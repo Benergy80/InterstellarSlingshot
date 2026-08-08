@@ -870,6 +870,30 @@ function _attachEngineGlow(model, colorHex, box, sizeScale, radiusFactor, radius
     });
 }
 
+// SHARED HULL EMISSIVE-FLOOR MARGIN — applies to every hostile faction
+// fighter hull (GLB path and fallback geometry alike), not just the two
+// classes an earlier acceptance test happened to name.
+//
+// This used to be a per-class ternary (`_isVulcanHull ? 0.62 : 0.28`) that
+// only lifted the Vulcan Patrol (and, on the fallback path, its
+// not-yet-loaded placeholder) while every other faction — Martian Pirate,
+// Sith, Cardassian, Klingon, Romulan, UFO, etc. — shipped the 0.28 shared
+// default from createFactionHullMaterial. Same-frame readback at 900u
+// showed that default sitting well under the 100/255 legibility bar for
+// several of those factions (Martian Pirate 59.9, Sith 71.0, Cardassian
+// 76.6), i.e. the exact "darker than empty space" failure the Vulcan/UFO
+// fix was supposed to solve for the WHOLE roster, not for two named
+// classes. The margin that cleared the bar for the Vulcan's unusually
+// sparse, low-fill silhouette (see the "Region 8" note further down)
+// clears it with room to spare for every denser fighter silhouette too,
+// so there is no reason to keep two tiers — one shared constant, applied
+// everywhere createEnemyMeshWithModel builds a hull material.
+const _HULL_EMISSIVE_FLOOR = {
+    emissiveIntensity: 0.62,
+    emissiveHeat: 0.64,
+    rimIntensity: 0.85
+};
+
 // Create enemy mesh using GLB model or fallback geometry
 function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOverride) {
     const model = getEnemyModel(regionId);
@@ -947,14 +971,14 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 // median 115 near Sagittarius A*, 190+ at the brighter
                 // boot screen, 0% of pixels under the 20/255 dark cutoff
                 // at every angle in both locations.
-                const _isVulcanHull = (regionId === 8);
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
                     // Was 0.84/0.70 — see the emissiveIntensity default
-                    // note on createFactionHullMaterial. Vulcan's own
-                    // margin over the shared floor (see note above).
-                    emissiveIntensity: _isVulcanHull ? 0.62 : 0.28,
-                    emissiveHeat: _isVulcanHull ? 0.64 : undefined,
-                    rimIntensity: _isVulcanHull ? 0.85 : 0.62,
+                    // note on createFactionHullMaterial. Shared floor
+                    // (see _HULL_EMISSIVE_FLOOR above) applied to every
+                    // faction now, not just Vulcan/UFO.
+                    emissiveIntensity: _HULL_EMISSIVE_FLOOR.emissiveIntensity,
+                    emissiveHeat: _HULL_EMISSIVE_FLOOR.emissiveHeat,
+                    rimIntensity: _HULL_EMISSIVE_FLOOR.rimIntensity,
                     panelCellSize: _hullPanelCellSize(child.geometry),
                     // Nose direction in MESH-LOCAL space: the nose-flipped
                     // regions are authored +Z-forward, everything else -Z.
@@ -1080,11 +1104,10 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // (0.62/0.64/0.85) so a not-yet-loaded Enemy8.glb doesn't hand the
         // player a dark placeholder that then visibly brightens once the
         // real model swaps in.
-        const _isVulcanHullFallback = (regionId === 8);
         const baseMaterial = createFactionHullMaterial(material.color || 0xff0000, {
-            emissiveIntensity: _isVulcanHullFallback ? 0.62 : 0.28,
-            emissiveHeat: _isVulcanHullFallback ? 0.64 : undefined,
-            rimIntensity: _isVulcanHullFallback ? 0.85 : 0.62,
+            emissiveIntensity: _HULL_EMISSIVE_FLOOR.emissiveIntensity,
+            emissiveHeat: _HULL_EMISSIVE_FLOOR.emissiveHeat,
+            rimIntensity: _HULL_EMISSIVE_FLOOR.rimIntensity,
             roughness: 0.5,
             panelCellSize: _hullPanelCellSize(fallbackGeometry),
             formNoseSign: -1.0

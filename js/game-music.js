@@ -1508,8 +1508,15 @@
     // exists to tolerate ordinary decoder jitter on a track we're settled
     // on, but a track we just landed on AS an escape needs to prove itself
     // quickly so a second dead track doesn't cost a full extra cycle.
-    const sampleMs = liv.escaping ? 350 : LIVENESS_SAMPLE_MS;
-    const stallMs = liv.escaping ? 500 : LIVENESS_STALL_MS;
+    // Same logic applies to `recovering` (we've already proven the decoder
+    // is frozen and are just giving the re-issued play() its chance — no
+    // reason to judge THAT on the slow baseline either) and to the moment
+    // stuckSince first gets set (the sample that flags a suspected stall) —
+    // once we suspect a freeze, confirming it fast beats paying the full
+    // 1000ms sample-granularity tax on a track already under suspicion.
+    const urgent = liv.escaping || liv.recovering || !!liv.stuckSince;
+    const sampleMs = urgent ? 350 : LIVENESS_SAMPLE_MS;
+    const stallMs = (liv.escaping || liv.recovering) ? 500 : LIVENESS_STALL_MS;
 
     // Nothing to watch, or the mix is legitimately silent — a stall check
     // is meaningless there, so just re-arm the baseline.

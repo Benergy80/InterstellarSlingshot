@@ -903,6 +903,203 @@ const _HULL_LAMP_FAR_LO = 600, _HULL_LAMP_FAR_HI = 2000;
 const _HULL_RIM_SCALE = 1.075;
 const _HULL_RIM_MAX = 2;
 
+// =============================================================================
+// HULL GEOMETRY FLOOR — GEOMETRIC CAP (this is what restores CLOSURE)
+// =============================================================================
+// The lamp above was fixed by capping its floor in WORLD units
+// (_HULL_LAMP_FLOOR_MAX): a screen-px floor divided by px-per-unit is a world
+// size PROPORTIONAL TO DISTANCE, so anything floored that way has a constant
+// apparent size at every range. The same defect still lived one layer down, in
+// the hull GEOMETRY: `_installHullScreenFloor(group, minPx=60, maxBoost=2.5)`
+// (game-models.js, installed on the Vulcan patrol hull group and on every UFO
+// hull group) did
+//     boost = min(2.5, minPx / rawPx)   with rawPx ∝ 1/d
+// so `boost ∝ d` and the projected hull was pinned at exactly `minPx` across
+// the entire dogfight envelope. Measured on the live build, boost read off the
+// floor group itself: 1.000@700u, 1.204@900u, 1.602@1200u, 2.131@1600u,
+// 2.500@>=1867u — dead-on linear in d. Consequence, measured by toggling the
+// bare hull mesh against a PAUSED zero-noise frame (lamp/nav/rim and plume
+// hidden): 60x57 px / 2,627 px at 900u, 60x57 px / 2,613 px at 1200u,
+// 60x57 px / 2,606 px at 1600u. Three ranges spanning 1.78x, identical to the
+// pixel. A ship that never grows as it closes gives the player no closure cue
+// at all — the one cue the whole combat loop is built on — and the inflated
+// silhouette is also what dragged the kill payoff under its >=3x bar.
+//
+// The fix is the same discipline the lamp already uses: the floor may not buy
+// SIZE past a distance-independent constant, and whatever presence is still
+// missing is paid for in BRIGHTNESS, which is the channel that does not lie
+// about how far away something is.
+//   • _HULL_GEO_BOOST_MAX caps the geometric boost at 1.25. It binds from
+//     ~930u out, so from there to 15,000u the hull's footprint is honestly
+//     proportional to 1/d.
+//   • the leftover deficit (what the uncapped floor WOULD have taken in
+//     scale) becomes an emissiveIntensity multiplier, capped at
+//     _HULL_GEO_EMIS_MAX, applied per-draw and restored in onAfterRender so
+//     it neither compounds nor leaks across ships that share a material
+//     (enemy hull materials ARE shared, and game-core.js rewrites
+//     emissiveIntensity from userData.baseEmissive every frame — writing in
+//     onBeforeRender and undoing it in onAfterRender is the only placement
+//     that survives both).
+//
+// This lives HERE, in game-controls.js, and replaces the global installer
+// rather than editing it in place: game-models.js is another agent's file this
+// round. game-models.js is loaded first (index.html) and its call sites run at
+// ship-construction time, i.e. long after this script has swapped the global,
+// so every hull built in the game gets the capped version. The upstream
+// implementation is kept on `.__upstream` for reference.
+const _HULL_GEO_BOOST_MAX = 1.25;   // hard cap on the geometric floor
+const _HULL_GEO_EMIS_MAX = 3.0;     // and the brightness that pays for the rest
+
+(function _capHullScreenFloor() {
+    if (typeof window === 'undefined' || typeof THREE === 'undefined') return;
+
+    function cappedInstall(group, minPx, maxBoost) {
+        if (!group || !group.parent) return;
+        minPx = (minPx !== undefined) ? minPx : 60;
+        // `maxBoost` is deliberately NOT honoured as a SCALE cap any more — it
+        // is what made the hull range-invariant. It survives as the ceiling on
+        // the brightness compensation instead.
+        const emisMax = Math.max(1, Math.min(_HULL_GEO_EMIS_MAX,
+                                             maxBoost !== undefined ? maxBoost * 1.2 : _HULL_GEO_EMIS_MAX));
+
+        const baseScale = group.scale.x || 1;
+        const parent = group.parent;
+        // Parent-relative corners captured ONCE, before any boost is applied,
+        // so the per-frame measurement never reads back its own last boost
+        // (see the upstream note — that part of the design is correct).
+        let localCorners = null;
+        try {
+            parent.updateWorldMatrix(true, false);
+            group.updateWorldMatrix(true, true);
+            const box = new THREE.Box3().setFromObject(group);
+            if (box.isEmpty()) return;
+            const invParent = new THREE.Matrix4().copy(parent.matrixWorld).invert();
+            localCorners = [];
+            for (let i = 0; i < 8; i++) {
+                const c = new THREE.Vector3(
+                    (i & 1) ? box.max.x : box.min.x,
+                    (i & 2) ? box.max.y : box.min.y,
+                    (i & 4) ? box.max.z : box.min.z
+                );
+                c.applyMatrix4(invParent);
+                localCorners.push(c);
+            }
+        } catch (e) {
+            return;
+        }
+        if (!localCorners) return;
+
+        const _tmp = new THREE.Vector3();
+        group.userData._hullGeoBoost = 1;
+        group.userData._hullGeoDeficit = 1;
+        group.userData._hullGeoRawPx = 0;
+
+        const measure = function (renderer, camera) {
+            const frame = (renderer.info && renderer.info.render) ? renderer.info.render.frame : null;
+            if (frame !== null) {
+                if (group.userData._hullFloorFrame === frame) return;
+                group.userData._hullFloorFrame = frame;
+            }
+            const w = renderer.domElement ? (renderer.domElement.width || renderer.domElement.clientWidth) : 0;
+            const h = renderer.domElement ? (renderer.domElement.height || renderer.domElement.clientHeight) : 0;
+            if (!w || !h) return;
+
+            group.parent.updateWorldMatrix(true, false);
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            let anyBehindCamera = false;
+            for (let i = 0; i < localCorners.length; i++) {
+                _tmp.copy(localCorners[i]).applyMatrix4(group.parent.matrixWorld);
+                const camDist = _tmp.distanceTo(camera.position);
+                _tmp.project(camera);
+                if (_tmp.z < -1 || _tmp.z > 1 || camDist <= 0) { anyBehindCamera = true; continue; }
+                const sx = (_tmp.x * 0.5 + 0.5) * w;
+                const sy = (1 - (_tmp.y * 0.5 + 0.5)) * h;
+                if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
+                if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+            }
+            // Partially off the near plane (the camera is effectively inside
+            // the hull): a partial bbox is not a "too small" reading.
+            if (anyBehindCamera || !isFinite(minX) || !isFinite(maxX)) {
+                group.userData._hullGeoBoost = 1;
+                group.userData._hullGeoDeficit = 1;
+                group.scale.setScalar(baseScale);
+                group.updateMatrixWorld(true);
+                return;
+            }
+
+            const rawPx = Math.max(maxX - minX, maxY - minY);
+            let boost = 1, deficit = 1;
+            if (rawPx > 0 && rawPx < minPx) {
+                boost = Math.min(_HULL_GEO_BOOST_MAX, minPx / rawPx);
+                deficit = Math.min(emisMax, Math.max(1, minPx / (rawPx * boost)));
+            }
+            group.userData._hullGeoRawPx = rawPx;
+            group.userData._hullGeoBoost = boost;
+            group.userData._hullGeoDeficit = deficit;
+            group.scale.setScalar(baseScale * boost);
+            group.updateMatrixWorld(true); // land it before the renderer reads
+            // this mesh's matrixWorld a moment later in the same
+            // renderObject() call; the deep update also fixes every sibling
+            // mesh that hits the frame-dedupe above later this frame.
+        };
+
+        // Per-DRAW, not per-frame: the emissive lift has to be applied and
+        // undone around each individual mesh so a material shared by several
+        // hulls carries the right value for whichever one is being drawn.
+        const applyFloor = function (renderer, scene, camera, geometry, material) {
+            if (!group.parent) return;              // destroyed since install
+            if (!renderer || !camera || !camera.isPerspectiveCamera) return;
+            measure(renderer, camera);
+            const d = group.userData._hullGeoDeficit || 1;
+            const mat = material || this.material;
+            if (d > 1.001 && mat && mat.emissiveIntensity !== undefined) {
+                this.userData._geoEmisSaved = mat.emissiveIntensity;
+                this.userData._geoEmisMat = mat;
+                mat.emissiveIntensity = mat.emissiveIntensity * d;
+            } else {
+                this.userData._geoEmisMat = null;
+            }
+        };
+        const restoreEmissive = function () {
+            const mat = this.userData._geoEmisMat;
+            if (mat) {
+                mat.emissiveIntensity = this.userData._geoEmisSaved;
+                this.userData._geoEmisMat = null;
+            }
+        };
+
+        group.traverse((child) => {
+            if (!child.isMesh) return;
+            child.onBeforeRender = applyFloor;
+            child.onAfterRender = restoreEmissive;
+        });
+    }
+
+    cappedInstall.__geoCapped = true;
+
+    // Swap now (game-models.js is loaded first, so the global already exists
+    // and every hull built at runtime picks this up) and again once the whole
+    // <script> chain has run — a hoisted `function _installHullScreenFloor`
+    // declaration in a file that ends up loading AFTER this one would
+    // otherwise silently re-take the global and put the range-invariance
+    // back. Idempotent: it only swaps when the current global isn't already
+    // the capped one, and it keeps whatever it displaced on `__upstream`.
+    function swap() {
+        const cur = window._installHullScreenFloor;
+        if (cur === cappedInstall || (cur && cur.__geoCapped)) return;
+        if (typeof cur === 'function') cappedInstall.__upstream = cur;
+        window._installHullScreenFloor = cappedInstall;
+    }
+    swap();
+    if (typeof document !== 'undefined') {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', swap);
+        } else {
+            setTimeout(swap, 0);
+        }
+    }
+})();
+
 // Hull-lamp profile. Deliberately FLATTER than _plumeCoreTex: the lamp's
 // job is area that survives a threshold, not a hot spot (a hot spot is what
 // the nozzle cores are for, and the whole point of this round is that the
@@ -5983,10 +6180,20 @@ const _FX_HULL_MAX = 620;
 function _fxMeasureWorldLen(obj) {
     if (!obj || !obj.isObject3D) return 0;
     const ud = obj.userData || {};
-    // The plume already measured this hull — reuse it rather than paying
-    // for a second traverse on the frame something dies.
-    if (ud._plumeHullLen > 0) return ud._plumeHullLen;
-    if (ud._fxHullLen > 0) return ud._fxHullLen;
+    // MEASURE FRESH. This used to return the plume rig's cached
+    // `_plumeHullLen` to save a traverse — but that cache is baked ONCE,
+    // whenever the rig was first built, at whatever range the hostile
+    // happened to be at, and the hull carries a distance-driven screen floor
+    // (see the geometry cap up at _HULL_GEO_BOOST_MAX). The victim's APPARENT
+    // size at the instant it dies — which is exactly what the burst has to be
+    // >=3x of — therefore did NOT match the size the burst was drawn from,
+    // and the kill/hull ratio became a function of the ship's engagement
+    // history: measured, a hostile whose rig was built at 700u (floor boost
+    // 1.00) and died at 1,200u (boost 1.25) detonated 1.56x too small in
+    // screen area, dropping the ratio from 3.4x to ~2.2x — a silent failure
+    // of the acceptance bar with no code change behind it. One extra traverse
+    // on the single frame something dies is not a cost worth that. The caches
+    // stay as the fallback for a hull that can no longer be measured.
     let len = 0;
     try {
         obj.updateWorldMatrix(true, true);
@@ -6013,6 +6220,8 @@ function _fxMeasureWorldLen(obj) {
         }
     } catch (e) {}
     if (len > 0 && obj.userData) obj.userData._fxHullLen = len;
+    if (!(len > 0)) len = (ud._plumeHullLen > 0) ? ud._plumeHullLen
+                        : ((ud._fxHullLen > 0) ? ud._fxHullLen : 0);
     return len;
 }
 

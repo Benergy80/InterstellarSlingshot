@@ -2548,12 +2548,39 @@ const MAP_CLUSTER_NODE_BUDGET = 250;
 // crowded the frame is.
 const MAP_SCENERY_CELL_PX = 14;
 const MAP_SCENERY_NODE_BUDGET = 24;
-// A `must`-individual contact (hostile / current target / active lock)
-// never gets bucketed away — but two of them landing within this many px
-// of each other on screen render as one indistinguishable smear anyway.
-// The one-pass separation below nudges such pairs apart just enough to
-// stay individually countable.
-const MAP_HOSTILE_SEPARATION_PX = 7;
+// The "must-tier" (hostile / boss / distress / current-target / active-lock)
+// used to render EVERY member individually, unbucketed — which is not a
+// budget at all: a 200+ hostile swarm just blew straight through the 250
+// node ceiling wearing full tactical grammar, and the O(n^2) separation
+// pass that used to sit here (pushing overlapping pairs apart one at a
+// time) cannot converge on a dense clump — nudging A off B pushes it onto
+// C. Only a genuinely unmissable handful renders unbucketed now (see
+// MAP_MUST_VIP_CAP below); everything else in the must-tier gets bucketed
+// exactly like `tactical`, just on a coarser grid so a swarm still reads
+// distinctly "hostile" rather than fading into scenery-grade aggregates.
+const MAP_MUST_CELL_PX = 6;
+const MAP_MUST_NODE_BUDGET = 120;
+// Hard cap on contacts that bypass bucketing entirely. Current target /
+// active lock / boss / distress call are non-negotiable — a player mid-fight
+// can't have their lock target vanish into an aggregate — so those are
+// always included even if that pushes slightly past the cap; remaining
+// slots (usually all 12) fill with the nearest-by-distance must-tier
+// contacts, since proximity is the best available proxy for "about to
+// matter" without a real threat score.
+const MAP_MUST_VIP_CAP = 12;
+// The VIP list bypasses the must-tier's own bucketing, so nothing else
+// stops its optional ("nearest by distance") members from landing on top
+// of each other — a boss with several nearest escorts can genuinely be
+// this close together on screen. Cap how many VIPs may occupy the same
+// audit-grid cell (4px, matching the "no cell holds > 3 individual nodes"
+// rule this whole pass exists to satisfy); a candidate that would push a
+// cell over the cap is simply left out of VIP and falls through to the
+// must-tier's bucketed overflow instead, where it renders as part of that
+// cell's aggregate — still visible, just not itemized. Forced VIPs
+// (current target / active lock / boss / distress) are never dropped by
+// this cap, only counted against it for later optional fills.
+const MAP_VIP_CELL_PX = 4;
+const MAP_VIP_CELL_CAP = 3;
 
 // #rrggbb -> 'rgba(r,g,b,alpha)', for the 35%-alpha elevation stalks (which
 // reuse each blip's own dotColor rather than a fixed palette entry).
@@ -2635,16 +2662,16 @@ function _ensureMapDepthBar(galaxyMap) {
 function renderClusteredMapDots(candidates) {
     // Three-way split, not two: scenery no longer competes with real
     // tactical contacts for the shared node budget at all — it gets its
-    // own small fixed allowance below. `must` bypasses bucketing entirely
-    // (a hostile/current-target/lock can't be allowed to vanish into an
-    // aggregate); `tactical` is the adaptive-cell bucket that used to be
-    // the whole "loose" set.
-    const must = [];
+    // own small fixed allowance below. `mustTier` (hostile/current-target/
+    // lock/boss/distress) gets bucketed too, just on its own coarser grid
+    // and budget (see below) instead of skipping bucketing entirely;
+    // `tactical` is the adaptive-cell bucket for everything else salient.
+    const mustTier = [];
     const tactical = [];
     const scenery = [];
     for (let i = 0; i < candidates.length; i++) {
         const c = candidates[i];
-        if (c.mustIndividual || c.dotPriority >= 90) must.push(c);
+        if (c.mustIndividual || c.dotPriority >= 90) mustTier.push(c);
         else if (c.dotPriority > 60) tactical.push(c);
         else scenery.push(c);
     }
@@ -2669,14 +2696,73 @@ function renderClusteredMapDots(candidates) {
         sceneryCellPx *= 1.7;
     }
 
+    // ── Must-tier VIPs: the only contacts that bypass bucketing entirely.
+    // Current target / active lock / boss / distress are always in (never
+    // let the one blip combat depends on reading correctly vanish into an
+    // aggregate); once those are placed, fill remaining slots up to the
+    // cap with the nearest-by-distance remainder of the must-tier.
+    const vip = [];
+    const vipKeys = new Set();
+    const vipCellCounts = new Map();
+    const vipCellKey = c => Math.floor(c.px / MAP_VIP_CELL_PX) + '_' + Math.floor(c.py / MAP_VIP_CELL_PX);
+    for (let i = 0; i < mustTier.length; i++) {
+        const c = mustTier[i];
+        if (c.mustIndividual || c.dotPriority >= 110 || c.distress) {
+            vip.push(c);
+            vipKeys.add(c.key);
+            const ck = vipCellKey(c);
+            vipCellCounts.set(ck, (vipCellCounts.get(ck) || 0) + 1);
+        }
+    }
+    if (vip.length < MAP_MUST_VIP_CAP) {
+        const rest = [];
+        for (let i = 0; i < mustTier.length; i++) {
+            if (!vipKeys.has(mustTier[i].key)) rest.push(mustTier[i]);
+        }
+        rest.sort((a, b) => a.distance - b.distance);
+        for (let i = 0; i < rest.length && vip.length < MAP_MUST_VIP_CAP; i++) {
+            const c = rest[i];
+            const ck = vipCellKey(c);
+            const cnt = vipCellCounts.get(ck) || 0;
+            if (cnt >= MAP_VIP_CELL_CAP) continue; // let mustOverflow's bucketing handle this cell instead
+            vip.push(c);
+            vipKeys.add(c.key);
+            vipCellCounts.set(ck, cnt + 1);
+        }
+    }
+    // Everything else in the must-tier (the bulk of a hostile swarm) is
+    // bucketed exactly like `tactical` below, just on its own coarser grid
+    // and budget — this is what structurally guarantees no cell holds more
+    // than a handful of individual nodes; the O(n^2) separation pass this
+    // replaced could not (pushing A off B pushes it onto C).
+    const mustOverflow = [];
+    for (let i = 0; i < mustTier.length; i++) {
+        if (!vipKeys.has(mustTier[i].key)) mustOverflow.push(mustTier[i]);
+    }
+    let mustCellPx = MAP_MUST_CELL_PX;
+    let mustGroups;
+    for (let attempt = 0; attempt < 4; attempt++) {
+        mustGroups = new Map(); // cellKey -> array of candidates
+        for (let i = 0; i < mustOverflow.length; i++) {
+            const c = mustOverflow[i];
+            const ck = Math.floor(c.px / mustCellPx) + '_' + Math.floor(c.py / mustCellPx);
+            let g = mustGroups.get(ck);
+            if (!g) { g = []; mustGroups.set(ck, g); }
+            g.push(c);
+        }
+        let total = 0;
+        mustGroups.forEach(g => { total += g.length <= 2 ? g.length : 1; });
+        if (total <= MAP_MUST_NODE_BUDGET || attempt === 3) break;
+        mustCellPx *= 1.7;
+    }
+
     // ── Tactical: same adaptive-cell bucketing as before (a lightly
     // occupied cell still renders its members individually), but sized to
-    // whatever's left of the 250 budget once `must` and scenery have
-    // taken their share — scenery no longer eats into this at all beyond
-    // the node count its own aggregates claim.
+    // whatever's left of the 250 budget once VIPs, the must-tier's bucketed
+    // overflow, and scenery have taken their share.
     let cellPx = MAP_CLUSTER_CELL_PX;
     let groups;
-    const tacticalBudget = Math.max(0, MAP_CLUSTER_NODE_BUDGET - must.length - sceneryGroups.size);
+    const tacticalBudget = Math.max(0, MAP_CLUSTER_NODE_BUDGET - vip.length - mustGroups.size - sceneryGroups.size);
     for (let attempt = 0; attempt < 4; attempt++) {
         groups = new Map(); // cellKey -> array of candidates
         for (let i = 0; i < tactical.length; i++) {
@@ -2692,36 +2778,22 @@ function renderClusteredMapDots(candidates) {
         cellPx *= 1.7;
     }
 
-    // ── Must: never bucketed — but rendering an unbucketed pile of
-    // hostiles exactly as-is is what fused a dense arc into one
-    // uncountable caterpillar (two dots whose screen positions land
-    // within their own render diameter overlap into a smear). One
-    // separation pass: any pair closer than MAP_HOSTILE_SEPARATION_PX
-    // apart gets nudged apart along their connecting vector, just enough
-    // to stay visually distinct. Cosmetic only — perturbs this blip's
-    // render-space px/py, never the underlying world position.
-    for (let i = 0; i < must.length; i++) {
-        for (let j = i + 1; j < must.length; j++) {
-            const a = must[i], b = must[j];
-            let dx = b.px - a.px, dy = b.py - a.py;
-            let dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist >= MAP_HOSTILE_SEPARATION_PX) continue;
-            if (dist < 0.01) {
-                // Exact overlap: no direction to push along. Pick one
-                // deterministically from the pair's indices so it doesn't
-                // jitter frame to frame while the overlap persists.
-                const ang = (i * 2.399963 + j * 0.618034) % (Math.PI * 2);
-                dx = Math.cos(ang); dy = Math.sin(ang); dist = 1;
-            }
-            const push = (MAP_HOSTILE_SEPARATION_PX - dist) / 2;
-            const ux = dx / dist, uy = dy / dist;
-            a.px -= ux * push; a.py -= uy * push;
-            b.px += ux * push; b.py += uy * push;
+    // VIPs always get their own dot, raised above anything sharing its cell.
+    for (let i = 0; i < vip.length; i++) renderIndividualMapDot(vip[i], true);
+
+    // Must-tier cell keys are prefixed so they can never collide with a
+    // tactical aggregate's pool key even when the raw grid coordinates
+    // happen to match (different, unrelated grid pitches). A lightly
+    // occupied must-tier cell still renders its members individually —
+    // renderIndividualMapDot's own salience tier (dotPriority >= 90) keeps
+    // them reading as hostile-grade regardless.
+    mustGroups.forEach((g, cellKey) => {
+        if (g.length <= 2) {
+            for (let i = 0; i < g.length; i++) renderIndividualMapDot(g[i], false);
+        } else {
+            renderAggregateMapDot('must:' + cellKey, g, mustCellPx);
         }
-    }
-    // Must-individual contacts (current target / active lock / hostiles)
-    // always get their own dot, raised above anything sharing its cell.
-    for (let i = 0; i < must.length; i++) renderIndividualMapDot(must[i], true);
+    });
 
     groups.forEach((g, cellKey) => {
         if (g.length <= 2) {

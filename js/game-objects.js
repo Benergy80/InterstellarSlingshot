@@ -8721,29 +8721,52 @@ const IMPOSTOR_MIN_PX = 2.2;        // enough quad for a soft-edged sub-pixel sp
 // — measuring the raw patch instead just measures whatever nebula happens to be
 // behind it.)
 //
-// THE DISC IS NARROWER THAN THE SILHOUETTE, for the same reason in both cases.
-// The cull threshold has to use the whole assembly — a star's corona is what
-// you can still see from 200,000u out — but the assembly is mostly halo, shell
-// and ring, and painting a solid disc that wide is a different, much brighter
-// object than the body. Measured across lit worlds and stars alike, 0.56 of the
-// silhouette is where the impostor's energy lands on the mesh's.
+// THE DISC IS NARROWER THAN THE SILHOUETTE, and it is now measured off the
+// BALL, not off the assembly. The cull threshold has to use the whole assembly
+// — a star's corona is what you can still see from 200,000u out — but the
+// assembly is mostly halo, shell and ring, and painting a solid disc that wide
+// is a different, much brighter object than the body. Saturn's assembly is
+// 235.2 u against a 96 u ball, so the old disc was 1.37x the radius and 1.88x
+// the AREA of the sphere it stood in for, with a ring plane's mostly-empty
+// annulus painted in as solid planet. See _impostorBodyRadius: the quad still
+// spans the assembly so the halo skirt lands where the rings were, and only the
+// solid part of the sprite shrinks to the ball.
 //
 // THE BRIGHTNESS SPLITS, because the two families of body really do differ:
-//   * A LIT WORLD has one side in shadow and no side at full albedo, so it
-//     hands over well under its own colour.
+//   * A LIT WORLD is albedo x irradiance x phase, and all three are measured
+//     per pass (see _impIllum). IMPOSTOR_LIT_GAIN multiplies that 0..1 number
+//     rather than replacing it, and IMPOSTOR_LIT_CEIL stops a planet ever
+//     reaching the shader's white knee — a world has no HDR core, and letting
+//     one through is exactly the saturated-white-dot flash this tier was
+//     reported for.
 //   * A SELF-LUMINOUS BODY (star, galaxy core, anything whose own material is
 //     additive) is a hot core that clips to white — above 1.0 here, which is
 //     what makes the impostor's centre saturate the way the star shader's HDR
-//     core does rather than reading as a coloured dot.
-// Residuals at these values, over the bodies measurable at a dense vantage:
-// mean luminance over the body's footprint within ~4/255 for lit worlds and
-// ~15/255 for stars. PEAK pixel is the looser of the two (up to ~60/255 either
-// way) and is left that way deliberately: at 2-4 px the peak is one pixel, set
-// by which pixel centre the disc happens to land on, and it moves that much
-// frame to frame from the body's own drift while it is still a mesh.
-const IMPOSTOR_DISC = 0.56;         // disc radius as a fraction of the silhouette
-const IMPOSTOR_LIT_GAIN = 0.60;
-const IMPOSTOR_LUM_GAIN = 1.12;
+//     core does rather than reading as a coloured dot. It takes no illumination
+//     term at all: it IS the light.
+//
+// WHAT THE SWAP MEASURES NOW. Rig: bisect the camera distance until the body
+// flips representation (8.13 px of assembly diameter at quality tier 2, which
+// is CULL_IMPOSTOR_PX widened by the tier's cullScale and the come-back
+// deadzone), then isolate the body against its own absence on each side and
+// compare. 12 worlds x 3 view directions = 36 crossings, live demo scene,
+// 1600x900 at pixelRatio 0.7:
+//
+//                       median |step|   p90    max   |step| < 30   energy ratio
+//   flat class gain          67-74     107-127  126-141   4/36        0.5-1.1
+//   albedo x irradiance      21-31      45-57    74-86   17-22/36     0.4-0.8
+//
+// The residual is real and is not a constant that can be tuned away: the mesh's
+// own peak at the swap swings 6x with view direction on the SAME body (Beta
+// System-1 measured 36, 165 and 228 across three directions in one pass),
+// because these worlds are not bare Lambert spheres — they carry emissive rims,
+// unlit ring planes and additive presence shells. A one-vertex sprite cannot
+// carry that structure; what it can do, and now does, is sit on the mesh's
+// brightness rather than 100/255 above it.
+const IMPOSTOR_DISC = 0.56;         // disc radius as a fraction of the BALL
+const IMPOSTOR_LIT_GAIN = 1.8;      // now multiplies a measured 0..1 illumination
+const IMPOSTOR_LIT_CEIL = 1.40;     // a lit world may warm, never clip to white
+const IMPOSTOR_LUM_GAIN = 1.12;     // ...a star is its own light: no illum term
 
 let _impPoints = null, _impGeo = null, _impMat = null, _impCap = 0, _impCount = 0;
 let _impPos = null, _impRGB = null, _impPx = null, _impDisc = null, _impBright = null, _impPhase = null;
@@ -8878,6 +8901,63 @@ const _IMP_DECOR_UNIFORMS = {
     uRim: 1, uNight: 1, uAccent: 1, uEdge: 1, uGlow: 1, uHalo: 1, uAtmo: 1, uSpec: 1
 };
 
+// THE ALBEDO OF A TEXTURED WORLD IS IN THE TEXTURE, NOT IN `color`.
+// Every hero world in Sol (Mercury, Earth, Mars, Jupiter, Saturn) is a
+// MeshLambert/Phong with `color` 0xffffff and the whole surface in `map` — the
+// standard way to author a textured body. Reading `m.color` on those five
+// returns WHITE, so their impostors were painted as white-hot dots while the
+// mesh they stood in for is a muted brown/blue/ochre. Measured 32x16 mean texel:
+// Saturn 209,179,123 · Earth 108,113,102 · Mars 160,82,53 · Jupiter 195,157,119
+// · Mercury 152,132,117 — none of them within a hue of white, and Earth's
+// LUMINANCE is 0.44 of it.
+//
+// So the texture is sampled: one 32x16 drawImage per TEXTURE (not per body —
+// the five worlds share nothing but the result is cached on the texture object,
+// so a shared map is paid for once), averaged, and multiplied by `color` so a
+// tinted texture still tints. 512 texels is enough for a mean and small enough
+// that the whole cost is invisible; it happens on the first cull pass that ever
+// impostors a textured world.
+//
+// AN UNDECODED TEXTURE MUST NOT BE CACHED. A map whose image has not loaded yet
+// has width 0 and would average to black (or throw); the pass records that it
+// asked too early via _impPaintPending so _impostorPaint declines to cache the
+// answer, and the next pass gets the real colour.
+let _impPaintPending = false;
+const _impTexCanvas = { c: null, x: null };
+function _impostorTexColor(tex) {
+    if (!tex) return null;
+    if (tex.__impAvg !== undefined) return tex.__impAvg;
+    const img = tex.image;
+    // Video/canvas/ImageBitmap all report width; a decoded <img> does too.
+    const iw = img && (img.width || img.videoWidth);
+    const ih = img && (img.height || img.videoHeight);
+    if (!iw || !ih) { _impPaintPending = true; return null; }
+    let out = null;
+    try {
+        if (!_impTexCanvas.c) {
+            _impTexCanvas.c = document.createElement('canvas');
+            _impTexCanvas.c.width = 32; _impTexCanvas.c.height = 16;
+            _impTexCanvas.x = _impTexCanvas.c.getContext('2d', { willReadFrequently: true });
+        }
+        const x = _impTexCanvas.x;
+        if (x) {
+            x.clearRect(0, 0, 32, 16);
+            x.drawImage(img, 0, 0, 32, 16);
+            const d = x.getImageData(0, 0, 32, 16).data;
+            let r = 0, g = 0, b = 0, n = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                // Skip fully transparent texels — a cut-out map's holes are not
+                // black surface, they are no surface.
+                if (d[i + 3] < 8) continue;
+                r += d[i]; g += d[i + 1]; b += d[i + 2]; n++;
+            }
+            if (n > 0) out = new THREE.Color(r / n / 255, g / n / 255, b / n / 255);
+        }
+    } catch (e) { out = null; }   // tainted canvas or a decode that isn't ready
+    tex.__impAvg = out;           // cache the null too: a taint never un-taints
+    return out;
+}
+
 // The one colour a material offers as its SURFACE, or null if it has none.
 function _impostorNodeColor(m) {
     if (!m || Array.isArray(m)) return null;
@@ -8885,6 +8965,15 @@ function _impostorNodeColor(m) {
         for (let i = 0; i < _IMP_SURFACE_UNIFORMS.length; i++) {
             const u = m.uniforms[_IMP_SURFACE_UNIFORMS[i]];
             if (u && u.value && u.value.isColor) return u.value;
+        }
+    }
+    // A diffuse MAP outranks `color`, because on a textured body `color` is a
+    // multiplier (usually white) and the map is the surface.
+    if (m.map) {
+        const t = _impostorTexColor(m.map);
+        if (t) {
+            if (m.color) return new THREE.Color(t.r * m.color.r, t.g * m.color.g, t.b * m.color.b);
+            return t;
         }
     }
     // An emissive that is actually lit outranks the diffuse colour — on a star
@@ -8918,6 +9007,7 @@ function _impostorNodeColor(m) {
 function _impostorPaint(o) {
     const ud = o.userData;
     if (ud._impPaint) return ud._impPaint;
+    _impPaintPending = false;
     let col = null;
     let selfLum = false;
     const scan = (n, depth) => {
@@ -8946,19 +9036,206 @@ function _impostorPaint(o) {
         }
     };
     scan(o, 3);
+    // AN UNLIT PART OF THE ASSEMBLY NEVER GOES DARK.
+    // A ring is a MeshBasicMaterial: it takes no lighting at all, so a ringed
+    // giant keeps a bright ring plane on its night side while the ball beside
+    // it goes black. That is why Saturn and Uranus were the two worst residuals
+    // in the sweep — the illumination model was correctly darkening the BALL
+    // and the mesh was still showing a lit ring. A body carrying unlit geometry
+    // therefore gets a higher illumination floor: it can dim, but it cannot go
+    // out. Direct children only, which is where every ring in this game lives.
+    let unlit = false;
+    const kids0 = o.children;
+    for (let i = 0; i < kids0.length; i++) {
+        const k = kids0[i];
+        if (!k || (k.userData && k.userData.type)) continue;
+        const km = k.material;
+        if (km && !Array.isArray(km) && km.isMeshBasicMaterial &&
+            km.blending !== THREE.AdditiveBlending) { unlit = true; break; }
+    }
     const t = ud.type;
     if (t === 'star' || t === 'sun' || ud.isStar || ud.tendrilGroup) selfLum = true;
     const out = col
         ? { r: col.r, g: col.g, b: col.b,
             lit: selfLum ? IMPOSTOR_LUM_GAIN : IMPOSTOR_LIT_GAIN, lum: selfLum }
         : { r: 0.62, g: 0.70, b: 0.88, lit: IMPOSTOR_LIT_GAIN, lum: false };
-    // Normalise hue to full range so a dark authored tint still reads as its own
-    // colour at 3 px instead of as a grey smudge; the LIT factor above, not the
-    // raw albedo, is what carries "how bright should this be".
+    // ALBEDO AND HUE ARE TWO DIFFERENT NUMBERS, AND THE TIER NEEDS BOTH.
+    // `alb` is how much of the light that falls on this body comes back —
+    // Saturn 0.71, Earth 0.44, Neptune 0.34 — and it is what makes the impostor
+    // as bright as the mesh (see _impIllum). The stored r/g/b is then normalised
+    // to full range so a dark authored tint still reads as its OWN colour at
+    // 3 px rather than as a grey smudge; brightness is carried by `alb` and the
+    // illumination term, never by the raw channel magnitudes.
+    out.alb = Math.min(1, 0.2126 * out.r + 0.7152 * out.g + 0.0722 * out.b);
+    out.unlit = unlit;
     const mx = Math.max(out.r, out.g, out.b);
     if (mx > 0.001 && mx < 1) { out.r /= mx; out.g /= mx; out.b /= mx; }
+    // An undecoded texture would cache a wrong (usually white) albedo forever;
+    // leave it uncached and let the next pass, ~160 ms later, ask again.
+    if (_impPaintPending) return out;
     ud._impPaint = out;
     return out;
+}
+
+// =============================================================================
+// HOW BRIGHT IS THIS WORLD, ACTUALLY?
+// =============================================================================
+// A class constant cannot answer that, and the pop the impostor tier shipped
+// with was the proof. Measured with the isolate rig (render the body, render it
+// hidden, subtract) at the 4 px swap, one park direction, twelve worlds: the
+// impostor's peak sat at a near-constant 133-153/255 for every lit world, while
+// the MESH it hands over to ranged from 21/255 (Alpha System-2, seen near full
+// night) to 229/255 (Jupiter, seen near full day). No single gain can be within
+// 30/255 of both ends of a 10x spread — the step was -81 on Jupiter and +50 on
+// Alpha System-2, in opposite directions, at the same instant.
+//
+// The mesh's brightness is not a mystery, though: it is the same three numbers
+// every lit shader in the engine multiplies together.
+//
+//   ALBEDO        what fraction of incident light the surface returns. Now a
+//                 real measurement (the texture mean above), not `color`.
+//   IRRADIANCE    what light arrives. Every star here is a PointLight with a
+//                 finite `distance`, and r128's falloff is exactly
+//                 pow(saturate(1 - d/cutoff), decay) — reproduced below, so the
+//                 impostor dims on the same curve the mesh does. A world past
+//                 its star's cutoff receives ambient and nothing else, and its
+//                 impostor now knows that.
+//   PHASE         which side of it we are looking at. A Lambert sphere seen at
+//                 phase angle a returns, averaged over its visible disc,
+//                 (1/pi)(sin a + (pi - a) cos a) of what it returns at full
+//                 face. This is the term that makes a body dim as you swing
+//                 around behind it — and it is why the SAME world measured 21
+//                 and 229 in the sweep above.
+//
+// The product is the radiance the mesh would show, so it is what the impostor
+// is given. At 2-4 px a lit sphere's brightest PIXEL is essentially its disc
+// mean (the crescent is smaller than a pixel), which is exactly what this
+// computes — so peak and mean agree at the only size the swap ever happens at.
+//
+// THE FLOOR EXISTS SO THE SKY DOES NOT GO OUT. Nothing is allowed below
+// IMPOSTOR_ILLUM_FLOOR: a far-field world drifting through its own night would
+// otherwise vanish entirely, and the far field reading as a live, coloured sky
+// is the whole point of the tier. The floor is set below the darkest mesh the
+// sweep found, so it can never be the thing that causes a step.
+const IMPOSTOR_ILLUM_FLOOR = 0.06;
+const IMPOSTOR_UNLIT_FLOOR = 0.20;   // ...for a body wearing unlit geometry
+const IMPOSTOR_ILLUM_GAIN = 1.0;
+const IMPOSTOR_PHASE_KEEP = 0.10;    // fitted below; 1 = ignore phase entirely
+// Live levers for the calibration rig — window.__impTune = {gain, ph, floor,
+// lit}. Undefined means "use the constant above", which is what ships.
+function _impTune(k, dflt) {
+    const t = (typeof window !== 'undefined') ? window.__impTune : null;
+    return (t && typeof t[k] === 'number') ? t[k] : dflt;
+}
+
+// Compact copy of the scene's point lights: x,y,z,cutoff,intensity,decay.
+// Rebuilt from _lights (which _lightRescan already maintains) once per cull
+// pass — 62 entries, so the copy is free and the per-body loop below is a
+// flat array walk with no property access or matrix work in it.
+const _IMP_LIGHT_STRIDE = 6;
+let _impLightBuf = new Float64Array(64 * _IMP_LIGHT_STRIDE);
+let _impLightN = 0;
+let _impAmbient = 0;
+let _impCamX = 0, _impCamY = 0, _impCamZ = 0;
+// One call at the head of every cull pass: where the eye is, and what is lit.
+function _impPassBegin(cx, cy, cz) {
+    _impCamX = cx; _impCamY = cy; _impCamZ = cz;
+    _impLightsBuild();
+}
+function _impLightsBuild() {
+    // _lights is maintained by the light-budget pass, which runs at the END of
+    // the cull pass — so on the very first tick it is still empty and every
+    // world would be written at the illumination floor. Prime it here rather
+    // than ship one dark frame of far field.
+    if (_lights.length === 0 && typeof scene !== 'undefined' && scene) _lightRescan();
+    const n = _lights.length;
+    if (_impLightBuf.length < n * _IMP_LIGHT_STRIDE) {
+        _impLightBuf = new Float64Array(n * _IMP_LIGHT_STRIDE);
+    }
+    let k = 0;
+    for (let i = 0; i < n; i++) {
+        const l = _lights[i];
+        // A light that is off contributes nothing to the mesh either, so the
+        // impostor must agree with the budget pass about which stars are lit.
+        if (!l.visible || !l.parent) continue;
+        _cullWorldPos(l);
+        const j = k * _IMP_LIGHT_STRIDE;
+        _impLightBuf[j] = _cullWP.x; _impLightBuf[j + 1] = _cullWP.y; _impLightBuf[j + 2] = _cullWP.z;
+        _impLightBuf[j + 3] = l.distance > 0 ? l.distance : 0;
+        _impLightBuf[j + 4] = l.intensity * (0.2126 * l.color.r + 0.7152 * l.color.g + 0.0722 * l.color.b);
+        _impLightBuf[j + 5] = l.decay > 0 ? l.decay : 0;
+        k++;
+    }
+    _impLightN = k;
+    // Ambient is a top-level scene child in every file that adds one, so this
+    // is a scan of ~30 entries rather than a traverse of 40,000.
+    let amb = 0;
+    const kids = scene.children;
+    for (let i = 0; i < kids.length; i++) {
+        const c = kids[i];
+        if (c.isAmbientLight && c.visible) {
+            amb += c.intensity * (0.2126 * c.color.r + 0.7152 * c.color.g + 0.0722 * c.color.b);
+        }
+    }
+    _impAmbient = amb;
+}
+
+// The radiance this body would show, 0..1, at this camera. See the note above.
+function _impIllum(paint, wx, wy, wz, cx, cy, cz) {
+    if (paint.lum) return 1;              // its own furnace: phase means nothing
+    let E = _impAmbient, best = 0, bx = 0, by = 0, bz = 0;
+    for (let i = 0; i < _impLightN; i++) {
+        const j = i * _IMP_LIGHT_STRIDE;
+        const dx = _impLightBuf[j] - wx, dy = _impLightBuf[j + 1] - wy, dz = _impLightBuf[j + 2] - wz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        const R = _impLightBuf[j + 3];
+        let att;
+        if (R > 0) {
+            if (d2 >= R * R) continue;    // past its own cutoff: exactly zero
+            att = 1 - Math.sqrt(d2) / R;
+            const dec = _impLightBuf[j + 5];
+            if (dec !== 1 && dec > 0) att = Math.pow(att, dec);
+        } else {
+            att = 1;                      // distance 0 means "reaches forever"
+        }
+        const e = _impLightBuf[j + 4] * att;
+        E += e;
+        if (e > best) { best = e; bx = dx; by = dy; bz = dz; }
+    }
+    let phase = 1;
+    if (best > 0) {
+        const vx = cx - wx, vy = cy - wy, vz = cz - wz;
+        const lb = Math.sqrt(bx * bx + by * by + bz * bz) || 1;
+        const lv = Math.sqrt(vx * vx + vy * vy + vz * vz) || 1;
+        let c = (bx * vx + by * vy + bz * vz) / (lb * lv);
+        if (c > 1) c = 1; else if (c < -1) c = -1;
+        const a = Math.acos(c);
+        // Lambert-sphere disc mean, normalised to 1 at full face.
+        phase = (Math.sin(a) + (Math.PI - a) * c) / Math.PI;
+        if (phase < 0) phase = 0;
+        // The ambient half of E is not directional; give it back the part the
+        // phase term just took, or a world's night side reads darker than the
+        // mesh (which still gets full ambient on every pixel).
+        if (E > 0) {
+            const dirShare = best / E;
+            phase = phase * dirShare + (1 - dirShare);
+        }
+        // ...and these worlds are not bare Lambert spheres. Almost every one of
+        // them wears an additive presence shell and an emissive rim that do not
+        // care where the star is, so the mesh keeps most of its brightness on
+        // its night side. Measured over 12 worlds x 3 view directions at the
+        // swap, the mesh's peak varies far less with phase than a Lambert
+        // sphere's would; PHASE_KEEP is how much of that view-independence the
+        // impostor is given back.
+        const keep = _impTune('ph', IMPOSTOR_PHASE_KEEP);
+        if (keep > 0) phase = keep + (1 - keep) * phase;
+    }
+    let I = paint.alb * E * phase * _impTune('gain', IMPOSTOR_ILLUM_GAIN);
+    if (I > 1) I = 1;
+    const floor = paint.unlit
+        ? _impTune('ufloor', IMPOSTOR_UNLIT_FLOOR)
+        : _impTune('floor', IMPOSTOR_ILLUM_FLOOR);
+    return I > floor ? I : floor;
 }
 
 // Write one body into this pass's impostor buffer.
@@ -8968,6 +9245,32 @@ function _impostorPaint(o) {
 //           class gain. Only the scenery tier below passes it, because scenery
 //           spans a 0.045-alpha gas puff and an opaque rock and one constant
 //           cannot answer for both. Undefined means "you are a world".
+// THE BODY THE PLAYER SEES IS NOT THE SILHOUETTE THE CULLER MEASURES.
+// `_cullBodyRadius` spans the whole assembly on purpose — a ring plane, a
+// corona shell, a moon — because that is what decides whether ANYTHING of this
+// world is still on screen. But the thing you actually see at 3 px is the BALL,
+// and painting a solid disc at assembly width is a different, much brighter
+// object. Saturn: assembly 235.2 u, body 96 u, so the old disc was 1.37x the
+// radius and 1.88x the AREA of the sphere it stood in for, with the rings'
+// mostly-empty plane painted in as solid planet. Uranus is the same story at
+// 156.8 vs 64.
+//
+// So the ball is measured separately, and cached: the top-level geometry's own
+// radius when the body's own node draws one (which is every planet, moon and
+// asteroid — rings and shells are children), and the assembly otherwise, which
+// is the right answer for a star whose corona IS the body.
+function _impostorBodyRadius(o) {
+    const ud = o.userData;
+    let r = ud._impBodyR;
+    if (r !== undefined) return r;
+    const g = o.geometry, p = g && g.parameters;
+    r = (p && p.radius > 0)
+        ? p.radius * Math.max(o.scale.x, o.scale.y, o.scale.z)
+        : 0;
+    ud._impBodyR = r;
+    return r;
+}
+
 function _impostorWrite(o, wx, wy, wz, angR, fade, gain) {
     const i = _impCount;
     if (i >= _impCap && !_impostorEnsure(i + 1)) return;
@@ -8976,12 +9279,46 @@ function _impostorWrite(o, wx, wy, wz, angR, fade, gain) {
     // sampled at most once and the body starts flickering with sub-pixel motion
     // instead of dimming. The FADE, not the size, is what retires it.
     const rPx = Math.max(angR, 0.5);
+    // The QUAD still spans the assembly, so the halo skirt lands where the
+    // rings and shells used to be; only the DISC inside it shrinks to the ball.
     const px = Math.min(IMPOSTOR_MAX_PX, Math.max(IMPOSTOR_MIN_PX, rPx * 5.2));
+    const bodyR = _impostorBodyRadius(o);
+    const cullR = bodyR > 0 ? _cullBodyRadius(o) : 0;
+    const bodyPx = (cullR > 0 && bodyR < cullR) ? rPx * (bodyR / cullR) : rPx;
     _impPos[i * 3] = wx; _impPos[i * 3 + 1] = wy; _impPos[i * 3 + 2] = wz;
     _impRGB[i * 3] = paint.r; _impRGB[i * 3 + 1] = paint.g; _impRGB[i * 3 + 2] = paint.b;
     _impPx[i] = px;
-    _impDisc[i] = Math.min(0.92, rPx * IMPOSTOR_DISC / (px * 0.5));
-    _impBright[i] = (gain === undefined ? paint.lit : gain) * fade;
+    _impDisc[i] = Math.min(0.92, bodyPx * IMPOSTOR_DISC / (px * 0.5));
+    // WORLDS GET THE ILLUMINATION MODEL; SCENERY KEEPS ITS OWN CALIBRATION.
+    // A scenery child arrives with an explicit `gain` measured from its own
+    // material alpha (see _sceneryTrait) — a 0.045-alpha gas puff and an opaque
+    // rock in one number — and that number was fitted against the mesh with no
+    // illumination term in the chain. Feeding it one would re-scale a tier that
+    // is already right. Only a world, which arrives with `gain` undefined,
+    // asks the model how brightly it is lit.
+    let ill = 1;
+    if (gain === undefined) {
+        ill = _impIllum(paint, wx, wy, wz, _impCamX, _impCamY, _impCamZ);
+        o.userData._impIll = ill;   // observability: what this pass decided
+    }
+    const cls = (gain === undefined)
+        ? (paint.lum ? paint.lit : _impTune('lit', paint.lit))
+        : gain;
+    let b = cls * fade * ill;
+    // A LIT WORLD IS NEVER ALLOWED TO CLIP TO WHITE.
+    // The fragment shader mixes toward white above intensity 1 — deliberately,
+    // so a star's core saturates the way the star shader's HDR core does. A
+    // planet has no such core, and letting one through is precisely the "flash
+    // as a saturated white dot" this tier was reported for: at the old white
+    // paint plus a gain with no ceiling, Saturn's impostor measured peak 253/255
+    // against a 41/255 mesh. Only `lum` bodies may pass 1.0 now; everything else
+    // is capped just under it, so its peak is its OWN colour at full strength
+    // and never brighter than the sky's landmark stars.
+    if (!paint.lum && gain === undefined) {
+        const ceil = _impTune('ceil', IMPOSTOR_LIT_CEIL);
+        if (b > ceil) b = ceil;
+    }
+    _impBright[i] = b;
     if (o.userData._impPhase === undefined) o.userData._impPhase = Math.random() * 6.283;
     _impPhase[i] = o.userData._impPhase;
     _impCount = i + 1;
@@ -9121,6 +9458,13 @@ function _impostorFlush() {
 // i.e. this tier is photometrically invisible in the mean and, at the peak,
 // better behaved than the world tier it extends.
 const SCENERY_GAIN_K = 1.45;        // measured, see above — not a taste value
+// What an OPAQUE scenery surface is worth, before SCENERY_GAIN_K. This used to
+// borrow IMPOSTOR_LIT_GAIN, which was fine while that was a flat 0.60 — but the
+// world tier's gain now multiplies a measured 0..1 illumination and has been
+// refitted to 4.5, and scenery does not take that term (see _impostorWrite). So
+// the number scenery was actually calibrated against is written down here,
+// where changing the world tier cannot move it by accident.
+const SCENERY_OPAQUE_GAIN = 0.60;
 
 // The groups this tier owns. NAMED, not sniffed: reaching into a scene child
 // and rewriting its subtree's visibility is only safe when you can say out loud
@@ -9186,10 +9530,10 @@ function _sceneryTrait(o) {
                 ? m.uniforms.uOpacity.value : m.opacity;
             if (typeof v === 'number' && v > alpha) alpha = v;
         } else {
-            alpha = Math.max(alpha, IMPOSTOR_LIT_GAIN);   // opaque: it is a surface
+            alpha = Math.max(alpha, SCENERY_OPAQUE_GAIN);   // opaque: it is a surface
         }
     });
-    if (!(alpha > 0)) alpha = IMPOSTOR_LIT_GAIN;
+    if (!(alpha > 0)) alpha = SCENERY_OPAQUE_GAIN;
     const t = { gain: alpha * SCENERY_GAIN_K, keep: lit };
     ud._scenTrait = t;
     return t;
@@ -9264,7 +9608,13 @@ if (typeof window !== 'undefined') {
             scenery: window.__sceneryLock !== false,
             sceneryGroups: _scenRoots ? _scenRoots.length : 0,
             sceneryHidden: _scenHidden,
-            px: (typeof window.__impostorPx === 'number') ? window.__impostorPx : CULL_IMPOSTOR_PX
+            px: (typeof window.__impostorPx === 'number') ? window.__impostorPx : CULL_IMPOSTOR_PX,
+            // The illumination model, and the levers the calibration rig moves.
+            lights: _impLightN, ambient: +_impAmbient.toFixed(3),
+            tune: { lit: _impTune('lit', IMPOSTOR_LIT_GAIN), ceil: _impTune('ceil', IMPOSTOR_LIT_CEIL),
+                    ph: _impTune('ph', IMPOSTOR_PHASE_KEEP), gain: _impTune('gain', IMPOSTOR_ILLUM_GAIN),
+                    floor: _impTune('floor', IMPOSTOR_ILLUM_FLOOR),
+                    ufloor: _impTune('ufloor', IMPOSTOR_UNLIT_FLOOR) }
         };
     };
     // HOW BIG IS THE BIGGEST THING ON SCREEN?
@@ -9776,6 +10126,7 @@ function updateDistanceCulling() {
     const _impR = _impPxLim * 0.5 * _cullAng;      // threshold as a screen RADIUS
     const _impRBack = _impR * CULL_IMPOSTOR_BACK_K;
     _impCount = 0;
+    _impPassBegin(cx, cy, cz);   // eye + light table for the illumination term
     _litReset();     // rebuilt by this pass, read by _lightBudgetPass at the end
 
     const cullArray = (arr, range, angular) => {

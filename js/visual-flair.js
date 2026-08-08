@@ -1542,7 +1542,7 @@ const _wsf = {
     // would ask for on the current frame (see _updateWarpStreaks), so the
     // handoff back to that path at t=1 is a no-op — no separate release
     // follow-through needed.
-    draining: false, drainT0: 0, drainMs: 1000, drainLen0: 0, drainOp0: 0, drainEnv0: 0
+    draining: false, drainT0: 0, drainMs: 1000, drainT: 0, drainLen0: 0, drainOp0: 0, drainEnv0: 0
 };
 
 function _wsfSeed(i, spanZ) {
@@ -1770,7 +1770,7 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
 // drain HOLDS (stays collapsed toward its live target) past its 1s timer
 // for as long as real speed is still > 1.5x refSpeed, and only lets go once
 // speed is actually back.
-function warpExitBeat(blackHole, refSpeed) {
+function warpExitBeat(blackHole, refSpeed, durMs) {
     try {
         // WARP-EXIT SYNC (lens): a signed warpFovPulse(-11, ...) impulse was
         // fired here previously. Its envelope — sin(pi*pk^0.32) — is FULL
@@ -1800,7 +1800,19 @@ function warpExitBeat(blackHole, refSpeed) {
         }
         _wsf.draining = true;
         _wsf.drainT0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-        _wsf.drainMs = 1000;
+        // Match the CALLER's own exitRamp duration (game-physics.js's O-warp
+        // and slingshot branches both use dur:1000 and call this with 2 args,
+        // so the default below reproduces that exactly; the Jump branch below
+        // in THIS file passes its own 550ms dur explicitly). Previously this
+        // was a hardcoded 1000 regardless of caller, so when gameState._warpExitT
+        // (driven by the ramp's OWN dur) hit 1.0 and cleared to null at 550ms,
+        // this drain's independent 1000ms clock read t=0.55 on the very next
+        // frame — a downward clock-swap discontinuity that snapped the streak
+        // field 45% of the way back toward its pre-collapse length. Keeping
+        // both clocks on the same duration from the start means the ratchet
+        // below (which also guards the general case) never even has to fire.
+        _wsf.drainMs = (typeof durMs === 'number' && durMs > 0) ? durMs : 1000;
+        _wsf.drainT = 0;
         _wsf.drainLen0 = (_wsf.mat) ? _wsf.mat.uniforms.uLen.value : 0;
         _wsf.drainOp0 = (_wsf.mat) ? _wsf.mat.uniforms.uOpacity.value : 0;
         _wsf.drainEnv0 = _wsf.env;
@@ -1871,7 +1883,10 @@ function _checkJumpExitBeat() {
             fromSpeed: fromSpeed,
             toSpeed: toSpeed
         };
-        warpExitBeat(false, toSpeed);
+        // Pass this branch's OWN 550ms dur through so the drain's clock
+        // agrees with the exitRamp clock (gameState._warpExitT) from the
+        // start — see the comment at warpExitBeat()'s drainMs assignment.
+        warpExitBeat(false, toSpeed, 550);
     }
     _jumpExitWasIsJump = ew.isJump;
     _jumpExitWasActive = ew.active;
@@ -1918,7 +1933,23 @@ function _updateWarpStreaks() {
         // (there's no ramp curve left to read at that point).
         const _extT = (typeof gameState !== 'undefined' && typeof gameState._warpExitT === 'number')
             ? gameState._warpExitT : null;
-        const t = (_extT !== null) ? _extT : Math.min(1, (now - _wsf.drainT0) / _wsf.drainMs);
+        const tRaw = (_extT !== null) ? _extT : Math.min(1, (now - _wsf.drainT0) / _wsf.drainMs);
+        // RATCHET, don't just read whichever clock is live. _extT (the
+        // physics ramp's own eased progress) and the local drainT0/drainMs
+        // timer are two independently-stamped clocks; even with drainMs now
+        // matched to the ramp's dur at every arm site (see warpExitBeat),
+        // they can still disagree frame-to-frame (rAF jitter, the physics
+        // ramp's easing curve vs this linear fallback, the ramp finishing
+        // and nulling _warpExitT a frame before/after this local timer hits
+        // 1.0). Previously reading tRaw directly meant a downward jump in
+        // either clock — most visibly _extT going 1.00 -> null exactly when
+        // the local timer was still mid-ramp — snapped uLen/uOpacity
+        // backward toward the pre-collapse start point on that one frame:
+        // measured live, uLen 15.2 -> 66.8 in a single 33ms frame. Clamping
+        // to the running max makes the drain physically incapable of running
+        // backwards no matter which clock owns a given frame.
+        _wsf.drainT = Math.max(_wsf.drainT || 0, tRaw);
+        const t = _wsf.drainT;
         const _spdNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
         const _overspeed = (_wsf.drainRefSpeed || 0) > 0 && _spdNow > _wsf.drainRefSpeed * 1.5;
         if (!_wsf.mesh) {
