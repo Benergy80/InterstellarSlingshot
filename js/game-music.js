@@ -957,7 +957,7 @@
   // is attenuated and panned toward it.
   // `_retry` is set when the call comes from the pending queue — those must
   // never re-park themselves (the queue entry is already holding the beat).
-  function playStinger(key, pos, _retry) {
+  function playStinger(key, pos, _retry, gainMul) {
     const spec = STINGERS[key];
     if (!spec) return false;
     // Hard no's: nothing is ever going to make these sound, so don't park.
@@ -995,7 +995,8 @@
     st.stingerLastFired[key] = now;
 
     const sg = spatialGain(pos);
-    const peak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg));
+    const gm = (typeof gainMul === 'number') ? gainMul : 1;
+    const peak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg * gm));
 
     // Stereo placement (Web Audio only — element volume still carries level).
     waEnsure();
@@ -1143,9 +1144,18 @@
         c.clearSince = 0;
         c.rank = bossForced ? 4 : (t.rank || 1);
         c.key = RANK_TRACK[c.rank] || 'eliteGuardians';
-        // Heavyweight contact gets a stab before the track lands.
-        if (c.rank >= 3 && !bossForced) {
+        // Every combat entry gets a transient ahead of the crossfade — the
+        // score should audibly NOTICE contact, not just dissolve into a new
+        // bed 2.5s later.  Severity scales the hit: a boss gets its own
+        // stinger, a serious threat gets the full 'threat' stab, and a lone
+        // skirmish still gets one, just pulled back so it doesn't read as
+        // loud as a Borg cube.
+        if (c.rank >= 4) {
+          playStinger('bossSpawn', t.lead ? t.lead.position : null);
+        } else if (c.rank >= 3) {
           playStinger('threat', t.lead ? t.lead.position : null);
+        } else if (c.rank >= 1) {
+          playStinger('threat', t.lead ? t.lead.position : null, false, 0.55);
         }
       }
     } else {
@@ -1155,6 +1165,11 @@
       if (r > c.rank) {
         c.rank = r;
         c.key = RANK_TRACK[r] || c.key;
+        // Mark the escalation itself, not just the track swap — this is the
+        // most dramatic beat in the game (grunts → BOSS) and a bare
+        // crossfade buries it.
+        if (r >= 4) playStinger('bossSpawn', t.lead ? t.lead.position : null);
+        else if (r > 2) playStinger('threat', t.lead ? t.lead.position : null);
       }
       // Hysteresis: entry at 2500 u, release only past 3400 u.
       const stillEngaged = bossForced || t.engagedNearest < COMBAT_RELEASE_RADIUS || hurtRecently;

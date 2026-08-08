@@ -1470,29 +1470,38 @@ function _applyUFOHullPresenceFloor(ufo) {
             child.geometry.computeVertexNormals();
         }
         const oldMap = mat.map || null;
-        // 0.30/0.64 (plus the normals + scale fixes below) measured
-        // median 96.72 at the WORST of 8 sampled yaw angles (900u,
-        // same-frame readback, background-excluded hull pixels) —
-        // under the 100/255 acceptance line at exactly the angle a
-        // player is likeliest to actually see (nose/tail-on, where the
-        // rim gets the least grazing-angle help). Bumped the same two
-        // knobs Vulcan needed (emissiveIntensity + emissiveHeat, see
-        // the Vulcan note in createEnemyMeshWithModel) rather than
-        // rimIntensity alone, because rim-only gains vanish at exactly
-        // this face-on angle. A first pass at 0.42/0.5/0.75 cleared the
-        // bar at the game's brighter boot-screen lighting (worst-of-8
-        // median 125.35) but same-frame readback near Sagittarius A* —
-        // measurably weaker ambient/key-light there, same as the Vulcan
-        // hull found — put the worst angle at 94.21, back under the
-        // 100/255 line. Pushed one more notch (0.52/0.58/0.78) so the
-        // EMISSIVE FLOOR ALONE (the one term independent of local light
-        // strength) clears the bar everywhere. Verified live at both
-        // locations: worst-of-8-angles median 125.35 near Sagittarius
-        // A*, 234+ at the brighter boot screen, darkFrac 0% at every
-        // angle in both.
+        // TUNING HISTORY (kept short — see the options-object comment
+        // right below for the current, correct rationale): an early pass
+        // at 0.30/0.64 cleared the median-luminance gate at the game's
+        // brighter boot-screen lighting but fell under it near Sagittarius
+        // A* (weaker ambient/key-light there). Pushing emissiveIntensity/
+        // emissiveHeat to 0.52/0.58 cleared the gate everywhere, but by
+        // relying almost entirely on the direction-INDEPENDENT emissive
+        // floor — measured worst-of-8-yaw p5->p95 spread of only 25.7
+        // luminance levels (median 239.6), i.e. a flat near-white plate
+        // with the faction's mint hue cooked out. Superseded below.
         const newMat = createFactionHullMaterial(UFO_HULL_COLOR, {
-            emissiveIntensity: 0.52,
-            emissiveHeat: 0.58,
+            // 0.52/0.58 (previous pass) cleared the luminance-floor gate but
+            // did it with a direction-INDEPENDENT additive term strong
+            // enough to swamp every direction-DEPENDENT one: measured
+            // worst-of-8-yaw p5->p95 spread of only 25.7 luminance levels
+            // (median 239.6, p95 247.3) — a near-white flat plate, not a
+            // lit hull, and hot enough to cook out the faction's mint hue
+            // (UFO_HULL_COLOR) along with it. Klingon (86.7 spread) and
+            // Cardassian (95.1 spread) clear the SAME luminance-floor gate
+            // at roster-default emissiveIntensity/emissiveHeat (0.30/0.40)
+            // by recovering brightness from direction-dependent terms
+            // instead: coreDarken pushes the camera-facing/grazing split
+            // wider so the rim actually reads as a rim, and a taller
+            // formFloor/formTop ramp (belly vs. spine) does the rest. Same
+            // operating point applied here rather than re-derived, since
+            // it's proven on two other hull classes under this exact
+            // lighting.
+            emissiveIntensity: 0.30,
+            emissiveHeat: 0.40,
+            coreDarken: 0.40,
+            formFloor: 0.45,
+            formTop: 2.10,
             rimIntensity: 0.78,
             roughness: 0.4,
             metalness: 0.35,

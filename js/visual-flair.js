@@ -1436,7 +1436,14 @@ function speedWhipLevel() {
 // player doing 8,000 km/s visibly reads hotter than one doing 2,000.
 function _spectacleCruiseCeil(vKmS) {
     const v = Math.max(0, (vKmS || 0) - _WHIP_V0 * 1000); // past where streaks start appearing
-    return Math.min(0.32, 0.05 + 0.0016 * Math.sqrt(v));
+    // Was Math.min(0.32, 0.05 + 0.0016*sqrt(v)) — that ceiling (0.32) sat
+    // ABOVE the measured warp envelope at the instant of drop-out (0.31 /
+    // 0.32 across 15 measured exits), so the exit's contraction had nowhere
+    // to go: bright-pixel fraction was bit-identical (1.24%) mid-warp and
+    // post-exit even though the lens moved 20deg. Lowered so ordinary
+    // cruise reads as star motion, not a warp-grade streak field — the
+    // exit now has a real ceiling-to-cruise gap to collapse into.
+    return Math.min(0.10, 0.0006 * Math.sqrt(v));
 }
 const _warpMoment = { level: 0, last: 0 };
 
@@ -1474,7 +1481,23 @@ function _warpSpeedRamp() {
     const v = (typeof gameState !== 'undefined' && gameState.velocityVector)
         ? gameState.velocityVector.length() : 0;
     const t = Math.max(0, Math.min(1, (v - 6) / 39));
-    return t * t * (3 - 2 * t);
+    const natural = t * t * (3 - 2 * t);
+    // Floor at 0.85 for the duration of an active/transitioning emergency
+    // warp so the streak/tunnel envelope holds near-full intensity through
+    // the whole burn instead of bleeding out mid-warp (measured uLen
+    // 630->105, env 1.06->0.31 over one 8s warp) and leaving almost nothing
+    // for the exit contraction to collapse. Only release the floor in the
+    // final 400ms before drop-out so the exit still eases out of a real
+    // "from" value instead of a floor->natural discontinuity right at the
+    // beat — this sustains the burn, it does not add a collapse-to-zero.
+    if (typeof gameState !== 'undefined' && gameState.emergencyWarp) {
+        const w = gameState.emergencyWarp;
+        if ((w.active || w.transitioning) &&
+            !(typeof w.timeRemaining === 'number' && w.timeRemaining < 400)) {
+            return Math.max(natural, 0.85);
+        }
+    }
+    return natural;
 }
 
 // ── 19. WARP STREAK FIELD — the thing that makes 79,000 km/s LOOK like it ────

@@ -951,6 +951,20 @@ body.ui-mode {
     outline-offset: 2px;
 }
 
+/* Elevation "drop-line" — one permanent child per radar dot (see
+   mapDotPool._fresh). Height/position are the only things JS ever
+   touches; a contact on-plane keeps height:0 and is invisible without
+   any visibility toggling (which would fight the parent dot's own
+   hidden/visible state — see _applyMapDotStalk). */
+.map-dot-stalk {
+    position: absolute;
+    left: 50%;
+    width: 1px;
+    height: 0;
+    pointer-events: none;
+    transform: translateX(-50%);
+}
+
 .map-grid {
     position: absolute;
     inset: 0;

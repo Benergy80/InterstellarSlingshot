@@ -173,11 +173,16 @@ const explosionManager = {
 // this the plume is widened in world space so it keeps reading at range.
 const _PLUME_MIN_PX = 7.0;
 // Never widen past this multiple of the plume's natural width — stops a
-// far-away speck from ballooning into a lens flare. 2.2 covers a standard
-// hull out past ~2,200u, which is well beyond any range the read matters
-// at; measured, 4.0 made distant hostiles wear plumes visibly fatter than
-// their own hulls.
-const _PLUME_MAX_WIDEN = 2.2;
+// far-away speck from ballooning into a lens flare. Measured, 4.0 made
+// distant hostiles wear plumes visibly fatter than their own hulls, so this
+// is a ceiling on ABSOLUTE width, not a taste knob: 2.2 x the old 0.29-hull
+// width and 3.4 x the current 0.18-hull width are the same number of world
+// units (0.63 vs 0.61 hull-widths), so trimming the plume's natural size
+// deliberately did NOT trim the far-range presence floor — the 15,000u
+// contact is the same size it was. The cap only ever binds past ~1,500u;
+// everywhere inside that the angular-size floor picks the width and this
+// value is inert.
+const _PLUME_MAX_WIDEN = 3.4;
 
 // FRAMEBUFFER px per world unit at distance `dist`, from the live
 // camera/canvas. Vertical FOV is the authority (Three's
@@ -502,7 +507,8 @@ function _ensureShipThrusterCones(ship, color) {
         ship.traverse(node => {
             if (!node.isMesh || !node.geometry) return;
             const ud = node.userData || {};
-            if (ud.isHitbox || ud.isGlowLayer || ud._isThrusterCone) return;
+            if (ud.isHitbox || ud.isGlowLayer || ud._isThrusterCone ||
+                ud._isHullRead) return;
             if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
             if (!node.geometry.boundingBox) return;
             _lm.multiplyMatrices(_pbInv, node.matrixWorld);
@@ -531,18 +537,38 @@ function _ensureShipThrusterCones(ship, color) {
                 // uniform +Z rear mount is right for every ship.
                 ship.userData._thrusterApexSign = 1;
                 localBack = _box.max.z;
-                // PLUME, not nozzle flame. Was 22% of ship length / 6%
-                // radius — measured, that is a 3-4px smudge at 700u that
-                // the starfield eats alive, and it vanished entirely
-                // whenever the ship coasted. 170% length / 29% width makes
-                // an elongated coloured streak roughly twice the hull's own
-                // footprint: a SHAPE the sky cannot counterfeit. Absolute
-                // floors keep the small 12-16u wingman-class hulls from
-                // getting a sub-pixel wisp.
-                coneLen = Math.max(worldLen * 1.70, 34) / sx;
-                coneRad = Math.max(worldLen * 0.145, 3.0) / sx;
+                // PLUME, not nozzle flame — and not a COMET either. Was 22%
+                // of ship length / 6% radius, which is a 3-4px smudge at
+                // 700u that the starfield eats alive; that got answered with
+                // 170% length / 29% width, and THAT overshot into the
+                // opposite failure: measured live at combat range with the
+                // plume children toggled inside one JS task, the exhaust was
+                // 1.8x to 5.8x the hull's own lit pixels (283u: hull 1,112 px
+                // vs plume 6,444 px — 87% of the whole contact). The hostile
+                // read as a comet with a ship stuck on the front, and every
+                // cue layered on top of it inherited that: the head-on aspect
+                // gate did not dim a contact, it DELETED one, and a telegraph
+                // that rides the plume had nothing to ride nose-on.
+                //
+                // 85% length / 18% width is the plume the hull can carry: a
+                // real elongated streak (still 1.34 hull-lengths at full
+                // thrust after the envelope below), still a SHAPE the sky
+                // cannot counterfeit, but now a MINORITY of the contact. The
+                // contrast that comes off it is not thrown away — it moves
+                // onto the hull, in _ensureHullReadout: a saturated faction
+                // rim, nav lights and a hull lamp, all aspect-independent.
+                // Absolute floors keep the small 12-16u wingman-class hulls
+                // from getting a sub-pixel wisp.
+                coneLen = Math.max(worldLen * 0.85, 18) / sx;
+                coneRad = Math.max(worldLen * 0.09, 2.0) / sx;
                 hullWideLocal = Math.max(size.x, 0.001);
                 hullLenWorld = worldLen;
+                // Local-frame hull box, kept for _ensureHullReadout so the
+                // rim/nav-light rig does not pay for a second traverse.
+                ship.userData._plumeLocalBox = {
+                    minx: _box.min.x, miny: _box.min.y, minz: _box.min.z,
+                    maxx: _box.max.x, maxy: _box.max.y, maxz: _box.max.z
+                };
             }
         }
     } catch (e) {}
@@ -552,14 +578,20 @@ function _ensureShipThrusterCones(ship, color) {
     if (coneLen === null || localBack === null ||
         !isFinite(localBack) || !isFinite(coneLen)) return;
 
-    // COLOUR. The core is the faction hue dragged 68% toward white so it
-    // clips high (measured L>=220 on the nozzle rows) — that is the "hot
-    // metal" read. The halo stays FULLY saturated faction colour, because
+    // COLOUR. The core is the faction hue dragged 25% toward white so it
+    // still reads hot at the nozzle without pinning at (255,255,255) — that
+    // was the second half of the comet problem: at a 68% white drag the
+    // measured plume p90 luminance was 251-255 (clipped white) against a
+    // hull median of 113-207, so the exhaust won on BRIGHTNESS as well as
+    // area and the faction hue was clipped out of existence at the very
+    // pixels the player looks at. 25% keeps the "hot metal" read as a
+    // saturated hue rather than as white paint. The halo stays FULLY
+    // saturated faction colour, because
     // saturation is the other axis the starfield can't contest: field
     // stars are white/blue-white/gold, so a saturated red, violet or
     // green streak is unmistakably a made thing, not sky.
     const _base = new THREE.Color(color === undefined ? 0xff5522 : color);
-    const coreCol = _base.clone().lerp(new THREE.Color(0xffffff), 0.68);
+    const coreCol = _base.clone().lerp(new THREE.Color(0xffffff), 0.25);
     const haloCol = _base.clone();
     // Saturation floor: a few factions ship a washed-out pastel tint that
     // would land right on top of a warm field star. Push them back out.
@@ -724,6 +756,315 @@ function _ensureShipThrusterCones(ship, color) {
     // already coasting never gets a dark frame.
     ship.userData._thrusterIntensity = 0.80;
     ship.userData._plumeHullLen = hullLenWorld || 0;
+    ship.userData._plumeSx = sx;
+}
+
+// =============================================================================
+// HULL READOUT — the ship has to out-read its own exhaust
+// =============================================================================
+// Measured, live, at combat range with the plume children toggled inside a
+// single JS task (so scene time and starfield are bit-identical between the
+// two readbacks):
+//
+//     283u   hull 1,112 px   plume 6,444 px   (plume = 87% of the contact)
+//     508u   hull 2,305 px   plume 4,397 px
+//     559u   hull 1,368 px   plume 3,349 px
+//
+// A hostile was a comet with a ship stuck on the front. That is not just an
+// aesthetic complaint, it is the ROOT of two separate failed cues, because
+// every other read in the fight was layered onto the plume:
+//
+//   - ASPECT. The head-on gate (tailGate, floor 0.12) turns the exhaust down
+//     when a hostile points its nose at you, which is correct — but when the
+//     exhaust IS 87% of the contact, turning it down does not dim the ship,
+//     it ERASES it: a standard hull charging at 900u measured 168 total lit
+//     px, a 13x13 blob smaller than the star blobs beside it.
+//   - THRUST and TELEGRAPH both ride the plume, so both went to zero on the
+//     one aspect that matters. Idle-vs-full at 900u charging: 0 px changed.
+//     Telegraph R-B swing charging: +7.6/255 against a +25 bar.
+//
+// The plume half of the fix is above (0.85 x 0.09 instead of 1.70 x 0.145,
+// and a core that is no longer painted 68% white). This is the other half:
+// the reclaimed contrast goes onto the HULL, in three layers that are all
+// ASPECT-INDEPENDENT — they do not care which way the ship is pointing, so
+// they survive the aspect gate that was deleting the contact.
+//
+//   RIM   — a back-face additive shell 7.5% out from the two biggest hull
+//           meshes. Additive over black, only the fringe outside the hull's
+//           own depth survives, so it draws a saturated faction OUTLINE:
+//           silhouette, which is the one thing a flat unlit MeshBasicMaterial
+//           hull (see createEnemyMaterial) could never give.
+//   NAV   — five running lights pinned to the measured hull box (nose,
+//           wingtips, dorsal, tail). Cyan cockpit + faction wingtips is the
+//           synthwave read, and being POSITIONED on the hull they also say
+//           which way it is facing when the plume is gated off.
+//   LAMP  — one camera-facing hull glow, depth-tested so the ship occludes
+//           its own middle and it reads as a halo around a solid silhouette,
+//           never as paint over the top of one. This is what carries the
+//           contact at 900u where the hull is 8 px of dart, and it is where
+//           the thrust and telegraph channels now ALSO live so that neither
+//           can be gated to nothing by aspect.
+//
+// It is built lazily, only inside _HULL_READ_DIST, and hidden outside it:
+// past ~3,000u there is no aspect to communicate and presence is the plume's
+// job (that is the 15,000u floor, which this deliberately does not touch).
+// =============================================================================
+
+// Build/keep the rig only inside this range. Beyond it a hostile is a speck
+// and the plume is the whole contact — see the far-range handback below.
+const _HULL_READ_DIST = 4200;
+// Lamp fade-out band. Full strength inside _LO, gone by _HI, so the hull
+// channel hands presence back to the plume before the plume's own
+// angular-size floor is doing all the work.
+const _HULL_LAMP_FADE_LO = 1800;
+const _HULL_LAMP_FADE_HI = 3000;
+// Lamp diameter in hull-lengths, and its on-screen floor in framebuffer px.
+// The floor is what makes a nose-on fighter at 900u a contact instead of a
+// smudge; it is deliberately smaller than the plume's old footprint at the
+// same range (the old spear was 125x53 px there) because this one is
+// centred on the ship and occluded by it, so it reads as the ship glowing
+// rather than as a separate object flying in formation.
+const _HULL_LAMP_K = 0.95;
+const _HULL_LAMP_MIN_PX = 46;
+// Rim shell scale and how many hull meshes get one.
+const _HULL_RIM_SCALE = 1.075;
+const _HULL_RIM_MAX = 2;
+
+// Hull-lamp profile. Deliberately FLATTER than _plumeCoreTex: the lamp's
+// job is area that survives a threshold, not a hot spot (a hot spot is what
+// the nozzle cores are for, and the whole point of this round is that the
+// engine stops being the brightest thing on the contact). Peak alpha 0.62
+// so that even at full thrust, over black, the lamp lands mid-value and the
+// hull's own lit surfaces stay the top of the range.
+let _HULL_LAMP_TEX = null;
+function _hullLampTex() {
+    if (_HULL_LAMP_TEX) return _HULL_LAMP_TEX;
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0.00, 'rgba(255,255,255,0.62)');
+    grd.addColorStop(0.30, 'rgba(255,255,255,0.50)');
+    grd.addColorStop(0.55, 'rgba(235,235,235,0.34)');
+    grd.addColorStop(0.78, 'rgba(190,190,190,0.16)');
+    grd.addColorStop(0.92, 'rgba(120,120,120,0.05)');
+    grd.addColorStop(1.00, 'rgba(0,0,0,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c);
+    _HULL_LAMP_TEX = t; return t;
+}
+
+const _hrC = new THREE.Vector3();
+const _hrV = new THREE.Vector3();
+
+function _ensureHullReadout(ship, color) {
+    if (!ship || !ship.userData || ship.userData._hullRead) return;
+    if (typeof THREE === 'undefined') return;
+    if (ship.userData._materializing) return;
+    // The plume measures the hull box first and caches it; piggy-back on
+    // that rather than paying for a second traverse per hostile.
+    const lb = ship.userData._plumeLocalBox;
+    const hullLen = ship.userData._plumeHullLen || 0;
+    const sx = ship.userData._plumeSx || 1;
+    if (!lb || !(hullLen > 0)) return;
+
+    const base = new THREE.Color(color === undefined ? 0xff5522 : color);
+    const _h = { h: 0, s: 0, l: 0 };
+    base.getHSL(_h);
+    // Same saturation floor the plume halo uses: a pastel faction tint would
+    // land straight on top of a warm field star.
+    const fac = new THREE.Color().setHSL(_h.h, Math.max(_h.s, 0.85),
+                                         Math.min(Math.max(_h.l, 0.52), 0.66));
+    const cyan = new THREE.Color(0x66f2ff);
+
+    const rig = { rims: [], navs: [], lamp: null, hullLen: hullLen, sx: sx };
+
+    // ── RIM ──────────────────────────────────────────────────────────────
+    // Back-face shell, additive, no depth write, drawn AFTER the hull
+    // (renderOrder 6) so the hull's own depth clips everything except the
+    // fringe. Scaled about each mesh's geometry centre, not its origin —
+    // GLB sub-meshes are routinely offset from the model origin and a naive
+    // uniform scale would slide the outline off the part it belongs to.
+    try {
+        const cand = [];
+        ship.traverse(n => {
+            if (!n.isMesh || !n.geometry) return;
+            const u = n.userData || {};
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone ||
+                u._isHullRead || u.isEnemyShield) return;
+            if (!n.geometry.boundingBox) n.geometry.computeBoundingBox();
+            const bb = n.geometry.boundingBox;
+            if (!bb) return;
+            const s = bb.getSize(_hrV);
+            cand.push({ mesh: n, vol: Math.max(1e-9, s.x * s.y * s.z) });
+        });
+        cand.sort((a, b) => b.vol - a.vol);
+        const k = _HULL_RIM_SCALE;
+        for (let i = 0; i < Math.min(_HULL_RIM_MAX, cand.length); i++) {
+            const src = cand[i].mesh;
+            if (!src.parent) continue;
+            const mat = new THREE.MeshBasicMaterial({
+                color: fac, transparent: true, opacity: 0.5,
+                blending: THREE.AdditiveBlending, depthWrite: false,
+                side: THREE.BackSide
+            });
+            const rim = new THREE.Mesh(src.geometry, mat);
+            src.geometry.boundingBox.getCenter(_hrC);
+            _hrC.multiply(src.scale).applyQuaternion(src.quaternion).add(src.position);
+            rim.position.copy(_hrC).multiplyScalar(1 - k).addScaledVector(src.position, k);
+            rim.quaternion.copy(src.quaternion);
+            rim.scale.copy(src.scale).multiplyScalar(k);
+            rim.renderOrder = 6;
+            rim.frustumCulled = true;
+            rim.userData._isHullRead = true;
+            _plumeExemptFromDrawBudget(rim);
+            src.parent.add(rim);
+            rig.rims.push({ mesh: rim, mat: mat });
+        }
+    } catch (e) {}
+
+    // ── NAV LIGHTS ───────────────────────────────────────────────────────
+    // Pinned to the measured local hull box. Every hull in the game flies
+    // -Z forward (see applyEnemyRotation / _applyNoseFlip), so -Z is the
+    // nose and +Z the engine deck: the nose lamp is the cockpit, the tail
+    // lamp sits between the nozzles, and the wingtips mark the span. That
+    // arrangement is also an aspect cue in its own right — three lights in
+    // a row is a broadside, one light with two close beside it is a ship
+    // coming at you.
+    const navRad = Math.max(hullLen * 0.052, 0.9) / sx;
+    const cx = (lb.minx + lb.maxx) * 0.5, cy = (lb.miny + lb.maxy) * 0.5;
+    const cz = (lb.minz + lb.maxz) * 0.5;
+    const spanZ = Math.max(1e-6, lb.maxz - lb.minz);
+    const navSpec = [
+        // [x, y, z, colour, size mult]  — cockpit first.
+        [cx, cy + (lb.maxy - cy) * 0.55, lb.minz - spanZ * 0.02, cyan, 1.15],
+        [lb.maxx * 0.94 + cx * 0.06, cy, cz - spanZ * 0.05, fac, 1.0],
+        [lb.minx * 0.94 + cx * 0.06, cy, cz - spanZ * 0.05, fac, 1.0],
+        [cx, lb.maxy * 0.96 + cy * 0.04, cz + spanZ * 0.10, cyan, 0.8],
+        [cx, cy, lb.maxz + spanZ * 0.02, fac, 0.9]
+    ];
+    navSpec.forEach(spec => {
+        const mat = new THREE.SpriteMaterial({
+            color: spec[3], map: _plumeCoreTex(),
+            transparent: true, opacity: 0.85,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const s = new THREE.Sprite(mat);
+        s.position.set(spec[0], spec[1], spec[2]);
+        const r = navRad * spec[4];
+        s.userData._navRad = r;
+        s.userData._navBaseCol = spec[3].clone();
+        s.scale.set(r * 2, r * 2, 1);
+        s.renderOrder = 7;
+        s.userData._isHullRead = true;
+        _plumeExemptFromDrawBudget(s);
+        ship.add(s);
+        rig.navs.push({ mesh: s, mat: mat });
+    });
+
+    // ── LAMP ─────────────────────────────────────────────────────────────
+    // depthTest stays TRUE: the hull occludes the middle of its own glow, so
+    // this can never wash the silhouette out into a blob — it is a halo with
+    // a ship-shaped hole in it. renderOrder 4 puts it after the hull in the
+    // transparent pass so that occlusion actually happens.
+    const lampMat = new THREE.SpriteMaterial({
+        color: fac.clone().lerp(new THREE.Color(0xffffff), 0.22),
+        map: _hullLampTex(), transparent: true, opacity: 0.35,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    const lamp = new THREE.Sprite(lampMat);
+    lamp.position.set(cx, cy, cz);
+    const lampD = hullLen * _HULL_LAMP_K / sx;
+    lamp.scale.set(lampD, lampD, 1);
+    lamp.renderOrder = 4;
+    lamp.userData._isHullRead = true;
+    lamp.userData._lampBaseCol = lampMat.color.clone();
+    _plumeExemptFromDrawBudget(lamp);
+    ship.add(lamp);
+    rig.lamp = { mesh: lamp, mat: lampMat };
+
+    ship.userData._hullRead = rig;
+}
+
+// Per-frame drive. `tN` is the plume's own normalised thrust (0 = idle,
+// 1 = full burn) and `chg` the telegraph charge, so the hull channel moves
+// in lock-step with the engine channel instead of inventing a second clock.
+function _updateHullReadout(ship, dist, tN, chg) {
+    const rig = ship.userData && ship.userData._hullRead;
+    if (!rig) return;
+    const d = dist || 0;
+    // Far-range handback: the rig switches off entirely and the plume owns
+    // presence, exactly as it does at 15,000u.
+    if (d > _HULL_READ_DIST) {
+        if (rig.lamp.mesh.visible) {
+            rig.lamp.mesh.visible = false;
+            for (let i = 0; i < rig.navs.length; i++) rig.navs[i].mesh.visible = false;
+            for (let i = 0; i < rig.rims.length; i++) rig.rims[i].mesh.visible = false;
+        }
+        return;
+    }
+    if (!rig.lamp.mesh.visible) {
+        rig.lamp.mesh.visible = true;
+        for (let i = 0; i < rig.navs.length; i++) rig.navs[i].mesh.visible = true;
+        for (let i = 0; i < rig.rims.length; i++) rig.rims[i].mesh.visible = true;
+    }
+
+    const t = Math.min(1, Math.max(0, tN || 0));
+    const c = Math.min(1, Math.max(0, chg || 0));
+    const cQ = c * c;
+    const fade = (d <= _HULL_LAMP_FADE_LO) ? 1
+               : Math.max(0, 1 - (d - _HULL_LAMP_FADE_LO) /
+                                 (_HULL_LAMP_FADE_HI - _HULL_LAMP_FADE_LO));
+    const ppu = _plumePxPerUnit(d);
+    const alarmCol = _plumeAlarmColor();
+
+    // LAMP. Angular-size floor, same idea as the plume's, so a nose-on
+    // hostile at 900u is a contact and not a smudge — but capped by `fade`
+    // so it cannot grow into a fake nebula out at survey range.
+    const lamp = rig.lamp;
+    let lampD = rig.hullLen * _HULL_LAMP_K;
+    if (ppu > 0 && fade > 0) {
+        const minWorld = (_HULL_LAMP_MIN_PX * fade) / ppu;
+        if (minWorld > lampD) lampD = minWorld;
+    }
+    // THRUST SWELLS IT. This is the aspect-independent half of the
+    // idle-vs-full cue, and it is the half that survives a nose-on attack
+    // run: measured at 900u, the plume's own contribution to a charging
+    // hostile's thrust delta is 0 px (the aspect gate is holding the
+    // exhaust down, correctly), so if the hull does not carry the cue there
+    // is no cue. A 1.30x swell plus the opacity lift below moves the whole
+    // lamp disc, not a dim skirt around it.
+    lampD *= (1 + 0.30 * t + 0.10 * cQ);
+    const lampLocal = lampD / rig.sx;
+    lamp.mesh.scale.set(lampLocal, lampLocal, 1);
+    lamp.mat.opacity = Math.min(1, (0.28 + 0.52 * t + 0.22 * cQ) * fade);
+    if (c > 0.02) lamp.mat.color.copy(lamp.mesh.userData._lampBaseCol).lerp(alarmCol, 0.92 * cQ);
+    else lamp.mat.color.copy(lamp.mesh.userData._lampBaseCol);
+
+    // NAV LIGHTS. A 1.6 px on-screen floor each: enough that they never
+    // vanish inside the fighting envelope, small enough that five of them
+    // cannot masquerade as the ship.
+    for (let i = 0; i < rig.navs.length; i++) {
+        const n = rig.navs[i];
+        let r = n.mesh.userData._navRad * rig.sx;
+        if (ppu > 0 && fade > 0) {
+            const minW = (1.6 * fade) / ppu;
+            if (minW > r * 2) r = minW * 0.5;
+        }
+        r *= (1 + 0.34 * t);
+        const rl = r / rig.sx;
+        n.mesh.scale.set(rl * 2, rl * 2, 1);
+        n.mat.opacity = Math.min(1, (0.52 + 0.48 * t) * (1 + 0.25 * cQ) * fade);
+        if (c > 0.02) n.mat.color.copy(n.mesh.userData._navBaseCol).lerp(alarmCol, 0.9 * cQ);
+        else n.mat.color.copy(n.mesh.userData._navBaseCol);
+    }
+
+    // RIM. Brightens with thrust (a ship under power is lit up) but keeps
+    // its faction hue through the wind-up: with the plume, the lamp and the
+    // nav lights all swinging to alarm red, the outline is the last thing
+    // still saying WHO this is.
+    for (let i = 0; i < rig.rims.length; i++) {
+        rig.rims[i].mat.opacity = Math.min(1, (0.38 + 0.34 * t) * (0.4 + 0.6 * fade));
+    }
 }
 
 // ALWAYS ON. `thrusting` no longer gates the plume to zero — it only
@@ -964,6 +1305,13 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // so the pilot-light/spear curve above is expressed in plain 0..1.
     const tN = Math.min(1, Math.max(0, (next - _PLUME_IDLE) / (1 - _PLUME_IDLE)));
 
+    // HULL CHANNEL, driven off the SAME thrust and charge values as the
+    // engine channel. This is deliberately outside the aspect gate: the gate
+    // exists to stop the exhaust shouting from the ship's nose, and applying
+    // it to the hull's own rim and running lights is what turned a charging
+    // hostile into 168 lit pixels with a 0 px thrust cue.
+    _updateHullReadout(ship, dist, tN, chg);
+
     // RANGE OVERRIDE. Collapsing the idle plume to a 36% stub is the whole
     // point at fighting range, and a liability at survey range: past ~2,000u
     // the streak is already down to a couple of pixels and a stub of that is
@@ -1146,6 +1494,14 @@ function _enemyPlumeTick(enemy, thrusting, dist) {
     if (!enemy || !enemy.userData) return;
     if (typeof _ensureShipThrusterCones !== 'function') return;
     _ensureShipThrusterCones(enemy, enemy.userData.galaxyColor || 0xff5522);
+    // Hull readout is built lazily and only for hostiles that are close
+    // enough for aspect to be a question the player is asking. Beyond
+    // _HULL_READ_DIST the plume is the contact and this rig would just be
+    // draw calls. (_ensureShipThrusterCones has to have run first — the rig
+    // is sized off the hull box it caches.)
+    if (!dist || dist <= _HULL_READ_DIST) {
+        _ensureHullReadout(enemy, enemy.userData.galaxyColor || 0xff5522);
+    }
     _updateShipThrusterCones(enemy, !!thrusting, dist,
                              enemy.userData._telegraphPhase || 0);
 }
@@ -2554,7 +2910,8 @@ function _setEnemyTelegraph(enemy, charge) {
         enemy.traverse(n => {
             if (!n.isMesh || !n.material) return;
             const u = n.userData || {};
-            if (u.isGlowLayer || u.isHitbox || u._isThrusterCone || u.isEnemyShield) return;
+            if (u.isGlowLayer || u.isHitbox || u._isThrusterCone ||
+                u._isHullRead || u.isEnemyShield) return;
             if (n.material.emissiveIntensity === undefined) return;
             if (u._telegraphBase === undefined) {
                 u._telegraphBase = (u.baseEmissive !== undefined)
@@ -5468,7 +5825,8 @@ function _fxMeasureWorldLen(obj) {
         obj.traverse(n => {
             if (!n.isMesh || !n.geometry) return;
             const u = n.userData || {};
-            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone) return;
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone ||
+                u._isHullRead) return;
             if (!n.geometry.boundingBox) n.geometry.computeBoundingBox();
             if (!n.geometry.boundingBox) return;
             _fxLM.multiplyMatrices(_fxInv, n.matrixWorld);
@@ -7208,7 +7566,8 @@ function _ensureEnemyShield(enemy) {
         enemy.traverse(node => {
             if (!node.isMesh || !node.geometry) return;
             const u = node.userData || {};
-            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone || u.isEnemyShield) return;
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone ||
+                u._isHullRead || u.isEnemyShield) return;
             if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
             if (!node.geometry.boundingBox) return;
             mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);

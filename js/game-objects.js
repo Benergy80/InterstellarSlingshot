@@ -9354,6 +9354,275 @@ function _installMoonVisibilityGuards() {
     _cullGuardsInstalled = n;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LIGHT BUDGET — the bill the pixel controllers were paying for
+// ═══════════════════════════════════════════════════════════════════════════
+// Every procedural star ships its own PointLight (outer-systems.js:326/378/435/
+// 626), plus supernovae and solar storms (cosmic-features.js:180/698) and the
+// hero suns here. In a populated demo that is ~63 PointLights ALIVE AT ONCE —
+// and three.js does not care where they are: `projectObject` pushes every
+// visible light into the frame's light list, so NUM_POINT_LIGHTS is compiled
+// into EVERY lit fragment shader and all 63 are evaluated per pixel, per frame.
+//
+// 62 of those 63 are further from the camera than their OWN authored
+// `light.distance`. That is not "dim" — it is arithmetically zero: for
+// cutoffDistance > 0 and decay > 0 the r128 falloff is
+// `pow(saturate(1 - d/cutoff), decay)`, which is exactly 0.0 at and beyond the
+// cutoff (the physically-correct path multiplies by `pow2(saturate(1 - pow4(
+// d/cutoff)))`, also exactly 0 there). So the loop burns ~60 light evaluations
+// per lit pixel to add nothing.
+//
+// The gate is therefore the light's own promise. But it has to be read the
+// right way round: a light illuminates OBJECTS, not the camera. "Camera further
+// than light.distance" is NOT a safe test — a star 20,000u away with an 8,000u
+// reach is still the only thing lighting its own planets, which are 20,000u
+// away too and right there on screen. The safe form of the same promise is the
+// light's INFLUENCE SPHERE (centre = light, radius = light.distance, outside
+// which its contribution is exactly zero): if that sphere does not intersect
+// the view frustum, no drawn pixel can contain one photon of it. That is a
+// provable no-op, not a tolerance — and it is what is implemented below.
+//
+// The frustum is WIDENED (LIGHT_FOV_SLACK) because this pass runs at 6 Hz: a
+// fast turn can reveal up to ~10 frames' worth of new sky before the next pass,
+// and the slack keeps the lights for that sky already switched on when it
+// arrives. Hysteresis (LIGHT_OFF_SLACK) keeps a light on the boundary from
+// strobing between passes.
+//
+// The frustum alone is not the whole answer: a star 70,000u away sits in front
+// of you, and its 8,000u sphere clips the frustum, but that only matters if
+// something DRAWN is standing in it. So the pass asks the sharper question —
+// "does this light reach anything the culler decided to draw as a mesh?" — and
+// it can ask it for almost nothing, because the pass that just ran KNOWS that
+// set: the impostor tier reduced 905 on-screen worlds to ~30 meshes, and the
+// cull walk records each survivor's world centre and true radius on its way
+// past (`_litAdd`). A light with no drawn geometry inside its own cutoff cannot
+// contribute to any pixel by definition — impostors are unlit point sprites,
+// so they cannot receive light either. Measured on the live demo-combat
+// vantage this is what takes the on-set from 36-48 to ~10 of 61.
+//
+// The player's own neighbourhood is not in that set (ship, enemies, stations,
+// debris and their effects are drawn from elsewhere), so a bubble around the
+// camera counts as lit: any light reaching within LIGHT_PLAYER_BUBBLE of the
+// camera stays on unconditionally.
+//
+// TWO CARE POINTS, both handled below:
+//  * SHADER COUNT CHURN. NUM_POINT_LIGHTS is a #define; every distinct value is
+//    a distinct program variant. Flying through a cluster would otherwise walk
+//    the count 4,5,6,7… and mint a variant of every lit material for each. So
+//    the enabled set is padded up to a multiple of LIGHT_BUCKET with the
+//    NEAREST out-of-range lights — they contribute exactly zero (they are past
+//    their own cutoff), so the image is unchanged, but the count only ever
+//    lands on 0/4/8/12… and the variant set stays tiny.
+//  * OWNERSHIP. Other systems fade their own lights out (a dying supernova).
+//    We only ever re-show a light WE hid (`__lgOff`), so this pass can never
+//    resurrect something another system deliberately switched off.
+// Floating origin needs no handler here: every distance is recomputed from live
+// world positions at each pass, so a rebase is invisible to it.
+const LIGHT_BUCKET = 4;              // quantum for NUM_POINT_LIGHTS
+const LIGHT_RESCAN_PASSES = 30;      // ~5 s at the 6 Hz cull cadence
+const LIGHT_FOV_SLACK = 2.0;         // frustum widened this much for turn slack
+const LIGHT_OFF_SLACK = 1.3;         // an ON light needs to miss by this to go off
+const LIGHT_PLAYER_BUBBLE = 4000;    // ship/enemies/stations/FX live in here
+const _lights = [];
+const _lightFrustum = (typeof THREE !== 'undefined') ? new THREE.Frustum() : null;
+const _lightPM = (typeof THREE !== 'undefined') ? new THREE.Matrix4() : null;
+const _lightSphere = (typeof THREE !== 'undefined') ? new THREE.Sphere() : null;
+let _lightWideCam = null;
+let _lightScanPass = -1e9;
+let _lightSceneN = -1;
+const _lightPad = [];                // scratch: out-of-range lights, nearest first
+const _lightStats = { total: 0, managed: 0, on: 0, padded: 0, off: 0, exempt: 0,
+                      scans: 0, scanMs: 0, lastMs: 0, passMs: 0 };
+
+// THE LIT SET — every body the cull pass just decided to DRAW AS A MESH, as
+// (centre, radius) in absolute world units. Written during the walk that is
+// already computing exactly these two numbers, so it costs a store; read only
+// by the light pass at the end of the same tick. Float64 because these are
+// absolute galaxy coordinates, where float32 rounding is tens of units.
+const LIT_MAX = 8192;
+const _litBuf = new Float64Array(LIT_MAX * 4);
+let _litN = 0, _litOverflow = false;
+function _litReset() { _litN = 0; _litOverflow = false; }
+function _litAdd(x, y, z, r) {
+    if (_litN >= LIT_MAX) { _litOverflow = true; return; }
+    const i = _litN * 4;
+    _litBuf[i] = x; _litBuf[i + 1] = y; _litBuf[i + 2] = z; _litBuf[i + 3] = r;
+    _litN++;
+}
+// Is any drawn body inside this sphere? Early-outs on the first hit.
+function _litAny(x, y, z, r) {
+    for (let i = 0, j = 0; i < _litN; i++, j += 4) {
+        const dx = _litBuf[j] - x, dy = _litBuf[j + 1] - y, dz = _litBuf[j + 2] - z;
+        const reach = r + _litBuf[j + 3];
+        if (dx * dx + dy * dy + dz * dz <= reach * reach) return true;
+    }
+    return false;
+}
+
+// A light is ours to gate only if its own numbers make the cutoff meaningful:
+// distance 0 means "reaches forever", and decay 0 makes the shader ignore the
+// cutoff entirely (`return 1.0`), so in both cases `distance` is not a promise
+// of zero contribution and the light is left alone.
+function _lightGateable(l) {
+    return l.distance > 0 && l.decay > 0;
+}
+
+// Lights are added in five different files, some to the scene and some as
+// children of a star group, so discovery is a traverse — but a rare one: only
+// when the scene's child count changes (every `scene.add` of a light lands
+// there) or once every ~5 s as a backstop for lights parented deeper.
+function _lightRescan() {
+    const t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+    _lights.length = 0;
+    scene.traverse(function (o) {
+        if (!o.isPointLight) return;
+        if (o.userData.__lgSeen !== true) {
+            o.userData.__lgSeen = true;
+            // A light created this frame has an identity matrixWorld until the
+            // next render, which would read as "0,0,0 → miles away → hide it".
+            if (o.parent && !o.parent.isScene) o.updateWorldMatrix(true, false);
+        }
+        _lights.push(o);
+    });
+    _lightStats.scans++;
+    if (t0) { _lightStats.lastMs = performance.now() - t0; _lightStats.scanMs += _lightStats.lastMs; }
+}
+
+// The test volume: the live camera's frustum, widened by LIGHT_FOV_SLACK so the
+// 6 Hz cadence cannot be out-turned. Falls back to the camera's own frustum for
+// anything that isn't a perspective camera.
+function _lightBuildFrustum() {
+    if (!_lightFrustum || !_lightPM) return false;
+    let pm = camera.projectionMatrix;
+    if (camera.isPerspectiveCamera && camera.fov > 0 && LIGHT_FOV_SLACK > 1) {
+        if (!_lightWideCam) _lightWideCam = new THREE.PerspectiveCamera();
+        const c = _lightWideCam;
+        c.fov = Math.min(170, camera.fov * LIGHT_FOV_SLACK);
+        c.aspect = camera.aspect; c.near = camera.near; c.far = camera.far;
+        c.updateProjectionMatrix();
+        pm = c.projectionMatrix;
+    }
+    _lightPM.multiplyMatrices(pm, camera.matrixWorldInverse);
+    _lightFrustum.setFromProjectionMatrix(_lightPM);
+    return true;
+}
+
+function _lightRestoreAll() {
+    for (let i = 0; i < _lights.length; i++) {
+        const l = _lights[i];
+        if (l.userData.__lgOff) { l.visible = true; l.userData.__lgOff = false; }
+    }
+    _lightStats.on = _lightStats.managed; _lightStats.off = 0; _lightStats.padded = 0;
+}
+
+function _lightBudgetPass(cx, cy, cz) {
+    if (typeof scene === 'undefined' || !scene) return;
+    const _t0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+    if (_cullFrameCount - _lightScanPass >= LIGHT_RESCAN_PASSES * 10 ||
+        scene.children.length !== _lightSceneN) {
+        _lightScanPass = _cullFrameCount;
+        _lightSceneN = scene.children.length;
+        _lightRescan();
+    }
+    _lightStats.total = _lights.length;
+    if (typeof window !== 'undefined' && window.__lightBudgetLock === false) {
+        _lightStats.managed = _lights.length;
+        _lightRestoreAll();
+        return;
+    }
+
+    if (!_lightBuildFrustum()) return;
+
+    _lightPad.length = 0;
+    let need = 0, managed = 0, exempt = 0;
+    for (let i = 0; i < _lights.length; i++) {
+        const l = _lights[i];
+        if (!l.parent) { l.userData.__lgWant = false; continue; }   // removed from the graph
+        if (!_lightGateable(l)) { l.userData.__lgWant = true; exempt++; continue; }
+        managed++;
+        _cullWorldPos(l);
+        const r = l.distance;
+        const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        // Hysteresis lives in the RADIUS, so a light that is already on has to
+        // miss by a margin before it goes off and nothing can strobe on a
+        // boundary. Every test below uses this one inflated reach.
+        const rr = l.visible ? r * LIGHT_OFF_SLACK : r;
+        // 1. The player's neighbourhood — ship, enemies, stations, FX.
+        const bubble = rr + LIGHT_PLAYER_BUBBLE;
+        let want = d2 <= bubble * bubble;
+        if (!want) {
+            // 2. Can its influence sphere reach any drawn pixel at all?
+            _lightSphere.center.set(_cullWP.x, _cullWP.y, _cullWP.z);
+            _lightSphere.radius = rr;
+            want = _lightFrustum.intersectsSphere(_lightSphere) &&
+                // 3. …and is anything the culler kept as a MESH standing in it?
+                (_litOverflow || _litAny(_cullWP.x, _cullWP.y, _cullWP.z, rr));
+        }
+        if (want) { l.userData.__lgWant = true; need++; }
+        else {
+            l.userData.__lgWant = false;
+            // Padding picks the nearest zero-contribution lights first.
+            l.userData.__lgExcess = d2 / (r * r);
+            _lightPad.push(l);
+        }
+    }
+
+    // Pad the count up to the next bucket with the nearest zero-contribution
+    // lights, so NUM_POINT_LIGHTS lands on a multiple of LIGHT_BUCKET.
+    const target = Math.ceil(need / LIGHT_BUCKET) * LIGHT_BUCKET;
+    let pad = Math.min(target - need, _lightPad.length);
+    _lightStats.padded = pad;
+    if (pad > 0) {
+        _lightPad.sort(function (a, b) { return a.userData.__lgExcess - b.userData.__lgExcess; });
+        for (let i = 0; i < pad; i++) _lightPad[i].userData.__lgWant = true;
+    }
+
+    let on = 0, off = 0;
+    for (let i = 0; i < _lights.length; i++) {
+        const l = _lights[i];
+        if (l.userData.__lgWant) {
+            // Only ever un-hide what THIS pass hid — see the ownership note.
+            if (l.userData.__lgOff) { l.visible = true; l.userData.__lgOff = false; }
+            if (l.visible) on++;
+        } else if (l.visible) {
+            l.visible = false; l.userData.__lgOff = true; off++;
+        } else if (l.userData.__lgOff) off++;
+    }
+    _lightStats.managed = managed; _lightStats.exempt = exempt;
+    _lightStats.on = on; _lightStats.off = off;
+    if (_t0) _lightStats.passMs = performance.now() - _t0;
+}
+
+if (typeof window !== 'undefined') {
+    // Measurement hook: `__lightBudgetLock = false` restores every light this
+    // pass hid on the next cull tick, so the gate can be A/B'd live without a
+    // reload. Anything else (undefined/true) is the shipping behaviour.
+    window.__lightBudgetLock = window.__lightBudgetLock !== false;
+    window.lightBudgetDebug = function () {
+        const out = { total: _lightStats.total, managed: _lightStats.managed,
+                      exempt: _lightStats.exempt, on: _lightStats.on,
+                      padded: _lightStats.padded, off: _lightStats.off,
+                      lit: _litN, litOverflow: _litOverflow, passMs: +_lightStats.passMs.toFixed(2),
+                      scans: _lightStats.scans, lastScanMs: +_lightStats.lastMs.toFixed(2),
+                      lock: window.__lightBudgetLock !== false, lights: [] };
+        const cp = (typeof camera !== 'undefined' && camera) ? camera.position : null;
+        for (let i = 0; i < _lights.length && out.lights.length < 200; i++) {
+            const l = _lights[i];
+            _cullWorldPos(l);
+            out.lights.push({
+                name: l.name || (l.parent && l.parent.name) || '(anon)',
+                d: cp ? Math.round(Math.sqrt((_cullWP.x - cp.x) * (_cullWP.x - cp.x) +
+                                             (_cullWP.y - cp.y) * (_cullWP.y - cp.y) +
+                                             (_cullWP.z - cp.z) * (_cullWP.z - cp.z))) : -1,
+                range: l.distance, decay: l.decay, visible: l.visible,
+                gated: !!l.userData.__lgOff
+            });
+        }
+        return out;
+    };
+}
+
 function updateDistanceCulling() {
     if (typeof camera === 'undefined' || !camera) return;
     // Throttle: visibility doesn't need per-frame precision. Every 10 frames
@@ -9409,6 +9678,7 @@ function updateDistanceCulling() {
     const _impR = _impPxLim * 0.5 * _cullAng;      // threshold as a screen RADIUS
     const _impRBack = _impR * CULL_IMPOSTOR_BACK_K;
     _impCount = 0;
+    _litReset();     // rebuilt by this pass, read by _lightBudgetPass at the end
 
     const cullArray = (arr, range, angular) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
@@ -9465,6 +9735,10 @@ function updateDistanceCulling() {
                 // never ask for a radius. For those the authored range rules.
                 inRange = d2 <= r2;
             }
+            // The lit set: this body will be submitted as geometry, so it is a
+            // surface a light can actually land on. (Impostors never get here —
+            // point sprites take no lighting.) See the LIGHT BUDGET note.
+            if (inRange) _litAdd(_cullWP.x, _cullWP.y, _cullWP.z, br || _cullBodyRadius(o));
             if (!inRange) {
                 if (o.visible) { o.visible = false; o.userData._distCulled = true; }
                 // Moons are the bodies game-core force-shows every frame.
@@ -9500,6 +9774,10 @@ function updateDistanceCulling() {
             const far = (dx * dx + dy * dy + dz * dz) > dr2;
             if (far) { if (a.visible) { a.visible = false; a.userData._distCulled = true; } }
             else if (a.userData._distCulled) { a.visible = true; a.userData._distCulled = false; }
+            // NOTE (lit set): this pass runs after the 30k one, so a dense-field
+            // rock it re-hides is still in the lit set for this tick. That can
+            // only keep a light ON that could have gone off — the safe side of
+            // the only error this gate is allowed to make.
         }
     }
     cullArray(typeof comets !== 'undefined' ? comets : null, 35000);
@@ -9514,6 +9792,11 @@ function updateDistanceCulling() {
 
     // Publish the far field the pass just decided: one upload, one draw call.
     _impostorFlush();
+
+    // Same cadence, same camera, same idea one tier down the pipeline: a light
+    // outside its own falloff radius is compiled into every lit shader and
+    // evaluated per pixel to add exactly zero. See the LIGHT BUDGET note above.
+    _lightBudgetPass(cx, cy, cz);
 }
 window.updateDistanceCulling = updateDistanceCulling;
 

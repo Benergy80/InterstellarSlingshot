@@ -2375,7 +2375,16 @@ const mapDotPool = {
         // Mirrors the CSS defaults so the cache and the element agree.
         el._s = { size: '', bg: '', shadow: '', tf: '', vis: 'hidden',
                   color: '', title: '', distress: false, glyph: false,
-                  z: '', aggregate: false, opacity: '', outline: '' };
+                  z: '', aggregate: false, opacity: '', outline: '', stalk: '' };
+        // Permanent elevation "drop-line" child — ONE per dot, created once
+        // and only ever restyled (height/position/colour), never
+        // added/removed. Ally arrows don't get one: they render as a
+        // glyph, not a dot, and el.textContent below would wipe it anyway.
+        if (cls === 'galactic-target-dot') {
+            const stalk = document.createElement('i');
+            stalk.className = 'map-dot-stalk';
+            el.appendChild(stalk);
+        }
         if (this.container) this.container.appendChild(el);
         return el;
     },
@@ -2529,6 +2538,83 @@ const MAP_CLUSTER_CELL_PX = 5;
 // otherwise still blow the budget.
 const MAP_CLUSTER_NODE_BUDGET = 250;
 
+// #rrggbb -> 'rgba(r,g,b,alpha)', for the 35%-alpha elevation stalks (which
+// reuse each blip's own dotColor rather than a fixed palette entry).
+function _mapStalkRgba(hex, alpha) {
+    if (typeof hex !== 'string' || hex.charCodeAt(0) !== 35 /* '#' */) {
+        return 'rgba(200,220,255,' + alpha + ')';
+    }
+    let h = hex.slice(1);
+    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
+    const r = parseInt(h.substring(0, 2), 16) || 0;
+    const g = parseInt(h.substring(2, 4), 16) || 0;
+    const b = parseInt(h.substring(4, 6), 16) || 0;
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+}
+
+// Applies the shared elevation "drop-line" treatment to a claimed dot: the
+// dot itself shifts vertically by `dy` px (elevated contacts render higher
+// on the disc, contacts below render lower), and its permanent stalk child
+// (added once in mapDotPool._fresh) is sized to bridge back down/up to the
+// contact's true flat-plane position. Returns dy so the caller can fold it
+// into the dot's own translate(). Fully compare-and-set: an unmoved blip
+// (same dy + colour) writes nothing.
+function _applyMapDotStalk(dot, s, relY, dotColor) {
+    const dyRaw = (relY || 0) * mapDotPool.h * 0.30;
+    const dy = Math.round(dyRaw * 10) / 10;
+    const stalk = dot.firstElementChild;
+    if (stalk) {
+        const stalkKey = dy + '|' + dotColor;
+        if (s.stalk !== stalkKey) {
+            const h = Math.abs(dy);
+            stalk.style.height = h + 'px';
+            if (h >= 0.5) {
+                stalk.style.background = _mapStalkRgba(dotColor, 0.35);
+                if (dy > 0) { stalk.style.top = '100%'; stalk.style.bottom = 'auto'; }
+                else { stalk.style.bottom = '100%'; stalk.style.top = 'auto'; }
+            }
+            s.stalk = stalkKey;
+        }
+    }
+    return dy;
+}
+
+// Shared #mapDepthBar / #mapDepthTick creation, used by BOTH map views so
+// there is exactly one build path (and one DOM structure) for the element
+// regardless of which view the player opens first. Universal view drives
+// the tick from the player's absolute Y; galactic view (radar) pins it to
+// the centre line, since every contact's own elevation is already shown
+// relative to the player via its stalk (see _applyMapDotStalk) — the bar
+// there is a static px-to-units scale reference, not a live gauge.
+function _ensureMapDepthBar(galaxyMap) {
+    let depthBar = document.getElementById('mapDepthBar');
+    if (depthBar || !galaxyMap) return depthBar;
+    depthBar = document.createElement('div');
+    depthBar.id = 'mapDepthBar';
+    // Depth bar placed inside the round-map clip area (circle has
+    // ~85% inner radius at the edges) — keep it short and inset so it
+    // doesn't get clipped by border-radius:50%.
+    depthBar.style.cssText = 'position:absolute;right:18%;top:30%;width:4px;height:40%;background:linear-gradient(to bottom,rgba(100,180,255,0.15),rgba(40,40,80,0.25),rgba(100,180,255,0.15));border:1px solid rgba(100,180,255,0.4);border-radius:3px;pointer-events:none;z-index:9;';
+    const tick = document.createElement('div');
+    tick.id = 'mapDepthTick';
+    tick.style.cssText = 'position:absolute;left:-4px;width:14px;height:3px;background:#00ff96;box-shadow:0 0 4px #00ff96;border-radius:2px;top:50%;';
+    depthBar.appendChild(tick);
+    const lblTop = document.createElement('div');
+    lblTop.textContent = '+Y';
+    lblTop.style.cssText = 'position:absolute;left:-22px;top:-12px;font-size:8px;color:#88ccff;';
+    depthBar.appendChild(lblTop);
+    const lblMid = document.createElement('div');
+    lblMid.textContent = '0';
+    lblMid.style.cssText = 'position:absolute;left:-12px;top:50%;font-size:8px;color:#88ccff;';
+    depthBar.appendChild(lblMid);
+    const lblBot = document.createElement('div');
+    lblBot.textContent = '−Y';
+    lblBot.style.cssText = 'position:absolute;left:-22px;bottom:-12px;font-size:8px;color:#88ccff;';
+    depthBar.appendChild(lblBot);
+    galaxyMap.appendChild(depthBar);
+    return depthBar;
+}
+
 function renderClusteredMapDots(candidates) {
     const must = [];
     const loose = [];
@@ -2616,7 +2702,11 @@ function renderIndividualMapDot(c, raised) {
         s.distress = c.distress;
     }
     if (s.aggregate) { dot.classList.remove('aggregate-map-dot'); s.aggregate = false; }
-    const tf = 'translate(' + c.px + 'px,' + c.py + 'px) translate(-50%,-50%)';
+    // Elevation cue: shift the dot itself by dy and grow its stalk to
+    // bridge back to the true flat-plane point (see _applyMapDotStalk).
+    const dy = _applyMapDotStalk(dot, s, c.relY, c.dotColor);
+    const py2 = Math.round((c.py - dy) * 10) / 10;
+    const tf = 'translate(' + c.px + 'px,' + py2 + 'px) translate(-50%,-50%)';
     if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
     if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
     // Raised dots (current target / active lock) sit above a same-cell
@@ -2638,16 +2728,17 @@ function renderAggregateMapDot(cellKey, group, cellPx) {
 
     // Dominant category wins colour/size (hostiles outrank neutral traffic
     // outranks scenery); position is the group's centroid.
-    let dominant = group[0], sumPx = 0, sumPy = 0, anyDistress = false;
+    let dominant = group[0], sumPx = 0, sumPy = 0, sumRelY = 0, anyDistress = false;
     for (let i = 0; i < group.length; i++) {
         const c = group[i];
-        sumPx += c.px; sumPy += c.py;
+        sumPx += c.px; sumPy += c.py; sumRelY += (c.relY || 0);
         if (c.dotPriority > dominant.dotPriority) dominant = c;
         if (c.distress) anyDistress = true;
     }
     const n = group.length;
     const px = Math.round((sumPx / n) * 10) / 10;
     const py = Math.round((sumPy / n) * 10) / 10;
+    const meanRelY = sumRelY / n;
 
     // Slightly larger than a lone dot of the dominant type, capped so a
     // clump of hundreds doesn't paint a blob over half the radar. The cap
@@ -2697,7 +2788,12 @@ function renderAggregateMapDot(cellKey, group, cellPx) {
         s.distress = anyDistress;
     }
     if (!s.aggregate) { dot.classList.add('aggregate-map-dot'); s.aggregate = true; }
-    const tf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%)';
+    // Elevation cue uses the GROUP's mean relY — same stalk treatment as a
+    // lone contact, so a crowded cell still tells you roughly how high/low
+    // its members sit as a whole.
+    const dy = _applyMapDotStalk(dot, s, meanRelY, dominant.dotColor);
+    const py2 = Math.round((py - dy) * 10) / 10;
+    const tf = 'translate(' + px + 'px,' + py2 + 'px) translate(-50%,-50%)';
     if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
     if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
     if (s.z !== '') { dot.style.zIndex = ''; s.z = ''; }
@@ -2723,11 +2819,30 @@ function updateGalaxyMap() {
     
     // Hide player and ally triangles (allies show as dots in galactic view)
     playerMapPos.style.display = 'none';
-    const _depthBar = document.getElementById('mapDepthBar');
-    if (_depthBar) _depthBar.style.display = 'none';
     const _zoneLabel = document.getElementById('mapZoneLabel');
     if (_zoneLabel) _zoneLabel.style.display = 'none';
     const _galaxyMap = document.getElementById('galaxyMap');
+    // Re-mount the elevation depth bar in THIS view too — it used to only
+    // ever get created/shown on the universal (galaxy-scale) branch, so it
+    // was permanently absent while flying the radar you actually fly in.
+    // Here it's a static px-to-units scale reference (every contact's own
+    // elevation is already on the dot via its stalk — see
+    // _applyMapDotStalk), so the tick just pins to the centre/"0" line.
+    const _depthBar = _ensureMapDepthBar(_galaxyMap);
+    if (_depthBar) {
+        _depthBar.style.display = 'block';
+        const _dTick = document.getElementById('mapDepthTick');
+        if (_dTick && _dTick.style.top !== '50%') _dTick.style.top = '50%';
+    }
+    let _rimLabel = document.getElementById('mapRadarRimLabel');
+    if (!_rimLabel && _galaxyMap) {
+        _rimLabel = document.createElement('div');
+        _rimLabel.id = 'mapRadarRimLabel';
+        _rimLabel.style.cssText = 'position:absolute;left:50%;bottom:4%;transform:translateX(-50%);font-size:8px;color:#88ccff;background:rgba(0,0,40,0.7);padding:1px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;white-space:nowrap;';
+        _rimLabel.textContent = '2600u / ±ELEV';
+        _galaxyMap.appendChild(_rimLabel);
+    }
+    if (_rimLabel) _rimLabel.style.display = 'block';
     if (_galaxyMap && _universeDecorLive) {
         // NOTE: .galactic-path-dot is intentionally NOT purged here — those
         // dots are POOLED (created once, repositioned/hidden) and refreshed
@@ -3024,7 +3139,11 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 : (obj.type + '|' + obj.name);
             const relativeX = (obj.position.x - camera.position.x) / radarRange;
             const relativeZ = (obj.position.z - camera.position.z) / radarRange;
-            
+            // Elevation relative to the player, normalized to the radar
+            // range and clamped so a contact far above/below still just
+            // pins to a max-length stalk instead of an absurd offset.
+            const relativeY = (obj.position.y - camera.position.y) / radarRange;
+
             const screenX = 50 + relativeX * 50; // Scale to fit map
             const screenZ = 50 + relativeZ * 50;
             
@@ -3165,8 +3284,9 @@ if (obj.type === 'ally') {
                 // Defer claiming a dot: bucket first, then render, so a
                 // crowded radar cell can collapse to one aggregate blip
                 // instead of stacking dozens of nodes on top of each other.
+                const relY = Math.max(-1, Math.min(1, relativeY));
                 _clusterCandidates.push({
-                    key: _key, px, py, dotColor, dotSize, dotPriority, distress,
+                    key: _key, px, py, relY, dotColor, dotSize, dotPriority, distress,
                     name: obj.name, distance: obj.distance, mustIndividual
                 });
             }
@@ -3292,6 +3412,10 @@ if (obj.type === 'ally') {
 
     // Re-arm the galactic view's one-shot chrome hide for the next switch.
     _galacticChromeHidden = false;
+    // The radar-range rim label is galactic-view-only chrome (the
+    // universal view has its own live mapZoneLabel further down).
+    const _rimLabelHide = document.getElementById('mapRadarRimLabel');
+    if (_rimLabelHide) _rimLabelHide.style.display = 'none';
 
     // Hide the pooled galactic-view mission-path dots so they don't
     // linger on the universal map (they're radar-relative).
@@ -3505,32 +3629,8 @@ mapDotPool.releaseAll();
 
     // Vertical depth bar on the right edge of the galaxy map container
     if (galaxyMap) {
-        let depthBar = document.getElementById('mapDepthBar');
-        if (!depthBar) {
-            depthBar = document.createElement('div');
-            depthBar.id = 'mapDepthBar';
-            // Depth bar placed inside the round-map clip area (circle has
-            // ~85% inner radius at the edges) — keep it short and inset so it
-            // doesn't get clipped by border-radius:50%.
-            depthBar.style.cssText = 'position:absolute;right:18%;top:30%;width:4px;height:40%;background:linear-gradient(to bottom,rgba(100,180,255,0.15),rgba(40,40,80,0.25),rgba(100,180,255,0.15));border:1px solid rgba(100,180,255,0.4);border-radius:3px;pointer-events:none;z-index:9;';
-            const tick = document.createElement('div');
-            tick.id = 'mapDepthTick';
-            tick.style.cssText = 'position:absolute;left:-4px;width:14px;height:3px;background:#00ff96;box-shadow:0 0 4px #00ff96;border-radius:2px;';
-            depthBar.appendChild(tick);
-            const lblTop = document.createElement('div');
-            lblTop.textContent = '+Y';
-            lblTop.style.cssText = 'position:absolute;left:-22px;top:-12px;font-size:8px;color:#88ccff;';
-            depthBar.appendChild(lblTop);
-            const lblMid = document.createElement('div');
-            lblMid.textContent = '0';
-            lblMid.style.cssText = 'position:absolute;left:-12px;top:50%;font-size:8px;color:#88ccff;';
-            depthBar.appendChild(lblMid);
-            const lblBot = document.createElement('div');
-            lblBot.textContent = '−Y';
-            lblBot.style.cssText = 'position:absolute;left:-22px;bottom:-12px;font-size:8px;color:#88ccff;';
-            depthBar.appendChild(lblBot);
-            galaxyMap.appendChild(depthBar);
-        }
+        const depthBar = _ensureMapDepthBar(galaxyMap);
+        if (depthBar) depthBar.style.display = 'block';
         const tick = document.getElementById('mapDepthTick');
         if (tick) {
             // Tick at 50% = on plane; lower = above plane (positive Y)
