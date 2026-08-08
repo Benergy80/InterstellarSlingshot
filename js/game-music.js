@@ -1169,6 +1169,13 @@
         c.rank = 0;
         c.contactSince = 0;
         c.leftAt = now;
+        // A cached substitute belongs to the engagement that produced it —
+        // clearing key without clearing subKey/subKeyFor would leave the
+        // sub-cache guard above believing the (now-gone) fight is still
+        // pinned to it, so the NEXT engagement's first tick could read a
+        // stale substitute for a combat.key that hasn't even resolved yet.
+        c.subKey = null;
+        c.subKeyFor = null;
         // Hand the context detector the wheel again immediately so the
         // ambient crossfade starts on the same beat the fight ends.
         updateMusicContext();
@@ -1709,7 +1716,18 @@
       // every call — re-resolve only when the requested key changes or
       // the cached substitute has itself since gone cold.
       const now = Date.now();
+      // The cached substitute is only still valid while BOTH halves of the
+      // swap hold: the substitute itself must still be healthy, AND the
+      // key it was substituted FOR must still be the one that's demoted.
+      // Checking only the former (as this used to) makes a substitution
+      // outlive the failure that caused it — once eliteGuardians subs in
+      // for a frozen bossFight, it stays cached even after bossFight
+      // recovers, because nothing here ever re-asks "is bossFight still
+      // bad?". Re-asking isRecentlyFailed(st.combat.key) on every tick is
+      // what lets a recovered key reclaim its own slot immediately.
       if (st.combat.subKeyFor === st.combat.key && st.combat.subKey &&
+          st.combat.subKey !== st.combat.key &&
+          isRecentlyFailed(st.combat.key, now) &&
           st.loaded[st.combat.subKey] && !st.loadErrors.has(st.combat.subKey) &&
           !isRecentlyFailed(st.combat.subKey, now)) {
         play(st.combat.subKey);
@@ -2139,7 +2157,31 @@
         // playHealthy() substituted a track for a demoted one.
         combatKey: st.combat.key,
         combatSubKey: st.combat.subKey,
+        combatSubKeyFor: st.combat.subKeyFor,
       };
+      // Invariant: a substitution may only be standing in for a key that's
+      // actually demoted right now. If combatKey isn't in failedKeys, the
+      // sub-cache must have already collapsed back to combatKey itself —
+      // otherwise a recovered track is being permanently shadowed by a
+      // stale substitute (the Wave-5 bug this fix closes).
+      //
+      // This ONLY applies once a substitution has actually been resolved
+      // FOR the current combat.key (subKeyFor === combatKey) — i.e. the
+      // combat branch of updateMusicContext() has run at least once since
+      // combat.key last changed. Until then subKey is legitimately stale/
+      // unset and that is not a bug: combat.key can be set or escalated by
+      // updateCombatState() (proximity-driven, runs every tick regardless)
+      // while updateMusicContext() itself is held off the wheel by the
+      // Skip-button's skipLockUntil gate (see top of that function) — a
+      // real, reachable state (player hits Skip mid-fight), not just a
+      // test artifact. Checking the invariant during that window produced
+      // console.assert false positives on every debugLevel() poll.
+      if (liveness.combatKey && liveness.combatSubKeyFor === liveness.combatKey &&
+          !liveness.failedKeys.includes(liveness.combatKey)) {
+        console.assert(liveness.combatSubKey === liveness.combatKey,
+          '🎵 stale combat substitute: combatKey=%s not failed but combatSubKey=%s',
+          liveness.combatKey, liveness.combatSubKey);
+      }
       if (!wa.ok) {
         return { bus: null, stingers: sting, fade: fade, liveness: liveness,
                  element: st.currentEl ? st.currentEl.volume : 0,
@@ -2176,6 +2218,41 @@
     get enabled()      { return st.enabled; },
     set enabled(v)     { st.enabled = !!v; if (!v) stopAll(); },
     get muted()        { return st.muted; },
+
+    // TEST-ONLY fault injection for the liveness watchdog: pins a track's
+    // <audio>.currentTime so it reads as a genuinely frozen decoder (the
+    // exact symptom updateLiveness() is watching for) without needing a
+    // corrupted media file on disk for every scenario. Does nothing to
+    // normal playback unless called. Not wired to any UI.
+    _debugFreezeTrack: function (key, frozen) {
+      const el = st.loaded[key];
+      if (!el) return false;
+      if (frozen) {
+        if (!el.__debugFrozen) {
+          const stuckT = el.currentTime;
+          Object.defineProperty(el, 'currentTime', {
+            configurable: true,
+            get: function () { return stuckT; },
+            set: function () { /* swallow seeks while frozen */ },
+          });
+          el.__debugFrozen = true;
+        }
+      } else if (el.__debugFrozen) {
+        delete el.currentTime;   // restores the native prototype accessor
+        delete el.__debugFrozen;
+      }
+      return true;
+    },
+
+    // TEST-ONLY: hold the context detector off the wheel for `ms`, exactly
+    // like the real Skip button does (see the click handler below), so a
+    // fault-injection test can force a specific track and watch the
+    // watchdog work on it without the location-driven context tick
+    // (which runs on its own ~500ms cadence outside this module) immediately
+    // re-asserting a different, healthy key over it.
+    _debugSkipLock: function (ms) {
+      st.skipLockUntil = Date.now() + (ms || 0);
+    },
   };
 
   // ─── Button event delegation ──────────────────────────────────────────────

@@ -1008,17 +1008,30 @@ body.ui-mode {
     z-index: 15;
 }
 
-/* Player position triangle - isosceles shape */
+/* Player position triangle - isosceles shape.
+   Star-Citizen IFF convention: the ownship glyph sits OFF the contact-colour
+   axis entirely (white, not the #00ff88 family civilian traffic paints the
+   radar in) so it never visually fuses with the neutral-traffic wash it
+   sits inside of — the CSS triangle below is the actual rendered marker
+   (font-size:0 hides the ▲ glyph text-color/filter index.html sets inline;
+   !important here wins over that inline filter too). */
 #playerMapPosition {
     width: 0 !important;
     height: 0 !important;
     border-left: 6px solid transparent !important;
     border-right: 6px solid transparent !important;
-    border-bottom: 16px solid #00ff96 !important; /* Longer pointed triangle */
+    border-bottom: 16px solid #ffffff !important; /* Longer pointed triangle, neutral white */
     font-size: 0 !important; /* Hide the ▲ text */
     line-height: 0 !important;
+    filter: drop-shadow(0 0 5px #00e5ff) !important; /* cyan glow, not green */
 }
 
+/* This is the ownship glyph that is ACTUALLY on screen during the
+   near-field combat/coast radar (gameState.mapView === 'galactic' hides
+   #playerMapPosition entirely and shows this rotating arrow instead — see
+   updateGalaxyMap). Same Star-Citizen IFF convention as #playerMapPosition
+   above: neutral white, cyan glow, off the #00ff88 civilian-traffic axis
+   so it doesn't fuse into the very traffic it's surrounded by. */
 .map-direction-arrow::before {
     content: '';
     position: absolute;
@@ -1028,9 +1041,9 @@ body.ui-mode {
     height: 0;
     border-left: 6px solid transparent;
     border-right: 6px solid transparent;
-    border-bottom: 16px solid rgba(0,255,150,0.9);
+    border-bottom: 16px solid #ffffff;
     transform: translate(-50%, -50%);
-    filter: drop-shadow(0 0 5px rgba(0,255,150,0.7));
+    filter: drop-shadow(0 0 5px #00e5ff);
 }
 
 .map-toggle-btn {

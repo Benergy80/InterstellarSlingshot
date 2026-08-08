@@ -218,7 +218,25 @@ function _plumeUnitGeo() {
     for (let i = 0; i < pos.count; i++) {
         // t: 0 at the nozzle (y = -0.5) -> 1 at the trailing tip.
         const t = Math.min(1, Math.max(0, pos.getY(i) + 0.5));
-        const b = Math.pow(1.0 - t, 1.05);
+        // FALLOFF EXPONENT, 1.05 -> 0.75. Measured, layer by layer, at 900u
+        // on the smallest hull in the game: the streak owns 2,620 of the
+        // contact's 2,991 lit pixels at full thrust — it IS the plume, the
+        // nozzle sprites are 239 — but it was only filling 40% of its own
+        // 125x53 px footprint. At the old 1.05 the tail is down to 9% of
+        // nozzle brightness by t=0.9, which is under the 8/255 floor across
+        // most of the quad's width, so the back half of every spear was
+        // geometry the player could not see and the framebuffer did not
+        // count. Chasing that with LENGTH is what failed in round 4a:
+        // 1.42 -> 1.74 (+22% quad) bought +5% lit pixels, because the extra
+        // length arrived pre-faded.
+        //
+        // 0.75 holds the tail at 25% instead of 9% and lifts fill to ~75%,
+        // which is where the thrust range finally clears its bar — and it
+        // buys it as a BRIGHTER SPEAR rather than a longer one, so the
+        // silhouette stays a plume instead of turning into a warp trail.
+        // It still tapers (the tip is genuinely dark), it just stops
+        // throwing away the middle.
+        const b = Math.pow(1.0 - t, 0.75);
         col[i * 3] = b; col[i * 3 + 1] = b; col[i * 3 + 2] = b;
     }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
@@ -281,6 +299,52 @@ function _plumeCoreTex() {
     g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
     const t = new THREE.CanvasTexture(c);
     _PLUME_CORE_TEX = t; return t;
+}
+
+// ALARM PROFILE — the wind-up's replacement for _plumeStreakTex.
+//
+// WHY A SECOND PROFILE AND NOT A TINT. The thing that held every previous
+// cut of the telegraph under the +25 R-B bar is CLIPPING. The streak's
+// centre line is baked white and additive over black lands it at (255,255,
+// 255); adding red to a pixel that is already 255 in every channel changes
+// nothing at all, so a red bulb, a red halo and a red anything-else can only
+// ever move the flanks, and the flanks are the dim minority of the mask.
+// Measured, that ceiling was +24/255 no matter how the bulb was sized.
+//
+// The only way past it is to stop those pixels being white. So the wind-up
+// CROSS-FADES the streak: the faction profile fades down while this one
+// fades up, and this one's centre line is RED-hot (255,74,92) instead of
+// white-hot. A clipped alarm pixel is (255,~120,~135) — still bright enough
+// to keep the plume the loudest thing on the contact, but 110-120 points of
+// R-B away from the white it replaced. Same trick as the nozzle-core lerp,
+// applied to the layer that owns most of the lit pixels.
+//
+// It is a swap, not a multiply, for the same reason the core uses a lerp:
+// multiplying a cyan faction's profile by red gives near-black, so a tint
+// would make half the roster DIM on wind-up instead of changing hue.
+let _PLUME_ALARM_TEX = null;
+function _plumeAlarmStreakTex() {
+    if (_PLUME_ALARM_TEX) return _PLUME_ALARM_TEX;
+    const c = document.createElement('canvas'); c.width = 64; c.height = 4;
+    const g = c.getContext('2d');
+    const grd = g.createLinearGradient(0, 0, 64, 0);
+    // Deliberately BROADER than the faction profile (0.10/0.90 shoulders vs
+    // 0.15/0.85): the alarm layer has to cover every pixel the faction layer
+    // lit, otherwise the uncovered rim keeps its old hue and drags the mean
+    // back down — which is exactly the dilution that capped the bulb.
+    grd.addColorStop(0.00, 'rgba(255,8,16,0)');
+    grd.addColorStop(0.10, 'rgba(255,8,16,0.45)');
+    grd.addColorStop(0.26, 'rgba(255,18,26,0.90)');
+    grd.addColorStop(0.42, 'rgba(255,44,54,1)');
+    grd.addColorStop(0.50, 'rgba(255,56,66,1)');
+    grd.addColorStop(0.58, 'rgba(255,44,54,1)');
+    grd.addColorStop(0.74, 'rgba(255,18,26,0.90)');
+    grd.addColorStop(0.90, 'rgba(255,8,16,0.45)');
+    grd.addColorStop(1.00, 'rgba(255,8,16,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 4);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+    _PLUME_ALARM_TEX = t; return t;
 }
 
 // DRAW-BUDGET OPT-OUT. game-core.js runs an adaptive draw-call budget that,
@@ -537,6 +601,29 @@ function _ensureShipThrusterCones(ship, color) {
         m.userData._isThrusterCone = true;  // excluded from hull box
         m.userData._plumeIsStreak = true;
         _plumeExemptFromDrawBudget(m);
+
+        // ALARM LAYER, parented to the streak at IDENTITY. Being a child is
+        // the whole trick: the streak's per-frame length/width scale, its
+        // re-anchoring slide along the thrust axis and its axis-aligned
+        // billboard quaternion are all solved once, in _updateShipThrusterCones,
+        // and this layer inherits every one of them for free. Any other
+        // arrangement (a sibling, a separate list) means keeping two
+        // transforms in sync every frame for every hostile, and one of them
+        // eventually drifts.
+        const amat = new THREE.MeshBasicMaterial({
+            color: 0xffffff, map: _plumeAlarmStreakTex(),
+            transparent: true, opacity: 0,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+            side: THREE.DoubleSide, vertexColors: true
+        });
+        const alarmQuad = new THREE.Mesh(_plumeUnitGeo(), amat);
+        alarmQuad.visible = false;          // costs nothing until a shot charges
+        alarmQuad.renderOrder = 83;         // over the streak, under the bulb
+        alarmQuad.frustumCulled = false;    // parent's scale drives it; cull with the parent
+        alarmQuad.userData._isThrusterCone = true;
+        _plumeExemptFromDrawBudget(alarmQuad);
+        m.add(alarmQuad);
+        m.userData._plumeAlarmQuad = alarmQuad;
         return { mesh: m, mat: mat };
     }
 
@@ -597,15 +684,25 @@ function _ensureShipThrusterCones(ship, color) {
     // underneath it.
     //
     // Hue is the free axis, and it has to be ADDED, not tinted. Tinting the
-    // existing plume toward alarm is multiplicative: it works for a red
-    // faction and turns a cyan faction BLACK (multiplying near-zero red by
-    // more red is still zero), so the wind-up would dim half the roster.
-    // A dedicated additive sprite adds red where there was none, so the swing
-    // is in the same direction for every faction in the game.
+    // existing plume is multiplicative: it works for a red faction and turns a
+    // cyan faction BLACK (multiplying near-zero red by more red is still
+    // zero), so the wind-up would dim half the roster. A dedicated additive
+    // sprite adds red where there was none, so the swing is in the same
+    // direction for every faction in the game.
     //
     // It is a single Sprite (not one per nozzle), parked between the engines,
     // and it is `visible = false` whenever charge is ~0 — which is almost
     // always — so a hostile that is not winding up pays nothing for it.
+    //
+    // THE BULB IS HALF THE ANSWER. Measured on a clean same-frame readback
+    // against dark sky (116u hull, 400/900/1,200u), the bulb on its own moved
+    // the lit region's R-B balance by +23 to +24/255 — real, but short of the
+    // +25 bar, because it lights a HALO around a nozzle whose own core stays
+    // white-hot, and those white core pixels are the brightest ones in the
+    // mask and dominate any mean taken over it. The other half is the core
+    // lerp in _updateShipThrusterCones, which walks the nozzle itself off
+    // white. Bulb + core together: +28.5 to +32 on each state's own lit
+    // region, +42 on a fixed region measured in both states.
     const alarm = new THREE.Sprite(new THREE.SpriteMaterial({
         color: _PLUME_ALARM, map: _plumeCoreTex(),
         transparent: true, opacity: 0,
@@ -636,16 +733,55 @@ const _PLUME_IDLE = 0.80;
 
 // PILOT LIGHT -> SPEAR. The thrust envelope, as multipliers on the streak's
 // base length / width / opacity. Idle is a stub at the nozzle; full thrust
-// is ~3x longer, half again as wide and at full opacity.
+// is a hard bright spear four times as long, twice as wide, at full opacity.
 //
-// The old envelope was a visual no-op: idle vs full moved the streak scale
-// by +3.1% and opacity from 0.248 to 0.310, because both length and width
-// were tied to `next` (0.80 -> 1.00) with tiny coefficients. Measured at
-// 900u the whole idle->full transition changed 832 framebuffer pixels — you
-// could not see a hostile go to burners.
-const _PLUME_LEN_IDLE = 0.36, _PLUME_LEN_FULL = 1.16;   // 3.2x range
-const _PLUME_WID_IDLE = 0.70, _PLUME_WID_FULL = 1.18;
-const _PLUME_OPA_IDLE = 0.62, _PLUME_OPA_FULL = 1.00;
+// The ORIGINAL envelope was a visual no-op: idle vs full moved the streak
+// scale by +3.1% and opacity from 0.248 to 0.310, because both length and
+// width were tied to `next` (0.80 -> 1.00) with tiny coefficients.
+//
+// RE-MEASURED in round 3 with a SAME-FRAME A/B — idle and full rendered
+// inside one JS task, so scene time, star rotation and every animation are
+// bit-identical between the two readbacks and the diff is exactly the
+// plume's own contribution. (Round 2's numbers were taken ~60ms apart with
+// the world running, which put the drifting nebulae, the player's own
+// thrusters and 900u of player travel into the mask: it reported a 46u hull
+// at 1200u as a 403x287 blob and a monotonically GROWING explosion, both of
+// which were the sky, not the ship.)
+//
+// Against that clean baseline the 0.36/1.16 envelope moved 2,118 px at 900u
+// — a real cue, but under the 2,500 px bar. The streak's footprint is
+// length x width, so the honest lever is area, not length alone: 1.16x1.18
+// -> 1.42x1.34 is a 1.39x area lift on the full-thrust end while the idle
+// end is trimmed 0.36->0.34 / 0.70->0.66 / 0.62->0.55 so the pilot light
+// gets quieter at the same time the spear gets louder. Both ends are in
+// hull-lengths, so this is scale-free across every hull in the game.
+//
+// ROUND 4 — MEASURED ON THE WORST-CASE HULL, NOT A CONVENIENT ONE. The
+// 2,500 px bar is an ABSOLUTE pixel count, so it is hardest on the SMALLEST
+// ship in the game, and rounds 1-3 were all calibrated against the 116-190u
+// pirates that happen to be rooted in the local galaxy. Re-measured on the
+// four smallest distinct hulls in the live enemy pool (42.0 / 44.3 / 48.2 /
+// 51.7u world length, each re-parented into `scene` so it actually renders,
+// same-frame A/B, world paused, parked down the darkest ray), the 1.42/1.34
+// envelope moved 1,876 / 2,194 / 2,317 / 2,379 px — every one of them under
+// the bar, and the 116u hull that passed round 3 was simply a bigger ship.
+//
+// Footprint is length x width, so the fix is area on both axes at once:
+// 1.42x1.34 -> 1.74x1.50 is a 1.37x lift on the spear, and trimming the
+// pilot light 0.34->0.30 / 0.66->0.60 / 0.55->0.50 widens the gap from the
+// other end without touching the far-range hand-back (farLift still walks
+// the idle end back to 1.0 past ~3,000u, so the 15,000u presence floor is
+// untouched).
+//
+// The length half of that was then walked BACK (1.74 -> 1.58) once the real
+// lever turned out to be the streak's along-length falloff, not its size —
+// see _plumeUnitGeo. Geometry the player cannot see is not a cue, and a
+// 3-hull-length spear on a 42u fighter starts reading as a warp trail. Final
+// full-thrust plume is 1.70 (base coneLen) x 1.58 = 2.7 hull-lengths against
+// an idle stub of 0.51 — a 5.3x range from pilot light to spear.
+const _PLUME_LEN_IDLE = 0.30, _PLUME_LEN_FULL = 1.58;   // 5.3x length range
+const _PLUME_WID_IDLE = 0.58, _PLUME_WID_FULL = 1.44;   // 2.5x width range
+const _PLUME_OPA_IDLE = 0.44, _PLUME_OPA_FULL = 1.00;
 
 // Fixed ALARM hue for the attack wind-up (see the alarm bulb in
 // _ensureShipThrusterCones). Deliberately NOT the faction colour: the
@@ -658,6 +794,15 @@ const _PLUME_OPA_IDLE = 0.62, _PLUME_OPA_FULL = 1.00;
 // contributing almost as much blue to the mean as the white nozzle it was
 // supposed to be distinguishable from.
 const _PLUME_ALARM = 0xff0a14;
+
+// Lazily-built THREE.Color of the alarm hue, shared by the bulb and by the
+// nozzle-core lerp in _updateShipThrusterCones. Lazy so this file stays
+// loadable before THREE is on the page.
+let _PLUME_ALARM_COL = null;
+function _plumeAlarmColor() {
+    if (!_PLUME_ALARM_COL) _PLUME_ALARM_COL = new THREE.Color(_PLUME_ALARM);
+    return _PLUME_ALARM_COL;
+}
 
 // ASPECT-GATE RELEASE, in framebuffer px of natural (un-widened) plume width.
 // The gate that hides a head-on ship's engines is at full strength while the
@@ -841,6 +986,14 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     const opaK = opaIdle + (_PLUME_OPA_FULL - opaIdle) * tN;
 
     const flicker = 0.90 + Math.sin(Date.now() * 0.026 + (ship.id || 0)) * 0.10;
+
+    // WIND-UP CROSS-FADE WEIGHT. chg^1.25 rather than the chg^2 the size and
+    // opacity boosts use: telegraphs run 215-620ms depending on faction, and
+    // a squared curve puts the whole hue swing inside the last ~90ms of the
+    // shortest one, which is not a warning, it is a muzzle flash. ^1.25 has
+    // the plume visibly leaving faction colour by the half-way point while
+    // still arriving at full alarm exactly on the bolt.
+    const alarmMix = chg > 0.02 ? Math.pow(chg, 1.25) : 0;
     for (let i = 0; i < cones.length; i++) {
         const c = cones[i];
         const isCore = (i % 2 === 0);
@@ -849,13 +1002,75 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         // deliberately allowed to clip (that's the white-hot read); the
         // streak is held under 1.0 so it keeps its faction hue instead of
         // washing out to the same white the starfield already owns.
-        const o = bo * opaK * flicker
+        let o = bo * opaK * flicker
                 * (1 + chgQ * (isCore ? 0.35 : 0.55))
                 * (isCore ? coreBoost : streakFade);
+        // The faction profile steps ASIDE for the alarm profile — it does not
+        // simply get overpainted. Leaving it at full strength would keep
+        // pumping white into the same clipped centre pixels the alarm layer
+        // is trying to recolour, and the two would average back out to pale
+        // pink. Down to 12% at full charge: enough that the streak never
+        // loses its shape, little enough that the alarm hue owns the pixel.
+        //
+        // The depth of this fade is what separates the wind-up from THRUST,
+        // which is the whole job. On a warm-hued faction, burning hard also
+        // lifts R-B — measured, full thrust alone moved it +34/255 on one
+        // hull — because everything in the plume gets brighter and its
+        // brightest pixels are already orange. What thrust cannot do is take
+        // GREEN AWAY: a hotter plume raises R, G and B together. So the
+        // telegraph's signature is a green DROP alongside the red lift, and
+        // that only happens if the faction profile actually gets out of the way.
+        if (!isCore && alarmMix > 0) o *= (1 - 0.88 * alarmMix);
         c.mat.opacity = Math.min(1.0, o);
+        const aq = c.mesh.userData._plumeAlarmQuad;
+        if (aq) {
+            if (alarmMix <= 0) {
+                if (aq.visible) { aq.visible = false; aq.material.opacity = 0; }
+            } else {
+                aq.visible = true;
+                // Rides streakFade and the thrust envelope's own opacity so a
+                // head-on or coasting hostile's wind-up stays proportionate to
+                // the plume it is replacing, never a red slab floating free of
+                // a plume that the aspect gate has already turned down.
+                aq.material.opacity = Math.min(1.0,
+                    alarmMix * (0.55 + 0.45 * opaK) * flicker * streakFade);
+            }
+        }
+        // ── WIND-UP TAKES THE NOZZLE OFF WHITE ───────────────────────────
+        // The alarm bulb alone adds red around the engine bay, but the
+        // brightest pixels in the whole contact — the white-hot nozzle cores
+        // — stayed white, and they dominate any mean taken over the lit
+        // region. Measured on a 116u hull, adding the bulb moved the lit
+        // region's R-B balance by only +24/255 for that reason.
+        //
+        // So the core itself LEAVES white as the shot charges: a LERP toward
+        // the alarm hue, not a tint. That distinction is the whole reason
+        // this is safe on every faction — multiplying a cyan core by red
+        // gives near-black (the plume would DIM on wind-up for half the
+        // roster), while a lerp walks any starting hue to the same alarm red
+        // and back. The streak is deliberately left alone: its faction
+        // colour lives in the texture, so it keeps saying WHO this is while
+        // the core says WHAT IT IS ABOUT TO DO.
+        if (isCore) {
+            const baseCol = c.mesh.userData._plumeCoreCol ||
+                (c.mesh.userData._plumeCoreCol = c.mat.color.clone());
+            if (chg > 0.02) c.mat.color.copy(baseCol).lerp(_plumeAlarmColor(), 0.95 * chgQ);
+            else c.mat.color.copy(baseCol);
+        }
         const bs = c.mesh.userData._plumeBaseScale;
-        const w = widen * widK * (1 + chgQ * 0.30);
-        const l = lenK * (1 + chgQ * 0.55);
+        // WIND-UP GROWTH IS NOW SMALL ON PURPOSE (was 0.55 / 0.30). When the
+        // telegraph was a brightness cue, swelling was all it had. Now that
+        // the alarm profile carries it as HUE, swelling actively fights the
+        // measurement and the read: every new pixel the wind-up lights is a
+        // dim skirt pixel on the rim of the plume, and it dilutes the mean of
+        // the region a player (or a readback) is averaging over. Measured, the
+        // 0.55/0.30 growth doubled the lit area between charge 0 and charge 1
+        // (1,030 -> 2,112 px on a 42u hull at 1,200u) and held the own-region
+        // hue shift to +18.6/255 while the same-pixels shift was +54.3. Cut to
+        // 0.20/0.12 the plume still visibly tightens and flares, but the pixels
+        // that were already lit are the ones doing the talking.
+        const w = widen * widK * (1 + chgQ * 0.12);
+        const l = lenK * (1 + chgQ * 0.20);
         if (isCore) c.mesh.scale.set(bs.x * w * coreBoost, bs.y * w * coreBoost, 1);
         else {
             c.mesh.scale.set(bs.x * w, bs.y * l, 1);
@@ -886,11 +1101,21 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
             // Grows 1.2x -> 4.4x the nozzle radius across the wind-up, and
             // rides the same angular-size floor as the plume so it is still
             // a real cue and not one pixel at 1,200u.
-            const s = rad * 2 * widen * (1.2 + 3.2 * chgQ);
+            //
+            // 4.4x WAS load-bearing while the bulb was the ONLY red in the
+            // frame: tightening it to 3.1x measured worse, not better, because
+            // the skirt is where the bulb overlaps the streak and that overlap
+            // was most of the red the measurement could see. That is no longer
+            // true — the alarm profile now recolours the whole streak, so the
+            // bulb is back to being what its name says, a bulb, and its skirt
+            // is pure dilution. 1.2 -> 2.8x.
+            const s = rad * 2 * widen * (1.2 + 1.6 * chgQ);
             alarm.scale.set(s, s, 1);
-            // chg^1.5: nothing at the start of the wind-up, hard by the end,
-            // so the LAST moments before the bolt are the loud ones.
-            alarm.material.opacity = Math.min(1, 0.98 * Math.pow(chg, 1.5));
+            // chg^1.3: nothing at the start of the wind-up, hard by the end,
+            // so the LAST moments before the bolt are the loud ones. Paired
+            // with the tighter scale above — density is what carries the hue,
+            // area is what dilutes it.
+            alarm.material.opacity = Math.min(1, Math.pow(chg, 1.3));
         }
     }
 }
@@ -2497,9 +2722,106 @@ function _patternAttackMode(enemy, dist, faction) {
 // natural speed as it arrives. Closing becomes possible; the fight still
 // happens at the enemy's own tuned speed once it is in the band, so this
 // buys presence without turning every fighter into an unshakable rocket.
-const _CLOSURE_BAND_FAR = 900;   // outer edge of the readable engage band
-const _CLOSURE_RAMP     = 500;   // assist fades in across FAR..FAR+RAMP
-const _CLOSURE_MAX      = 4.0;   // hard ceiling on the speed multiplier
+//
+// ROUND 2 — the band was WRONG, and that one constant was the arithmetic
+// cause of two failed acceptance tests. _CLOSURE_BAND_FAR was a flat 900 u,
+// but every faction's own preferredRange is 80-250 u and
+// updateEngagementBehavior steers to THAT number. So the assist switched
+// off at 900 u and handed the hull back its natural 304-421 u/s against a
+// 433 u/s player — it then physically could not close the remaining 700 u.
+// Measured live over 40 samples: p50 nearest hostile ~400 u, min 262 u, i.e.
+// 2x its own bracket, where the contact paints 374-381 lit px in a 45x30
+// bbox (0.05% of the buffer). Every downstream readability metric — kill
+// spectacle, thrust dynamic range — is multiplied by that silhouette, so
+// they were all capped by this line.
+//
+// FIX 1: key the cutoff to the hull's OWN bracket instead of a global
+// constant. The assist now stays alive from 900 u down to ~1.15x
+// preferredRange (92-288 u), so hulls actually arrive in their 80-250 u
+// ring and fight there.
+//
+// FIX 2, found by instrumenting the governor during the round-2 A/B and
+// NOT visible from the band constant alone: moving the finish line was not
+// enough, because the ceiling was expressed in the WRONG UNITS. `need`
+// already computes the per-tick step required to gain on the player and
+// divides it by this hull's own adjustedSpeed — the whole point being that
+// every hull, fast or slow, arrives at the same absolute closing speed. Then
+// `_CLOSURE_MAX = 4.0` clamped the RESULT in multiplier space, which caps a
+// 0.26-speed hull at 0.26x the absolute speed of a 1.0-speed hull and
+// re-introduces exactly the standoff `need` exists to remove. Instrumented
+// live: k pinned at the 4.0 ceiling for the entire engagement while the
+// hulls still lost ~20 u/s to the player and the range grew monotonically
+// from 2,100u to 4,200u. Cap absolutely, not proportionally — the ceiling
+// that matters is "how fast may a hostile move compared to YOU", and `need`
+// already answers that (+25%), so the clamp is only a guard against a
+// corrupted player-step sample.
+//
+// FIX 3: the taper. Handing the hull back its natural speed at the bracket
+// edge is only correct against a stationary target. `engage` steps at
+// speed*4.0 per tick, so a 1.0-speed hull holds 4.0 u/tick — a fraction of
+// a cruising player — and a contact that fought its way into its 200u ring
+// was immediately spat back out of it. So the assist now tapers to a
+// STATION-KEEPING floor (`hold`) rather than to 1: just enough to sit in the
+// ring the faction asked for. Deliberately a hair under parity, so a player
+// who commits to running can still extend — you just have to actually
+// commit, instead of the fight dissolving on its own.
+//
+// FIX 4: the ramp had to be re-scaled once 1-3 were in, because it sets the
+// EQUILIBRIUM range, and measured live the equilibrium was 451u — a hull
+// that could now hold station but not finish the approach. Two reasons, both
+// unit errors. (i) `need` was divided by the PURSUIT step (4.6) while `hold`
+// uses the ENGAGE step (4.0), and everything inside preferredRange*2.2 —
+// which is where the last 240u of the approach happens — runs engage, so the
+// two ends of the interpolation were quoted in different currencies and the
+// real closing margin at 450u came out at 1.5% instead of the intended 25%.
+// Both ends are now quoted against the engage step; pursuit's wider stride
+// simply makes the long-range approach 15% brisker, which is the right place
+// for it. (ii) A 500u ramp fades the margin out linearly, so the assist is
+// weakest exactly where the last 200u have to be won. 260u puts the hull at
+// full closing margin by ~470u and lets it coast the rest in.
+//
+// FIX 5, and this is the one that actually set the floor: the governor has
+// to be quoted against the SLOWEST stride a hull uses inside the band, not
+// the fastest. Each steering behavior applies its own per-tick multiple of
+// `speed` — pursuit 4.6, engagement approach 4.0, orbit 3.2, and flanking
+// 2.8 — and _closureSpeedScale cannot see which one is about to run. The
+// last 200u of every approach is flown in FLANK (_patternAttackMode returns
+// 'flank' for everything inside preferredRange*2.2), the 2.8 stride, chasing
+// a flank point that is itself orbiting the moving player at 0.55 rad/s. So
+// a governor calibrated on 4.0 delivered 2.8/4.0 = 0.7x parity there, and
+// the measured equilibrium was 380-420u — hulls that had closed 1,200u at
+// 307-320 u/s and then simply could not finish. Instrumented: k = 8-15,
+// v = 307 u/s at 1,200u, v = 151 u/s (= parity) at 400u, mode 'flank'.
+// Calibrating on 2.8 makes flank the parity case and hands the faster modes
+// their natural head start, which is the right shape: the long approach is
+// brisk, the knife fight is even.
+//
+// Once it is quoted that way the governor needs no separate speed cap, and
+// must not have one in MULTIPLIER units: `_CLOSURE_MAX` in multiplier space
+// re-broke everything a second time at low frame rate. The enemy AI ticks
+// per FRAME while the player is a fixed-timestep sim, so at 9 fps a hull
+// needs a ~50x multiplier just to match a 433 u/s player — measured, k was
+// pinned at the 24 ceiling and the whole squadron fell out of detection
+// range again. The bound that matters is the RATIO, and _CLOSURE_GAIN
+// already is one: a hostile can never move faster than
+// GAIN x (4.6 / 2.8) = 2.05x your speed, on any hull, at any frame rate,
+// because every term is derived from your own measured displacement.
+// _CLOSURE_MAX is now only a guard against a pathological divisor.
+const _CLOSURE_BAND_FALLBACK = 140;   // used when a hull has no faction
+const _CLOSURE_BAND_MARGIN   = 1.05;  // stop assisting right at the bracket
+const _CLOSURE_RAMP     = 260;   // assist fades in across near..near+RAMP
+const _CLOSURE_GAIN     = 1.25;  // closing speed as a multiple of the player's
+const _CLOSURE_MAX      = 60;    // paranoia guard only; never the real limit
+// The guard is quoted against the FASTEST stride any behavior can apply
+// (pursuit, 4.6), so that even a hull that happens to be pursuing on the
+// tick the ceiling binds cannot exceed _CLOSURE_SPEED_CEIL x the player's
+// own measured displacement. 2.05 is exactly the bound the governor already
+// implies (GAIN x 4.6 / 2.8), so this never binds in normal play — it only
+// catches a pathological _closurePlayerStep sample.
+const _CLOSURE_SPEED_CEIL = 2.05; // hostile speed as a multiple of the player's
+const _CLOSURE_STEP_CEIL  = 4.6;  // fastest stride (updatePursuitBehavior)
+const _CLOSURE_STEP_HOLD = 2.8;  // slowest in-band stride (updateFlankingBehavior)
+const _CLOSURE_HOLD     = 0.96;  // station-keeping is a hair under parity
 let _closurePrevPlayerPos = null;
 let _closurePlayerStep = 0;      // player displacement PER BEHAVIOR TICK
 
@@ -2518,17 +2840,32 @@ function _updateClosureClock() {
     _closurePlayerStep += (step - _closurePlayerStep) * 0.15;   // smoothed
 }
 
-function _closureSpeedScale(dist, adjustedSpeed) {
+function _closureSpeedScale(dist, adjustedSpeed, faction) {
     // Never chase a warping player — that fight isn't meant to be winnable
     // and the assist would just drag the whole squadron along behind them.
     if (typeof gameState !== 'undefined' && gameState && gameState.warping) return 1;
-    if (!(dist > _CLOSURE_BAND_FAR)) return 1;
-    const ramp = Math.min(1, (dist - _CLOSURE_BAND_FAR) / _CLOSURE_RAMP);
+    const spd = Math.max(0.0001, adjustedSpeed);
+    // Absolute ceiling, in the only currency the player can perceive: a
+    // multiple of their own displacement. Frame-rate and hull agnostic.
+    const ceil = Math.min(_CLOSURE_MAX,
+        (_closurePlayerStep * _CLOSURE_SPEED_CEIL + 3) / (_CLOSURE_STEP_CEIL * spd));
+    // Station-keeping floor: the multiplier that lets a hull ALREADY in its
+    // bracket stay there, quoted against the slowest in-band stride. Never
+    // below 1 (a parked player must not slow anyone down) and it collapses to
+    // 1 on its own whenever the player is not actually moving.
+    const hold = Math.max(1, Math.min(ceil,
+        (_closurePlayerStep * _CLOSURE_HOLD / _CLOSURE_STEP_HOLD) / spd));
+    // The hull's own engagement bracket is the finish line, not a constant.
+    const near = ((faction && faction.preferredRange) || _CLOSURE_BAND_FALLBACK) * _CLOSURE_BAND_MARGIN;
+    if (!(dist > near)) return hold;
+    const ramp = Math.min(1, (dist - near) / _CLOSURE_RAMP);
     // Per-tick top speed needed to actually gain ground: match the target,
-    // then add a real closing margin on top.
-    const need = (_closurePlayerStep * 1.25 + 1.2) / 4.6;
-    const k = Math.max(1, Math.min(_CLOSURE_MAX, need / Math.max(0.0001, adjustedSpeed)));
-    return 1 + (k - 1) * ramp;
+    // then add a real closing margin on top. This is ALREADY an absolute
+    // speed target — dividing by `spd` is what makes every hull converge on
+    // it — so the clamps are guards, never the operating limit.
+    const need = (_closurePlayerStep * _CLOSURE_GAIN + 1.2) / _CLOSURE_STEP_HOLD;
+    const k = Math.max(hold, Math.min(ceil, need / spd));
+    return hold + (k - hold) * ramp;
 }
 
 // While rolling out of a gunsight an enemy should NOT stay perfectly
@@ -2739,7 +3076,8 @@ function updateEnemyBehavior() {
             // for. Deliberately applied after the 0.2-2.0 clamp: that clamp
             // is the per-faction speed identity, this is permission to
             // actually arrive at the fight.
-            const engageSpeed = adjustedSpeed * _closureSpeedScale(distanceToPlayer, adjustedSpeed);
+            const _clFaction = (typeof getFactionBehavior === 'function') ? getFactionBehavior(enemy) : null;
+            const engageSpeed = adjustedSpeed * _closureSpeedScale(distanceToPlayer, adjustedSpeed, _clFaction);
 
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, engageSpeed, difficultySettings);
@@ -5305,13 +5643,34 @@ function _fxEmberTail(center, S, color, count, life) {
 // "explosion peak lit px vs hull silhouette px" ratio can be tuned against
 // the framebuffer without re-balancing five layers by hand.
 //
-// CALIBRATED, not guessed. Measured by same-frame render-target readback at
-// 1,200u (count of pixels the burst lifts >=8/255 above an otherwise
-// identical frame), the burst's peak area follows peak ~= 10.94 x gain^2 x
-// hull-silhouette. 0.64 lands it at 4.7x the hull for a 116u pirate and
-// 3.9x for a 48u fighter — inside the 3-5x spec for both, because every
-// dimension is in hull-lengths and the ratio is therefore scale-free.
-const _FX_KILL_GAIN = 0.64;
+// CALIBRATED, not guessed — and the calibration is only as good as the
+// measurement, so here is what the measurement actually was.
+//
+// Rounds 1-2 tuned this constant against numbers that were wrong twice over.
+// The frames being diffed were captured ~60ms apart with the world RUNNING,
+// so the player flew ~1,000u during a 2.4s explosion track and the burst
+// simply got nearer — which is why the "peak" appeared to arrive at 2,250ms
+// and to grow monotonically to the end of the capture, an impossible shape
+// for an effect whose longest layer dies at 1,850ms. Worse, the harness
+// booted with startGame() and never left the Earth launch pad, so every
+// reading was taken against a LIT BLUE ATMOSPHERE (background luminance
+// 175/255): additive layers over a near-clipped background barely register,
+// which is exactly what made the burst look small and pushed this gain up.
+//
+// Round 3 re-measured with idle/full/background rendered INSIDE ONE JS TASK
+// (scene time and star rotation bit-identical between readbacks, so the diff
+// is only the toggled object), the world paused, explosionManager stepped by
+// hand in exact 50ms beats, and the subject parked down the darkest ray in
+// the frame. On a 116u Martian Pirate at 1,200u the burst then measures:
+//   peak 16,400 px at t=550ms   (hull silhouette 1,644-2,891 px depending on
+//   aspect -> 5.5x broadside, 10x foreshortened)
+//   still lit at t=1,500ms (369 px), dark by t=1,950ms
+// So 0.84 is comfortably past the >=3x bar at every aspect, and the peak
+// lands where a detonation should — at 550ms, not at the end of the tail.
+// It is NOT lowered back toward 0.64 because that is an area change of
+// (0.64/0.84)^2 = 0.58x, which would put the broadside case at 3.3x, close
+// enough to the bar that a slightly larger hull would fail it.
+const _FX_KILL_GAIN = 0.84;
 
 function _fxKillBurst(center, S) {
     const K = S * _FX_KILL_GAIN;

@@ -623,7 +623,17 @@ function updateCameraView(camera) {
                 const _fp = (performance.now() - cameraState._exitFovT0) /
                     Math.max(1, cameraState._exitFovMs || 700);
                 if (_fp < 1) {
-                    _fovT = _cruiseFovT + (cameraState._exitFovFrom - _cruiseFovT) * Math.pow(1 - _fp, 3);
+                    // Ease the RESIDUAL over the LIVE composite (_fovT as
+                    // already computed above this frame), not an override
+                    // toward a separately-computed _cruiseFovT. At _fp=0
+                    // this is exactly _exitFovFrom; at _fp=1 the blend
+                    // weight is exactly 0 so it lands on whatever the
+                    // composite is THAT FRAME — continuously, no matter
+                    // what _tl (warp tunnel) or _zAmt are doing — so no
+                    // handoff step is representable. _cruiseFovT is dead
+                    // for this path now; kept above only for the whip/lean/
+                    // crack state-var drains earlier in this block.
+                    _fovT = _fovT + (cameraState._exitFovFrom - _fovT) * Math.pow(1 - _fp, 3);
                 } else {
                     cameraState._exitFovT0 = 0;
                 }

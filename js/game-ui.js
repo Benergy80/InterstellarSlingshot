@@ -2596,7 +2596,7 @@ function renderIndividualMapDot(c, raised) {
         : '0 0 4px ' + c.dotColor;
     let opacity = '1';
     let outline = 'none';
-    if (c.dotPriority < 60) {
+    if (c.dotPriority <= 60) {
         dotSize = '3px';
         shadow = 'none';
         opacity = '0.45';
@@ -2659,12 +2659,24 @@ function renderAggregateMapDot(cellKey, group, cellPx) {
     // aggregate could grow (baseSize+6, up to ~10-14px) well past the
     // ~5px grid it was bucketed on, so neighbouring cells' aggregates
     // overlapped into one fused blob instead of tiling edge-to-edge.
-    const size = Math.round(Math.min(cellPx, baseSize + 6, baseSize + 1 + Math.sqrt(scaleN))) + 'px';
+    let size = Math.round(Math.min(cellPx, baseSize + 6, baseSize + 1 + Math.sqrt(scaleN))) + 'px';
 
     // Count-weighted brightness, capped well short of the distress pulse
     // so a big cluster reads as "many", not "on fire".
     const glowPx = Math.min(10, 4 + Math.floor(scaleN / 4));
-    const shadow = '0 0 ' + glowPx + 'px ' + dominant.dotColor + ', 0 0 ' + (glowPx + 4) + 'px ' + dominant.dotColor;
+    let shadow = '0 0 ' + glowPx + 'px ' + dominant.dotColor + ', 0 0 ' + (glowPx + 4) + 'px ' + dominant.dotColor;
+    let opacity = '1';
+
+    // Same salience tier as renderIndividualMapDot: a fused cell of
+    // scenery/neutral traffic (dominant.dotPriority <= 60) must NOT
+    // out-ink real contacts just because the cellPx budget widened its
+    // clamp. Clamp it down to the demoted individual's footprint instead
+    // of letting size/glow scale with member count.
+    if (dominant.dotPriority <= 60) {
+        size = Math.min(parseFloat(size), 4) + 'px';
+        opacity = '0.5';
+        shadow = 'none';
+    }
 
     if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
     if (s.bg !== dominant.dotColor) { dot.style.backgroundColor = dominant.dotColor; s.bg = dominant.dotColor; }
@@ -2677,7 +2689,7 @@ function renderAggregateMapDot(cellKey, group, cellPx) {
     // CLEARED (not forced to 'none') — .aggregate-map-dot already gets
     // its own faint "many contacts" ring from CSS, and an inline 'none'
     // would win over that class rule and erase the ring.
-    if (s.opacity !== '1') { dot.style.opacity = '1'; s.opacity = '1'; }
+    if (s.opacity !== opacity) { dot.style.opacity = opacity; s.opacity = opacity; }
     if (s.outline !== '') { dot.style.outline = ''; s.outline = ''; }
     if (s.distress !== anyDistress) {
         if (anyDistress) dot.classList.add('distress-map-dot');

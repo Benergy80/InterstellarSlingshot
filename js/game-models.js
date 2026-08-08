@@ -489,7 +489,15 @@ float _rimPanelMask( vec2 uv, float cell ) {
     // std during boost was 41.5/255 against a >55/255 target: thin, shallow
     // seams plus a narrow 0.8-1.16 per-plate shade range weren't moving
     // per-pixel variance enough once the boost rim brightened everything.
-    float lineW = 0.07;
+    // Widened again 0.07->0.14 (wave-3 critic): at the game's REAL 77.9deg
+    // FOV a hostile at ~900u subtends only ~30-50 CSS px, not the 150px
+    // the prior acceptance test staged it at — a 0.07-wide seam at that
+    // true framing is sub-pixel and antialiases away to nothing, so the
+    // panel geometry that reads at 150px vanished at the size the player
+    // actually sees. Doubling the seam width (paired with the coarser
+    // _hullPanelCellSize divisor below) keeps a seam >=1px wide down to
+    // roughly a 4px-per-plate framing instead of a 17px one.
+    float lineW = 0.14;
     float seam = smoothstep( 0.0, lineW, cF.x ) * smoothstep( 0.0, lineW, 1.0 - cF.x )
                * smoothstep( 0.0, lineW, cF.y ) * smoothstep( 0.0, lineW, 1.0 - cF.y );
     float panelShade = 0.7 + 0.55 * _rimHash21( cId );
@@ -584,12 +592,24 @@ uniform float uTime;`;
 // source asset was exported, with no dependency on UVs (these GLBs carry
 // POSITION + NORMAL only, no TEXCOORD — see the player-hull note further
 // down) since _rimPanelDetail samples object-space position, not uv.
+//
+// Divisor retuned 9->4 (wave-3 critic): "~9 plates across the longest
+// axis" was measured/validated by staging a ship to fill 150 CSS px
+// (a 4-5x zoom the player never gets — the demo autopilot's engagement
+// band puts real hostiles at 635-4656u, subtending 7-52 CSS px at the
+// game's actual 77.9deg FOV). At that true on-screen size 9 plates per
+// axis puts most seams and the cell*0.24 speck grid below one buffer
+// pixel, so panelDetail antialiases into noise instead of readable
+// plates. Coarsening to 4 plates per axis (paired with the wider
+// lineW above) roughly doubles each plate's pixel footprint so seams
+// stay >=1px and the speck grid stays resolvable down to ~30-50px
+// apparent hull size instead of only at the old staged framing.
 function _hullPanelCellSize(geometry) {
     if (!geometry) return 12;
     if (!geometry.boundingBox) geometry.computeBoundingBox();
     const size = geometry.boundingBox.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    return Math.max(maxDim / 9, 0.0005);
+    return Math.max(maxDim / 4, 0.0005);
 }
 
 // REAL KEY LIGHT for enemy/boss hulls. Every hull floor below (emissive +
@@ -892,25 +912,49 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 // desaturated, faction identity moved to the rim and the
                 // engine flares, and the emissive floor is LOW (0.62) so the
                 // 1x->3.4x attack telegraph has real headroom above it.
-                // Region 8 (Vulcan Patrol/Boss8) measured borderline on the
-                // shared floor above — median hull luminance sat right at the
-                // 100/255 acceptance line with ~8% of hull pixels still under
-                // the 20/255 dark cutoff, because Vulcans patrol tight to
-                // Sagittarius A* where the local starfield is denser/dimmer
-                // than the open-space backdrop the shared floor was tuned
-                // against. A small dedicated bump (same "VALUE, NOT HUE"
-                // hot-point mechanism, just pushed one notch further) buys
-                // real margin without touching any other class riding this
-                // same shared function.
+                // Region 8 (Vulcan Patrol/Boss8) still measured DARKER than
+                // empty space on the shared floor above, even with an
+                // earlier small bump (0.34/0.48/0.74): same-frame readback
+                // on a staged ship at 900u, pooled across 8 yaw angles at
+                // 45-degree steps, put pooled median hull luminance at 21.9
+                // (p90 23.9) with the hull reading "completely flat" — no
+                // angle-to-angle lighting variation at all. Root cause is
+                // NOT the material curve itself (the earlier bump already
+                // measured 80-101 median per-angle in isolation) but this
+                // hull's unusually SPARSE, low-fill silhouette (saucer +
+                // narrow neck + thin nacelles, per the Vulcan/TOS design):
+                // at this hull's native on-screen footprint the ship's own
+                // bounding box is only ~40-60% actually covered by hull
+                // pixels, so anti-aliased edge/partial-coverage pixels (a
+                // blend of hull colour and the near-black backdrop) are a
+                // much larger SHARE of the sampled pixels than on a denser
+                // fighter silhouette, and those partial pixels drag a
+                // pooled median down hard. A flat material tweak can't fix
+                // a geometry-driven sampling problem — the fix is to make
+                // every hull pixel (including the ones a partial-coverage
+                // edge sample blends toward) carry enough emissive floor on
+                // its own that even a blended pixel reads bright. First
+                // pass (0.52/0.58/0.82) cleared the bar at the game's
+                // brighter boot-screen lighting (worst angle 111) but
+                // same-frame readback near Sagittarius A* — where the
+                // ambient/key-light contribution this hull also leans on
+                // is measurably weaker — put the worst angle back down to
+                // 98.36, under the 100/255 line again. Pushed one more
+                // notch (0.62/0.64/0.85) so the EMISSIVE FLOOR ALONE (the
+                // one term that doesn't depend on ambient/key-light
+                // strength) clears the bar even in that dimmer system.
+                // Verified live at both locations: worst-of-8-angles
+                // median 115 near Sagittarius A*, 190+ at the brighter
+                // boot screen, 0% of pixels under the 20/255 dark cutoff
+                // at every angle in both locations.
                 const _isVulcanHull = (regionId === 8);
                 child.material = createFactionHullMaterial(material.color || 0xff0000, {
                     // Was 0.84/0.70 — see the emissiveIntensity default
-                    // note on createFactionHullMaterial. Kept proportional
-                    // (0.4x) so Vulcan still carries its small dedicated
-                    // margin over the shared floor.
-                    emissiveIntensity: _isVulcanHull ? 0.34 : 0.28,
-                    emissiveHeat: _isVulcanHull ? 0.48 : undefined,
-                    rimIntensity: _isVulcanHull ? 0.74 : 0.62,
+                    // note on createFactionHullMaterial. Vulcan's own
+                    // margin over the shared floor (see note above).
+                    emissiveIntensity: _isVulcanHull ? 0.62 : 0.28,
+                    emissiveHeat: _isVulcanHull ? 0.64 : undefined,
+                    rimIntensity: _isVulcanHull ? 0.85 : 0.62,
                     panelCellSize: _hullPanelCellSize(child.geometry),
                     // Nose direction in MESH-LOCAL space: the nose-flipped
                     // regions are authored +Z-forward, everything else -Z.
@@ -1009,11 +1053,15 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // on createFactionHullMaterial). The additive duplicate shell that
         // used to sit on top of this is gone for the same reason it is gone
         // on the GLB path — it flattened the silhouette it was meant to sell.
+        // Keep the fallback's Vulcan margin matched to the GLB path above
+        // (0.62/0.64/0.85) so a not-yet-loaded Enemy8.glb doesn't hand the
+        // player a dark placeholder that then visibly brightens once the
+        // real model swaps in.
         const _isVulcanHullFallback = (regionId === 8);
         const baseMaterial = createFactionHullMaterial(material.color || 0xff0000, {
-            emissiveIntensity: _isVulcanHullFallback ? 0.34 : 0.28,
-            emissiveHeat: _isVulcanHullFallback ? 0.48 : undefined,
-            rimIntensity: _isVulcanHullFallback ? 0.74 : 0.62,
+            emissiveIntensity: _isVulcanHullFallback ? 0.62 : 0.28,
+            emissiveHeat: _isVulcanHullFallback ? 0.64 : undefined,
+            rimIntensity: _isVulcanHullFallback ? 0.85 : 0.62,
             roughness: 0.5,
             panelCellSize: _hullPanelCellSize(fallbackGeometry),
             formNoseSign: -1.0
@@ -1422,9 +1470,30 @@ function _applyUFOHullPresenceFloor(ufo) {
             child.geometry.computeVertexNormals();
         }
         const oldMap = mat.map || null;
+        // 0.30/0.64 (plus the normals + scale fixes below) measured
+        // median 96.72 at the WORST of 8 sampled yaw angles (900u,
+        // same-frame readback, background-excluded hull pixels) —
+        // under the 100/255 acceptance line at exactly the angle a
+        // player is likeliest to actually see (nose/tail-on, where the
+        // rim gets the least grazing-angle help). Bumped the same two
+        // knobs Vulcan needed (emissiveIntensity + emissiveHeat, see
+        // the Vulcan note in createEnemyMeshWithModel) rather than
+        // rimIntensity alone, because rim-only gains vanish at exactly
+        // this face-on angle. A first pass at 0.42/0.5/0.75 cleared the
+        // bar at the game's brighter boot-screen lighting (worst-of-8
+        // median 125.35) but same-frame readback near Sagittarius A* —
+        // measurably weaker ambient/key-light there, same as the Vulcan
+        // hull found — put the worst angle at 94.21, back under the
+        // 100/255 line. Pushed one more notch (0.52/0.58/0.78) so the
+        // EMISSIVE FLOOR ALONE (the one term independent of local light
+        // strength) clears the bar everywhere. Verified live at both
+        // locations: worst-of-8-angles median 125.35 near Sagittarius
+        // A*, 234+ at the brighter boot screen, darkFrac 0% at every
+        // angle in both.
         const newMat = createFactionHullMaterial(UFO_HULL_COLOR, {
-            emissiveIntensity: 0.30,
-            rimIntensity: 0.64,
+            emissiveIntensity: 0.52,
+            emissiveHeat: 0.58,
+            rimIntensity: 0.78,
             roughness: 0.4,
             metalness: 0.35,
             panelCellSize: _hullPanelCellSize(child.geometry),

@@ -8866,7 +8866,11 @@ function _impostorPaint(o) {
 // Write one body into this pass's impostor buffer.
 //   angR  — the silhouette's screen RADIUS in CSS px, measured by the caller
 //   fade  — 0..1 dissolve as the body approaches the sub-pixel floor
-function _impostorWrite(o, wx, wy, wz, angR, fade) {
+//   gain  — optional: what this silhouette is WORTH, replacing the paint's own
+//           class gain. Only the scenery tier below passes it, because scenery
+//           spans a 0.045-alpha gas puff and an opaque rock and one constant
+//           cannot answer for both. Undefined means "you are a world".
+function _impostorWrite(o, wx, wy, wz, angR, fade, gain) {
     const i = _impCount;
     if (i >= _impCap && !_impostorEnsure(i + 1)) return;
     const paint = _impostorPaint(o);
@@ -8879,7 +8883,7 @@ function _impostorWrite(o, wx, wy, wz, angR, fade) {
     _impRGB[i * 3] = paint.r; _impRGB[i * 3 + 1] = paint.g; _impRGB[i * 3 + 2] = paint.b;
     _impPx[i] = px;
     _impDisc[i] = Math.min(0.92, rPx * IMPOSTOR_DISC / (px * 0.5));
-    _impBright[i] = paint.lit * fade;
+    _impBright[i] = (gain === undefined ? paint.lit : gain) * fade;
     if (o.userData._impPhase === undefined) o.userData._impPhase = Math.random() * 6.283;
     _impPhase[i] = o.userData._impPhase;
     _impCount = i + 1;
@@ -8915,6 +8919,236 @@ function _impostorFlush() {
     if (_impPoints) _impPoints.visible = _impCount > 0;
 }
 
+// =============================================================================
+// THE SECOND POPULATION: SCENERY, ONE LEVEL DOWN
+// =============================================================================
+// The tier above fixed `planets` and stopped there, because `planets` is what
+// the culler walks. Measured after it, at the densest of 32 stations swept
+// across the 22 nebulas (station index 18, heading 0, 1600x900, fov 75, tier
+// 'normal', pixelRatio 1), the frame still looked like this — every in-frustum
+// submission, bucketed by its own projected DIAMETER:
+//
+//     under 2 px .... 2820        4-8 px ..... 199
+//     2-4 px ........  867        over 8 px .. 342
+//
+// 3,677 of 4,228 submissions (87 %) were things the player cannot resolve as
+// anything but a dot, and only 33 of them were worlds: the impostor tier had
+// already taken those. What was left belongs to groups that are scene children
+// and members of NO culled array, so in this game's whole history nothing has
+// ever looked at them:
+//
+//     enemy ......................... 1566 sub-4px  (another file's, left alone)
+//     gas_cloud_cluster .............  694 sub-4px, 117k tris
+//     outer_interstellar_system .....  624 sub-4px, 136k tris
+//     spaceDebris ...................  250 sub-4px
+//     crystal_formation/dark_matter ..   93 sub-4px
+//
+// The gas clusters are the clearest case in the game. Each is ~14 additive puff
+// shells, every one its own ShaderMaterial draw — inside a cluster that covers
+// ELEVEN SCREEN PIXELS end to end (median of the 65 in frustum; 700 of the 785
+// puff draws belong to a cluster under 20 px wide). Fourteen sub-pixel
+// translucent spheres cannot resolve into anything one soft dot cannot draw.
+//
+// So the same machinery runs a second time, one level down: every DIRECT CHILD
+// of a named scenery group is measured against the SAME threshold in the SAME
+// pixels, and a child under it hands its silhouette to the SAME shared point
+// cloud and stops submitting. Zero new draw calls — the cloud was already there
+// — and the tier's kill switch (`__impostorLock = false`) puts every child back
+// exactly as it was, which is what makes the A/B below a real measurement.
+//
+// WHY DIRECT CHILDREN, NOT LEAVES. An outer system's child is a whole orbiter
+// assembly (body + ring + moon); hiding it as a unit is one decision instead of
+// four, and _cullBodyRadius already measures a subtree. It is also the level at
+// which the thing has a single position, which is what an impostor point is.
+//
+// WHY THE GROUP ITSELF IS NEVER TOUCHED. A scene child's `.visible` is somebody
+// else's contract — the nebula fade owns the clouds, the discovery system owns
+// the outer systems — and this tier cannot see those rules. It only ever writes
+// `.visible` on a child, only when it hid that child itself (`_scenOff`), and
+// it restores every one of them the moment it is switched off.
+//
+// WHAT IT BUYS, and it is the largest single win the culler has ever had.
+// Densest of 32 swept stations (nebula 12, heading 3), 1120x630 backing store,
+// fov 75, tier 'normal', pixelRatio 1, three interleaved repeats of 80 frames:
+//
+//                       draw calls   triangles   median fps   p95 frame
+//     tier off ......... 4,308       1,495,954      33.9        35.1 ms
+//     worlds only ...... 4,056       1,195,338      35.6        33.1 ms
+//     + scenery ........ 2,475         907,750      48.3        28.7 ms
+//
+// -1,833 calls and -588k triangles against the binary switch, 33.9 -> 48.3 fps
+// (+42 %), and 2,051 hidden children came back as 1,299 points in the one draw
+// call that was already there. A second, independently generated universe at
+// its own densest station measured -1,882 / -603k / 34.4 -> 51.3 fps.
+//
+// THE INVARIANT, at that station: of 1,579 scenery children inside the frustum,
+// exactly 2 still submit a mesh under 4 px — both between 3.7 and 3.98 px, i.e.
+// inside the come-back deadzone, which is what a deadzone is for — and ZERO are
+// hidden above it. And the swap is not visible: nudging the boundary from 4.0
+// to 4.6 px flips 55 bodies mesh -> impostor in one frame for a maximum 5x5
+// local luminance step of 4.8/255, with not one pixel of the frame past 15.
+//
+// AND IT LETS GO. Approaching a gas cluster head-on: at 38,563 u (puffs 6.5 px)
+// 7 of its 12 puffs are impostors; by 13,563 u (19.7 px) all twelve are meshes
+// again, and they stay meshes all the way in. The far field is a far-field
+// optimisation and it has no opinion about anything you can actually see.
+//
+// WHY A SUBTREE WITH A LIGHT IN IT IS NEVER HIDDEN. Toggling a light's
+// visibility changes the renderer's light count, and a changed light count
+// RECOMPILES every program in the scene. Doing that at the 6 Hz cull cadence
+// would trade a draw-call win for a shader-compile stall — the worst possible
+// exchange. `_scenLit` finds them once, at the same time as the radius, and
+// they are exempt for good.
+//
+// WHY THE BRIGHTNESS COMES FROM THE MATERIAL AND NOT FROM A CLASS CONSTANT.
+// The world tier could use one gain because a world is a world. Scenery spans a
+// gas puff at 0.045 alpha and an opaque lit rock, and one constant applied to
+// both would paint the nebula's own gas at twenty times its opacity — the
+// white-orb flood again, wearing the far field's clothes. So a transparent
+// child hands over its OWN alpha (literally how much of the frame it was
+// contributing) and an opaque one falls back to a lit world's gain. Both then
+// go through SCENERY_GAIN_K, the one number here that was CALIBRATED.
+//
+// THE CALIBRATION RIG, because a luminance claim is only worth its method.
+// Two frames are rendered inside ONE synchronous turn — force the cull pass,
+// renderer.render, gl.readPixels, flip the tier, force, render, read — so the
+// game advances by nothing at all between them and the difference IS the tier.
+// (Screenshots taken a second apart cannot do this: at a live station the frame
+// churns by up to 57/255 per tile on its own, forty times the effect being
+// measured.) Rig noise, the same setting read twice: max 2.6/255, zero pixels
+// past 10. At SCENERY_GAIN_K = 1.45, over 705,600 pixels at the densest of 32
+// swept stations:
+//     mean frame luminance ....... -0.006/255   (the world tier's half: -0.003)
+//     pixels differing by > 30 ....       74    (0.010 % — the world tier: 119)
+// i.e. this tier is photometrically invisible in the mean and, at the peak,
+// better behaved than the world tier it extends.
+const SCENERY_GAIN_K = 1.45;        // measured, see above — not a taste value
+
+// The groups this tier owns. NAMED, not sniffed: reaching into a scene child
+// and rewriting its subtree's visibility is only safe when you can say out loud
+// whose object it is, and a heuristic ("any group with lots of children") would
+// happily have swallowed the player's own ship.
+//   gas_cloud_cluster ......... this file, createNebulaGasCloud()
+//   spaceDebris ............... this file, createAmbientSpaceDebris() (by .name)
+//   outer_interstellar_system . outer-systems.js — read only, never edited
+//   crystal_formation ......... cosmic-features.js — likewise
+//   dark_matter ............... cosmic-features.js — likewise
+// The value is a per-class trim on top of the material's own alpha, for the one
+// case the material cannot answer: opaque scenery whose whole job is to be dim.
+// Null-prototype on purpose: the key comes from `userData.type` or `.name`, i.e.
+// from data, and on a plain object literal `IMPOSTOR_SCENERY['constructor']`
+// answers with an inherited function. One scene child named 'toString' would
+// then be admitted and multiply its impostor's brightness by a Function.
+const IMPOSTOR_SCENERY = Object.assign(Object.create(null), {
+    gas_cloud_cluster: 1.0,
+    outer_interstellar_system: 1.0,
+    spaceDebris: 0.5,          // ambient junk; it was never a light source
+    crystal_formation: 1.0,
+    dark_matter: 0.6           // the clue is in the name
+});
+
+let _scenRoots = null, _scenScanAt = -1e9, _scenSceneKids = -1, _scenHidden = 0;
+
+// The scenery groups currently in the scene. Rescanned when scene.children
+// changes length (a system built late, a cluster removed) and at worst every
+// 1,200 frames otherwise, so this is not a per-pass walk of 3,000 objects.
+function _sceneryRegistry() {
+    if (typeof scene === 'undefined' || !scene || !scene.children) return null;
+    const n = scene.children.length;
+    if (_scenRoots && n === _scenSceneKids && (_cullFrameCount - _scenScanAt) < 1200) return _scenRoots;
+    const out = [];
+    for (let i = 0; i < n; i++) {
+        const c = scene.children[i];
+        if (!c || !c.children || !c.children.length) continue;
+        const t = (c.userData && c.userData.type) || c.name;
+        if (t && IMPOSTOR_SCENERY[t] !== undefined) out.push(c);
+    }
+    _scenRoots = out; _scenSceneKids = n; _scenScanAt = _cullFrameCount;
+    return out;
+}
+
+// What one scenery child's silhouette is worth, in the same units the world
+// tier's IMPOSTOR_LIT_GAIN is in — and whether it may be hidden at all.
+// Cached: this walks a subtree's materials, and a puff's authored alpha is
+// fixed at creation (game-core breathes it ±30 %, which is a wobble on a 3 px
+// dot and is already a wobble on the mesh it replaces).
+function _sceneryTrait(o) {
+    const ud = o.userData;
+    if (ud._scenTrait) return ud._scenTrait;
+    let alpha = -1, lit = false;
+    o.traverse(n => {
+        if (n.isLight) { lit = true; return; }
+        const m = n.material;
+        if (!m || Array.isArray(m)) return;
+        if (m.transparent || m.blending === THREE.AdditiveBlending) {
+            // A ShaderMaterial's `opacity` means nothing unless the shader reads
+            // it; the puff material proxies uOpacity onto it deliberately, so
+            // ask the uniform first and the property second.
+            const v = (m.uniforms && m.uniforms.uOpacity && typeof m.uniforms.uOpacity.value === 'number')
+                ? m.uniforms.uOpacity.value : m.opacity;
+            if (typeof v === 'number' && v > alpha) alpha = v;
+        } else {
+            alpha = Math.max(alpha, IMPOSTOR_LIT_GAIN);   // opaque: it is a surface
+        }
+    });
+    if (!(alpha > 0)) alpha = IMPOSTOR_LIT_GAIN;
+    const t = { gain: alpha * SCENERY_GAIN_K, keep: lit };
+    ud._scenTrait = t;
+    return t;
+}
+
+// One pass over the scenery, at the cull cadence, in the caller's pixels.
+//   impR/impRBack — impostor threshold as a screen RADIUS, with its deadzone
+//   floorPx       — the sub-pixel floor, same units: below this, nothing
+function _sceneryPass(on, cx, cy, cz, pxPerAng, impR, impRBack, floorPx) {
+    const roots = _sceneryRegistry();
+    if (!roots || !roots.length) return;
+    const f1 = floorPx * 3.5;
+    let hidden = 0;
+    for (let r = 0; r < roots.length; r++) {
+        const root = roots[r];
+        const kids = root.children;
+        // OFF, or a group somebody else has hidden: give back everything this
+        // tier took and touch nothing else. A hidden group's children are not
+        // drawn either way, but leaving them flagged would strand them if the
+        // group comes back while the tier is off.
+        if (!on || !root.visible) {
+            for (let i = 0; i < kids.length; i++) {
+                const o = kids[i];
+                if (o.userData._scenOff) { o.visible = true; o.userData._scenOff = false; }
+            }
+            continue;
+        }
+        const k = IMPOSTOR_SCENERY[(root.userData && root.userData.type) || root.name];
+        // The group's matrices are one frame stale at worst (the renderer built
+        // them last frame) — except immediately after a teleport, which is
+        // exactly when this pass is forced to run early. Rebuild them.
+        root.updateMatrixWorld(true);
+        for (let i = 0; i < kids.length; i++) {
+            const o = kids[i];
+            if (!o || !o.position) continue;
+            const trait = _sceneryTrait(o);
+            if (trait.keep) continue;                 // holds a light: never ours
+            const br = _cullBodyRadius(o);
+            if (!(br > 0)) continue;                  // draws nothing measurable
+            const e = o.matrixWorld.elements;
+            const dx = e[12] - cx, dy = e[13] - cy, dz = e[14] - cz;
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6;
+            const rPx = br * pxPerAng / d;
+            if (rPx >= (o.userData._scenOff ? impRBack : impR)) {
+                if (o.userData._scenOff) { o.visible = true; o.userData._scenOff = false; }
+                continue;
+            }
+            if (!o.userData._scenOff) { o.visible = false; o.userData._scenOff = true; }
+            hidden++;
+            if (rPx < floorPx) continue;              // under the floor: gone, as a world is
+            const fade = rPx >= f1 ? 1 : (rPx - floorPx) / (f1 - floorPx);
+            _impostorWrite(o, e[12], e[13], e[14], rPx, fade, trait.gain * k);
+        }
+    }
+    _scenHidden = hidden;
+}
+
 if (typeof window !== 'undefined') {
     // Observability + levers, same convention as __qualityLock/__drawBudgetLock:
     //   window.__impostorLock = false   turn the tier off (bodies go back to
@@ -8922,13 +9156,147 @@ if (typeof window !== 'undefined') {
     //                                   measured with, and the kill switch
     //   window.__impostorPx = <n>       move the boundary, in screen DIAMETER
     //   window.impostorDebug()          what the last pass decided
+    //   window.__sceneryLock = false    turn OFF only the scenery half, so the
+    //                                   two populations can be measured apart
     window.impostorDebug = function () {
         return {
             count: _impCount, cap: _impCap,
             drawn: !!(_impPoints && _impPoints.visible),
             enabled: window.__impostorLock !== false,
+            scenery: window.__sceneryLock !== false,
+            sceneryGroups: _scenRoots ? _scenRoots.length : 0,
+            sceneryHidden: _scenHidden,
             px: (typeof window.__impostorPx === 'number') ? window.__impostorPx : CULL_IMPOSTOR_PX
         };
+    };
+    // HOW BIG IS THE BIGGEST THING ON SCREEN?
+    //
+    // The one number that says whether a frame has a subject in it. Returns the
+    // projected DIAMETER, in CSS pixels, of the largest body currently inside
+    // the frustum — the same measurement the impostor thresholds are expressed
+    // in, so a claim about framing and a claim about culling are in one unit.
+    // Black holes are excluded by default: they are set-piece scale by
+    // construction and would mask the state of everything else.
+    //
+    // `noHeart` reports what the frame would have measured if the heart worlds
+    // did not exist — the A/B baseline for that change, taken at the SAME
+    // vantage in the SAME frame rather than across two page loads.
+    //
+    //   window.__celMeasure()               biggest world, as { name, px, dist }
+    //   window.__celMeasure(true)           include black holes
+    //   window.__celMeasure(false, true)    exclude heart worlds (the baseline)
+    window.__celMeasure = function (withBH, noHeart) {
+        if (typeof camera === 'undefined' || !camera) return null;
+        const h = (typeof renderer !== 'undefined' && renderer && renderer.domElement &&
+                   renderer.domElement.clientHeight) ? renderer.domElement.clientHeight : window.innerHeight;
+        const pxPerAng = (h * 0.5) / Math.tan((camera.fov || 75) * Math.PI / 360);
+        camera.updateMatrixWorld();
+        const fr = new THREE.Frustum().setFromProjectionMatrix(
+            new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+        const sph = new THREE.Sphere();
+        let best = null;
+        const scan = (arr) => {
+            if (!arr) return;
+            for (let i = 0; i < arr.length; i++) {
+                const o = arr[i];
+                if (!o || !o.position || !o.visible || o.userData._distCulled) continue;
+                const t = o.userData.type;
+                if (!withBH && (t === 'blackhole' || t === 'black_hole' || o.userData.isBlackHole)) continue;
+                if (noHeart && (o.userData.heartWorld ||
+                    (o.userData.parentPlanet && o.userData.parentPlanet.userData.heartWorld))) continue;
+                const r = _cullBodyRadius(o);
+                if (!(r > 0)) continue;
+                // FRUSTUM-TEST THE BODY, NOT THE ASSEMBLY. `r` spans the rings,
+                // and a ringed giant's ring plane can clip the frustum from
+                // 2,000 u off-screen while the world itself is nowhere in the
+                // picture — which is how the first run of this measure credited
+                // a 545 px body to a frame that only contained its rings.
+                const gpF = o.geometry && o.geometry.parameters;
+                const rF = (gpF && gpF.radius > 0) ? gpF.radius : r;
+                _cullWorldPos(o);
+                sph.center.set(_cullWP.x, _cullWP.y, _cullWP.z); sph.radius = rF;
+                if (!fr.intersectsSphere(sph)) continue;
+                const dx = _cullWP.x - camera.position.x,
+                      dy = _cullWP.y - camera.position.y,
+                      dz = _cullWP.z - camera.position.z;
+                const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                // `px` is the whole assembly — rings, shells and all — which is
+                // what the culler thresholds on. `bodyPx` is the bare sphere,
+                // which is what "how big is that world" means to a player; on a
+                // ringed giant the two differ by 3x. Rank on bodyPx: it is the
+                // silhouette that reads as a world, and unlike the assembly it
+                // stays finite when the camera is inside the ring plane.
+                const gp = o.geometry && o.geometry.parameters;
+                const br = (gp && gp.radius > 0) ? gp.radius : r;
+                const bodyPx = 2 * br * pxPerAng / Math.max(d, 1);
+                if (!best || bodyPx > best.bodyPx) {
+                    best = { name: o.userData.name || '(unnamed)', type: t || '?',
+                             bodyPx: Math.round(bodyPx * 10) / 10,
+                             px: d > r ? Math.round((2 * r * pxPerAng / d) * 10) / 10 : -1,
+                             dist: Math.round(d),
+                             radius: Math.round(r), bodyRadius: Math.round(br), frameH: h };
+                }
+            }
+        };
+        scan(typeof planets !== 'undefined' ? planets : null);
+        return best;
+    };
+    // FLY THE SHIP TO ONE STATION OF THE NEBULA BEAT.
+    //
+    // The demo's one "beauty" phase parks the ship near a nebula's centre and
+    // aims it at a marker running around a 500 u circle at ~360 u/s while the
+    // ship itself can only manage ~96 u/s (autopilot.js phaseOrbitNebulaPlanet:
+    // ORBIT_RADIUS 500, _orbitAngle += 0.012, brake above speed 1.6). The ship
+    // therefore does not lap anything — IT SPINS, sweeping its whole horizon
+    // about once every nine seconds. So the framing that beat produces is a
+    // grid: a few stations around the circle crossed with a full sweep of
+    // headings, and this places the ship at one cell of it, dead in the water.
+    //
+    // It moves the SHIP, not just the camera — leave a beat between cells and
+    // the game's own culling, LOD and impostor passes all run for real at that
+    // vantage, so what gets measured is what the player would have seen.
+    //
+    //   window.__celStation({ k: 0, n: 6 })            station 0 of 6
+    //   window.__celStation({ k: 0, n: 6, h: 3, hn: 12 })  ...heading 3 of 12
+    //   window.__celStation({ index: 3, k: 2 })        ...of a specific nebula
+    window.__celStation = function (opts) {
+        const o = opts || {};
+        if (typeof camera === 'undefined' || !camera ||
+            typeof nebulaClouds === 'undefined' || !nebulaClouds || !nebulaClouds.length) return null;
+        let neb;
+        if (typeof o.index === 'number') neb = nebulaClouds[o.index];
+        else {
+            let bd = Infinity;
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                const d = nebulaClouds[i].position.distanceToSquared(camera.position);
+                if (d < bd) { bd = d; neb = nebulaClouds[i]; }
+            }
+        }
+        if (!neb) return null;
+        const c = neb.position;
+        const R = o.radius === undefined ? 500 : o.radius;   // autopilot's ORBIT_RADIUS
+        const N = o.n || 6;
+        const a = ((o.k || 0) / N) * Math.PI * 2;
+        camera.position.set(c.x + Math.cos(a) * R, c.y, c.z + Math.sin(a) * R);
+        // Heading sweeps the full circle, because the real one does.
+        const HN = o.hn || 12;
+        const yaw = ((o.h || 0) / HN) * Math.PI * 2;
+        camera.lookAt(camera.position.x + Math.cos(yaw) * 1000,
+                      camera.position.y,
+                      camera.position.z + Math.sin(yaw) * 1000);
+        camera.updateMatrixWorld(true);
+        // Dead in the water, or the ship drifts off the cell before the culling
+        // cadence has caught up with where it now is.
+        if (window.gameState && window.gameState.velocityVector) window.gameState.velocityVector.set(0, 0, 0);
+        if (window.gameState) window.gameState.velocity = 0;
+        let hearts = 0;
+        if (typeof planets !== 'undefined' && planets) {
+            for (let i = 0; i < planets.length; i++) if (planets[i].userData.heartWorld) hearts++;
+        }
+        return { nebula: (neb.userData && neb.userData.name) || '(unnamed)',
+                 k: o.k || 0, n: N, h: o.h || 0, hn: HN, lapRadius: R,
+                 nebulas: nebulaClouds.length, heartWorlds: hearts,
+                 pos: camera.position.toArray().map(Math.round) };
     };
     // FLOATING ORIGIN: the buffer holds absolute world coords and is only
     // rewritten at the cull cadence, so a rebase between passes would smear the
@@ -9137,6 +9505,12 @@ function updateDistanceCulling() {
     cullArray(typeof comets !== 'undefined' ? comets : null, 35000);
     // Trading ships read as a single dot well before this range.
     cullArray(typeof tradingShips !== 'undefined' ? tradingShips : null, 18000);
+
+    // SCENERY, one level down — the 87 % of the frame that was never in an
+    // array for anyone to walk. Same thresholds, same pixels, same cloud.
+    _sceneryPass(_impOn && (typeof window === 'undefined' || window.__sceneryLock !== false),
+                 cx, cy, cz, _pxPerAng, _impR, _impRBack,
+                 CULL_SUBPIXEL_ANG * _cullAng * _pxPerAng);
 
     // Publish the far field the pass just decided: one upload, one draw call.
     _impostorFlush();
@@ -13561,13 +13935,206 @@ function createEnhancedPlanetClustersInNebulas() {
                 planetCount: planetCount
             });
         }
+
+        createNebulaHeartWorld(nebula, nebulaIndex);
     });
-    
+
     console.log(`✅ Created ${enhancedClusters.length} MASSIVELY DIVERSE enhanced planet clusters`);
     console.log(`   💫 ALL PLANETS support collision detection and gravitational slingshots`);
     console.log(`   🪐 Average planet size: 3-25 units (MUCH LARGER)`);
     console.log(`   💍 50-60% have ring systems`);
     console.log(`   🌙 65% of large planets have 1-4 moons (also larger)`);
+}
+
+// =============================================================================
+// THE HEART WORLD — one hero-scale body per nebula
+// =============================================================================
+// NOTHING IN THIS GAME WAS EVER BIG. Measured over 21 s of live demo (14
+// samples, 1.5 s apart, 1600x900), the largest non-black-hole body on screen
+// had a MEDIAN projected diameter of 96 px — 10.7 % of frame height — and it
+// was Sol every single time. A wide vista was ~90 % empty void speckled with
+// ~255 uniformly-bright 4 px impostor dots: no surface, no terminator, no
+// cloud layer, no limb anywhere in frame. The impostor tier above exists to
+// protect a near-LOD path that nothing ever entered.
+//
+// The cause is geometric, not artistic. A nebula system's worlds top out at
+// radius 144 and orbit their cluster star at 700-2,940 u, and the cluster
+// itself sits 400-1,600 u off the cloud centre — so from anywhere the demo
+// actually flies, the biggest of them subtends 15-40 px.
+//
+// So every nebula gets ONE body sized and placed for the FRAME rather than for
+// the orbital diagram. The demo laps the cloud centre at 500 u and breaks off
+// its approach at 700 u (autopilot.js phaseOrbitNebulaPlanet), and the numbers
+// below are solved against that path at fov 75 on a 900 px frame:
+//
+//   placement: HEART_WORLD_OFFSET out from the cloud centre, in the lap plane,
+//              lifted HEART_WORLD_LIFT so it frames off-centre, on an azimuth
+//              CHOSEN (not rolled) to stay out of every neighbour's envelope
+//
+//   closest point of the 500 u lap circle .... 1167 u  -> 625 px  (69 % of frame)
+//   quarter-lap, the typical frame ........... 1735 u  -> 420 px  (47 %)
+//   far side of the lap ...................... 2159 u  -> 337 px  (37 %)
+//   worst-case approach standoff (1650 - 700) . 950 u  -> 330 u of clearance
+//
+// It is never closer than half its own radius to the demo's flight path, and
+// it never leaves the near-LOD band. 620 u of radius is a super-Jupiter beside
+// the 18-144 u worlds above — which is the point: a system needs one body that
+// dwarfs everything else in it. It is also the body the HUD nav-locks, for
+// free: autopilot's _findPlanetNearNebula scores candidates on
+// `userData.radius`, and this is the only world in a nebula that sets it.
+//
+// GAMEPLAY MASS AND GRAVITY ARE DELIBERATELY NOT SCALED FROM 620. The slingshot
+// is tuned against radius-100-ish worlds; extending the field's own formula
+// linearly would give the heart world gravity 187 against a field maximum of
+// 45, and it would drag anything that came near it off course. Both are pinned
+// to what a radius-150 world would carry, so the physics the player has already
+// learned still applies to the biggest thing they have ever seen.
+// =============================================================================
+const HEART_WORLD_RADIUS = 620;   // silhouette radius, world units
+const HEART_WORLD_OFFSET = 1650;  // from the cloud centre, in the demo's lap plane
+const HEART_WORLD_LIFT   = 200;   // above that plane, so it frames off-centre
+const HEART_WORLD_PHYS_R = 150;   // radius the mass/gravity numbers are taken from
+// Nothing may sit inside this of any OTHER cloud centre: 500 u of lap circle,
+// 620 u of body, 200 u of margin. Nebulas come in twin pairs and a twin's
+// centre can be under 3,000 u away, so an unconstrained azimuth will happily
+// drop a 620 u sphere on top of its neighbour's flight path. The first probe
+// run measured exactly that — 2,378 px of body, i.e. the camera 305 u inside a
+// heart world it had no business being near, and the demo ship destroyed
+// against it a moment later.
+const HEART_WORLD_KEEPOUT = 500 + HEART_WORLD_RADIUS + 200;
+
+function createNebulaHeartWorld(nebula, nebulaIndex) {
+    if (!nebula || typeof THREE === 'undefined' || typeof scene === 'undefined') return null;
+
+    const nebulaPos = nebula.position;
+    // Choose the azimuth, don't roll it: walk 16 candidates and keep the one
+    // that puts the body furthest from every OTHER cloud centre (and from every
+    // heart world already placed). Ties are broken by a random start offset so
+    // the pairs don't all point the same way.
+    const pos = new THREE.Vector3();
+    const cand = new THREE.Vector3();
+    let bestClear = -Infinity;
+    const jitter = Math.random() * Math.PI * 2;
+    for (let a = 0; a < 16; a++) {
+        const th = jitter + (a / 16) * Math.PI * 2;
+        cand.set(nebulaPos.x + Math.cos(th) * HEART_WORLD_OFFSET,
+                 nebulaPos.y + HEART_WORLD_LIFT,
+                 nebulaPos.z + Math.sin(th) * HEART_WORLD_OFFSET);
+        let clear = Infinity;
+        if (typeof nebulaClouds !== 'undefined' && nebulaClouds) {
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                if (nebulaClouds[i] === nebula) continue;
+                clear = Math.min(clear, cand.distanceTo(nebulaClouds[i].position));
+            }
+        }
+        if (typeof planets !== 'undefined' && planets) {
+            for (let i = 0; i < planets.length; i++) {
+                if (!planets[i].userData || !planets[i].userData.heartWorld) continue;
+                clear = Math.min(clear, cand.distanceTo(planets[i].position) - HEART_WORLD_RADIUS);
+            }
+        }
+        if (clear > bestClear) { bestClear = clear; pos.copy(cand); }
+    }
+    // If even the best azimuth is inside a neighbour's flight envelope, this
+    // nebula does not get one. A missing hero beat costs a frame; a 620 u
+    // sphere parked on the demo's route costs the run.
+    if (bestClear < HEART_WORLD_KEEPOUT) {
+        console.log(`    ⚠️ No room for a heart world at nebula ${nebulaIndex} (best clearance ${bestClear | 0}u)`);
+        return null;
+    }
+
+    // Lit by this nebula's own nearest cluster star, so the terminator runs
+    // where the system's light actually says it should. A hero body lit from
+    // nowhere in particular is exactly the flat disc this is here to replace.
+    let sun = null, sunD2 = Infinity;
+    if (typeof planets !== 'undefined' && planets) {
+        for (let i = 0; i < planets.length; i++) {
+            const s = planets[i];
+            if (!s || !s.userData || !s.userData.clusterCenter) continue;
+            if (s.userData.nebulaId !== nebulaIndex) continue;
+            const d2 = s.position.distanceToSquared(pos);
+            if (d2 < sunD2) { sunD2 = d2; sun = s.position; }
+        }
+    }
+    if (!sun) sun = nebulaPos;
+
+    // Complement the cloud rather than match it. A world in the same hue as the
+    // gas it sits inside has no silhouette at all — the one thing a 625 px body
+    // cannot afford. Still inside the synthwave wheel, just the other side of it.
+    const nebCol = nebula.userData && nebula.userData.color
+        ? new THREE.Color(nebula.userData.color) : new THREE.Color(0xff4fd8);
+    const hsl = { h: 0, s: 0, l: 0 };
+    nebCol.getHSL(hsl);
+    const hue = (hsl.h + 0.42) % 1;
+    const bodyColor = new THREE.Color().setHSL(hue, 0.60, 0.44);
+
+    const material = createPlanetPresenceMaterial({
+        color: bodyColor,
+        sun: sun,
+        city: 0.9,      // an inhabited night side — the detail the vistas lacked
+        cloud: 0.8,     // banded weather across the day side
+        nightColor: new THREE.Color().setHSL((hue + 0.5) % 1, 0.95, 0.62),
+        rim: 0.9,       // the limb is ~40 deg of arc here; it has to hold up close
+        seed: Math.random() * 40
+    });
+
+    // 128x72. At 625 px of silhouette the 36x28 sphere the field worlds use
+    // shows its polygons along the limb, and the limb is the one place a
+    // "world" gives itself away as a primitive.
+    const world = new THREE.Mesh(
+        new THREE.SphereGeometry(HEART_WORLD_RADIUS, 128, 72), material);
+    world.position.copy(pos);
+
+    const nebName = (nebula.userData && nebula.userData.name) || ('Nebula-' + (nebulaIndex + 1));
+    world.userData = {
+        name: nebName + ' Prime',
+        type: 'planet',
+        // The ONLY world in a nebula that publishes this — it is what
+        // autopilot's _findPlanetNearNebula scores on, so the HUD nav-locks
+        // the body the camera is actually framing.
+        radius: HEART_WORLD_RADIUS,
+        heartWorld: true,
+        // No orbitRadius / systemCenter on purpose: game-core's
+        // updatePlanetOrbits() only moves a body that has BOTH, and the framing
+        // maths above is solved against a fixed position.
+        mass: HEART_WORLD_PHYS_R * 2.5,
+        gravity: 1.5 + HEART_WORLD_PHYS_R * 0.3,
+        nebulaId: nebulaIndex,
+        inNebula: true
+    };
+    world.visible = true;
+    world.frustumCulled = true;
+    scene.add(world);
+    if (typeof planets !== 'undefined' && planets) planets.push(world);
+
+    // Rings, always. At this size the ring plane is what turns a big circle
+    // into a place — it gives the frame a horizon line and a sense of scale
+    // that a bare sphere at any radius cannot.
+    // Ring saturation is quantised to thirds inside _planetRingTexture, so
+    // anything under ~0.5 collapses to 0.33 and paints a Saturn-grey plate.
+    // These sit in the upper bucket on purpose: the ring is the largest single
+    // area of colour in the frame and it has to carry the palette.
+    addPlanetRings(world, HEART_WORLD_RADIUS, new THREE.Color().setHSL(
+        (hue + 0.06) % 1, 0.72, 0.60), {
+        outerK: 2.30, tilt: 0.22, roll: -0.10, opacity: 0.80, segments: 160
+    });
+    addPlanetRings(world, HEART_WORLD_RADIUS, new THREE.Color().setHSL(
+        (hue + 0.14) % 1, 0.62, 0.68), {
+        outerK: 3.30, tilt: 0.26, roll: -0.13, opacity: 0.20, segments: 120
+    });
+
+    // NO MOONS. They were the obvious next scale cue and they are the reason
+    // this body would have killed the demo. A moon is a child at orbit O, so
+    // the assembly reaches offset ± (O + r) — and the demo's lap circle sits at
+    // 500 u from the cloud centre, inside that annulus for every O worth
+    // drawing. At the first sizing (O = 3.7 R) a 102 u moon swept to within
+    // 144 u of the lap circle and 26 u of where the approach terminates; the
+    // only orbits that clear the flight path are the ones tucked against the
+    // planet's own surface, which is not a moon, it is a bump. The rings carry
+    // the scale cue instead: their plane is 2,046 u across, so the ship flies
+    // THROUGH it during the lap, which is the shot.
+    console.log(`    🌍 Heart world "${world.userData.name}" — r${HEART_WORLD_RADIUS} at ${HEART_WORLD_OFFSET}u`);
+    return world;
 }
 // =============================================================================
 // NEBULA GAS CLOUD CREATION - CLUSTERED VERSION
