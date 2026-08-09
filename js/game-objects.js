@@ -6209,15 +6209,19 @@ try {
         // renderOrder, every one of its texels became the literal minimum
         // luminance of that direction of sky, and the darkest texel was a
         // violet ~#120e2a — so NOTHING in the game could ever be blacker
-        // than that. Additive at 0.25 means this layer can only ADD light
+        // than that. Additive at 0.30 means this layer can only ADD light
         // on top of the near-black clear colour: void stays void, dust
         // lanes and baked stars still bloom.
+        //
+        // 0.30 is the same number as updateNebulaSkyboxOpacity()'s minOp, so
+        // the very first frame already sits on the distance ramp instead of
+        // stepping down onto it once the fade starts ticking.
         const nebulaSkyboxMaterial = new THREE.MeshBasicMaterial({
             map: nebulaSkyboxTexture,
             side: THREE.BackSide,
             fog: false,
             transparent: true,
-            opacity: 0.25,
+            opacity: 0.30,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
@@ -6229,15 +6233,23 @@ try {
         window.nebulaSkybox = nebulaSkybox;
         window.nebulaSkyboxTexture = nebulaSkyboxTexture;
         // Design opacity the distance fade below modulates around.
-        nebulaSkybox.userData._nebBaseOpacity = 0.25;
+        nebulaSkybox.userData._nebBaseOpacity = 0.30;
 
         // scene.background is the true floor of the frame now that the
-        // backdrop is additive. Near-black with a trace of blue so it reads
-        // as deep space rather than a dead monitor, but low enough that
-        // large parts of an open-void frame sit under 0.02 luminance.
-        scene.background = new THREE.Color(0x010109);
+        // backdrop is additive — it is the colour of every pixel the sky
+        // dome does not light up, which is most of the frame.
+        //
+        // It used to be 0x010109, which is black to within one code value.
+        // Measured over a 16-heading sweep, that put 66-69% of the average
+        // frame under 8/255 and pinned mean luminance at ~8.5 — the game was
+        // being staged against a black card, so nothing else on screen had
+        // anything to sit against. 0x0a0a1a is still unmistakably deep space
+        // (4% luminance, nowhere near a washed-out grey) but it is a violet-
+        // blue void rather than a dead monitor, and it gives the neon of the
+        // synthwave palette a ground to read against instead of a hole.
+        scene.background = new THREE.Color(0x0a0a1a);
 
-        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.25)`);
+        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.30)`);
     } catch (nebulaSkyboxError) {
         console.error('❌ Error creating nebula skybox backdrop:', nebulaSkyboxError);
     }
@@ -18106,11 +18118,19 @@ function updateCMBOpacity() {
 // player spawns ~9.3k units out, and an origin-anchored ramp would open the
 // game already half-lit.
 //
-//   • Open void near Sol → 0.15: dust is a rumour, blacks are real black.
-//   • Deep travel / galactic core → 0.32: the sky opens up and the dust
+//   • Open void near Sol → 0.30: dust is a rumour, but the sky is LIT.
+//   • Deep travel / galactic core → 0.55: the sky opens up and the dust
 //     lanes and baked galaxy cores bloom, so distance READS as spectacle.
 //   • Boss battle → ~0, so only the pulsing blood-red boss dome shows
 //     (identical policy to hubbleSkybox2).
+//
+// These were 0.12 / 0.20 — below the authored base opacity, and half of what
+// this very comment block used to promise. The effect was that the sky was
+// switched off: a 16-heading sweep at three vantages measured mean luminance
+// 8.5-8.7/255 with 66-69% of the frame under 8/255 (dead black), and the
+// worst single heading was 97% dead black. The celestial bodies, the neon
+// and the particle work were all being composited onto an unlit black card.
+// 0.30/0.55 is the same ramp SHAPE, just actually turned on.
 // =============================================================================
 function updateNebulaSkyboxOpacity() {
     const sky = (typeof window !== 'undefined') ? window.nebulaSkybox : null;
@@ -18126,8 +18146,8 @@ function updateNebulaSkyboxOpacity() {
 
     const fadeStart = 1500;
     const fadeEnd = 70000;
-    const minOp = 0.12;
-    const maxOp = 0.20;
+    const minOp = 0.30;
+    const maxOp = 0.55;
 
     let targetOpacity;
     if (distanceFromStart < fadeStart) {

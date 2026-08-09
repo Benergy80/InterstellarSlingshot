@@ -2913,6 +2913,18 @@ function renderIndividualMapDot(c, raised) {
         dotSize = c.dotPriority >= 110 ? '9px' : '7px';
         outline = '1px solid rgba(255,255,255,0.9)';
     }
+    // The player's actual locked/selected target — renderClusteredMapDots
+    // passes raised=true for the WHOLE vip list, so "raised" alone can't
+    // tell this blip apart from a same-tier hostile neighbour sitting
+    // right next to it (identical colour/outline/glow/z-index otherwise).
+    // c.mustIndividual is true ONLY for gameState.currentTarget / the
+    // active lock target (see where _clusterCandidates is built), so a
+    // cyan reticle ring here always singles out the one contact combat
+    // depends on reading correctly, never a generic nearby VIP.
+    if (c.mustIndividual) {
+        outline = '2px solid #00fff9';
+        shadow = (shadow === 'none') ? '0 0 6px #00fff9' : shadow + ', 0 0 8px #00fff9';
+    }
 
     if (s.size !== dotSize) { dot.style.width = dotSize; dot.style.height = dotSize; s.size = dotSize; }
     if (s.bg !== c.dotColor) { dot.style.backgroundColor = c.dotColor; s.bg = c.dotColor; }
@@ -2933,8 +2945,11 @@ function renderIndividualMapDot(c, raised) {
     if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
     if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
     // Raised dots (current target / active lock) sit above a same-cell
-    // aggregate; everything else shares the CSS class's base z-index.
-    const z = raised ? '5' : '';
+    // aggregate; everything else shares the CSS class's base z-index. The
+    // actual locked/current target goes one higher still, above every
+    // other raised VIP, so its cyan reticle ring never gets edge-clipped
+    // by a neighbour's own outline.
+    const z = c.mustIndividual ? '6' : (raised ? '5' : '');
     if (s.z !== z) { dot.style.zIndex = z; s.z = z; }
     if (_mapTitleTick) {
         const t = `${c.name} (${c.distance.toFixed(0)} units)`;
@@ -3078,6 +3093,55 @@ function renderAllyMarker(c) {
     }
 }
 
+// ── Auto radar range (round 2 fix) ───────────────────────────────────────
+// A fixed 3000u range put the whole 200-400u dogfight band inside a ~7px
+// annulus hugging the player glyph — 5 hostiles spanning a 2:1 range
+// spread rendered as a fused rosette glued to the "you" icon. Contract the
+// range toward the nearest hostile so the combat band actually uses the
+// disc, and relax back to the full 3000u scan once nothing hostile is
+// close. Snapped onto a coarse ladder with a dwell timer so the range
+// STEPS between states instead of continuously breathing as the nearest
+// hostile's distance fluctuates frame to frame.
+const RADAR_RANGE_LADDER = [500, 750, 1000, 1500, 3000];
+const RADAR_RANGE_DWELL_MS = 1500;
+
+function nearestHostileDistance() {
+    if (typeof camera === 'undefined' || typeof enemies === 'undefined') return Infinity;
+    let best = Infinity;
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.position || !e.userData || e.userData.health <= 0) continue;
+        const d = camera.position.distanceTo(e.position);
+        if (d < best) best = d;
+    }
+    return best;
+}
+
+function _snapRadarRange(want) {
+    for (let i = 0; i < RADAR_RANGE_LADDER.length; i++) {
+        if (want <= RADAR_RANGE_LADDER[i]) return RADAR_RANGE_LADDER[i];
+    }
+    return RADAR_RANGE_LADDER[RADAR_RANGE_LADDER.length - 1];
+}
+
+// State lives on the function itself (same pattern as
+// updateGalaxyMap._pathDots below) rather than a fresh module-level
+// global. Dwell is a MINIMUM TIME BETWEEN CHANGES, not a delay before the
+// first reaction — a closing hostile snaps the range in immediately, then
+// the range can't flip again for RADAR_RANGE_DWELL_MS.
+function _currentRadarRange(nowMs) {
+    let st = _currentRadarRange._state;
+    if (!st) st = _currentRadarRange._state = { value: 3000, lastChangeAt: -Infinity };
+    const _near = nearestHostileDistance();
+    const _want = _near < 900 ? Math.max(500, Math.min(1200, _near * 2.2)) : 3000;
+    const snapped = _snapRadarRange(_want);
+    if (snapped !== st.value && (nowMs - st.lastChangeAt) >= RADAR_RANGE_DWELL_MS) {
+        st.value = snapped;
+        st.lastChangeAt = nowMs;
+    }
+    return st.value;
+}
+
 function updateGalaxyMap() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     
@@ -3114,7 +3178,8 @@ function updateGalaxyMap() {
         _rimLabel = document.createElement('div');
         _rimLabel.id = 'mapRadarRimLabel';
         _rimLabel.style.cssText = 'position:absolute;left:50%;bottom:4%;transform:translateX(-50%);font-size:8px;color:#88ccff;background:rgba(0,0,40,0.7);padding:1px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;white-space:nowrap;';
-        _rimLabel.textContent = '2600u / ±ELEV';
+        // Text is set below, every refresh, from the live (auto-ranging)
+        // radarRange — compare-and-set so a steady range writes nothing.
         _galaxyMap.appendChild(_rimLabel);
     }
     if (_rimLabel) _rimLabel.style.display = 'block';
@@ -3152,7 +3217,15 @@ function updateGalaxyMap() {
     
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
-    const radarRange = 3000; // Detection range for galactic view (6000u diameter)
+    // Auto-ranging (round 2 fix): contracts toward the nearest hostile so
+    // the 200-400u dogfight band isn't crushed into a sliver around the
+    // player glyph, snapped to a ladder + dwell so it steps, not breathes.
+    // See _currentRadarRange / nearestHostileDistance above.
+    const radarRange = _currentRadarRange(Date.now());
+    if (_rimLabel) {
+        const _rimText = radarRange + 'u / ±ELEV';
+        if (_rimLabel.textContent !== _rimText) _rimLabel.textContent = _rimText;
+    }
 
     // Rewind the persistent blip pool for this refresh (no teardown).
     mapDotPool.begin(galaxyMap);

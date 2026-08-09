@@ -87,6 +87,20 @@
     // warp.  noDuck: this one IS the bloom, so it must not fight the bed it
     // is lifting; ducking here would flatten the exact moment of arrival.
     warpExit:        { file: 'nebula5.mp3',          at: 4.05,  dur: 2.40, gain: 0.58, atk: 0.05, rel: 0.80, cool: 6000,  hold: 900, noDuck: true },
+    // The single most frequent beat in the game (score climbs on every
+    // kill, arcade.js addKill()) gets its own light punctuation — but
+    // "frequent" means small and short, not another fanfare: quiet gain,
+    // a ~0.5s envelope-forced stab (the underlying file keeps playing
+    // under it; the envelope just cuts it off), a short cooldown so a
+    // real dogfight's kill cadence still gets punctuated per-kill instead
+    // of once every several seconds, and noDuck because sidechaining the
+    // combat bed on THIS frequency would just be constant pumping, not a
+    // moment. Cut from a Galaxy exploration track (never a combat bed —
+    // bossFight/borg/eliteGuardians — so a kill hit never smears into the
+    // track that's actively crossfading under it, same reasoning as
+    // bossSpawn avoiding Boss Fight.mp3) — measured the largest early
+    // silence-to-hit jump (76 dB) same methodology as every other slice.
+    kill:            { file: 'Galaxy3.mp3',          at: 0.40,  dur: 0.50, gain: 0.55, atk: 0.02, rel: 0.28, cool: 350,   hold: 250, noDuck: true },
   };
   const STINGER_SPACING = 900;          // ms minimum gap between ANY two hits
   const STINGER_DUCK    = 0.30;         // sidechain: bed drops 30% under a hit
@@ -216,6 +230,7 @@
     seenBosses: null,     // Set of boss uuids already stingered
     lastMissionsDone: -1,
     lastGalaxiesCleared: -1,
+    lastScore: -1,         // gameState.score edge — see pollEvents' KILLS block
 
     lastTick: 0,
 
@@ -1373,6 +1388,21 @@
       st.lastMissionsDone = done;
     }
 
+    // KILLS — score climbs on every kill (arcade.js addKill()), and until
+    // now that was the single most frequent beat in the game to get zero
+    // musical acknowledgment. A raw score delta is a strictly WIDER trigger
+    // than "a kill happened" (the rare megastructure-discovery bonus in
+    // game-core.js also nudges score), but that bonus already fires its own
+    // 'discovery' cue and is rare enough that an extra quiet stab under it
+    // is not a false positive worth a second observation channel for.
+    if (typeof gameState.score === 'number') {
+      const score = gameState.score;
+      if (st.lastScore >= 0 && score > st.lastScore) {
+        playStinger('kill', null);
+      }
+      st.lastScore = score;
+    }
+
     // GALAXY LIBERATION — the campaign's biggest beat gets the biggest hit.
     const cleared = gameState.galaxiesCleared || 0;
     if (st.lastGalaxiesCleared >= 0 && cleared > st.lastGalaxiesCleared) {
@@ -1399,7 +1429,7 @@
   // decoder is actually still moving.  This does: sample currentTime, and
   // if the track that's supposed to be audible right now hasn't moved in
   // LIVENESS_STALL_MS, that's dead air wearing a healthy mix.
-  const LIVENESS_SAMPLE_MS = 1000;   // how often we look at currentTime
+  const LIVENESS_SAMPLE_MS = 250;    // how often we look at currentTime
   const LIVENESS_STALL_MS  = 1500;   // no advance for this long = stalled
   // A key that has never once proven itself advancing in its CURRENT watch
   // window (liv.confirmed === false) is watched on a far tighter clock than
@@ -1567,7 +1597,12 @@
     // reason to judge THAT on the slow baseline either) and to the moment
     // stuckSince first gets set (the sample that flags a suspected stall) —
     // once we suspect a freeze, confirming it fast beats paying the full
-    // 1000ms sample-granularity tax on a track already under suspicion.
+    // LIVENESS_SAMPLE_MS sample-granularity tax on a track already under
+    // suspicion. `urgent` gates BOTH the sample cadence (sampleMs below)
+    // and the judging threshold (stallMs below) — a track already under
+    // suspicion must be judged on the same fast clock it's being sampled
+    // on, or suspicion starts on the fast clock and then gets judged on the
+    // slow one, which is its own (subtler) version of the same bug.
     const urgent = liv.escaping || liv.recovering || !!liv.stuckSince;
     // A key that has never once proven itself advancing THIS watch window
     // (liv.confirmed still false) gets the fastest clock of all — see
@@ -1588,7 +1623,7 @@
     const sampleMs = firstConfirm ? LIVENESS_CONFIRM_SAMPLE_MS
                     : (urgent ? 350 : LIVENESS_SAMPLE_MS);
     const stallMs = firstConfirm ? LIVENESS_CONFIRM_STALL_MS
-                   : ((liv.escaping || liv.recovering) ? 500 : LIVENESS_STALL_MS);
+                   : (urgent ? 500 : LIVENESS_STALL_MS);
 
     // Nothing to watch, or the mix is legitimately silent — a stall check
     // is meaningless there, so just re-arm the baseline.

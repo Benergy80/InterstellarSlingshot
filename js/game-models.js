@@ -429,6 +429,7 @@ function _addFresnelRim(material, opts) {
     const panelDetail = !!opts.panelDetail;
     const hullForm = !!opts.hullForm;
     const battleDamage = panelDetail && (opts.battleDamage !== false);
+    const hullSpec = !!opts.hullSpec;
     const needObjNormal = panelDetail || hullForm;
     const uniforms = {
         rimColorIdle: { value: new THREE.Color(opts.idle !== undefined ? opts.idle : 0x2ad4ff) },
@@ -443,9 +444,40 @@ function _addFresnelRim(material, opts) {
     };
     if (panelDetail) {
         uniforms.uRimPanelCell = { value: opts.panelCellSize !== undefined ? opts.panelCellSize : 0.05 };
+        // Strength of the FINE plating octave (0 = coarse plates only, i.e.
+        // the single-lattice behaviour this replaced). Kept as a live uniform
+        // rather than a compile-time branch so the two can be A/B'd on the
+        // same hull in the same frame — which is the only honest way to
+        // measure what the fine layer is worth, since which hostile the
+        // harness happens to grab varies between page loads.
+        uniforms.uRimPanelFine = { value: opts.panelFine !== undefined ? opts.panelFine : 1.0 };
         // How much of the panel mask reaches the EMISSIVE floor (0 = the old
         // albedo-only behaviour, 1 = the floor is fully panelled).
         uniforms.uPanelEmis = { value: opts.panelEmissive !== undefined ? opts.panelEmissive : 0.85 };
+        // _rimPlateOctave calls fwidth(). On a WebGL2 context (which this
+        // game gets — verified live: renderer.capabilities.isWebGL2 true)
+        // derivatives are core and three.js emits no #extension line at all,
+        // but on a WebGL1 fallback the shader will not compile without this
+        // flag, and a hull that fails to compile is an invisible ship.
+        material.extensions = material.extensions || {};
+        material.extensions.derivatives = true;
+    }
+    if (hullSpec) {
+        // Direction TO the key light, in VIEW space. This is not an arbitrary
+        // number: _ensureHullKeyLight parents a DirectionalLight to the camera
+        // at local (160,220,30) aiming at (-60,-80,-600), so its direction is
+        // fixed in view space and normalize(220,300,630) restates it exactly.
+        // Because it is camera-parented, one constant vec3 is correct for
+        // every hull in the scene at every moment — no per-object work.
+        uniforms.uSpecDir = {
+            value: (opts.specDir ? opts.specDir.clone() : new THREE.Vector3(220, 300, 630)).normalize()
+        };
+        uniforms.uSpecColor = { value: new THREE.Color(opts.specColor !== undefined ? opts.specColor : 0xfff2d8) };
+        uniforms.uSpecPower = { value: opts.specPower !== undefined ? opts.specPower : 28.0 };
+        uniforms.uSpecStrength = { value: opts.specStrength !== undefined ? opts.specStrength : 2.2 };
+        uniforms.uSkyUp = { value: new THREE.Color(opts.skyUp !== undefined ? opts.skyUp : 0xff2ad4) };
+        uniforms.uSkyDown = { value: new THREE.Color(opts.skyDown !== undefined ? opts.skyDown : 0x00d4ff) };
+        uniforms.uSkyStrength = { value: opts.skyStrength !== undefined ? opts.skyStrength : 0.10 };
     }
     if (battleDamage) {
         uniforms.uDamage = { value: 0.0 };
@@ -504,6 +536,7 @@ uniform float rimBaseStrength;
 uniform float rimBoostStrength;
 uniform float rimCoreDarken;
 uniform float uRimPanelCell;
+uniform float uRimPanelFine;
 uniform float uPanelEmis;
 ${hullForm ? 'uniform float uFormFloor;\nuniform float uFormTop;\nuniform float uFormNoseSign;\nuniform float uFormNoseDark;' : ''}
 ${battleDamage ? 'uniform float uDamage;\nuniform vec3 uDamageEmber;' : ''}
@@ -515,32 +548,100 @@ float _rimHash21( vec2 p ) {
     return fract( ( p3.x + p3.y ) * p3.z );
 }
 
-float _rimPanelMask( vec2 uv, float cell ) {
+// ONE OCTAVE of plating: seamed plates on a square lattice, with per-plate
+// shade variance and (optionally) a finer greeble speckle.
+//
+// SCREEN-SPACE AWARE, which is the whole reason this is a function and not
+// the inline block it used to be. px is how many lattice cells fall inside
+// one screen pixel (fwidth of the cell-space coordinate). Everything about a
+// procedural lattice's legibility is a function of that number:
+//   px << 1  — a cell is many pixels wide. Draw it at full strength.
+//   px ~ 1   — a cell is about one pixel. The lattice is at Nyquist: the GPU
+//              point-samples it and the pattern turns into per-pixel hash
+//              noise that crawls under the smallest rotation. This is the
+//              exact failure the previous two waves kept trading against
+//              (wave 2 made the cells fine and they dissolved at range; wave
+//              3 made them coarse and the hull went back to flat clay).
+//   px > 1   — pure aliasing, nothing but noise.
+// So the octave fades ITSELF out (vis) as it approaches Nyquist, and its
+// seam is never allowed to be thinner than ~1.5 screen pixels (sw). That
+// makes the frequency question local and automatic instead of a single
+// global constant that has to be wrong at one end of the range or the other,
+// and it is what lets _rimPanelMask below stack a coarse and a fine octave:
+// each one simply switches off at the distance where it stops being an image
+// and starts being noise.
+// norm divides the octave's own spatial mean back out, so an octave adds
+// VARIANCE without changing average hull brightness — it is applied inside
+// the vis blend, never outside it, or an octave that has faded out would
+// still be scaling the hull (the far-range emissive floor that keeps tagged
+// hostiles visible at 1500-3000u is exactly the thing that must not move).
+float _rimPlateOctave( vec2 uv, float cell, float lineW, float shadeAmt, float speckAmt, float norm ) {
     vec2 cUv = uv / cell;
+    vec2 w = fwidth( cUv );
+    float px = max( max( w.x, w.y ), 1e-6 );
+    float vis = 1.0 - smoothstep( 0.30, 0.85, px );
+    if ( vis <= 0.002 ) return 1.0;
     vec2 cId = floor( cUv );
     vec2 cF = fract( cUv );
-    // lineW/seam-floor/panelShade widened — measured hull-pixel luminance
-    // std during boost was 41.5/255 against a >55/255 target: thin, shallow
-    // seams plus a narrow 0.8-1.16 per-plate shade range weren't moving
-    // per-pixel variance enough once the boost rim brightened everything.
-    // Widened again 0.07->0.14 (wave-3 critic): at the game's REAL 77.9deg
-    // FOV a hostile at ~900u subtends only ~30-50 CSS px, not the 150px
-    // the prior acceptance test staged it at — a 0.07-wide seam at that
-    // true framing is sub-pixel and antialiases away to nothing, so the
-    // panel geometry that reads at 150px vanished at the size the player
-    // actually sees. Doubling the seam width (paired with the coarser
-    // _hullPanelCellSize divisor below) keeps a seam >=1px wide down to
-    // roughly a 4px-per-plate framing instead of a 17px one.
-    float lineW = 0.14;
-    float seam = smoothstep( 0.0, lineW, cF.x ) * smoothstep( 0.0, lineW, 1.0 - cF.x )
-               * smoothstep( 0.0, lineW, cF.y ) * smoothstep( 0.0, lineW, 1.0 - cF.y );
-    float panelShade = 0.7 + 0.55 * _rimHash21( cId );
-    float mask = mix( 0.18, 1.0, seam ) * panelShade;
+    // Distance to the nearest plate border, in cell units. Filtering the
+    // seam on this signed distance (instead of the old product of four
+    // smoothsteps) is what makes the AA width meaningful: the transition
+    // is widened symmetrically about lineW, so softening the edge for a
+    // distant hull does NOT also make the seam eat more of the plate and
+    // darken the ship.
+    float d = min( min( cF.x, 1.0 - cF.x ), min( cF.y, 1.0 - cF.y ) );
+    float sw = max( px * 1.5, 0.02 );
+    float seam = smoothstep( lineW - sw, lineW + sw, d );
+    float plate = 1.0 - shadeAmt + 2.0 * shadeAmt * _rimHash21( cId );
+    float mask = mix( 0.18, 1.0, seam ) * plate;
+    if ( speckAmt > 0.0 ) {
+        // Greeble/rivet speckle, 4.2x finer than the plates it sits on, with
+        // its own independent Nyquist fade — at 900u the plates still read
+        // while this grid (which would be ~0.2 px per cell) is switched off.
+        vec2 gUv = cUv * ( 1.0 / 0.24 );
+        vec2 gw = fwidth( gUv );
+        float gvis = 1.0 - smoothstep( 0.30, 0.85, max( gw.x, gw.y ) );
+        float speck = _rimHash21( floor( gUv ) + 11.0 );
+        mask *= 1.0 + gvis * speckAmt * ( step( 0.90, speck ) - step( speck, 0.10 ) );
+    }
+    return mix( 1.0, mask * norm, vis );
+}
 
-    vec2 gUv = uv / ( cell * 0.24 );
-    float speck = _rimHash21( floor( gUv ) + 11.0 );
-    mask *= 1.0 + step( 0.90, speck ) * 0.6 - step( speck, 0.10 ) * 0.6;
-    return mask;
+// THREE OCTAVES, because a hostile is not seen at one size, and because a
+// single lattice provably cannot serve both ends of the range. Measured on
+// the live build: at 4 plates across the longest axis a hull carries a
+// normalized mean |Laplacian| of 13.8 at a 150 px framing (flat clay in
+// close); at 24 plates it carries 49.3 there but is already sub-pixel at
+// combat framing, where a 0.4deg yaw repainted 32.5% of hull pixels —
+// boiling noise, not plating.
+//
+//   COARSE (cell * 3 == maxDim/4) — the silhouette-scale value structure
+//   that survives when a hostile is 40 px wide. Same absolute plate size,
+//   same constants as the single lattice this replaced, so the far read
+//   that was tuned against real engagement framing is preserved exactly.
+//
+//   MID (cell == maxDim/12) — the octave that has to carry the WHOLE brief,
+//   because the measured median dogfight puts a hostile at ~50 px across.
+//   12 plates over 50 px is ~4 px per plate: resolvable. 24 plates over the
+//   same 50 px is ~2 px and its own Nyquist fade would (correctly) switch it
+//   most of the way off, which is exactly what a single 24-cell lattice was
+//   measured doing — nothing at all at the range the player actually fights.
+//
+//   FINE (cell / 3 == maxDim/36) — hull plating for the close pass, live
+//   from roughly a 120 px framing up. Costs nothing at range because it
+//   fades itself out there.
+//
+// Every octave carries a norm that divides its own spatial mean out, so the
+// mask's average — the thing the emissive floor's /0.92 normalisation and
+// every far-range legibility measurement depend on — is held where the
+// single-layer version had it (measured mean 0.77) while per-pixel spread
+// goes up.
+float _rimPanelMask( vec2 uv, float cell ) {
+    float mask = _rimPlateOctave( uv, cell * 3.0, 0.10, 0.275, 0.6, 1.07 );
+    if ( uRimPanelFine <= 0.001 ) return mask;
+    float mid = _rimPlateOctave( uv, cell, 0.09, 0.20, 0.0, 1.39 );
+    float fine = _rimPlateOctave( uv, cell * 0.3333, 0.09, 0.16, 0.0, 1.37 );
+    return mask * mix( 1.0, mid * fine, uRimPanelFine );
 }
 
 float _rimPanelDetail( vec3 posObj, vec3 normalObj, float cell ) {
@@ -592,7 +693,13 @@ uniform float rimCoreDarken;
 ${hullForm ? 'uniform float uFormFloor;\nuniform float uFormTop;\nuniform float uFormNoseSign;\nuniform float uFormNoseDark;' : ''}
 uniform float uTime;`;
 
-        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', fragCommon);
+        // Declared once for both fragCommon branches — the specular block is
+        // independent of whether panel detail is compiled in.
+        const fragSpec = hullSpec
+            ? '\nuniform vec3 uSpecDir;\nuniform vec3 uSpecColor;\nuniform float uSpecPower;\nuniform float uSpecStrength;\nuniform vec3 uSkyUp;\nuniform vec3 uSkyDown;\nuniform float uSkyStrength;'
+            : '';
+
+        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', fragCommon + fragSpec);
 
         let colorInject = `#include <color_fragment>
     float _rimFresEarly = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
@@ -615,7 +722,11 @@ uniform float uTime;`;
             // the RIM of each blotch. The scorch fill darkens; only this
             // edge glows. `_dmgScorch`/`_dmgEdge` are declared here and
             // reused by the emissive inject further down main().
-            colorInject += `    float _dmgF = _rimDamageField( vRimPosObj, vRimNormalObj, uRimPanelCell * 1.6 );
+            // 4.8 == 3.0 (the coarse-octave multiplier in _rimPanelMask) x 1.6.
+            // uRimPanelCell is now the FINE plate size, so the blotch lattice
+            // has to be re-derived from the coarse one or scorch damage would
+            // shrink 6x with it and stop reading as burn at combat range.
+            colorInject += `    float _dmgF = _rimDamageField( vRimPosObj, vRimNormalObj, uRimPanelCell * 4.8 );
     float _dmgThr = 1.00 - 0.58 * uDamage;
     float _dmgScorch = smoothstep( _dmgThr, _dmgThr + 0.16, _dmgF ) * step( 0.02, uDamage );
     float _dmgEdge = _dmgScorch * ( 1.0 - smoothstep( _dmgThr + 0.05, _dmgThr + 0.20, _dmgF ) );
@@ -675,18 +786,95 @@ uniform float uTime;`;
             );
         }
 
-        shader.fragmentShader = shader.fragmentShader
-            .replace(
-                '#include <output_fragment>',
-                `
+        // SPECULAR: THE DIFFERENCE BETWEEN CLAY AND METAL.
+        //
+        // A hull that only ever gains BROAD terms — ambient, an emissive
+        // floor, a fresnel rim — is by construction a shaded solid, because
+        // every one of those terms is a smooth function of the surface
+        // normal. Metal is recognised by the opposite thing: a small, hard,
+        // view-dependent highlight that skates across the surface as the
+        // object turns, and that is bright out of proportion to everything
+        // around it. On a 392-triangle faceted GLB that highlight lands on a
+        // couple of facets at a time, which is precisely the read wanted.
+        //
+        // This is deliberately NOT delivered through an envMap. A PMREM probe
+        // was built and measured on the live build first: at roughness 0.42
+        // and metalness 0.35 the probe arrives almost entirely as the
+        // fully-blurred irradiance term, so on an isolated hull at 300u it
+        // raised mean luminance 153->161 while p90-p10 spread FELL 172->167
+        // and surface detail fell 23.6->22.0. Sweeping roughness 0.42/0.30/
+        // /0.18 and metalness 0.35/0.75/0.95 never reversed the sign: every
+        // configuration bought brightness by spending contrast, because this
+        // hull's appearance is dominated by an emissive floor that a uniform
+        // lift can only wash out. An analytic lobe spends nothing: it is
+        // sparse by construction, so it adds highlight without adding fill.
+        //
+        // Two terms:
+        //   GLINT — a tight Blinn-Phong lobe on the camera-parented key
+        //           light's own direction (so the highlight always agrees
+        //           with the light that is actually shading the hull),
+        //           gated by a Schlick fresnel so it strengthens toward
+        //           grazing facets the way a real specular does.
+        //   SKY   — a two-tone reflection tint looked up by the reflection
+        //           vector, magenta above / cyan below. It is what a hull
+        //           reflecting this game's sky would pick up, and it makes
+        //           adjacent facets differ in HUE as well as value, which
+        //           flat-shaded clay never does. It is written ZERO-MEAN
+        //           (the average of the two sky colours is subtracted) for
+        //           the same reason the env probe was rejected: added as a
+        //           plain sum it is just ambient, and measured that way it
+        //           cost 15% of the hull's p90-p10 spread to buy 26/255 of
+        //           brightness nobody asked for. Zero-mean, it moves hue
+        //           per facet and moves average brightness by nothing.
+        const specInject = hullSpec ? `
+    vec3 _spN = normalize( vRimNormalW );
+    vec3 _spV = normalize( vRimViewW );
+    vec3 _spL = normalize( uSpecDir );
+    vec3 _spH = normalize( _spL + _spV );
+    float _spD = pow( max( dot( _spN, _spH ), 0.0 ), uSpecPower );
+    float _spF = 0.04 + 0.96 * pow( 1.0 - max( dot( _spH, _spV ), 0.0 ), 5.0 );
+    outgoingLight += uSpecColor * ( _spD * ( 0.35 + 0.65 * _spF ) * uSpecStrength );
+    vec3 _spR = reflect( -_spV, _spN );
+    outgoingLight += ( mix( uSkyDown, uSkyUp, _spR.y * 0.5 + 0.5 ) - 0.5 * ( uSkyUp + uSkyDown ) ) * uSkyStrength;
+` : '';
+
+        // THE RIM HAD NEVER RENDERED. This block used to be spliced in by
+        // replacing '#include <output_fragment>', and that string DOES NOT
+        // EXIST in this build's MeshStandardMaterial fragment shader —
+        // verified live: THREE.ShaderChunk.output_fragment is undefined and
+        // ShaderLib.standard.fragmentShader (=== ShaderLib.physical's, they
+        // are the same source here) inlines the outgoing-light assignment
+        // instead, because of the TRANSMISSION branch. String.replace with a
+        // missing needle is a silent no-op, so every hull material in the
+        // game compiled WITHOUT its fresnel rim: the term four consecutive
+        // waves tuned — rimColorIdle/BoostA/BoostB, rimPower,
+        // rimBaseStrength, rimBoostStrength — has been dead code on enemy,
+        // boss, UFO and player hulls this whole time. Proof: setting
+        // rimBaseStrength AND rimBoostStrength to 0 on a live hostile's own
+        // material changed the isolated-hull readback by exactly 0 pixels.
+        // That is a large part of why hulls kept measuring as flat shaded
+        // solids no matter what the rim constants were set to.
+        //
+        // Anchor on the line that is actually there, and keep the old anchor
+        // first so this still works if the engine is upgraded to a build that
+        // has the chunk.
+        const rimBlock = `
     float _rimFres = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
     vec3 _rimBoostShimmer = mix( rimColorBoostA, rimColorBoostB, 0.5 + 0.5 * sin( uTime * 2.6 ) );
     vec3 _rimColor = mix( rimColorIdle, _rimBoostShimmer, boostT );
     float _rimStrengthMix = mix( rimBaseStrength, rimBoostStrength, boostT );
     outgoingLight += _rimColor * _rimFres * _rimStrengthMix;
-    #include <output_fragment>
-`
-            );
+${specInject}`;
+        const OUT_CHUNK = '#include <output_fragment>';
+        const OUT_INLINE = 'gl_FragColor = vec4( outgoingLight, diffuseColor.a );';
+        if (shader.fragmentShader.indexOf(OUT_CHUNK) >= 0) {
+            shader.fragmentShader = shader.fragmentShader.replace(OUT_CHUNK, rimBlock + '    ' + OUT_CHUNK + '\n');
+        } else if (shader.fragmentShader.indexOf(OUT_INLINE) >= 0) {
+            shader.fragmentShader = shader.fragmentShader.replace(OUT_INLINE, rimBlock + '    ' + OUT_INLINE + '\n');
+        } else if (typeof console !== 'undefined') {
+            // Never fail silently again.
+            console.warn('_addFresnelRim: no output anchor in fragment shader; rim/spec not injected');
+        }
     };
 
     material.userData._rimUniforms = uniforms;
@@ -705,23 +893,41 @@ uniform float uTime;`;
 // POSITION + NORMAL only, no TEXCOORD — see the player-hull note further
 // down) since _rimPanelDetail samples object-space position, not uv.
 //
-// Divisor retuned 9->4 (wave-3 critic): "~9 plates across the longest
-// axis" was measured/validated by staging a ship to fill 150 CSS px
-// (a 4-5x zoom the player never gets — the demo autopilot's engagement
-// band puts real hostiles at 635-4656u, subtending 7-52 CSS px at the
-// game's actual 77.9deg FOV). At that true on-screen size 9 plates per
-// axis puts most seams and the cell*0.24 speck grid below one buffer
-// pixel, so panelDetail antialiases into noise instead of readable
-// plates. Coarsening to 4 plates per axis (paired with the wider
-// lineW above) roughly doubles each plate's pixel footprint so seams
-// stay >=1px and the speck grid stays resolvable down to ~30-50px
-// apparent hull size instead of only at the old staged framing.
+// THIS IS NOW THE MID PLATE SIZE, and _rimPanelMask derives the coarse
+// octave from it as cell * 3 and the fine octave as cell / 3 — so the old
+// "4 plates across the longest axis" lattice is still drawn, unchanged, as
+// the coarse octave, with 12 and 36 plate lattices layered over it.
+//
+// The divisor has been round-tripped 9 -> 4 -> 24 across three waves and
+// the reason is worth writing down, because 24 on its own would be the
+// wave-2 mistake again. Measured live on a Federation hostile, isolated
+// hull, normalized mean |Laplacian| (surface detail) against the fraction
+// of hull pixels that change by >=8/255 under a 0.4deg yaw (aliasing —
+// a plate pattern that is really there does not repaint a third of the
+// ship when it turns by less than half a degree):
+//
+//        90u                    300u
+//   div  detail  alias     detail  alias
+//    4    13.8   0.059      36.4   0.087     <- shipped: clean, but clay
+//   12    29.4   0.172      85.1   0.222
+//   24    49.3   0.288     115.8   0.325     <- critic's number, and 33%
+//   48    84.1   0.404     134.4   0.443        of the hull boiling at 300u
+//
+// A hostile at combat range is ~50 px across, so 24 plates is ~2 px per
+// plate: the detail column at div 24 is measuring hash noise, not plating,
+// and confirming that, a 24-cell lattice measured live at the true combat
+// framing raised surface detail by 0.0% because its own Nyquist fade had
+// (correctly) switched it off. The fix is not to pick a compromise divisor
+// — it is to make the frequency LOCAL and then stack octaves.
+// _rimPlateOctave fades each octave out as its cells approach one screen
+// pixel, so 4 / 12 / 36 plates can all be authored at once and the ship
+// simply draws whichever of them its current on-screen size can resolve.
 function _hullPanelCellSize(geometry) {
     if (!geometry) return 12;
     if (!geometry.boundingBox) geometry.computeBoundingBox();
     const size = geometry.boundingBox.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z) || 1;
-    return Math.max(maxDim / 4, 0.0005);
+    return Math.max(maxDim / 12, 0.0005);
 }
 
 // REAL KEY LIGHT for enemy/boss hulls. Every hull floor below (emissive +
@@ -870,8 +1076,16 @@ function createFactionHullMaterial(colorHex, opts) {
         boostB: rimHot.getHex(),
         boostT: opts.rimIntensity !== undefined ? opts.rimIntensity : 0.6,
         power: opts.rimPower !== undefined ? opts.rimPower : 2.4,
-        baseStrength: opts.rimBaseStrength !== undefined ? opts.rimBaseStrength : 0.9,
-        boostStrength: opts.rimBoostStrength !== undefined ? opts.rimBoostStrength : 1.7,
+        // HALVED (0.9/1.7 -> 0.45/0.85) because these constants had never
+        // actually been seen. The rim block was never spliced into the
+        // fragment shader (see the anchor bug in _addFresnelRim), so every
+        // rim number this material carries was tuned against a term that
+        // rendered nothing. Now that it renders, the shipped values put
+        // +13/255 of flat lift on the hull and cost 5% of its measured
+        // surface detail; half strength keeps the leading-edge separation
+        // the rim is for at +7/255 and 2.5%.
+        baseStrength: opts.rimBaseStrength !== undefined ? opts.rimBaseStrength : 0.45,
+        boostStrength: opts.rimBoostStrength !== undefined ? opts.rimBoostStrength : 0.85,
         coreDarken: opts.coreDarken !== undefined ? opts.coreDarken : 0.22,
         // PANEL/RIVET SURFACE DETAIL. These GLBs carry no TEXCOORD (see
         // the player-hull note further down), so a conventional
@@ -884,6 +1098,14 @@ function createFactionHullMaterial(colorHex, opts) {
         // of createFactionHullMaterial (enemy, boss, fallback, UFO).
         panelDetail: opts.panelDetail !== false,
         panelCellSize: opts.panelCellSize !== undefined ? opts.panelCellSize : 12,
+        // The hard specular that makes a hostile read as a lit metal object
+        // rather than a shaded solid. On by default for every enemy, boss,
+        // fallback and UFO hull — the mechanism is shared, there are no
+        // per-class overrides.
+        hullSpec: opts.hullSpec !== false,
+        specStrength: opts.specStrength !== undefined ? opts.specStrength : 2.2,
+        specPower: opts.specPower !== undefined ? opts.specPower : 28.0,
+        skyStrength: opts.skyStrength !== undefined ? opts.skyStrength : 0.10,
         hullForm: opts.hullForm !== false,
         formFloor: opts.formFloor !== undefined ? opts.formFloor : 0.66,
         formTop: opts.formTop !== undefined ? opts.formTop : 1.72,
@@ -1443,11 +1665,15 @@ const PLAYER_BOOST_REFERENCE_SPEED = 6.8;
 // GLB: POSITION + NORMAL only, no TEXCOORD) so a conventional map/normalMap
 // is out — the panel/greeble detail below is projected triplanar in the
 // mesh's own OBJECT space (see _addFresnelRim's panelDetail path) instead,
-// which needs no UVs and stays fixed to the hull under rotation. cell
-// ~0.045 gives roughly 6 plates across the ~0.28-unit hull length (the
-// existing engine-bloom sprites are hand-placed at local Z=-0.14, i.e.
-// half-length 0.14, in this same object-space frame).
-const PLAYER_HULL_PANEL_CELL = 0.045;
+// which needs no UVs and stays fixed to the hull under rotation. This is
+// the MID cell; _rimPanelMask draws the coarse octave at cell * 3, so 0.015
+// reproduces the previous 0.045 plate lattice (~6 plates across the
+// ~0.28-unit hull length — the existing engine-bloom sprites are hand-placed
+// at local Z=-0.14, i.e. half-length 0.14, in this same object-space frame)
+// and layers 18- and 54-plate lattices over it, which the player's own ship,
+// permanently ~10-30u from the third-person camera, is always close enough
+// to resolve.
+const PLAYER_HULL_PANEL_CELL = 0.015;
 
 function createPlayerHullMaterial() {
     // Presence floor, in the ship's own accent cyan. 0.18 x 0.7 = 0.126
@@ -1477,11 +1703,27 @@ function createPlayerHullMaterial() {
         boostB: 0xff2ad4,    // magenta
         boostT: 0.0,
         power: 2.6,
-        baseStrength: 2.4,   // was 1.3 — too weak to beat direct-light response on facing panels (measured rim/core ratio 0.64, i.e. rim READ DARKER than core)
-        boostStrength: 4.2,  // was 2.8
+        // Also cut (2.4/4.2 -> 1.0/1.8): same reason as the hostiles above.
+        // These were raised twice against a rim term that was never in the
+        // compiled shader, so the "measured rim/core ratio 0.64" they were
+        // chasing was a measurement of no rim at all. At 2.4/4.2 a now-live
+        // rim floods a hull that already carries a 1.15-intensity emissive
+        // floor.
+        baseStrength: 1.0,
+        boostStrength: 1.8,
         coreDarken: 0.62,    // was 0.55 — dim facing panels so the rim reads brighter than the core instead of losing to it; raised further to widen core/rim luminance spread (measured hull-pixel std 41.5/255 during boost, target >55/255)
         panelDetail: true,
         panelCellSize: PLAYER_HULL_PANEL_CELL,
+        // Same specular mechanism as the hostiles, in the player ship's own
+        // cool key: this hull is metalness 0.65 and sits 10-30u from the
+        // camera, so it is the surface with the most to gain from a real
+        // highlight — and it is the reference the player's eye calibrates
+        // "what a ship in this game is made of" against.
+        hullSpec: true,
+        specColor: 0xd8f4ff,
+        specStrength: 2.6,
+        specPower: 34.0,
+        skyStrength: 0.07,
         // The damage tier is a HOSTILE-legibility cue ("that one is nearly
         // dead") and the player's own hull already has a HUD hull-integrity
         // bar six inches from the crosshair. Off here so the player ship does

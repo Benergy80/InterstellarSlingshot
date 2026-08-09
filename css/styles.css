@@ -951,6 +951,23 @@ body.ui-mode {
     outline-offset: 2px;
 }
 
+/* #targetMapPosition is authored in index.html (sealed, not ours to edit)
+   as a filled 12px bg-red-400 disc — identical hue to every hostile dot
+   around it, so the "you are targeting this" cue read as just another red
+   blob ("red among red"). Restyled here, from our owned stylesheet, into
+   a hollow cyan targeting reticle instead. The ID selector's specificity
+   beats the .bg-red-400 utility class outright; box-shadow additionally
+   needs !important because index.html sets it inline (inline style
+   otherwise wins over any external stylesheet rule regardless of
+   selector). The element's own inline `animation: pulse 1s infinite` is
+   left alone — that keyframe only scales/fades opacity, so it now pulses
+   the cyan ring instead of the old red fill, still a fine "locked" cue. */
+#targetMapPosition {
+    background: transparent;
+    border: 2px solid #00fff9;
+    box-shadow: 0 0 6px #00fff9, 0 0 10px rgba(0,255,249,0.55) !important;
+}
+
 /* Elevation "drop-line" — one permanent child per radar dot (see
    mapDotPool._fresh). Height/position are the only things JS ever
    touches; a contact on-plane keeps height:0 and is invisible without

@@ -667,6 +667,37 @@
       }
     }
 
+    // ARRIVAL CUT-OFF: "the warp never arrives anywhere" — physics ends the
+    // O-key emergency-warp boost purely on a stopwatch (timeRemaining <= 0),
+    // always flying its full fixed distance regardless of what's staged as
+    // the reveal subject. That leaves the arrival distance this same system
+    // computes for itself (arriveDist, above) as dead code on the warp path
+    // — the boost sails past the staged body and fires the exit beat while
+    // RECEDING from it. End the burn where the reveal actually reads instead
+    // of where the timer says to: every frame a non-jump warp is active with
+    // a live staged subject, check the CURRENT range and cut the boost
+    // (mirrors the dist<=500 combat-intercept cut below/elsewhere in this
+    // file — physics already treats timeRemaining=0 as "stop now" from any
+    // source) once we're within arriveDist plus one ramp-length of lead: the
+    // exit ramp (camera-system.js / visual-flair.js) still eats roughly
+    // 0.35 * speed * 60 * 1s of ground while it eases warp -> cruise, so
+    // cutting exactly AT arriveDist would coast straight through the
+    // standoff and still overshoot the framing.
+    if (typeof gameState !== 'undefined' && gameState._arrivalSubject &&
+        gameState._arrivalSubject.obj && gameState._arrivalSubject.obj.position &&
+        gameState.emergencyWarp && gameState.emergencyWarp.active &&
+        !gameState.emergencyWarp.isJump &&
+        Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 15000) {
+      const _as = gameState._arrivalSubject;
+      const _cp = camPos();
+      const _d = _cp.distanceTo(_as.obj.position);
+      const _speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      const _lead = 0.35 * _speed * 60 * 1.0;
+      if (_d <= _as.arriveDist + _lead) {
+        gameState.emergencyWarp.timeRemaining = 0;
+      }
+    }
+
     // WARP INTEGRITY: a full O-key emergency warp must run its whole 15 s
     // boost. Phase logic was pressing X mid-boost — flyToward's distance
     // brake (speed×35 = 3,500 u at warp speed!), combat's overshoot brake,
@@ -2473,8 +2504,12 @@
   // resolves the actual navigation target to a concrete nearby BODY (planet/
   // star, never an asteroid) worth revealing, and computes how far from it
   // the ship should be standing when the tunnel finishes collapsing so the
-  // body reads as an arrival, not a speck: angular size >= 15 degrees full,
+  // body reads as an arrival, not a speck: angular size >= 40 degrees full,
   // and outside the body's own collision/gravity danger radius.
+  // (Was 15deg — the paused-world GPU readback at exactly that standoff
+  // measured only 15.9% of the central-third frame filled vs a live
+  // reference's 95.3%; 15deg technically clears "on screen" but reads as a
+  // speck, not an arrival.)
   // gameState._arrivalSubject is the single shared handle: set here (only
   // when a real body is found — no candidate means no reveal is claimed),
   // read by camera-system.js's exit-framing assist and by the phase-agnostic
@@ -2491,12 +2526,12 @@
     return Math.max(sz * 2, 80);
   }
 
-  // Distance at which a body of this radius subtends exactly a 15-degree
+  // Distance at which a body of this radius subtends exactly a 40-degree
   // full angle, floored just outside its own danger radius (never ask the
   // ship to stand somewhere that reads as "arrived" but is also "in the
   // grave").
   function _idealArriveDist(radius, dangerR) {
-    const thresh = radius / Math.tan(7.5 * _DEG2RAD);
+    const thresh = radius / Math.tan(20 * _DEG2RAD);
     return Math.max(thresh, dangerR * 1.15);
   }
 
@@ -2561,8 +2596,26 @@
     const estBoostDist = boostSpeed * 60 * (boostDur / 1000); // u/frame*60fps*seconds
     _owarpPosTmp.copy(camPos()).addScaledVector(_owarpFwdTmp, estBoostDist);
     const cand = _findArrivalSubject(_owarpPosTmp, Math.max(3000, estBoostDist * 0.6));
-    if (cand) _setArrivalSubject(cand.obj, cand.radius);
-    else _clearArrivalSubject();
+    if (cand) {
+      // REJECT GUARANTEED FLYBYS: a candidate near the ESTIMATED landing
+      // point can still be one the burn will sail past — e.g. staged near
+      // the far edge of that search radius while already close to the ship
+      // today. Only claim a subject the boost can actually stop at: its
+      // CURRENT range (from here, now) must fit within estBoostDist minus
+      // the standoff arriveDist reserves for the reveal, so there's enough
+      // burn left to reach the arrival cut-off (below/in the per-frame
+      // tick) before overshooting it.
+      const dangerR = _arrivalDangerR(cand.obj);
+      const arriveDist = _idealArriveDist(cand.radius, dangerR);
+      const curRange = camPos().distanceTo(cand.obj.position);
+      if (curRange <= estBoostDist - arriveDist) {
+        _setArrivalSubject(cand.obj, cand.radius);
+      } else {
+        _clearArrivalSubject();
+      }
+    } else {
+      _clearArrivalSubject();
+    }
   }
 
   // ─── navigateTo: closed-loop travel controller ─────────────────────────────
