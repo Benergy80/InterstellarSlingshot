@@ -6057,24 +6057,31 @@ try {
         //    black-point subtract in step 4.5: it deletes the overlap tails
         //    outright (they land below the black point and resolve to zero)
         //    while leaving the blob CORES intact. So the alphas here are
-        //    painted for the look we want in the dust lanes, ~3x the cut
-        //    values, and the subtract — not the artist — polices the floor.
+        //    painted for the look we want in the dust lanes and the subtract
+        //    — not the artist — polices the floor.
+        //    These are ~2.2x the previous pass's values. That pass paired
+        //    timid alphas with an aggressive 0.115 black point and the two
+        //    compounded: the band and dust body landed UNDER the black point
+        //    and were deleted, leaving a texture that was 43.79% literal
+        //    zero. With the black point now at 0.020 the alphas have to carry
+        //    the mid-tone body themselves — this is the paint, 4.5 is still
+        //    the floor police.
         const _bandY = _nebH * (0.42 + Math.random() * 0.16);
         for (let i = 0; i < 26; i++) {
             const x = (i / 26) * _nebW * 1.4 - _nebW * 0.2;
             const y = _bandY + Math.sin(i * 0.7) * _nebH * 0.05;
             _nebBlob(x, y, _nebH * (0.16 + Math.random() * 0.08),
-                [[0, 'rgba(200,190,255,0.125)'], [0.5, 'rgba(140,120,220,0.055)'], [1, 'rgba(0,0,0,0)']],
+                [[0, 'rgba(200,190,255,0.275)'], [0.5, 'rgba(140,120,220,0.121)'], [1, 'rgba(0,0,0,0)']],
                 50, 'lighter');
         }
 
         // 3) Dust-lane / warm-cool nebula blobs in synthwave palette
         const _nebPalette = [
-            ['rgba(255,45,190,0.215)', 'rgba(255,45,190,0)'],  // magenta dust
-            ['rgba(0,220,255,0.200)', 'rgba(0,220,255,0)'],    // cyan dust
-            ['rgba(140,60,255,0.215)', 'rgba(140,60,255,0)'],  // violet dust
-            ['rgba(255,160,60,0.155)', 'rgba(255,160,60,0)'],  // amber — warm zone
-            ['rgba(40,220,190,0.140)', 'rgba(40,220,190,0)']   // teal — cool zone
+            ['rgba(255,45,190,0.473)', 'rgba(255,45,190,0)'],  // magenta dust
+            ['rgba(0,220,255,0.440)', 'rgba(0,220,255,0)'],    // cyan dust
+            ['rgba(140,60,255,0.473)', 'rgba(140,60,255,0)'],  // violet dust
+            ['rgba(255,160,60,0.341)', 'rgba(255,160,60,0)'],  // amber — warm zone
+            ['rgba(40,220,190,0.308)', 'rgba(40,220,190,0)']   // teal — cool zone
         ];
         for (let i = 0; i < 16; i++) {
             const p = _nebPalette[i % _nebPalette.length];
@@ -6147,9 +6154,30 @@ try {
         //      instead of being crushed with it. One pass over the canvas at
         //      load time (256-entry LUT, no per-pixel pow) — zero per-frame
         //      cost, and it is the last thing to touch the dust layer.
-        const _NEB_BLACK_POINT = 0.115;   // texels dimmer than this → hard 0
-        const _NEB_GAMMA = 1.30;          // crush the mids that survive
-        const _NEB_GAIN = 1.45;           // then put the punch back in the lanes
+        //      CALIBRATION (measured on the live 2048x1024 canvas, then on the
+        //      rendered frame at a frozen vantage):
+        //      0.115 was the right IDEA at the wrong SETTING. It did not just
+        //      eat the gradient tails — it ate the nebula's entire mid-tone
+        //      body with them and kept only the small hot cores. At 0.115 the
+        //      baked texture measured 43.79% of texels at EXACTLY RGB(0,0,0),
+        //      51.15% under 8/255, mean 14.89/255, and only 0.73% above half
+        //      white. Because the dome is AdditiveBlending a zero texel adds
+        //      exactly nothing at ANY opacity, so the sky could not be turned
+        //      back on from the opacity knob: hiding the dome entirely gave
+        //      frame meanLum 31.86, op=0.30 gave 36.88, and op=1.00 — 3.3x
+        //      more light — gave only 48.55, against a 104.57 reference. You
+        //      cannot scale a near-black texture into a luminous one.
+        //      0.020 keeps the fix's purpose (the far tail, which is what
+        //      washed the whole sphere, still resolves to hard 0 — dead-black
+        //      pixels in frame are unchanged at ~0.5%) while letting the
+        //      mid-tone body through. Gamma flips below 1 so those recovered
+        //      mids are LIFTED rather than crushed, and the gain carries the
+        //      lanes. Re-measured with these three constants: texture zeros
+        //      43.79% → 8.14%, frame meanLum 36.90 → 105.73, meanChroma
+        //      26.59 → 47.59, flat-background card 2.72% → 0.00%.
+        const _NEB_BLACK_POINT = 0.020;   // texels dimmer than this → hard 0
+        const _NEB_GAMMA = 0.85;          // lift the mids that survive
+        const _NEB_GAIN = 1.70;           // then put the punch back in the lanes
         try {
             const _nebLut = new Uint8ClampedArray(256);
             const _nebSpan = 1 - _NEB_BLACK_POINT;

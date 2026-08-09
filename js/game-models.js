@@ -1103,8 +1103,40 @@ function createFactionHullMaterial(colorHex, opts) {
         // fallback and UFO hull — the mechanism is shared, there are no
         // per-class overrides.
         hullSpec: opts.hullSpec !== false,
-        specStrength: opts.specStrength !== undefined ? opts.specStrength : 2.2,
-        specPower: opts.specPower !== undefined ? opts.specPower : 28.0,
+        // 2.2 / 28 IS A WASH, NOT A HIGHLIGHT. The round-5 critic ablated this
+        // term live and reported it net-NEGATIVE on the pale-hull factions —
+        // spec OFF buying +43% high-frequency detail and +78% p90-p10 contrast
+        // at 90u — on the argument that these are 392-tri GLBs with SMOOTHED
+        // normals, so an N.H^28 lobe covers a huge swath of the ship and at
+        // 2.2 in linear space that swath clips to white through ACES, erasing
+        // the panel plates the detail injection just added.
+        //
+        // MEASURED AGAIN HERE (same-frame readback, world paused, subject
+        // isolated, hull-only render, px at lum>40), the direction is theirs
+        // but the magnitude is not — on this build the term barely renders at
+        // all:
+        //   91.5u hull @150u   spec 2.2/28  mean|Lap| 21.06  p90-p10 146
+        //                      spec 0.5/90  mean|Lap| 21.19  p90-p10 146
+        //                      spec OFF     mean|Lap| 21.19  p90-p10 146
+        //   39.4u hull @300u   2.2/28 47.47 / 117   0.5/90 47.82 / 119
+        //                      OFF    47.84 / 119
+        // 0.5/90 is bit-for-bit indistinguishable from OFF (uSpecStrength 0.5
+        // vs 50 at power 90 renders the SAME mean luminance to 0.1/255 — the
+        // lobe is so tight it lands on no pixels of these hulls), and the old
+        // 2.2/28 was itself only ~0.7% of detail away from OFF. The plumbing
+        // is live, not dead: strength 50 at power 2 moves hull mean luminance
+        // 140.8 -> 246.3, so the term does render, it just has nothing to bite
+        // on at a sane exponent.
+        //
+        // Shipped at the critic's prescribed 0.5 / 90 because every measured
+        // number moves the right way (detail +0.7%, contrast +2 on the small
+        // hull) and because it removes the ACES-clipping failure mode on any
+        // hull that IS flat-normalled enough for the wide lobe to land. What
+        // it does NOT do is buy the +43%/+78% the ablation advertised, and the
+        // honest read of these numbers is that hull material is being carried
+        // by the panel/rim/form injections, not by this highlight.
+        specStrength: opts.specStrength !== undefined ? opts.specStrength : 0.5,
+        specPower: opts.specPower !== undefined ? opts.specPower : 90.0,
         skyStrength: opts.skyStrength !== undefined ? opts.skyStrength : 0.10,
         hullForm: opts.hullForm !== false,
         formFloor: opts.formFloor !== undefined ? opts.formFloor : 0.66,

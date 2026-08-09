@@ -559,8 +559,26 @@ function _ensureShipThrusterCones(ship, color) {
                 // rim, nav lights and a hull lamp, all aspect-independent.
                 // Absolute floors keep the small 12-16u wingman-class hulls
                 // from getting a sub-pixel wisp.
+                //
+                // THE RADIUS FLOOR WAS 2.0 AND IT IS WHY SMALL HULLS FARED
+                // WORST. It is an ABSOLUTE world-space floor sitting under a
+                // term that is 9% of hull length, so it only binds on hulls
+                // under ~22u — and on exactly those hulls it decouples plume
+                // width from ship size entirely: the plume stops shrinking
+                // while the hull keeps shrinking. Measured, that is the whole
+                // reason the wingman-class hulls scored FX/hull 3.97-7.73
+                // against 2.38-2.51 for a large hull at the same range, and
+                // 93.5-100% hull coverage — the identical plume was being
+                // hung off a third of the ship. The angular-size floor
+                // (_PLUME_MIN_PX / `widen`, applied per-frame in screen space
+                // further down) is the CORRECT place to guarantee a distant
+                // contact stays visible, because it is keyed to how big the
+                // thing actually is on screen; this world-space floor was a
+                // second, blind copy of that job. Halved to 1.0 so it still
+                // catches a degenerate near-zero measurement without
+                // out-sizing the ship it belongs to.
                 coneLen = Math.max(worldLen * 0.85, 18) / sx;
-                coneRad = Math.max(worldLen * 0.09, 2.0) / sx;
+                coneRad = Math.max(worldLen * 0.09, 1.0) / sx;
                 hullWideLocal = Math.max(size.x, 0.001);
                 hullLenWorld = worldLen;
                 // Local-frame hull box, kept for _ensureHullReadout so the
@@ -699,7 +717,18 @@ function _ensureShipThrusterCones(ship, color) {
         core.mesh.position.x = xOff;
         ship.add(core.mesh);
         cones.push(core);
-        const streak = _makeStreak(coneRad, coneLen, haloCol, back, 1.0);
+        // STREAK HALF-WIDTH IS 0.85 coneRad, NOT coneRad. The core sprite is
+        // the layer that was eating the hull (see _PLUME_CORE_NEAR), and
+        // subordinating it alone lands hull COVERAGE at ~52% — just over the
+        // 50% bar, with the residual overlap coming off the streak's flanks
+        // where they pass the hull's rear quarter. A 15% trim of the half-
+        // width takes those flank pixels back without touching the streak's
+        // LENGTH, which is the part that reads as motion and as "which way is
+        // it going" — the two things this layer exists to say. Note this also
+        // feeds `_plumeWorldRad`, so the angular-size floor and the aspect
+        // gate both see the narrower plume and engage 15% earlier in range,
+        // which is self-correcting rather than a far-range loss.
+        const streak = _makeStreak(coneRad * 0.85, coneLen, haloCol, back, 1.0);
         streak.mesh.position.x = xOff;
         ship.add(streak.mesh);
         cones.push(streak);
@@ -958,6 +987,29 @@ const _HULL_LAMP_CHG_RELIEF = 0.85;
 // HALO below, which is thin and gated to the last ~35 degrees, and the nav /
 // rim thrust response, which is aspect-independent and nearly free in area).
 const _HULL_LAMP_THR_RELIEF = 0.45;
+// ROUND 6 — WITH THE NOZZLE CORE SUBORDINATED, THE LAMP IS THE BLOB.
+// Round 5's numbers for this layer were taken with the rig hidden, which is
+// how a hostile OUTSIDE _HULL_READ_DIST renders — but inside it, which is
+// every fight, the lamp is live and it is the largest additive layer on the
+// ship by an order of magnitude. Measured this round per-layer at 300u, full
+// thrust, world paused, subject isolated, 91.5u GLB hull, px at lum>40:
+//
+//   dead astern   hull 5,196 | lamp 12,723  nav 641  core 401  streak 0
+//   broadside     hull 4,147 | rig 2,927    core 43   streak 959
+//
+// 2.4x the ship from one quad, and it is worst dead astern where the tail
+// bonus and the on-axis halo both peak. That single layer is what still put
+// FX/hull at 2.54 and hull coverage at 85.6% after the nozzle fix, and it is
+// the reason a hostile you are not looking at reads as a cotton ball.
+//
+// So the lamp gets the same treatment the nozzle core got: a near-range size
+// multiplier that is handed back through the SAME `far` ramp the opacity
+// lift already rides, so everything past 2,000u is untouched by construction
+// rather than by re-tuning, and presence keeps being paid for in brightness
+// (_HULL_LAMP_FAR_LIFT) rather than in area. It multiplies the natural size
+// AND the on-axis halo, so the nose/tail asymmetry that carries
+// charging-vs-fleeing is scaled, never reshaped.
+const _HULL_LAMP_NEAR = 0.55;
 // Extra opacity out at range, so the contact keeps its presence while its
 // FOOTPRINT is allowed to shrink with distance the way a real object's does.
 const _HULL_LAMP_FAR_LIFT = 0.95;
@@ -1490,6 +1542,14 @@ function _updateHullReadout(ship, dist, tN, chg) {
     const lamp = rig.lamp;
     let lampW = (rig.hullWid || rig.hullLen * 0.45) * _HULL_LAMP_W_K;
     let lampL = Math.max(rig.hullLen * _HULL_LAMP_K, lampW);
+    // NEAR-RANGE SUBORDINATION — see _HULL_LAMP_NEAR. Computed here, ahead of
+    // the angular-size floor, so the floor still gets the last word on the
+    // small hulls it was written for; `farLamp` is reused verbatim by the
+    // opacity lift further down, so the two channels cannot drift apart.
+    const farLamp = Math.min(1, Math.max(0, (d - _HULL_LAMP_FAR_LO) /
+                                             (_HULL_LAMP_FAR_HI - _HULL_LAMP_FAR_LO)));
+    const lampNearK = _HULL_LAMP_NEAR + (1 - _HULL_LAMP_NEAR) * farLamp;
+    lampW *= lampNearK; lampL *= lampNearK;
     if (ppu > 0 && fade > 0) {
         const minWorld = Math.min((_HULL_LAMP_MIN_PX * fade) / ppu,
                                   rig.hullLen * _HULL_LAMP_FLOOR_MAX);
@@ -1599,7 +1659,14 @@ function _updateHullReadout(ship, dist, tN, chg) {
     const onAxis = Math.pow(Math.abs(axialC), 1.6);
     const haloK = (axialC < 0) ? (0.55 + 0.46 * t)    // nose:  0.55 -> 1.01
                                : (0.86 + 0.80 * t);   // tail:  0.86 -> 1.66
-    const axisHalo = (rig.hullWid || rig.hullLen * 0.45) * haloK * onAxis;
+    // ...and the on-axis halo is subordinated on the SAME curve. It has to
+    // be: dead astern it is the term that wins (it is a floor on lampW, and
+    // at 1.66 hull-widths it beats everything above it), so leaving it out of
+    // _HULL_LAMP_NEAR would leave the one aspect that was failing untouched.
+    // Scaling both ends of the asymmetric pair by the same factor keeps the
+    // charging-vs-fleeing ratio — which is what the aspect read is made of —
+    // exactly where round 5 measured it.
+    const axisHalo = (rig.hullWid || rig.hullLen * 0.45) * haloK * onAxis * lampNearK;
     if (lampW < axisHalo) lampW = axisHalo;
 
     const sinA = Math.sqrt(Math.max(0, 1 - axialC * axialC));
@@ -1610,8 +1677,7 @@ function _updateHullReadout(ship, dist, tN, chg) {
     // ~1.9x brightness by 2,000u so a distant hostile still registers while
     // its FOOTPRINT keeps shrinking the way a real object's does — the range
     // cue the fixed-size lamp had deleted.
-    const far = Math.min(1, Math.max(0, (d - _HULL_LAMP_FAR_LO) /
-                                        (_HULL_LAMP_FAR_HI - _HULL_LAMP_FAR_LO)));
+    const far = farLamp;
     // ASPECT GAIN. Same nose-hemisphere gate as the size, so the two cues
     // reinforce instead of cancelling.
     const aGain = (1 - _HULL_LAMP_ASPECT) + _HULL_LAMP_ASPECT * noseF;
@@ -1772,7 +1838,32 @@ const _PLUME_LEN_FAR = 1.58, _PLUME_WID_FAR = 1.44, _PLUME_OPA_FAR = 1.00;
 // envelope and handed all of it back through `farLift`, on exactly the same
 // curve the thrust envelope uses. Far range is therefore untouched by
 // construction, not by tuning.
-const _PLUME_CORE_NEAR = 0.62;      // size multiplier at dogfight range
+// ROUND 6: 0.62 WAS STILL BIGGER THAN THE SHIP. Measured same-frame, paused
+// world, subject isolated, 4 yaws, px counted at luminance > 40/255 on an
+// untouched hostile at true engagement range:
+//
+//   d=250u  hull 2,276 | core 3,619  streak 1,326  other 459 | FX/hull 2.38
+//   d=300u  hull 1,585 | core 2,582  streak   978  other 312 | FX/hull 2.44
+//   d=400u  hull   906 | core 1,496  streak   601  other 177 | FX/hull 2.51
+//
+// The nozzle CORE ALONE was 1.6x the hull. The hull was 38-40% of its own
+// contact's lit pixels at every range a dogfight actually happens at, which
+// is why a frame with eight hostiles in it had one readable ship and seven
+// white cotton balls: whichever one you stare at, the other seven are their
+// own engine bloom. 0.62 -> 0.28 (a 0.45x scale on the near-range disc) was
+// applied live on a single paused frame and re-measured on that same frame:
+//   d=250u  FX/hull 2.38 -> 0.86   cover 84.5% -> 52.3%
+//   d=300u  FX/hull 2.44 -> 0.89   cover 85.3% -> 52.4%
+//   d=400u  FX/hull 2.51 -> 0.93   cover 86.0% -> 52.6%
+//
+// WHY HERE AND NOT AT THE BAKED RADIUS (_makeCore's `coneRad * 1.15`). Same
+// near-range result, but this multiplier is handed back through `farLift` on
+// the same curve as the thrust envelope, so the 15,000u presence contact —
+// where the streak is a sub-pixel sliver and this sprite is the ONLY thing
+// rendering the ship at all — is untouched BY CONSTRUCTION rather than by
+// re-tuning. Shrinking the baked radius would have spent that floor to buy
+// this fix, which is the exact trade the round-5 note above warns against.
+const _PLUME_CORE_NEAR = 0.28;      // size multiplier at dogfight range
 const _PLUME_CORE_NEAR_OPA = 0.66;  // opacity multiplier at dogfight range
 
 // Fixed ALARM hue for the attack wind-up (see the alarm bulb in

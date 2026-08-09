@@ -3103,7 +3103,7 @@ function renderAllyMarker(c) {
 // STEPS between states instead of continuously breathing as the nearest
 // hostile's distance fluctuates frame to frame.
 const RADAR_RANGE_LADDER = [500, 750, 1000, 1500, 3000];
-const RADAR_RANGE_DWELL_MS = 1500;
+const RADAR_RANGE_DWELL_MS = 2500;
 
 function nearestHostileDistance() {
     if (typeof camera === 'undefined' || typeof enemies === 'undefined') return Infinity;
@@ -3117,11 +3117,48 @@ function nearestHostileDistance() {
     return best;
 }
 
-function _snapRadarRange(want) {
-    for (let i = 0; i < RADAR_RANGE_LADDER.length; i++) {
-        if (want <= RADAR_RANGE_LADDER[i]) return RADAR_RANGE_LADDER[i];
+// Hysteretic snap: takes the CURRENT rung so the ladder has separate
+// thresholds for stepping out (to a coarser rung) vs stepping in (to a
+// finer rung), instead of one boundary tested in both directions. Without
+// this a `want` value oscillating a few % around a rung edge (e.g. a
+// bandit closing/opening across 227u, right on the old 500/750 split)
+// flips the whole-map scale every frame it crosses the line. With it,
+// `want` has to clear 1.25x the current rung to widen, or drop under 0.8x
+// the rung below current to narrow — a >25%/<20% move, not a rounding
+// error.
+function _snapRadarRange(want, currentRung) {
+    let idx = RADAR_RANGE_LADDER.indexOf(currentRung);
+    if (idx === -1) {
+        // No known current rung (first call) — plain snap to seed state.
+        for (let i = 0; i < RADAR_RANGE_LADDER.length; i++) {
+            if (want <= RADAR_RANGE_LADDER[i]) return RADAR_RANGE_LADDER[i];
+        }
+        return RADAR_RANGE_LADDER[RADAR_RANGE_LADDER.length - 1];
     }
-    return RADAR_RANGE_LADDER[RADAR_RANGE_LADDER.length - 1];
+    // Step OUT (coarser) only once want clears 1.25x the current rung.
+    while (idx < RADAR_RANGE_LADDER.length - 1 && want > RADAR_RANGE_LADDER[idx] * 1.25) {
+        idx++;
+    }
+    // Step IN (finer) only once want drops under 0.8x the next rung down.
+    // Exception: the bottom rung (500) is also `want`'s own hard floor
+    // (`_currentRadarRange` clamps with `Math.max(500, ...)` below), so
+    // "under 0.8x of 500 = 400" can never be true — that would make the
+    // single most important rung for the 200-400u dogfight band
+    // permanently unreachable once the state had stepped away from it.
+    // Entering the floor rung uses the plain (undiscounted) boundary
+    // instead; the 226<->229u flip this fix targets lives entirely on the
+    // EXIT side (625u, well clear of the ~500-504u band), so this doesn't
+    // reopen it.
+    while (idx > 0) {
+        const belowRung = RADAR_RANGE_LADDER[idx - 1];
+        const threshold = (idx - 1 === 0) ? belowRung : belowRung * 0.8;
+        if (want < threshold || (idx - 1 === 0 && want <= belowRung)) {
+            idx--;
+        } else {
+            break;
+        }
+    }
+    return RADAR_RANGE_LADDER[idx];
 }
 
 // State lives on the function itself (same pattern as
@@ -3131,15 +3168,21 @@ function _snapRadarRange(want) {
 // the range can't flip again for RADAR_RANGE_DWELL_MS.
 function _currentRadarRange(nowMs) {
     let st = _currentRadarRange._state;
-    if (!st) st = _currentRadarRange._state = { value: 3000, lastChangeAt: -Infinity };
+    if (!st) st = _currentRadarRange._state = { value: 3000, shown: 3000, lastChangeAt: -Infinity };
     const _near = nearestHostileDistance();
     const _want = _near < 900 ? Math.max(500, Math.min(1200, _near * 2.2)) : 3000;
-    const snapped = _snapRadarRange(_want);
+    const snapped = _snapRadarRange(_want, st.value);
     if (snapped !== st.value && (nowMs - st.lastChangeAt) >= RADAR_RANGE_DWELL_MS) {
         st.value = snapped;
         st.lastChangeAt = nowMs;
     }
-    return st.value;
+    // st.value is the TARGET rung (steps instantly, gated by hysteresis +
+    // dwell above). st.shown is what actually renders — eased toward the
+    // target every refresh instead of jumping, so a rung change slides the
+    // scale (and every blip on it) over ~300ms instead of teleporting the
+    // whole radar picture in one frame.
+    st.shown += (st.value - st.shown) * 0.12;
+    return st.shown;
 }
 
 function updateGalaxyMap() {
@@ -3223,7 +3266,12 @@ function updateGalaxyMap() {
     // See _currentRadarRange / nearestHostileDistance above.
     const radarRange = _currentRadarRange(Date.now());
     if (_rimLabel) {
-        const _rimText = radarRange + 'u / ±ELEV';
+        // Label reads the TARGET rung (st.value), not the eased render
+        // scale (st.shown) — so it snaps straight to a clean "500u" /
+        // "750u" instead of crawling through fractional values while the
+        // disc eases toward it.
+        const _rimTarget = Math.round(_currentRadarRange._state.value);
+        const _rimText = _rimTarget + 'u / ±ELEV';
         if (_rimLabel.textContent !== _rimText) _rimLabel.textContent = _rimText;
     }
 

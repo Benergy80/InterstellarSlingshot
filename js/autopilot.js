@@ -380,6 +380,12 @@
     }
   }
 
+  // Reused per-frame scratch vectors for the arrival cut-off's forward-cone
+  // test (see below) — module-scope so the hot per-frame path never
+  // allocates.
+  const _arriveFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _arriveToTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
   // ─── Main update (called every frame from animate()) ──────────────────────
   function update() {
     if (!ap.active) return;
@@ -663,7 +669,34 @@
         !!(_sl && _sl.active) ||
         (typeof gameState._warpExitT === 'number');
       if (_inCycle && !(gameState.slingshot && gameState.slingshotWhip)) {
-        window.orientTowardsTarget(gameState._arrivalSubject.obj);
+        // FIX 3 (arrival off-boresight): orientTowardsTarget caps the demo
+        // pilot's turn rate at 0.016 rad/frame (~55 deg/s, see
+        // game-physics.js) for cinematic smoothness everywhere else — but
+        // that budget can't close a 100+ degree arrival-subject error
+        // inside the ~1s exit ramp. While the ramp is actually live
+        // (gameState._warpExitT is a number), borrow the player auto-nav's
+        // faster 0.045 rad/frame (~155 deg/s) cap for just this call.
+        // orientTowardsTarget picks its rate from window.demoPilot.driving,
+        // which is a GETTER-ONLY accessor (`ap.active && !ap.paused` —
+        // see window.demoPilot above); assigning to it directly throws in
+        // this file's strict mode. Toggle the underlying `ap.paused` field
+        // instead (update() runs inside the same closure as `ap`, so this
+        // is a plain, synchronous property write, not an accessor call) —
+        // driving reads false for the one nested call, then true again the
+        // instant it's restored, with no other code able to observe the
+        // flip since JS never yields mid-expression. This file may not
+        // edit game-physics.js, so this is the in-bounds way to get the
+        // faster rate without a `fast` parameter it doesn't accept.
+        const _wantFastOrient = (typeof gameState._warpExitT === 'number') &&
+          typeof window !== 'undefined' && window.demoPilot && window.demoPilot.driving;
+        if (_wantFastOrient) {
+          const _prevPaused = ap.paused;
+          ap.paused = true;
+          window.orientTowardsTarget(gameState._arrivalSubject.obj);
+          ap.paused = _prevPaused;
+        } else {
+          window.orientTowardsTarget(gameState._arrivalSubject.obj);
+        }
       }
     }
 
@@ -690,11 +723,28 @@
         Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 15000) {
       const _as = gameState._arrivalSubject;
       const _cp = camPos();
-      const _d = _cp.distanceTo(_as.obj.position);
       const _speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
       const _lead = 0.35 * _speed * 60 * 1.0;
-      if (_d <= _as.arriveDist + _lead) {
-        gameState.emergencyWarp.timeRemaining = 0;
+      // FORWARD-CONE TEST (was a scalar sphere test: `_d <= arriveDist +
+      // lead`, which any point on that sphere satisfies — including abeam
+      // or BEHIND the ship). Decompose the vector to the subject along the
+      // camera's boresight: `_along` is how far ahead it is (negative means
+      // it's already behind us — never a valid cut), `_off` is the lateral
+      // miss distance off that boresight. Cutting only when the subject is
+      // both within range AND within a narrow forward cone (off <=
+      // arriveDist * 0.35, ~19deg at this standoff) is what actually
+      // guarantees it's still near the center of the frame when the streaks
+      // finish draining, since the framing hold above only has ~1s and a
+      // 55-155 deg/s cap to correct any residual aim error.
+      if (typeof camera !== 'undefined' && _arriveFwdTmp && _arriveToTmp) {
+        camera.getWorldDirection(_arriveFwdTmp);
+        _arriveToTmp.subVectors(_as.obj.position, _cp);
+        const _along = _arriveToTmp.dot(_arriveFwdTmp);
+        const _offSq = Math.max(0, _arriveToTmp.lengthSq() - _along * _along);
+        const _off = Math.sqrt(_offSq);
+        if (_along > 0 && _along <= _as.arriveDist + _lead && _off <= _as.arriveDist * 0.35) {
+          gameState.emergencyWarp.timeRemaining = 0;
+        }
       }
     }
 
@@ -2587,6 +2637,7 @@
   // claim nothing than to bias the camera at emptiness.
   const _owarpFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const _owarpPosTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _owarpToTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   function _stageOWarpArrivalSubject() {
     if (typeof camera === 'undefined' || !_owarpFwdTmp || typeof gameState === 'undefined') return;
     camera.getWorldDirection(_owarpFwdTmp);
@@ -2608,7 +2659,25 @@
       const dangerR = _arrivalDangerR(cand.obj);
       const arriveDist = _idealArriveDist(cand.radius, dangerR);
       const curRange = camPos().distanceTo(cand.obj.position);
-      if (curRange <= estBoostDist - arriveDist) {
+      // REJECT LATERALLY-OFFSET CANDIDATES: distance-to-landing-point alone
+      // (via _findArrivalSubject's maxDist) still accepts a body sitting well
+      // off to the side of the actual boost RAY — close enough to the
+      // estimated endpoint to qualify by radius, but never something the
+      // straight-line burn passes near. Project the candidate onto the ray
+      // from here (camPos()) along the current heading (_owarpFwdTmp) and
+      // measure its perpendicular miss distance; only claim it as a subject
+      // if that offset is inside the same forward-cone half-width the
+      // per-frame arrival cut-off (above) will require at cut time —
+      // otherwise the cut-off's cone test can never fire and the boost just
+      // runs its full stopwatch past a subject that was never reachable.
+      let offOK = true;
+      if (_owarpToTmp) {
+        _owarpToTmp.subVectors(cand.obj.position, camPos());
+        const along = _owarpToTmp.dot(_owarpFwdTmp);
+        const offSq = Math.max(0, _owarpToTmp.lengthSq() - along * along);
+        offOK = Math.sqrt(offSq) <= arriveDist * 0.35;
+      }
+      if (curRange <= estBoostDist - arriveDist && offOK) {
         _setArrivalSubject(cand.obj, cand.radius);
       } else {
         _clearArrivalSubject();

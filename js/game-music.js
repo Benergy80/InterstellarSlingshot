@@ -70,7 +70,31 @@
   // the instant it is asked for (slice still buffering, spacing gate closed).
   // A discovery bell still reads right a beat late; a warp-exit swell does
   // not, because the thing it is scoring is already over.
-  const STINGER_LEVEL = 0.80;           // stingers relative to the music slider
+  const STINGER_LEVEL = 0.80;           // legacy fallback level (no Web Audio
+                                         // chain available — see playStinger)
+  // Real punctuation target: +4 dB over the bed's OWN running RMS, read live
+  // off wa.bedAnalyser at the instant a hit fires. This is what makes a hit
+  // land above the mix instead of being mixed under it as a fraction of the
+  // same slider that sets the bed (the 20260810c bug) — chain.gain.gain
+  // carries this, unclamped, separate from el.volume's 0..1 envelope shape.
+  const STINGER_OVER_BED_DB   = 4;
+  const STINGER_OVER_BED_GAIN = Math.pow(10, STINGER_OVER_BED_DB / 20);   // ≈1.585
+  const STINGER_FLOOR_RMS     = 0.006;  // the game's own documented "healthy
+                                         // audible" floor — target at least
+                                         // this much over even when the bed
+                                         // is momentarily near-silent.
+  const STINGER_MAKEUP_MIN = 0.5;       // sane bounds on the makeup multiplier
+  const STINGER_MAKEUP_MAX = 8;         // so a mismeasured slice can't clip
+                                         // or vanish
+  // A hit that fires before its offline slice measurement has landed (fetch
+  // + decodeAudioData of the WHOLE mp3 can take a second or more; in real
+  // play this window is brief — the bank starts measuring the moment the
+  // Web Audio bus comes up, long before e.g. `liberation` has any chance to
+  // fire — but it must still degrade gracefully) uses this as a stand-in for
+  // "typical mastered-music RMS" instead of skipping the makeup gain
+  // entirely, which was indistinguishable from the pre-fix under-mix.
+  const STINGER_ASSUMED_RAW_RMS = 0.15; // ≈ -16.5 dBFS, a conservative guess
+                                         // for mastered content
   const STINGERS = {
     // 41 dB jump out of near-silence — the biggest fanfare in the library.
     liberation:      { file: 'Galaxy8.mp3',          at: 10.12, dur: 3.10, gain: 1.00, atk: 0.02, rel: 0.85, cool: 8000,  hold: 3000 },
@@ -84,26 +108,37 @@
     // Low driving hit for heavyweight contact (Borg / elite arrival).
     threat:          { file: 'Boss Fight.mp3',       at: 9.02,  dur: 2.00, gain: 0.82, atk: 0.03, rel: 0.55, cool: 15000, hold: 1000 },
     // Slow swell out of silence — the arrival breath on the far side of a
-    // warp.  noDuck: this one IS the bloom, so it must not fight the bed it
-    // is lifting; ducking here would flatten the exact moment of arrival.
-    warpExit:        { file: 'nebula5.mp3',          at: 4.05,  dur: 2.40, gain: 0.58, atk: 0.05, rel: 0.80, cool: 6000,  hold: 900, noDuck: true },
+    // warp.  This one IS the bloom, so a full-depth duck would flatten the
+    // exact moment of arrival — but going fully un-ducked (the old noDuck)
+    // was measured mixing 6.1 dB UNDER the bed, i.e. not landing as a hit at
+    // all. Shallow/short duck instead: enough to carve space, not enough to
+    // fight the bloom it's lifting.
+    warpExit:        { file: 'nebula5.mp3',          at: 4.05,  dur: 2.40, gain: 0.58, atk: 0.05, rel: 0.80, cool: 6000,  hold: 900, duck: { depth: 0.15, ms: 250 } },
     // The single most frequent beat in the game (score climbs on every
     // kill, arcade.js addKill()) gets its own light punctuation — but
     // "frequent" means small and short, not another fanfare: quiet gain,
     // a ~0.5s envelope-forced stab (the underlying file keeps playing
     // under it; the envelope just cuts it off), a short cooldown so a
     // real dogfight's kill cadence still gets punctuated per-kill instead
-    // of once every several seconds, and noDuck because sidechaining the
-    // combat bed on THIS frequency would just be constant pumping, not a
-    // moment. Cut from a Galaxy exploration track (never a combat bed —
-    // bossFight/borg/eliteGuardians — so a kill hit never smears into the
-    // track that's actively crossfading under it, same reasoning as
-    // bossSpawn avoiding Boss Fight.mp3) — measured the largest early
-    // silence-to-hit jump (76 dB) same methodology as every other slice.
-    kill:            { file: 'Galaxy3.mp3',          at: 0.40,  dur: 0.50, gain: 0.55, atk: 0.02, rel: 0.28, cool: 350,   hold: 250, noDuck: true },
+    // of once every several seconds. A full-depth duck at this frequency
+    // would be constant pumping, not a moment — but going fully un-ducked
+    // (the old noDuck) was the single largest contributor to the -12.1 dB
+    // median measured on kill hits, so it gets the same shallow/short duck
+    // as warpExit: just enough to carve space for THIS hit, gone before the
+    // next one can turn it into pumping. Cut from a Galaxy exploration
+    // track (never a combat bed — bossFight/borg/eliteGuardians — so a kill
+    // hit never smears into the track that's actively crossfading under it,
+    // same reasoning as bossSpawn avoiding Boss Fight.mp3) — measured the
+    // largest early silence-to-hit jump (76 dB) same methodology as every
+    // other slice.
+    kill:            { file: 'Galaxy3.mp3',          at: 0.40,  dur: 0.50, gain: 0.55, atk: 0.02, rel: 0.28, cool: 350,   hold: 250, duck: { depth: 0.15, ms: 250 } },
   };
   const STINGER_SPACING = 900;          // ms minimum gap between ANY two hits
-  const STINGER_DUCK    = 0.30;         // sidechain: bed drops 30% under a hit
+  // Default sidechain depth/duration: bed drops 30% for the hit's full
+  // duration.  A spec may override with its own `duck: { depth, ms }` (see
+  // kill / warpExit above) for a shallower, shorter carve instead of none —
+  // every stinger now ducks SOMETHING; the old noDuck escape hatch is gone.
+  const STINGER_DUCK    = 0.30;
   // How long a discovery keeps re-offering its bell to the mix if the hit
   // could not be delivered.  Past this the moment has gone and we stop.
   const DISCOVERY_HIT_WINDOW = 10000;
@@ -112,6 +147,13 @@
   const FILTER_OPEN_HZ  = 20000;        // "no filter" resting position
   const FX_TAU_UP       = 0.10;         // s — fast to grab (ducks bite instantly)
   const FX_TAU_DOWN     = 0.32;         // s — slow to release (blooms breathe)
+  // Smoothing for the bed's RUNNING RMS that a stinger's makeup gain targets
+  // (see STINGER_OVER_BED_DB / currentBedRMS above). A raw instantaneous
+  // analyser read is spiky — a drum hit or a lull between phrases in the bed
+  // would send a hit's makeup gain chasing noise instead of the mix's actual
+  // level. ~350ms settles that out while still tracking a real level change
+  // (a track switch, a duck) within roughly one beat.
+  const BED_RMS_TAU = 0.35;
 
   // ─── 4. Spatialization ────────────────────────────────────────────────────
   const SPATIAL_NEAR = 600;             // full volume inside this radius
@@ -205,6 +247,12 @@
       bloomUntil: 0,            // ms — warp-exit bloom window
       tunnelPeak: 0,            // highest tunnel level seen this transit
       duckUntil: 0,             // ms — stinger sidechain window
+      duckDepth: STINGER_DUCK,  // how deep the CURRENT duck window is — per-
+                                 // spec now (kill/warpExit duck shallower than
+                                 // the default), so this can't be a constant.
+      bedRmsRunning: -1,        // smoothed bed RMS (-1 = not primed yet — see
+                                 // updateWarpFx). What a stinger's makeup
+                                 // gain actually targets N dB over.
       lastPushedGain: -1,
       lastPushedLp: -1,
     },
@@ -216,6 +264,10 @@
     stingerGateUntil: 0,  // global spacing gate
     stingerTimers: {},    // { key: intervalId }
     stingerLastFired: {}, // { key: ms of the last hit that actually sounded }
+    // { key: linear RMS of that slice's [at, at+dur] window (offline-measured,
+    // once), 'pending' mid-measurement, null if measurement failed }. Feeds
+    // the makeup gain in playStinger() — see measureStingerSlice().
+    stingerSliceRMS: {},
     // Hits that could not fire the instant they were asked for (element
     // still buffering, 900 ms spacing gate, a pause) wait here instead of
     // being thrown away.  Retried every frame until they land or their
@@ -275,8 +327,17 @@
     ok: false,
     failed: false,
     ctx: null,
-    bus: null,
+    bus: null,        // music bed only — riser/duck automation lives here
     filter: null,
+    master: null,      // bus + stinger chains summed here, then to destination —
+                        // the ONE node that represents "what the player hears"
+                        // and the ONE node debugLevel()'s analyser is allowed
+                        // to tap (see the 20260810c postmortem: an analyser on
+                        // `bus` alone is structurally blind to stingers).
+    bedAnalyser: null,  // small tap on `bus` ONLY, used to read the bed's live
+                        // level so a stinger's makeup gain can target N dB
+                        // over whatever the bed is actually doing right now.
+    bedAnalyserBuf: null,
     sources: new WeakMap(),   // music elements
     stingerNodes: new WeakMap(),
   };
@@ -302,13 +363,23 @@
       wa.bus = ctx.createGain();
       wa.bus.gain.setValueAtTime(1, ctx.currentTime);
       wa.filter.connect(wa.bus);
-      // Straight to the destination, NOT through masterGain/musicGain — the
-      // MP3 score has always been mixed independently of the synth layer and
-      // routing it into the synth bus would silently halve its level.
-      wa.bus.connect(ctx.destination);
+      // `master` sums the bed (`bus`, riser/duck automation applied) with the
+      // stinger chains (their own gain, NOT subject to the bed's own duck —
+      // a stinger ducking itself would be self-cancelling) and is the single
+      // point that reaches the speakers. NOT through masterGain/musicGain —
+      // the MP3 score has always been mixed independently of the synth layer
+      // and routing it into the synth bus would silently halve its level.
+      wa.master = ctx.createGain();
+      wa.master.gain.setValueAtTime(1, ctx.currentTime);
+      wa.bus.connect(wa.master);
+      wa.master.connect(ctx.destination);
       wa.ctx = ctx;
       wa.ok = true;
       Object.keys(st.loaded).forEach(k => waRoute(st.loaded[k]));
+      // One-time offline RMS measurement of every stinger slice — the basis
+      // for the makeup gain that lets a hit actually land above the bed
+      // instead of being mixed under it as a fraction of the same slider.
+      Object.keys(STINGERS).forEach(measureStingerSlice);
       console.log('🎛️ Soundtrack: adaptive bus online (filter + riser automation)');
       return true;
     } catch (e) {
@@ -349,7 +420,11 @@
       } else {
         src.connect(gain);
       }
-      gain.connect(wa.ctx.destination);
+      // Into `master`, not straight to destination: that's what makes a
+      // stinger visible to debugLevel()'s analyser (tapped on `master`) and
+      // what lets the bed's OWN duck automation (on `bus`, upstream of here)
+      // leave the stinger alone instead of self-cancelling it.
+      gain.connect(wa.master || wa.ctx.destination);
       chain = { src: src, gain: gain, pan: pan };
       wa.stingerNodes.set(el, chain);
     } catch (e) {
@@ -779,6 +854,65 @@
     return Math.max(-1, Math.min(1, dot)) * SPATIAL_PAN;
   }
 
+  // Live level of the music BED alone (never includes a stinger, since this
+  // taps `bus` — upstream of where stinger chains join at `master`). Read at
+  // the instant a hit fires so its makeup gain targets "N dB over whatever
+  // is actually playing right now", not a guess baked in ahead of time.
+  function currentBedRMS() {
+    if (!wa.ok || !wa.bus || !wa.ctx) return 0;
+    if (!wa.bedAnalyser) {
+      try {
+        wa.bedAnalyser = wa.ctx.createAnalyser();
+        // Matches debugLevel()'s master analyser fftSize (1024) on purpose —
+        // an AnalyserNode's internal delay line is ~fftSize samples, so a
+        // mismatched size here would read the bed and the master at two
+        // subtly different instants and make short, fast stingers (kill:
+        // 20ms attack) look mistimed against the bed when they are not.
+        wa.bedAnalyser.fftSize = 1024;
+        wa.bus.connect(wa.bedAnalyser);        // tap only — not routed to output
+        wa.bedAnalyserBuf = new Float32Array(wa.bedAnalyser.fftSize);
+      } catch (e) { return 0; }
+    }
+    try {
+      wa.bedAnalyser.getFloatTimeDomainData(wa.bedAnalyserBuf);
+    } catch (e) { return 0; }
+    let sum = 0;
+    for (let i = 0; i < wa.bedAnalyserBuf.length; i++) sum += wa.bedAnalyserBuf[i] * wa.bedAnalyserBuf[i];
+    return Math.sqrt(sum / wa.bedAnalyserBuf.length);
+  }
+
+  // One-time OFFLINE measurement of a stinger slice's own raw loudness (the
+  // RMS of exactly the [at, at+dur] window that plays, not the whole file).
+  // This is what a makeup gain has to divide out: two slices at the same
+  // `spec.gain` can differ by several dB in raw content, which is the "~5 dB
+  // more" the 20260810c critique measured on top of the slider-fraction bug.
+  // Fire-and-forget, cached in st.stingerSliceRMS[key]: 'pending' while the
+  // fetch/decode is in flight, a number once measured, null if it failed (in
+  // which case playStinger() falls back to the legacy el.volume-only path
+  // for that key rather than dividing by an unknown).
+  function measureStingerSlice(key) {
+    if (st.stingerSliceRMS[key] !== undefined) return;   // already going
+    const spec = STINGERS[key];
+    if (!spec || !wa.ctx) { st.stingerSliceRMS[key] = null; return; }
+    st.stingerSliceRMS[key] = 'pending';
+    const url = BASE_PATH + encodeURIComponent(spec.file);
+    fetch(url)
+      .then(r => r.arrayBuffer())
+      .then(buf => wa.ctx.decodeAudioData(buf))
+      .then(audioBuf => {
+        const sr = audioBuf.sampleRate;
+        const startSample = Math.max(0, Math.floor(spec.at * sr));
+        const endSample = Math.min(audioBuf.length, Math.floor((spec.at + spec.dur) * sr));
+        let sumSq = 0, n = 0;
+        for (let c = 0; c < audioBuf.numberOfChannels; c++) {
+          const data = audioBuf.getChannelData(c);
+          for (let i = startSample; i < endSample; i++) { sumSq += data[i] * data[i]; n++; }
+        }
+        st.stingerSliceRMS[key] = (n > 0) ? Math.sqrt(sumSq / n) : null;
+      })
+      .catch(() => { st.stingerSliceRMS[key] = null; });
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   // ADAPTIVE MIX — stingers
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1020,13 +1154,57 @@
 
     const sg = spatialGain(pos);
     const gm = (typeof gainMul === 'number') ? gainMul : 1;
-    const peak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg * gm));
 
-    // Stereo placement (Web Audio only — element volume still carries level).
+    // Stereo placement + the chain that will carry the makeup gain.
     waEnsure();
     const chain = waRouteStinger(el);
     if (chain && chain.pan) {
       try { chain.pan.pan.setTargetAtTime(spatialPan(pos), wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
+    }
+
+    // LEVEL.
+    //  - Web Audio chain available (the normal path): el.volume below carries
+    //    ONLY the 0..1 attack/hold/release SHAPE. The actual output level
+    //    lives on chain.gain.gain, which — unlike el.volume — is not capped
+    //    at 1.0, so it can genuinely exceed the bed instead of being a
+    //    fraction of the same slider that sets it (the 20260810c bug).  Its
+    //    makeup gain is `target RMS ÷ this slice's own offline-measured RMS`,
+    //    where target RMS tracks the bed's LIVE running RMS (read fresh off
+    //    wa.bedAnalyser, not a snapshot) at STINGER_OVER_BED_DB(+4dB), with a
+    //    small per-spec offset (relDb) so relative prominence across event
+    //    types (liberation > bossSpawn > kill) survives WITHOUT ever letting
+    //    a low-`gain` spec (kill=0.55) get crushed back under the bed the
+    //    way a straight `* spec.gain` multiply on the target would.
+    //  - No Web Audio (file://, context never came up): fall back to the
+    //    legacy el.volume-only peak — still capped at 1.0, unchanged from
+    //    before this fix, since chain.gain doesn't exist to carry the level.
+    let legacyPeak = 0;
+    if (chain) {
+      const relDb = (spec.gain - 0.75) * 4;   // ≈ -0.8..+1.0 dB — keeps every
+                                               // event type inside the AAA
+                                               // 0..+6 dB punctuation band
+      const targetOverBed = Math.pow(10, (STINGER_OVER_BED_DB + relDb) / 20);
+      const sliceRMS = st.stingerSliceRMS[key];
+      const bedRms = st.fx.bedRmsRunning >= 0 ? st.fx.bedRmsRunning : currentBedRMS();
+      let makeup;
+      if (typeof sliceRMS === 'number' && sliceRMS > 0) {
+        const targetRMS = Math.max(bedRms, STINGER_FLOOR_RMS) * targetOverBed;
+        makeup = targetRMS / sliceRMS;
+      } else {
+        // Offline measurement not ready yet (or failed) — kick it off if it
+        // hasn't started, and use STINGER_ASSUMED_RAW_RMS as the divisor
+        // meanwhile so the hit still lands roughly on target instead of
+        // reverting to the pre-fix under-mix (targetOverBed alone, with no
+        // normalization for the slice's own raw loudness, was measured
+        // landing BELOW the bed for exactly this reason).
+        measureStingerSlice(key);
+        const targetRMS = Math.max(bedRms, STINGER_FLOOR_RMS) * targetOverBed;
+        makeup = targetRMS / STINGER_ASSUMED_RAW_RMS;
+      }
+      const level = Math.max(STINGER_MAKEUP_MIN, Math.min(STINGER_MAKEUP_MAX, makeup)) * sg * gm;
+      try { chain.gain.gain.setTargetAtTime(level, wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
+    } else {
+      legacyPeak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg * gm));
     }
 
     stopStinger(key);
@@ -1036,7 +1214,14 @@
     if (p && p.catch) p.catch(() => {});
 
     // Sidechain: the bed steps back under the hit and swells back after.
-    if (!spec.noDuck) st.fx.duckUntil = now + spec.dur * 1000;
+    // Every stinger ducks something now — `spec.duck` overrides depth/ms for
+    // a shallow, short carve (kill/warpExit); anything else gets the default
+    // full-duration/full-depth duck.
+    {
+      const duckSpec = spec.duck || { depth: STINGER_DUCK, ms: spec.dur * 1000 };
+      st.fx.duckUntil = now + duckSpec.ms;
+      st.fx.duckDepth = duckSpec.depth;
+    }
 
     // Attack → hold → release envelope, 40 ms resolution.
     const STEP = 40;
@@ -1046,12 +1231,17 @@
     const t0 = now;
     st.stingerTimers[key] = setInterval(() => {
       const t = Date.now() - t0;
-      let v;
-      if (t < atkMs) v = peak * (t / atkMs);
-      else if (t > totalMs - relMs) v = peak * Math.max(0, (totalMs - t) / relMs);
-      else v = peak;
-      // Follow the music slider live, and vanish instantly on mute.
-      el.volume = (st.muted || !st.enabled) ? 0 : Math.max(0, Math.min(1, v));
+      let shape;   // 0..1 attack/hold/release SHAPE only
+      if (t < atkMs) shape = t / atkMs;
+      else if (t > totalMs - relMs) shape = Math.max(0, (totalMs - t) / relMs);
+      else shape = 1;
+      // Vanish instantly on mute. With a chain, el.volume carries only the
+      // shape — the absolute level already lives on chain.gain.gain (set
+      // once, above) and is not touched here. Without a chain (legacy
+      // fallback), el.volume has to carry both, as before this fix.
+      if (st.muted || !st.enabled) el.volume = 0;
+      else if (chain) el.volume = Math.max(0, Math.min(1, shape));
+      else el.volume = Math.max(0, Math.min(1, legacyPeak * shape));
       if (t >= totalMs) stopStinger(key);
     }, STEP);
     return true;
@@ -1306,8 +1496,10 @@
       lp = FILTER_OPEN_HZ;
     }
 
-    // ── STINGER SIDECHAIN.
-    if (now < fx.duckUntil) gain *= (1 - STINGER_DUCK);
+    // ── STINGER SIDECHAIN.  Depth is per-window (fx.duckDepth, set when the
+    // stinger fired) — not a flat constant — so kill/warpExit's shallow
+    // carve doesn't get the full-depth treatment.
+    if (now < fx.duckUntil) gain *= (1 - fx.duckDepth);
 
     fx.gainT = Math.max(0.05, Math.min(1.5, gain));
     fx.lpT = Math.max(200, Math.min(FILTER_OPEN_HZ, lp));
@@ -1317,6 +1509,17 @@
     fx.gain += (fx.gainT - fx.gain) * kg;
     const kl = 1 - Math.exp(-dt / (fx.lpT < fx.lp ? FX_TAU_UP : FX_TAU_DOWN));
     fx.lp += (fx.lpT - fx.lp) * kl;
+
+    // Track the bed's RUNNING RMS (smoothed) — see BED_RMS_TAU / playStinger.
+    if (wa.ok) {
+      const instBed = currentBedRMS();
+      if (fx.bedRmsRunning < 0) {
+        fx.bedRmsRunning = instBed;               // prime on first read
+      } else {
+        const kb = 1 - Math.exp(-dt / BED_RMS_TAU);
+        fx.bedRmsRunning += (instBed - fx.bedRmsRunning) * kb;
+      }
+    }
 
     applyFx();
   }
@@ -2330,7 +2533,11 @@
         try {
           wa.analyser = wa.ctx.createAnalyser();
           wa.analyser.fftSize = 1024;
-          wa.bus.connect(wa.analyser);   // tap only — not routed to output
+          // Tap `master` (bed + stingers summed), NOT `bus` (bed only) — an
+          // analyser on `bus` alone is structurally blind to stingers, which
+          // is exactly how a mix with zero audible hits read as "healthy"
+          // for multiple rounds. See wa.master above.
+          wa.master.connect(wa.analyser);   // tap only — not routed to output
           wa.analyserBuf = new Float32Array(wa.analyser.fftSize);
         } catch (e) { return null; }
       }
@@ -2340,6 +2547,9 @@
       const rms = Math.sqrt(sum / wa.analyserBuf.length);
       return {
         rms: rms,
+        bedRms: currentBedRMS(),                 // instantaneous
+        bedRmsRunning: st.fx.bedRmsRunning,       // smoothed — what a stinger's
+                                                   // makeup gain actually targets
         db: 20 * Math.log10(rms + 1e-9),
         element: st.currentEl ? st.currentEl.volume : 0,
         paused: st.currentEl ? st.currentEl.paused : true,
