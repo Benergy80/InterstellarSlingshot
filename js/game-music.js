@@ -1401,6 +1401,19 @@
   // LIVENESS_STALL_MS, that's dead air wearing a healthy mix.
   const LIVENESS_SAMPLE_MS = 1000;   // how often we look at currentTime
   const LIVENESS_STALL_MS  = 1500;   // no advance for this long = stalled
+  // A key that has never once proven itself advancing in its CURRENT watch
+  // window (liv.confirmed === false) is watched on a far tighter clock than
+  // the steady-state baseline above. That baseline exists to tolerate
+  // ordinary decoder jitter on a track that's already proven it plays —
+  // there's no jitter history to protect on one that hasn't, so nothing is
+  // lost by confirming fast. Two consecutive frozen reads ~150ms apart
+  // (300ms worst case) is enough to call it dead. Before this, EVERY first
+  // stall of a watch window — the literal first track of a session, or any
+  // freshly-switched-to track that never gets going — sat through the full
+  // 1000ms sample / 1500ms stall baseline before anything even noticed.
+  // Measured: that wait alone was 82.8% of all dead-air time.
+  const LIVENESS_CONFIRM_SAMPLE_MS = 150;
+  const LIVENESS_CONFIRM_STALL_MS  = 150;
   // How long a track stays demoted after a confirmed liveness failure
   // before it's eligible to be picked as a fallback again. Without this,
   // a track that just failed sits in goodKeys forever (it WAS healthy once)
@@ -1488,6 +1501,47 @@
     return null;
   }
 
+  // Shared "give up on this track, hand off to the best known-good
+  // alternative" step. Used by BOTH the fast first-confirm path (a track
+  // that has never once proven itself gets no same-element retry — see
+  // updateLiveness) and the ordinary two-retry watchdog's second-failure
+  // branch, so the demotion/fallback/hard-reload mechanics are identical
+  // no matter which rung triggered the escape. Demotes BEFORE picking a
+  // fallback so a later fallback walk can't land right back on the track
+  // that's still frozen.
+  function escapeFrom(el, key, now, reason) {
+    const liv = st.liveness;
+    demoteKey(key, now);
+    let fallbackTarget = pickFallbackKey(key, now);
+    if (!fallbackTarget && key !== LIVENESS_SAFE_BASE_KEY &&
+        st.loaded[LIVENESS_SAFE_BASE_KEY] && !st.loadErrors.has(LIVENESS_SAFE_BASE_KEY) &&
+        !isRecentlyFailed(LIVENESS_SAFE_BASE_KEY, now)) {
+      // Every proven-healthy candidate is itself cold or in cooldown —
+      // rather than cycle dead tracks, drop to the known-safest base layer.
+      fallbackTarget = LIVENESS_SAFE_BASE_KEY;
+    }
+    console.warn('🎵 Soundtrack: ' + reason + ' "' + key + '" — ' +
+                  (fallbackTarget ? 'falling back to "' + fallbackTarget + '"'
+                          : 'no known-good track yet, forcing a hard reload'));
+    liv.stuckSince = 0;
+    liv.recovering = false;
+    liv.stalled = false;
+    if (fallbackTarget) {
+      liv.escaping = true;
+      play(fallbackTarget);
+    } else {
+      // No known-good track yet (this stalled on the very first track of
+      // the session, and the safe base layer is unavailable or itself
+      // frozen) — hard-reload the element as a last resort.
+      try {
+        el.load();
+        el.currentTime = 0;
+        const p = el.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch (e) { /* ignore */ }
+    }
+  }
+
   function livenessRearm(now, key, t) {
     const liv = st.liveness;
     liv.lastKeyWatched = key;
@@ -1515,8 +1569,26 @@
     // once we suspect a freeze, confirming it fast beats paying the full
     // 1000ms sample-granularity tax on a track already under suspicion.
     const urgent = liv.escaping || liv.recovering || !!liv.stuckSince;
-    const sampleMs = urgent ? 350 : LIVENESS_SAMPLE_MS;
-    const stallMs = (liv.escaping || liv.recovering) ? 500 : LIVENESS_STALL_MS;
+    // A key that has never once proven itself advancing THIS watch window
+    // (liv.confirmed still false) gets the fastest clock of all — see
+    // LIVENESS_CONFIRM_* above — for BOTH the pre-suspicion sample cadence
+    // AND the stall threshold once suspicion is flagged. This must NOT be
+    // gated on `!urgent`: the moment the fast path takes its own first
+    // suspicious read, it sets stuckSince, which flips `urgent` true on
+    // the very next tick — gating on `!urgent` here would silently hand
+    // the stall threshold back to the 1500ms baseline one sample after
+    // suspicion starts, undoing the entire point of confirming fast.
+    // (`recovering` and `escaping` can only be true on a key that already
+    // proved itself at some point THIS session — recovering is only ever
+    // set below, after this branch has already deferred to it once
+    // liv.confirmed is true; escaping is cleared the moment any key
+    // proves an advance — so neither can coexist with confirmed===false
+    // and there is no case this steals from the escaping/recovering path.)
+    const firstConfirm = !liv.confirmed;
+    const sampleMs = firstConfirm ? LIVENESS_CONFIRM_SAMPLE_MS
+                    : (urgent ? 350 : LIVENESS_SAMPLE_MS);
+    const stallMs = firstConfirm ? LIVENESS_CONFIRM_STALL_MS
+                   : ((liv.escaping || liv.recovering) ? 500 : LIVENESS_STALL_MS);
 
     // Nothing to watch, or the mix is legitimately silent — a stall check
     // is meaningless there, so just re-arm the baseline.
@@ -1552,6 +1624,20 @@
 
     liv.stalled = true;
 
+    if (firstConfirm) {
+      // Never-confirmed track, two frozen reads ~150ms apart: that's
+      // confirmed dead WITHOUT a same-element retry hop. A track that
+      // hasn't proven it can produce even one sample isn't helped by
+      // nudging the same element — that's what the recovering branch below
+      // is for (an ESTABLISHED decoder having a hiccup). Retrying here
+      // would just spend another 150-500ms re-confirming what two fast
+      // reads already confirmed — this is the rung that used to be 82.8%
+      // of all dead air (the slow 1000ms/1500ms baseline below, paid in
+      // full before anything even noticed).
+      escapeFrom(el, key, now, 'liveness stall (never confirmed) —');
+      return;
+    }
+
     if (!liv.recovering && !liv.escaping) {
       // First failure: nudge the SAME element. Most stalls are a decoder
       // hiccup on a track that is otherwise correctly armed, not a dead
@@ -1571,38 +1657,7 @@
     // confirmed dead — demote it BEFORE picking a fallback so a later
     // fallback walk (possibly triggered by the track we're about to switch
     // to also failing) can't land right back on it while it's still frozen.
-    demoteKey(key, now);
-
-    // Do not sit on indefinite silence — fall back to the last track we
-    // KNOW was actually producing sound (and hasn't itself just failed).
-    let fallbackTarget = pickFallbackKey(key, now);
-    if (!fallbackTarget && key !== LIVENESS_SAFE_BASE_KEY &&
-        st.loaded[LIVENESS_SAFE_BASE_KEY] && !st.loadErrors.has(LIVENESS_SAFE_BASE_KEY) &&
-        !isRecentlyFailed(LIVENESS_SAFE_BASE_KEY, now)) {
-      // Every proven-healthy candidate is itself cold or in cooldown —
-      // rather than cycle dead tracks, drop to the known-safest base layer.
-      fallbackTarget = LIVENESS_SAFE_BASE_KEY;
-    }
-    console.warn('🎵 Soundtrack: liveness recovery failed on "' + key + '" — ' +
-                  (fallbackTarget ? 'falling back to "' + fallbackTarget + '"'
-                          : 'no known-good track yet, forcing a hard reload'));
-    liv.stuckSince = 0;
-    liv.recovering = false;
-    liv.stalled = false;
-    if (fallbackTarget) {
-      liv.escaping = true;
-      play(fallbackTarget);
-    } else {
-      // No known-good track yet (this stalled on the very first track of
-      // the session, and the safe base layer is unavailable or itself
-      // frozen) — hard-reload the element as a last resort.
-      try {
-        el.load();
-        el.currentTime = 0;
-        const p = el.play();
-        if (p && p.catch) p.catch(() => {});
-      } catch (e) { /* ignore */ }
-    }
+    escapeFrom(el, key, now, 'liveness recovery failed on');
   }
 
   // updateMusicContext() below picks WHAT the player should be hearing
@@ -2189,6 +2244,11 @@
         stalled: liv.stalled,
         recovering: liv.recovering,
         escaping: liv.escaping,
+        // False until the watched key has advanced at least once THIS
+        // watch window — gates the fast first-confirm cadence (see
+        // LIVENESS_CONFIRM_* / updateLiveness). Exposed for debug/tuning
+        // alongside the other rungs above.
+        confirmed: liv.confirmed,
         stuckMs: liv.stuckSince ? (Date.now() - liv.stuckSince) : 0,
         // Ring of recently-confirmed-healthy keys (newest last), plus what
         // the second-failure rung would actually pick right now.

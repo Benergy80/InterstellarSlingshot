@@ -2532,20 +2532,30 @@ let _universeDecorLive = false;      // nebula dots / path lines are attached
 // observed stacking into (a screen-space cell, not a world-space one, so
 // it scales with however zoomed-in the radar currently is).
 const MAP_CLUSTER_CELL_PX = 5;
-// Hard ceiling on DOM nodes this pass may claim. The cell bucketing alone
-// handles the normal "dense clump" case; this is a fallback for a
-// pathological spread (many cells, each lightly occupied) that would
-// otherwise still blow the budget.
+// Hard ceiling on DOM nodes the WHOLE radar refresh may claim — VIPs,
+// hostiles, objectives, allies AND scenery all draw from this ONE pool now,
+// spent in strict priority order (current target > hostiles > objectives >
+// allies > scenery). It used to look like a budget but wasn't one: scenery
+// had its own separate, ADDITIVE allowance (MAP_SCENERY_NODE_BUDGET) that
+// sat entirely outside this ceiling, and ally arrows bypassed the whole
+// system — rendered individually, every frame, with no cap at all. Total
+// nodes could exceed MAP_CLUSTER_NODE_BUDGET by scenery's 24 plus however
+// many allies were in play. Fixed with one running remainder (`remaining`
+// in renderClusteredMapDots), debited by each tier in priority order
+// before the next tier gets to see it.
 const MAP_CLUSTER_NODE_BUDGET = 250;
 // Scenery (dotPriority <= 60: planets, asteroids, dysons, whales,
 // ringworlds, storms, quiet civilian traffic) already gets visually
 // demoted to near-invisible ink by renderIndividualMapDot — 3px, no glow,
 // 45% opacity — yet an untouched asteroid field was still spending one
-// full DOM node (plus a permanent stalk child) per rock, competing with
-// hostiles for the shared MAP_CLUSTER_NODE_BUDGET. Scenery gets its own
-// small, fixed-grid budget instead: coarser than the adaptive tactical
-// cell (so a scattered field collapses hard) and never widened by how
-// crowded the frame is.
+// full DOM node (plus a permanent stalk child) per rock. Scenery gets its
+// own small, fixed-grid CEILING instead: coarser than the tactical/hostile
+// cells (so a scattered field collapses hard), never widened by how
+// crowded the frame is, AND — being last in priority order — further
+// clamped to whatever's left of the shared budget once every
+// higher-priority tier has taken its share (see renderClusteredMapDots).
+// This ceiling only stops scenery from HOGGING a quiet frame's surplus
+// budget; it is not itself a separate allowance on top of the total.
 const MAP_SCENERY_CELL_PX = 14;
 const MAP_SCENERY_NODE_BUDGET = 24;
 // The "must-tier" (hostile / boss / distress / current-target / active-lock)
@@ -2558,8 +2568,12 @@ const MAP_SCENERY_NODE_BUDGET = 24;
 // MAP_MUST_VIP_CAP below); everything else in the must-tier gets bucketed
 // exactly like `tactical`, just on a coarser grid so a swarm still reads
 // distinctly "hostile" rather than fading into scenery-grade aggregates.
+// (No separate node-count ceiling for this tier: as tier #2 in priority
+// order — current target > HOSTILES > objectives > allies > scenery — it
+// is entitled to as much of the shared budget as it needs, same as
+// objectives get whatever hostiles leave behind. Only scenery, dead last,
+// gets an extra ceiling so it can't eat a quiet frame's whole surplus.)
 const MAP_MUST_CELL_PX = 6;
-const MAP_MUST_NODE_BUDGET = 120;
 // Hard cap on contacts that bypass bucketing entirely. Current target /
 // active lock / boss / distress call are non-negotiable — a player mid-fight
 // can't have their lock target vanish into an aggregate — so those are
@@ -2659,13 +2673,113 @@ function _ensureMapDepthBar(galaxyMap) {
     return depthBar;
 }
 
-function renderClusteredMapDots(candidates) {
-    // Three-way split, not two: scenery no longer competes with real
-    // tactical contacts for the shared node budget at all — it gets its
-    // own small fixed allowance below. `mustTier` (hostile/current-target/
-    // lock/boss/distress) gets bucketed too, just on its own coarser grid
-    // and budget (see below) instead of skipping bucketing entirely;
-    // `tactical` is the adaptive-cell bucket for everything else salient.
+// Buckets `items` onto a screen-space grid (same declutter idea the old
+// per-tier loops used), widening the cell up to 4x if the natural
+// bucketing still produces more nodes than `target`. Unlike the old
+// per-tier FIXED constants, `target` here is today's REMAINING shared
+// budget (see renderClusteredMapDots) — so this is the one place that has
+// to make good on "the cap is a cap" even in a case the geometric widening
+// alone can't reach (a higher-priority tier already spent nearly
+// everything, so this tier's target is tiny). If widening still leaves the
+// tier over target, the lowest-salience cells are folded into ONE final
+// "+overflow" aggregate so the tier's real emitted node count can never
+// exceed target — a hard guarantee, not a best-effort one (the old
+// widening loop just gave up after 4 attempts and rendered whatever it
+// had, which is how a class of blip could blow straight through the
+// declared budget).
+// individualMax: cells with <= this many members render as individual
+// dots (0 disables that entirely — every surviving cell is an aggregate,
+// which is how scenery always wants it).
+function _bucketWithBudget(items, cellPxStart, target, individualMax, keyPrefix) {
+    if (target <= 0 || items.length === 0) return { entries: [], nodeCount: 0 };
+
+    const cost = g => (individualMax > 0 && g.length <= individualMax) ? g.length : 1;
+
+    let cellPx = cellPxStart;
+    let groups;
+    let total = 0;
+    for (let attempt = 0; attempt < 4; attempt++) {
+        groups = new Map(); // cellKey -> array of candidates
+        for (let i = 0; i < items.length; i++) {
+            const c = items[i];
+            const ck = Math.floor(c.px / cellPx) + '_' + Math.floor(c.py / cellPx);
+            let g = groups.get(ck);
+            if (!g) { g = []; groups.set(ck, g); }
+            g.push(c);
+        }
+        total = 0;
+        groups.forEach(g => { total += cost(g); });
+        if (total <= target || attempt === 3) break;
+        cellPx *= 1.7;
+    }
+
+    if (total <= target) {
+        const entries = [];
+        groups.forEach((g, ck) => entries.push({ cellKey: keyPrefix + ck, group: g, forceAggregate: false }));
+        return { entries, nodeCount: total };
+    }
+
+    // Widening alone didn't converge (target is smaller than this tier's
+    // natural spread even at max cell size) — guarantee the cap anyway:
+    // rank cells by salience (highest member priority, then size), keep
+    // rendering the top ones normally until one slot is left, then fold
+    // every remaining cell's members into a single synthetic overflow
+    // aggregate. Still "many" reads as one blip, it's just the whole
+    // remainder instead of one cell's worth.
+    const ranked = [];
+    groups.forEach((g, ck) => ranked.push({ cellKey: keyPrefix + ck, group: g }));
+    ranked.sort((a, b) => {
+        let pa = -Infinity, pb = -Infinity;
+        for (let i = 0; i < a.group.length; i++) if (a.group[i].dotPriority > pa) pa = a.group[i].dotPriority;
+        for (let i = 0; i < b.group.length; i++) if (b.group[i].dotPriority > pb) pb = b.group[i].dotPriority;
+        if (pb !== pa) return pb - pa;
+        return b.group.length - a.group.length;
+    });
+
+    const entries = [];
+    const overflow = [];
+    let node = 0;
+    const reserve = 1; // last slot held for the overflow aggregate, if needed
+    for (let i = 0; i < ranked.length; i++) {
+        const g = ranked[i].group;
+        const c = cost(g);
+        if (node + c <= target - reserve) {
+            entries.push({ cellKey: ranked[i].cellKey, group: g, forceAggregate: false });
+            node += c;
+        } else {
+            for (let j = 0; j < g.length; j++) overflow.push(g[j]);
+        }
+    }
+    if (overflow.length) {
+        entries.push({ cellKey: keyPrefix + 'overflow', group: overflow, forceAggregate: true });
+        node += 1;
+    }
+    return { entries, nodeCount: node };
+}
+
+// Renders the entries _bucketWithBudget returned: a cell within
+// individualMax renders its members as individual dots (today's look,
+// unchanged), everything else — including any forced overflow fold —
+// renders as one aggregate.
+function _renderBudgetedEntries(entries, individualMax) {
+    for (let i = 0; i < entries.length; i++) {
+        const e = entries[i];
+        if (!e.forceAggregate && individualMax > 0 && e.group.length <= individualMax) {
+            for (let j = 0; j < e.group.length; j++) renderIndividualMapDot(e.group[j], false);
+        } else {
+            renderAggregateMapDot(e.cellKey, e.group);
+        }
+    }
+}
+
+function renderClusteredMapDots(candidates, allyCandidates) {
+    // `mustTier` (hostile/current-target/lock/boss/distress), `tactical`
+    // (the "objectives" tier — anything salient that isn't hostile-grade,
+    // dotPriority 61-89) and `scenery` are the same three-way split as
+    // before. Ally arrows arrive pre-split via `allyCandidates` (they
+    // never dot-cluster — no aggregate form for a glyph — but now DO count
+    // against the shared budget, closing the class of blip that used to
+    // render completely outside it).
     const mustTier = [];
     const tactical = [];
     const scenery = [];
@@ -2674,26 +2788,6 @@ function renderClusteredMapDots(candidates) {
         if (c.mustIndividual || c.dotPriority >= 90) mustTier.push(c);
         else if (c.dotPriority > 60) tactical.push(c);
         else scenery.push(c);
-    }
-
-    // ── Scenery: fixed coarse grid, ALWAYS one aggregate per cell, no
-    // individuals — an asteroid field becomes one quiet blob instead of
-    // one DOM node (+ stalk) per rock. Widen the grid, same as the
-    // tactical pass below, only if it still produces more distinct cells
-    // than the scenery budget allows.
-    let sceneryCellPx = MAP_SCENERY_CELL_PX;
-    let sceneryGroups;
-    for (let attempt = 0; attempt < 4; attempt++) {
-        sceneryGroups = new Map(); // cellKey -> array of candidates
-        for (let i = 0; i < scenery.length; i++) {
-            const c = scenery[i];
-            const ck = Math.floor(c.px / sceneryCellPx) + '_' + Math.floor(c.py / sceneryCellPx);
-            let g = sceneryGroups.get(ck);
-            if (!g) { g = []; sceneryGroups.set(ck, g); }
-            g.push(c);
-        }
-        if (sceneryGroups.size <= MAP_SCENERY_NODE_BUDGET || attempt === 3) break;
-        sceneryCellPx *= 1.7;
     }
 
     // ── Must-tier VIPs: the only contacts that bypass bucketing entirely.
@@ -2732,83 +2826,61 @@ function renderClusteredMapDots(candidates) {
     }
     // Everything else in the must-tier (the bulk of a hostile swarm) is
     // bucketed exactly like `tactical` below, just on its own coarser grid
-    // and budget — this is what structurally guarantees no cell holds more
-    // than a handful of individual nodes; the O(n^2) separation pass this
+    // — this is what structurally guarantees no cell holds more than a
+    // handful of individual nodes; the O(n^2) separation pass this
     // replaced could not (pushing A off B pushes it onto C).
     const mustOverflow = [];
     for (let i = 0; i < mustTier.length; i++) {
         if (!vipKeys.has(mustTier[i].key)) mustOverflow.push(mustTier[i]);
     }
-    let mustCellPx = MAP_MUST_CELL_PX;
-    let mustGroups;
-    for (let attempt = 0; attempt < 4; attempt++) {
-        mustGroups = new Map(); // cellKey -> array of candidates
-        for (let i = 0; i < mustOverflow.length; i++) {
-            const c = mustOverflow[i];
-            const ck = Math.floor(c.px / mustCellPx) + '_' + Math.floor(c.py / mustCellPx);
-            let g = mustGroups.get(ck);
-            if (!g) { g = []; mustGroups.set(ck, g); }
-            g.push(c);
-        }
-        let total = 0;
-        mustGroups.forEach(g => { total += g.length <= 2 ? g.length : 1; });
-        if (total <= MAP_MUST_NODE_BUDGET || attempt === 3) break;
-        mustCellPx *= 1.7;
-    }
 
-    // ── Tactical: same adaptive-cell bucketing as before (a lightly
-    // occupied cell still renders its members individually), but sized to
-    // whatever's left of the 250 budget once VIPs, the must-tier's bucketed
-    // overflow, and scenery have taken their share.
-    let cellPx = MAP_CLUSTER_CELL_PX;
-    let groups;
-    const tacticalBudget = Math.max(0, MAP_CLUSTER_NODE_BUDGET - vip.length - mustGroups.size - sceneryGroups.size);
-    for (let attempt = 0; attempt < 4; attempt++) {
-        groups = new Map(); // cellKey -> array of candidates
-        for (let i = 0; i < tactical.length; i++) {
-            const c = tactical[i];
-            const ck = Math.floor(c.px / cellPx) + '_' + Math.floor(c.py / cellPx);
-            let g = groups.get(ck);
-            if (!g) { g = []; groups.set(ck, g); }
-            g.push(c);
-        }
-        let total = 0;
-        groups.forEach(g => { total += g.length <= 2 ? g.length : 1; });
-        if (total <= tacticalBudget || attempt === 3) break;
-        cellPx *= 1.7;
-    }
+    // ── Shared budget, spent in strict priority order ───────────────────
+    // current target > hostiles > objectives > allies > scenery. VIPs
+    // (tier #1) already spent their share unconditionally, above — it's
+    // non-negotiable. Every tier below debits the SAME running remainder
+    // before the next tier gets to see it, which is what makes
+    // MAP_CLUSTER_NODE_BUDGET an actual TOTAL ceiling instead of several
+    // tiers each quietly assuming they had the whole budget to themselves
+    // (the old bug: scenery had its own separate additive allowance, and
+    // ally arrows had no budget check at all).
+    let remaining = Math.max(0, MAP_CLUSTER_NODE_BUDGET - vip.length);
 
-    // VIPs always get their own dot, raised above anything sharing its cell.
+    // Tier #2: hostiles. No ceiling below `remaining` — hostiles outrank
+    // objectives, allies and scenery, so they're entitled to whatever's
+    // left of the shared pool, same as objectives get whatever hostiles
+    // don't need.
+    const hostiles = _bucketWithBudget(mustOverflow, MAP_MUST_CELL_PX, remaining, 2, 'must:');
+    remaining = Math.max(0, remaining - hostiles.nodeCount);
+
+    // Tier #3: objectives (everything else salient, dotPriority 61-89).
+    const objectives = _bucketWithBudget(tactical, MAP_CLUSTER_CELL_PX, remaining, 2, '');
+    remaining = Math.max(0, remaining - objectives.nodeCount);
+
+    // Tier #4: allies. Sorted nearest-first so, if the roster ever did
+    // outgrow the remaining budget, the wingmen actually near the action
+    // are the ones that stay visible. Whatever doesn't fit is simply never
+    // claimed this frame — mapDotPool hides any arrow slot a previous
+    // frame held that this frame didn't reclaim, so an over-budget ally
+    // just fades out rather than leaking a node past the cap.
+    const allySorted = (allyCandidates || []).slice().sort((a, b) => a.distance - b.distance);
+    const allyRenderCount = Math.min(allySorted.length, remaining);
+    for (let i = 0; i < allyRenderCount; i++) renderAllyMarker(allySorted[i]);
+    remaining = Math.max(0, remaining - allyRenderCount);
+
+    // Tier #5: scenery, dead last — gets whatever's left, further capped
+    // by its own small ceiling (MAP_SCENERY_NODE_BUDGET) so it can't hog
+    // an otherwise-quiet frame's surplus just because nothing else needed
+    // it. Always renders as an aggregate (individualMax 0) — even a lone
+    // rock in a cell — matching scenery's "never gets full individual-dot
+    // treatment" rule from before.
+    const sceneryTarget = Math.min(MAP_SCENERY_NODE_BUDGET, remaining);
+    const sceneryResult = _bucketWithBudget(scenery, MAP_SCENERY_CELL_PX, sceneryTarget, 0, 'scenery:');
+
+    // ── Render, in the same priority order the budget was spent in ──────
     for (let i = 0; i < vip.length; i++) renderIndividualMapDot(vip[i], true);
-
-    // Must-tier cell keys are prefixed so they can never collide with a
-    // tactical aggregate's pool key even when the raw grid coordinates
-    // happen to match (different, unrelated grid pitches). A lightly
-    // occupied must-tier cell still renders its members individually —
-    // renderIndividualMapDot's own salience tier (dotPriority >= 90) keeps
-    // them reading as hostile-grade regardless.
-    mustGroups.forEach((g, cellKey) => {
-        if (g.length <= 2) {
-            for (let i = 0; i < g.length; i++) renderIndividualMapDot(g[i], false);
-        } else {
-            renderAggregateMapDot('must:' + cellKey, g, mustCellPx);
-        }
-    });
-
-    groups.forEach((g, cellKey) => {
-        if (g.length <= 2) {
-            for (let i = 0; i < g.length; i++) renderIndividualMapDot(g[i], false);
-        } else {
-            renderAggregateMapDot(cellKey, g, cellPx);
-        }
-    });
-
-    // Scenery cell keys are prefixed so they can never collide with a
-    // tactical aggregate's pool key even when the raw grid coordinates
-    // happen to match (different, unrelated grid pitches).
-    sceneryGroups.forEach((g, cellKey) => {
-        renderAggregateMapDot('scenery:' + cellKey, g, sceneryCellPx);
-    });
+    _renderBudgetedEntries(hostiles.entries, 2);
+    _renderBudgetedEntries(objectives.entries, 2);
+    _renderBudgetedEntries(sceneryResult.entries, 0);
 }
 
 // Every write below is compare-and-set against the dot's own cache: a
@@ -2873,7 +2945,7 @@ function renderIndividualMapDot(c, raised) {
 // One dot standing in for every contact bucketed into `cellKey` this
 // refresh. Keyed on the CELL, not the members, so the element a crowded
 // spot on the radar owns stays stable while its membership churns.
-function renderAggregateMapDot(cellKey, group, cellPx) {
+function renderAggregateMapDot(cellKey, group) {
     const dot = mapDotPool.get('agg:' + cellKey);
     const s = dot._s;
 
@@ -2891,33 +2963,61 @@ function renderAggregateMapDot(cellKey, group, cellPx) {
     const py = Math.round((sumPy / n) * 10) / 10;
     const meanRelY = sumRelY / n;
 
-    // Slightly larger than a lone dot of the dominant type, capped so a
-    // clump of hundreds doesn't paint a blob over half the radar. The cap
-    // only tames the VISUAL scaling curve — the tooltip below still shows
-    // the true member count, it just stops growing the dot past it.
-    const baseSize = parseFloat(dominant.dotSize) || 4;
-    const scaleN = Math.min(n, 99);
-    // Clamped to the bucketing cell's own pitch — without this an
-    // aggregate could grow (baseSize+6, up to ~10-14px) well past the
-    // ~5px grid it was bucketed on, so neighbouring cells' aggregates
-    // overlapped into one fused blob instead of tiling edge-to-edge.
-    let size = Math.round(Math.min(cellPx, baseSize + 6, baseSize + 1 + Math.sqrt(scaleN))) + 'px';
+    // ── Density encoding ─────────────────────────────────────────────────
+    // An aggregate used to be sized/glowed almost independently of how many
+    // contacts it stood for: size was clamped to `Math.min(cellPx, ...)`,
+    // and cellPx (5-6px for hostiles/objectives) is SMALLER than even the
+    // 2-member step of the old growth curve — so the clamp won every time
+    // and a 190-ship wolfpack rendered pixel-identical to a 3-ship patrol.
+    // Worse, this function never applied renderIndividualMapDot's own
+    // salience tier (a lone hostile gets 7-9px + a strong white outline),
+    // so BOTH clusters were also less salient than one unclustered enemy.
+    // Fixed by starting from the same salience baseline a lone contact of
+    // this class would get, then adding count-weighted growth on top —
+    // capped in absolute px, decoupled from the bucketing cell's pitch.
+    // Dropping that clamp is not a new risk: box-shadow glow already bled
+    // past a cell's own footprint before this change (that's what made the
+    // glow read as "many" at all), so letting the solid dot grow a
+    // comparable, capped amount is the same order of spill already
+    // accepted, not a fresh one — and it's what actually makes "190" look
+    // bigger than "3" instead of both losing to the min().
+    const scaleN = Math.min(n, 199);
+    const growth = Math.sqrt(scaleN); // n=3 → ~1.7, n=40 → ~6.3, n=190 → ~13.8
 
-    // Count-weighted brightness, capped well short of the distress pulse
-    // so a big cluster reads as "many", not "on fire".
-    const glowPx = Math.min(10, 4 + Math.floor(scaleN / 4));
-    let shadow = '0 0 ' + glowPx + 'px ' + dominant.dotColor + ', 0 0 ' + (glowPx + 4) + 'px ' + dominant.dotColor;
-    let opacity = '1';
+    const isScenery = dominant.dotPriority <= 60;
+    const isHostile = dominant.dotPriority >= 90;
+    let size, shadow, opacity, outline;
 
-    // Same salience tier as renderIndividualMapDot: a fused cell of
-    // scenery/neutral traffic (dominant.dotPriority <= 60) must NOT
-    // out-ink real contacts just because the cellPx budget widened its
-    // clamp. Clamp it down to the demoted individual's footprint instead
-    // of letting size/glow scale with member count.
-    if (dominant.dotPriority <= 60) {
-        size = Math.min(parseFloat(size), 4) + 'px';
-        opacity = '0.5';
+    if (isScenery) {
+        // Scenery aggregates stay quiet regardless of n — a huge debris
+        // field must never out-ink a real contact just because it's huge.
+        size = '3px';
         shadow = 'none';
+        opacity = '0.45';
+        outline = '';
+    } else {
+        const baseSize = isHostile ? (dominant.dotPriority >= 110 ? 9 : 7) : (parseFloat(dominant.dotSize) || 4);
+        // Hostiles get the most growth headroom (they outrank objectives),
+        // capped well short of "blob that swallows the radar" — the
+        // tooltip still shows the true member count once it stops growing.
+        const maxGrow = isHostile ? 10 : 6;
+        size = Math.round(baseSize + Math.min(maxGrow, growth * 1.15)) + 'px';
+
+        // Brightness ramp: blur radius AND the outer halo's alpha both
+        // climb with n. Blur alone plateaus too early to read as "hotter"
+        // in a flat screenshot average — alpha is what actually raises
+        // luminance, so it carries most of the signal for big n.
+        const glowPx = Math.round(4 + Math.min(10, growth * 1.3));
+        const haloAlpha = Math.min(1, 0.55 + growth * 0.045);
+        shadow = '0 0 ' + glowPx + 'px ' + dominant.dotColor +
+                 ', 0 0 ' + (glowPx + 6) + 'px ' + _mapStalkRgba(dominant.dotColor, haloAlpha);
+        opacity = '1';
+        // Same 1px / 90%-white ring a lone salient contact gets at
+        // minimum (n=3, the smallest possible aggregate, floors right at
+        // that — an aggregate is never quieter than the individual it
+        // stands in for), widening only once a cluster is genuinely huge.
+        const outlineWidth = 1 + Math.min(2, Math.floor(growth / 4));
+        outline = outlineWidth + 'px solid rgba(255,255,255,0.9)';
     }
 
     if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
@@ -2927,12 +3027,13 @@ function renderAggregateMapDot(cellKey, group, cellPx) {
     // dimmed scenery individual (opacity 0.45) or an outlined hostile
     // (1px white outline) — the salience tier in renderIndividualMapDot.
     // Reset opacity explicitly so a fused-cell aggregate doesn't inherit
-    // dimming from whatever this node used to represent. Outline is
-    // CLEARED (not forced to 'none') — .aggregate-map-dot already gets
-    // its own faint "many contacts" ring from CSS, and an inline 'none'
-    // would win over that class rule and erase the ring.
+    // dimming from whatever this node used to represent.
     if (s.opacity !== opacity) { dot.style.opacity = opacity; s.opacity = opacity; }
-    if (s.outline !== '') { dot.style.outline = ''; s.outline = ''; }
+    // Scenery clears outline back to '' so the faint constant "many
+    // contacts" ring from .aggregate-map-dot's CSS shows through instead;
+    // anything salient sets its own scaled inline outline above, which
+    // wins over that CSS rule (outline-offset still comes from the class).
+    if (s.outline !== outline) { dot.style.outline = outline; s.outline = outline; }
     if (s.distress !== anyDistress) {
         if (anyDistress) dot.classList.add('distress-map-dot');
         else dot.classList.remove('distress-map-dot');
@@ -2951,6 +3052,29 @@ function renderAggregateMapDot(cellKey, group, cellPx) {
     if (_mapTitleTick) {
         const t = n + ' contacts (' + (dominant.name || 'mixed') + ' + more)';
         if (s.title !== t) { dot.title = t; s.title = t; }
+    }
+}
+
+// Ally ▲ glyph for one wingman. Pulled out of the nearbyObjects loop so
+// allies can be collected first and rendered later, in priority order,
+// against the SAME shared radar budget as everything else (see
+// renderClusteredMapDots) — they used to claim an arrow unconditionally,
+// with no cap at all, regardless of how much budget hostiles/objectives
+// had already spent.
+function renderAllyMarker(c) {
+    const arrow = mapDotPool.getArrow(c.key);
+    const as = arrow._s;
+    if (as.color !== c.dotColor) {
+        arrow.style.color = c.dotColor;
+        arrow.style.filter = 'drop-shadow(0 0 3px ' + c.dotColor + ')';
+        as.color = c.dotColor;
+    }
+    const atf = 'translate(' + c.px + 'px,' + c.py + 'px) translate(-50%,-50%) rotate(' + c.angle + 'rad)';
+    if (as.tf !== atf) { arrow.style.transform = atf; as.tf = atf; }
+    if (as.vis !== 'visible') { arrow.style.visibility = 'visible'; as.vis = 'visible'; }
+    if (_mapTitleTick) {
+        const at = (c.name || 'Wingman') + ' (' + c.distance.toFixed(0) + 'u)';
+        if (as.title !== at) { arrow.title = at; as.title = at; }
     }
 }
 
@@ -3276,9 +3400,11 @@ if (typeof outerInterstellarSystems !== 'undefined') {
 
         // Display objects as dots on map
         // Candidates collected here, THEN bucketed/rendered below — see
-        // renderClusteredMapDots(). Allies still claim their arrow directly
-        // inside this loop (they never dot-cluster).
+        // renderClusteredMapDots(). Allies are collected into their own
+        // array (they never dot-cluster — no aggregate form for a glyph —
+        // but still spend from the same shared radar budget).
         const _clusterCandidates = [];
+        const _allyCandidates = [];
         nearbyObjects.forEach(obj => {
             // The blip's identity. THREE.Object3D.id is unique and stable
             // for the object's whole life, so the same ship keeps the same
@@ -3316,7 +3442,11 @@ let dotSize = '4px';
 let dotPriority = 20;
 
 if (obj.type === 'ally') {
-    // Render allies as arrow markers like the player, not dots
+    // Allies render as arrow markers, not dots — but rendering is deferred
+    // to renderClusteredMapDots() now (see _allyCandidates below), so they
+    // count against the SAME shared radar budget as everything else
+    // instead of claiming a node unconditionally, with no cap, every frame
+    // regardless of how much budget hostiles/objectives had already spent.
     // Use the wingman's stored color (Greek-named recruits have distinct hues)
     dotColor = (obj.colorStr) || (obj.name === 'Wingman Alpha' ? '#00ff88' : (obj.name === 'Wingman Beta' ? '#88aaff' : '#ffaa44'));
     // Point the ▲ along the wingman's NOSE (they're clones of the
@@ -3328,22 +3458,7 @@ if (obj.type === 'ally') {
         _allyMarkerFwd.set(0, 0, 1).applyQuaternion(obj.ship.quaternion);
         _allyAng = Math.round(Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z) * 100) / 100;
     }
-    // Arrows live in their own sub-pool: already attached, glyph already
-    // set, look already in CSS. Only colour / transform / visibility move.
-    const arrow = mapDotPool.getArrow(_key);
-    const as = arrow._s;
-    if (as.color !== dotColor) {
-        arrow.style.color = dotColor;
-        arrow.style.filter = 'drop-shadow(0 0 3px ' + dotColor + ')';
-        as.color = dotColor;
-    }
-    const atf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%) rotate(' + _allyAng + 'rad)';
-    if (as.tf !== atf) { arrow.style.transform = atf; as.tf = atf; }
-    if (as.vis !== 'visible') { arrow.style.visibility = 'visible'; as.vis = 'visible'; }
-    if (_mapTitleTick) {
-        const at = (obj.name || 'Wingman') + ' (' + obj.distance.toFixed(0) + 'u)';
-        if (as.title !== at) { arrow.title = at; as.title = at; }
-    }
+    _allyCandidates.push({ key: _key, px, py, angle: _allyAng, dotColor, name: obj.name, distance: obj.distance });
     return; // skip normal dot styling below
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
@@ -3455,7 +3570,7 @@ if (obj.type === 'ally') {
         // pool key is the CELL's coordinates, not its membership, so a
         // contact drifting in or out of an otherwise-stable cell just
         // restyles the same DOM element — no churn, no flicker.
-        renderClusteredMapDots(_clusterCandidates);
+        renderClusteredMapDots(_clusterCandidates, _allyCandidates);
     }
     // Park every blip this refresh didn't claim (visibility only) — also
     // covers the case where the world arrays aren't loaded yet.

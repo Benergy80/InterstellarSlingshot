@@ -402,10 +402,33 @@ const _sharedRimTime = { value: 0.0 };
 //                        regions), -1 for the game's usual -Z-forward hulls
 //   formNoseDark       — multiplier on faces pointing along the nose, which
 //                        darkens the bow cap / canopy into an accent
+//
+// opts.battleDamage (bool, requires panelDetail): adds the DAMAGE TIER —
+// the one hull cue this material had none of. A hull carried exactly the
+// same pixels at 100% HP and at 3% HP, so "this one is nearly dead, finish
+// it" was information that existed only in the HUD bracket, never on the
+// ship. It is driven by a single `uDamage` uniform (0 = pristine, 1 =
+// wreck) written per-ship by _syncHullDamage below, and it is a MECHANISM,
+// not a per-class decal: it rides the same object-space triplanar field the
+// panel detail already uses, so every faction, every boss and every fallback
+// hull gets it from the one call site with no per-model authoring, and it
+// costs no UVs (these GLBs ship POSITION + NORMAL only) and no extra draw.
+//
+// Two terms, because damage reads as a pair:
+//   SCORCH — carbon blotches that eat the albedo. As uDamage rises the
+//            threshold drops and more of the hull burns black.
+//   EMBER  — a thin hot band on the EDGE of every scorch blotch, added to
+//            emissive and flickering off uTime. Cooling carbon is dark;
+//            what glows is the rim of the hole, which is why this is a band
+//            around the blotch and not a fill of it.
+// Both terms also do real work for the surface read: they are high-contrast
+// and locally structured, so they raise per-pixel luminance spread on the
+// isolated hull rather than just tinting it.
 function _addFresnelRim(material, opts) {
     opts = opts || {};
     const panelDetail = !!opts.panelDetail;
     const hullForm = !!opts.hullForm;
+    const battleDamage = panelDetail && (opts.battleDamage !== false);
     const needObjNormal = panelDetail || hullForm;
     const uniforms = {
         rimColorIdle: { value: new THREE.Color(opts.idle !== undefined ? opts.idle : 0x2ad4ff) },
@@ -420,6 +443,15 @@ function _addFresnelRim(material, opts) {
     };
     if (panelDetail) {
         uniforms.uRimPanelCell = { value: opts.panelCellSize !== undefined ? opts.panelCellSize : 0.05 };
+        // How much of the panel mask reaches the EMISSIVE floor (0 = the old
+        // albedo-only behaviour, 1 = the floor is fully panelled).
+        uniforms.uPanelEmis = { value: opts.panelEmissive !== undefined ? opts.panelEmissive : 0.85 };
+    }
+    if (battleDamage) {
+        uniforms.uDamage = { value: 0.0 };
+        uniforms.uDamageEmber = {
+            value: new THREE.Color(opts.emberColor !== undefined ? opts.emberColor : 0xff7a1e)
+        };
     }
     if (hullForm) {
         uniforms.uFormFloor    = { value: opts.formFloor    !== undefined ? opts.formFloor    : 0.55 };
@@ -472,7 +504,9 @@ uniform float rimBaseStrength;
 uniform float rimBoostStrength;
 uniform float rimCoreDarken;
 uniform float uRimPanelCell;
+uniform float uPanelEmis;
 ${hullForm ? 'uniform float uFormFloor;\nuniform float uFormTop;\nuniform float uFormNoseSign;\nuniform float uFormNoseDark;' : ''}
+${battleDamage ? 'uniform float uDamage;\nuniform vec3 uDamageEmber;' : ''}
 uniform float uTime;
 
 float _rimHash21( vec2 p ) {
@@ -516,7 +550,33 @@ float _rimPanelDetail( vec3 posObj, vec3 normalObj, float cell ) {
     float mYZ = _rimPanelMask( posObj.yz, cell );
     float mXZ = _rimPanelMask( posObj.xz, cell );
     return mXY * blend.z + mYZ * blend.x + mXZ * blend.y;
-}`
+}
+${battleDamage ? `
+// Smooth value field on a coarse cell lattice — bilinear over per-cell
+// hashes so the scorch blotches are BLOBS with soft edges rather than the
+// hard squares a raw per-cell hash gives (which would read as a checker,
+// not as burn). One octave is enough: this is silhouette-scale damage seen
+// at 30-90 px, not a texture study.
+float _rimBlobField( vec2 uv, float cell ) {
+    vec2 p = uv / cell;
+    vec2 i = floor( p );
+    vec2 f = fract( p );
+    f = f * f * ( 3.0 - 2.0 * f );
+    float a = _rimHash21( i + vec2( 0.0, 0.0 ) + 53.0 );
+    float b = _rimHash21( i + vec2( 1.0, 0.0 ) + 53.0 );
+    float c = _rimHash21( i + vec2( 0.0, 1.0 ) + 53.0 );
+    float d = _rimHash21( i + vec2( 1.0, 1.0 ) + 53.0 );
+    return mix( mix( a, b, f.x ), mix( c, d, f.x ), f.y );
+}
+
+float _rimDamageField( vec3 posObj, vec3 normalObj, float cell ) {
+    vec3 blend = pow( abs( normalize( normalObj ) ), vec3( 4.0 ) );
+    blend /= max( blend.x + blend.y + blend.z, 0.0001 );
+    float fXY = _rimBlobField( posObj.xy, cell );
+    float fYZ = _rimBlobField( posObj.yz, cell );
+    float fXZ = _rimBlobField( posObj.xz, cell );
+    return fXY * blend.z + fYZ * blend.x + fXZ * blend.y;
+}` : ''}`
             : `#include <common>
 varying vec3 vRimNormalW;
 varying vec3 vRimViewW;
@@ -539,7 +599,28 @@ uniform float uTime;`;
     diffuseColor.rgb *= mix( 1.0 - rimCoreDarken, 1.0, _rimFresEarly );
 `;
         if (panelDetail) {
-            colorInject += '    diffuseColor.rgb *= _rimPanelDetail( vRimPosObj, vRimNormalObj, uRimPanelCell );\n';
+            // Kept in a named local: the emissive inject further down main()
+            // needs the SAME mask (see uPanelEmis).
+            colorInject += `    float _panelM = _rimPanelDetail( vRimPosObj, vRimNormalObj, uRimPanelCell );
+    diffuseColor.rgb *= _panelM;
+`;
+        }
+        if (battleDamage) {
+            // Blotch cell is 1.6x the panel cell: burn damage crosses panel
+            // seams (that is what makes it read as damage rather than as a
+            // differently-painted plate), so it must NOT be on the same
+            // lattice the panel lines are on.
+            //
+            // `_dmgEdge` is a narrow band around the scorch threshold, i.e.
+            // the RIM of each blotch. The scorch fill darkens; only this
+            // edge glows. `_dmgScorch`/`_dmgEdge` are declared here and
+            // reused by the emissive inject further down main().
+            colorInject += `    float _dmgF = _rimDamageField( vRimPosObj, vRimNormalObj, uRimPanelCell * 1.6 );
+    float _dmgThr = 1.00 - 0.58 * uDamage;
+    float _dmgScorch = smoothstep( _dmgThr, _dmgThr + 0.16, _dmgF ) * step( 0.02, uDamage );
+    float _dmgEdge = _dmgScorch * ( 1.0 - smoothstep( _dmgThr + 0.05, _dmgThr + 0.20, _dmgF ) );
+    diffuseColor.rgb *= mix( 1.0, 0.20, _dmgScorch );
+`;
         }
         if (hullForm) {
             // Top-lit value ramp + darkened nose/canopy cap. Declared here so
@@ -556,10 +637,41 @@ uniform float uTime;`;
         shader.fragmentShader = shader.fragmentShader
             .replace('#include <color_fragment>', colorInject);
 
-        if (hullForm) {
+        if (hullForm || battleDamage || panelDetail) {
+            let emisInject = '#include <emissivemap_fragment>\n';
+            // Order matters: the form ramp SHAPES the always-on floor, and
+            // the ember is added AFTER it so a hole burning on the hull's
+            // shadowed belly still glows. A wound is its own light source.
+            if (hullForm) emisInject += '    totalEmissiveRadiance *= _formShade;\n';
+            if (panelDetail) {
+                // THE PANEL DETAIL HAS TO REACH THE EMISSIVE, or it is not
+                // there at all. Measured on a paused, isolated frame, an 84u
+                // and a 114u hull at 300u broadside had p90-p10 luminance of
+                // 26.7 and 9.1 — a ship the size of a playing card with NINE
+                // levels of tone across it. The panel/greeble mask was being
+                // multiplied into diffuseColor only, and diffuseColor is only
+                // visible through the LIT terms; this game's hulls are lit
+                // almost entirely by their own emissive floor (the ambient is
+                // 0.02-0.4, the star point lights fall off long before combat
+                // range, and the camera-parented rig is not in the traversed
+                // scene graph at all), so on the term that was actually
+                // drawing the ship the surface had no detail whatsoever.
+                // Feeding the same mask into the emissive puts the plates,
+                // the seams and the greeble speckle onto the pixels the
+                // player is really looking at, at any range and under any
+                // lighting, which is what "reads as material" means.
+                // Normalised by the mask's own mean so the 100/255 far-range
+                // legibility floor is not spent on getting texture.
+                emisInject += '    totalEmissiveRadiance *= mix( 1.0, _panelM / 0.92, uPanelEmis );\n';
+            }
+            if (battleDamage) {
+                emisInject += `    totalEmissiveRadiance *= mix( 1.0, 0.30, _dmgScorch );
+    float _dmgPulse = 0.62 + 0.38 * sin( uTime * 6.4 + _dmgF * 41.0 );
+    totalEmissiveRadiance += uDamageEmber * _dmgEdge * _dmgPulse * ( 0.55 + 2.30 * uDamage );
+`;
+            }
             shader.fragmentShader = shader.fragmentShader.replace(
-                '#include <emissivemap_fragment>',
-                '#include <emissivemap_fragment>\n    totalEmissiveRadiance *= _formShade;\n'
+                '#include <emissivemap_fragment>', emisInject
             );
         }
 
@@ -780,6 +892,72 @@ function createFactionHullMaterial(colorHex, opts) {
     });
 
     return material;
+}
+
+// ── DAMAGE TIER DRIVER ───────────────────────────────────────────────────
+//
+// Writes each ship's own `uDamage` from its own HP. This is safe to do on a
+// per-material uniform — and NOT via an onBeforeRender write to a shared
+// material — because createEnemyMeshWithModel / createBossMeshWithModel call
+// createFactionHullMaterial once per hull mesh per SHIP (getEnemyModel hands
+// back model.clone(), whose materials are then replaced wholesale), so a
+// hull material instance belongs to exactly one hostile. An onBeforeRender
+// write would in fact be WRONG here if materials ever were shared: three.js
+// only re-uploads a material's uniforms when the bound material CHANGES, so
+// twenty hostiles sharing one material would all render with whichever
+// damage value the first of them wrote.
+//
+// TIERS, NOT A CONTINUUM. The brief is "at least one damage tier", and a
+// tier is what a player can actually name: an undamaged ship must look
+// undamaged (a permanent light dusting of scorch would just be texture), a
+// hurt ship shows scarring, and a ship about to die is visibly burning. So
+// this is flat 0 above 75% HP, then ramps, and it never quite reaches 1.0
+// while the ship is alive — full 1.0 is what a wreck looks like, and a wreck
+// is the explosion's job.
+const _HULL_DMG_START = 0.75;   // HP fraction where scarring begins
+const _HULL_DMG_FLOOR = 0.06;   // HP fraction that reads as fully wrecked
+function _hullDamageFromHp(hp) {
+    if (!(hp < _HULL_DMG_START)) return 0;
+    const t = (_HULL_DMG_START - hp) / (_HULL_DMG_START - _HULL_DMG_FLOOR);
+    // ^0.7, not linear. Measured across the tiers on three hulls, a linear
+    // ramp put 0-0.3% of hull pixels under scorch at 60% HP and 35-74% at 5%
+    // HP: the first half of the health bar showed the player nothing, and the
+    // last sliver of it turned the ship into a black silhouette that had
+    // stopped being a readable ship at all. Front-loading the curve spends
+    // the range where the information is actually worth something.
+    return Math.min(0.95, Math.pow(Math.max(0, t), 0.7));
+}
+
+function _syncHullDamage(ship) {
+    if (!ship || !ship.userData) return;
+    const maxHp = ship.userData.maxHealth;
+    const hp = ship.userData.health;
+    if (!(maxHp > 0) || typeof hp !== 'number') return;
+    const dmg = _hullDamageFromHp(Math.max(0, hp) / maxHp);
+    // Nothing to do while pristine and already pristine — this runs for every
+    // hostile every frame, and the overwhelmingly common case is a healthy
+    // ship, so the early-out is the point.
+    if (dmg === 0 && ship.userData._hullDmg === 0) return;
+    if (ship.userData._hullDmg === dmg) return;
+    ship.userData._hullDmg = dmg;
+    // Cache the uniform list on first write: traversing a GLB hull every
+    // frame for every hostile is the kind of cost that only shows up in a
+    // 30-ship brawl, which is exactly when ships are taking damage.
+    let list = ship.userData._hullDmgUniforms;
+    if (!list) {
+        list = [];
+        ship.traverse(n => {
+            const m = n.material;
+            if (!m || !m.userData || !m.userData._rimUniforms) return;
+            if (m.userData._rimUniforms.uDamage) list.push(m.userData._rimUniforms.uDamage);
+        });
+        ship.userData._hullDmgUniforms = list;
+    }
+    for (let i = 0; i < list.length; i++) list[i].value = dmg;
+}
+if (typeof window !== 'undefined') {
+    window._syncHullDamage = _syncHullDamage;
+    window._hullDamageFromHp = _hullDamageFromHp;
 }
 
 // Attach small additive engine-glow spheres at the rear of a GLB hull
@@ -1303,7 +1481,17 @@ function createPlayerHullMaterial() {
         boostStrength: 4.2,  // was 2.8
         coreDarken: 0.62,    // was 0.55 — dim facing panels so the rim reads brighter than the core instead of losing to it; raised further to widen core/rim luminance spread (measured hull-pixel std 41.5/255 during boost, target >55/255)
         panelDetail: true,
-        panelCellSize: PLAYER_HULL_PANEL_CELL
+        panelCellSize: PLAYER_HULL_PANEL_CELL,
+        // The damage tier is a HOSTILE-legibility cue ("that one is nearly
+        // dead") and the player's own hull already has a HUD hull-integrity
+        // bar six inches from the crosshair. Off here so the player ship does
+        // not pay for a shader branch that would never be driven above zero.
+        battleDamage: false,
+        // The player hull is lit (shipLight sits 50u ahead of it) and its
+        // emissive is a deliberate flat presence floor at 1.15 intensity, so
+        // panelling that floor as hard as the enemies' would dim the one term
+        // guaranteeing the ship is a legible silhouette. Half strength.
+        panelEmissive: 0.45
     });
 
     return { material: material, uniforms: uniforms };

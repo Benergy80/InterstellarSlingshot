@@ -643,6 +643,30 @@
       default:                         goPhase('init');
     }
 
+    // FIX 1 — ARRIVAL FRAMING HOLD: phase-agnostic, runs regardless of which
+    // phase is driving this frame. Phase code only calls orientTowardsTarget
+    // in its own distance/state bands (e.g. phaseCoastToNebulaCluster's
+    // inLockedCoast branch stops re-aiming the instant the boost ends), which
+    // leaves gaps in exactly the ~0.5-1s window the exit-ramp beat plays in.
+    // Whenever a warp/jump cycle is live (boosting OR draining out of it) AND
+    // an arrival subject has been staged (see triggerOKeyWarp/triggerSlingshot
+    // and navigateTo's jump branch above), keep the nose on it every single
+    // frame of that window — so the destination is already converged on, not
+    // still catching up, the moment the tunnel finishes collapsing.
+    if (typeof gameState !== 'undefined' && gameState._arrivalSubject &&
+        gameState._arrivalSubject.obj && gameState._arrivalSubject.obj.position &&
+        Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 15000 &&
+        window.orientTowardsTarget) {
+      const _ew = gameState.emergencyWarp;
+      const _sl = gameState.slingshot;
+      const _inCycle = !!(_ew && (_ew.active || _ew.transitioning)) ||
+        !!(_sl && _sl.active) ||
+        (typeof gameState._warpExitT === 'number');
+      if (_inCycle && !(gameState.slingshot && gameState.slingshotWhip)) {
+        window.orientTowardsTarget(gameState._arrivalSubject.obj);
+      }
+    }
+
     // WARP INTEGRITY: a full O-key emergency warp must run its whole 15 s
     // boost. Phase logic was pressing X mid-boost — flyToward's distance
     // brake (speed×35 = 3,500 u at warp speed!), combat's overshoot brake,
@@ -1540,7 +1564,34 @@
     // Hard fallback — punch the warp even if alignment never settles
     // (extended window when a slingshot approach was in progress)
     if (t > (ap.slingshotPlanet ? 16000 : 8000)) {
-      if (canEmergencyWarp()) triggerOKeyWarp();
+      if (canEmergencyWarp() && triggerOKeyWarp()) {
+        ap.warpStartedAt = Date.now();
+        ap.warpsUsed++;
+        goPhase('coastToNebulaCluster');
+        return;
+      }
+      // FIX 2 — DEMO PLAYS THE BEAT: O-warp is the scarce mechanic (kill-
+      // gated, limited charges) and can be tapped out here even though this
+      // IS a major nebula-to-nebula leg. The slingshot check above only ran
+      // once, early in this phase — a body can have drifted into range
+      // since. One more opportunistic look before conceding this leg to a
+      // flat, beat-less cruise: if something is ALREADY within whip range
+      // right now, take it instead of silently skipping the ramped path.
+      const _fallbackSp = pickSlingshotPlanet(targetPos);
+      if (_fallbackSp && gameState.energy > 25) {
+        const _fbRange = (typeof window.getSlingshotRange === 'function')
+          ? window.getSlingshotRange(_fallbackSp) * 0.8 : 150;
+        if (camPos().distanceTo(_fallbackSp.position) <= _fbRange) {
+          gameState.currentTarget = target;
+          if (triggerSlingshot()) {
+            setStatus('GRAVITY WHIP → ' + targetName);
+            ap.warpStartedAt = Date.now();
+            ap.warpsUsed++;
+            goPhase('coastToNebulaCluster');
+            return;
+          }
+        }
+      }
       ap.warpStartedAt = Date.now();
       goPhase('coastToNebulaCluster');
     }
@@ -2414,6 +2465,106 @@
     }
   }
 
+  // ─── ARRIVAL SUBJECT — "warp must arrive somewhere" ────────────────────────
+  // A warp/jump used to aim at a bare coordinate (a nebula's center point, a
+  // discovery path's endPosition) — a place, not a THING. The lens contraction
+  // on exit was mechanically clean but resolved onto whatever happened to be
+  // floating there, which was often nothing: a lens move in a vacuum. This
+  // resolves the actual navigation target to a concrete nearby BODY (planet/
+  // star, never an asteroid) worth revealing, and computes how far from it
+  // the ship should be standing when the tunnel finishes collapsing so the
+  // body reads as an arrival, not a speck: angular size >= 15 degrees full,
+  // and outside the body's own collision/gravity danger radius.
+  // gameState._arrivalSubject is the single shared handle: set here (only
+  // when a real body is found — no candidate means no reveal is claimed),
+  // read by camera-system.js's exit-framing assist and by the phase-agnostic
+  // orientation hold below. It stores a LIVE object reference (never a
+  // cloned position) so it stays correct through a worldOriginOffset rebase
+  // for free — the same reason planets/enemies do.
+  const _DEG2RAD = Math.PI / 180;
+
+  function _arrivalDangerR(p) {
+    const ud = (p && p.userData) || {};
+    const sz = ud.size || 20;
+    if (ud.type === 'blackhole') return (ud.warpThreshold || 600) + 1200;
+    if (ud.type === 'star') return Math.max(sz * 4, 200);
+    return Math.max(sz * 2, 80);
+  }
+
+  // Distance at which a body of this radius subtends exactly a 15-degree
+  // full angle, floored just outside its own danger radius (never ask the
+  // ship to stand somewhere that reads as "arrived" but is also "in the
+  // grave").
+  function _idealArriveDist(radius, dangerR) {
+    const thresh = radius / Math.tan(7.5 * _DEG2RAD);
+    return Math.max(thresh, dangerR * 1.15);
+  }
+
+  // Best real body within maxDist of pos — biggest AND closest wins (a tiny
+  // distant rock at the edge of range technically qualifies but is an
+  // unsatisfying "arrival", so size is weighted heavily).
+  function _findArrivalSubject(pos, maxDist) {
+    if (typeof planets === 'undefined' || !pos) return null;
+    let best = null, bestRadius = 0, bestScore = -Infinity;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      const ud = p && p.userData;
+      if (!p || !p.position || !ud) continue;
+      if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
+      const d = pos.distanceTo(p.position);
+      if (d > maxDist) continue;
+      const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || ud.size || 20;
+      const score = radius * 3 - d * 0.02;
+      if (score > bestScore) { bestScore = score; best = p; bestRadius = radius; }
+    }
+    return best ? { obj: best, radius: bestRadius } : null;
+  }
+
+  function _setArrivalSubject(obj, radius) {
+    if (typeof gameState === 'undefined') return;
+    const dangerR = _arrivalDangerR(obj);
+    gameState._arrivalSubject = {
+      obj: obj,
+      radius: radius,
+      dangerR: dangerR,
+      arriveDist: _idealArriveDist(radius, dangerR),
+      // Bounds how long a staged subject stays "live" for the framing hold
+      // / camera nudge (see the two consumers below and in camera-system.js)
+      // — this jump/warp's own boost+drain is always well under this, so it
+      // never expires mid-beat. Without a bound, a stale subject from a
+      // nebula leg could otherwise keep gently biasing aim on a LATER,
+      // unrelated combat jump (those fire wDoubleTap directly and never
+      // stage or clear a subject of their own).
+      stagedAt: Date.now()
+    };
+  }
+
+  function _clearArrivalSubject() {
+    if (typeof gameState !== 'undefined') gameState._arrivalSubject = null;
+  }
+
+  // Reactive staging for the O-key long-haul warp: boost distance/duration
+  // are physics-fixed (not something the pilot can shorten), so instead of
+  // committing to a subject in advance, estimate where THIS boost will
+  // actually end (current heading × the boost's own distance) and look for
+  // a body near that landing point. A long interstellar hop that lands in
+  // open space between clusters honestly has no arrival subject — better to
+  // claim nothing than to bias the camera at emptiness.
+  const _owarpFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _owarpPosTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function _stageOWarpArrivalSubject() {
+    if (typeof camera === 'undefined' || !_owarpFwdTmp || typeof gameState === 'undefined') return;
+    camera.getWorldDirection(_owarpFwdTmp);
+    const ew = gameState.emergencyWarp || {};
+    const boostSpeed = ew.boostSpeed || 15;
+    const boostDur = ew.boostDuration || 8000;
+    const estBoostDist = boostSpeed * 60 * (boostDur / 1000); // u/frame*60fps*seconds
+    _owarpPosTmp.copy(camPos()).addScaledVector(_owarpFwdTmp, estBoostDist);
+    const cand = _findArrivalSubject(_owarpPosTmp, Math.max(3000, estBoostDist * 0.6));
+    if (cand) _setArrivalSubject(cand.obj, cand.radius);
+    else _clearArrivalSubject();
+  }
+
   // ─── navigateTo: closed-loop travel controller ─────────────────────────────
   // The autopilot used to puppet raw key presses from each phase (orient here,
   // wDoubleTap there, brake band somewhere else), fighting physics state it
@@ -2573,7 +2724,27 @@
     //    tail on the doorstep). WITH an approach zone it's sized to land at
     //    the zone EDGE — the ship is hands-off during the boost, so a jump
     //    aimed at the target itself would carry warp speed into the fight.
-    const _jumpGap = approachRange ? (dist - approachRange) : (dist - 700);
+    //
+    // FIX 1 — ARRIVAL SUBJECT: a flat 700u standoff was sized for nothing in
+    // particular — a tiny asteroid and a whole star got the same tail, so
+    // landing distance had no relationship to what was actually there to
+    // see. When this jump has a real destination (no approachRange — that
+    // path is a combat engagement, not an arrival) and a body worth
+    // revealing sits near the target, land at ITS ideal reveal distance
+    // instead: close enough for >=15 deg angular size, never inside its own
+    // danger radius. No candidate body → no subject staged, and the flat
+    // 700u tail is unchanged (nothing claimed, nothing to frame).
+    let _jumpTail = 700;
+    if (!approachRange) {
+      const _arrivalCand = _findArrivalSubject(targetObj.position, Math.max(1500, Math.min(dist, 4000)));
+      if (_arrivalCand) {
+        _setArrivalSubject(_arrivalCand.obj, _arrivalCand.radius);
+        _jumpTail = Math.min(gameState._arrivalSubject.arriveDist, dist * 0.6, 4500);
+      } else {
+        _clearArrivalSubject();
+      }
+    }
+    const _jumpGap = approachRange ? (dist - approachRange) : (dist - _jumpTail);
     if (allowJump && dist > 1200 && _jumpGap > 500 && dist < jumpMaxDist && speed < 4 &&
         facing > 0.9 && gameState.energy > 25 &&
         Date.now() - (ap._lastJumpTap || 0) > 5000) {
@@ -3079,6 +3250,11 @@
   // planet is within reach.
   function triggerOKeyWarp() {
     if (!canEmergencyWarp()) return false;
+    // FIX 1 — ARRIVAL SUBJECT: stage what this boost will actually reveal
+    // BEFORE firing, so camera-system's exit framing and the orientation
+    // hold below have a real body to converge on the instant the tunnel
+    // starts collapsing.
+    _stageOWarpArrivalSubject();
     keys().o = true;
     setTimeout(() => { keys().o = false; }, 100);
     return true;
@@ -3089,6 +3265,15 @@
   function triggerSlingshot() {
     if (gameState.energy < 20) return false;
     if (gameState.slingshot && gameState.slingshot.active) return false;
+    // FIX 1 — ARRIVAL SUBJECT: the slingshot is explicitly launched TOWARD
+    // gameState.currentTarget (callers set it just before triggering, e.g.
+    // "Aim target = the nebula" above) — resolve a real body near that aim
+    // point so the whip's glide has a staged reveal too, same as the O-warp.
+    if (gameState.currentTarget && gameState.currentTarget.position) {
+      const _slCand = _findArrivalSubject(gameState.currentTarget.position, 3500);
+      if (_slCand) _setArrivalSubject(_slCand.obj, _slCand.radius);
+      else _clearArrivalSubject();
+    }
     // Simulate Enter key press (same input a human player uses)
     document.dispatchEvent(new KeyboardEvent('keydown', {
       key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true

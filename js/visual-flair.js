@@ -1445,7 +1445,7 @@ function _spectacleCruiseCeil(vKmS) {
     // exit now has a real ceiling-to-cruise gap to collapse into.
     return Math.min(0.10, 0.0006 * Math.sqrt(v));
 }
-const _warpMoment = { level: 0, last: 0 };
+const _warpMoment = { level: 0, last: 0, fastDecayUntil: 0 };
 
 function _isWarpMomentNow() {
     if (typeof gameState === 'undefined') return false;
@@ -1461,12 +1461,29 @@ function _isWarpMomentNow() {
 // Safe to call several times per frame: dt is measured off the last call, so
 // the first caller in a frame advances the ease and the rest read the same
 // value with dt ≈ 0. Every consumer therefore sees one consistent level.
+//
+// RE-INFLATION FIX (FIX 3): this level is shared by the streak field's
+// speed-driven envelope (_updateWarpStreaks) AND the DOM screen-fx vignette/
+// spoke stack (_updateScreenFX) — both add `(1-cruiseCeil) * moment * ramp`
+// on top of a plain speed-driven cruise ceiling. The plain ~0.6s release
+// tau here is slower than an exit drain's window (550ms Jump / 1000ms O-warp
+// or slingshot): measured, at a Jump's t=550ms handoff moment is still
+// ~40% "hot". The streak drain's own convergence target
+// (_spectacleCruiseCeil alone, no moment bonus — see _updateWarpStreaks)
+// never accounted for that residual, so the instant control hands back to
+// the speed-driven path the moment term reappears as a SECOND rise on top
+// of wherever the drain had already settled — measured live as the streak
+// field visibly re-inflating ~650ms into the exit on the majority of Jump
+// drop-outs. warpExitBeat() (below) stamps fastDecayUntil to the drain's
+// own end time so this collapses on THE SAME clock as the beat it belongs
+// to, instead of trailing behind it.
 function _warpMomentLevel() {
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     const dt = Math.max(0, Math.min(0.05, (now - (_warpMoment.last || now)) / 1000));
     _warpMoment.last = now;
     const target = _isWarpMomentNow() ? 1 : 0;
-    const tau = (target > _warpMoment.level) ? 0.05 : 0.6;
+    const _fastDecay = target === 0 && _warpMoment.fastDecayUntil && now < _warpMoment.fastDecayUntil;
+    const tau = (target > _warpMoment.level) ? 0.05 : (_fastDecay ? 0.12 : 0.6);
     _warpMoment.level += (target - _warpMoment.level) * (1 - Math.exp(-dt / tau));
     if (_warpMoment.level < 0.002) _warpMoment.level = 0;
     return _warpMoment.level;
@@ -1817,6 +1834,11 @@ function warpExitBeat(blackHole, refSpeed, durMs) {
         _wsf.drainOp0 = (_wsf.mat) ? _wsf.mat.uniforms.uOpacity.value : 0;
         _wsf.drainEnv0 = _wsf.env;
         _wsf.drainRefSpeed = refSpeed || 0;
+        // RE-INFLATION FIX (FIX 3) — see _warpMomentLevel() above: collapse
+        // the shared warp-moment level on THIS drain's own clock so nothing
+        // is left "hot" to re-feed the streak/screen-fx gate once the drain
+        // hands control back to the speed-driven path.
+        _warpMoment.fastDecayUntil = _wsf.drainT0 + _wsf.drainMs;
     } catch (e) {}
 }
 

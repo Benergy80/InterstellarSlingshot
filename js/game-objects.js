@@ -101,6 +101,145 @@ function getPointSprite() {
 // shared GPU texture, one bind.
 if (typeof window !== 'undefined') window.getPointSprite = getPointSprite;
 
+// =============================================================================
+// ...AND NOBODY HAS TO REMEMBER TO ASK FOR IT
+// =============================================================================
+// The texture above shipped, and then every point cloud written afterwards in
+// every OTHER file went on being born bare, because adopting it is an opt-in a
+// caller has to remember. Censused live off the running scene — walk the graph,
+// collect every distinct PointsMaterial, ask each one whether it has a map or
+// an alphaMap — the survivors were not obscure: TWENTY-EIGHT of them were the
+// outer-system STARFIELDS (js/outer-systems.js, size 4, vertexColors, ~400
+// stars each), i.e. most of the individual stars the player sees when they look
+// out at a system they have not flown to yet, each one a hard axis-aligned
+// square. The rest were the black-hole accretion discs.
+//
+// So the adoption stops being a thing to remember. `getPointSprite` is now
+// applied by the CONSTRUCTOR: THREE.PointsMaterial is wrapped in a Proxy whose
+// construct trap hands the shared sprite to any instance that did not bring a
+// map of its own. A Proxy rather than a subclass or a reassigned function
+// because it forwards everything else untouched — prototype, statics,
+// `instanceof`, `.clone()`, subclassing — so nothing downstream can tell the
+// difference except that its particles are round. It is installed here, at the
+// top of the first game file, which is before any of the files that build point
+// clouds have run a line of their own code.
+//
+// WHAT IS AND IS NOT CHANGED. Colour, size, sizeAttenuation, blending, opacity
+// and vertexColors are the caller's and are never touched: the sprite's RGB is
+// pure white, so under both AdditiveBlending and NormalBlending it multiplies
+// the caller's colour by a falloff and nothing else. A material that already
+// brought a map (the explosion sparks' deliberately hard core, the procedural
+// galaxies' own dot) is left exactly alone.
+//
+// THE ONE THING THAT DOES CHANGE, AND WHY. A cloud that writes DEPTH gets a
+// small alphaTest with the sprite. Without it, the transparent skirt of every
+// star would go on claiming depth over the full quad — the square would be
+// invisible but still there, punching a hole in whatever nebula was behind it.
+// alphaTest discards those fragments outright, so the depth footprint shrinks
+// to the round part the player can actually see. Clouds that already had
+// depthWrite off (the additive puffs and discs) keep the full soft skirt.
+const POINT_SPRITE_ALPHATEST = 0.04;   // discard the invisible skirt, keep the puff
+// THE ADOPTION LEDGER IS NOT KEPT ON THE MATERIAL, and that is not fussiness.
+// It was `m.userData.__softSprite` at first, and the live census said 74 of the
+// 108 adopted materials had lost the mark: the Proxy sets it at construction,
+// and then the CALLER does `mat.userData = { _baseSize: … }` — a whole-object
+// replace, not a merge — which drops the flag on the floor. The map survived
+// (it is a real property, so the particles were round either way), but every
+// piece of bookkeeping hung off userData was gone with it: the A/B revert below
+// could only put back 34 of 108, and a cloud that HAD taken the alphaTest bump
+// would have lost the original value it needs to restore.
+//
+// A WeakMap keyed on the material itself cannot be overwritten by a caller who
+// has never heard of it, and it holds no strong reference, so a disposed cloud
+// still collects. The stored value is the material's PRE-ADOPTION alphaTest
+// (null when the bump did not apply), which is exactly what revert needs.
+const _softSpriteOwned = new WeakMap();
+function _adoptPointSprite(m) {
+    if (!m || m.map || m.alphaMap) return false;
+    const tex = getPointSprite();
+    if (!tex) return false;
+    m.map = tex;
+    let prevAT = null;
+    if (m.depthWrite && m.alphaTest < POINT_SPRITE_ALPHATEST) {
+        prevAT = m.alphaTest;
+        m.alphaTest = POINT_SPRITE_ALPHATEST;
+    }
+    _softSpriteOwned.set(m, prevAT);
+    m.needsUpdate = true;      // map + alphaTest are both program-cache keys
+    return true;
+}
+function _installPointSpriteDefault() {
+    if (typeof THREE === 'undefined' || !THREE.PointsMaterial) return;
+    if (THREE.PointsMaterial.__softSpriteWrapped) return;
+    if (typeof Proxy === 'undefined' || typeof Reflect === 'undefined') return;
+    const Base = THREE.PointsMaterial;
+    const Wrapped = new Proxy(Base, {
+        construct(target, args, newTarget) {
+            const m = Reflect.construct(target, args, newTarget || target);
+            if (typeof window === 'undefined' || window.__softSprite !== false) _adoptPointSprite(m);
+            return m;
+        },
+        get(target, prop, recv) {
+            if (prop === '__softSpriteWrapped') return true;
+            return Reflect.get(target, prop, recv);
+        }
+    });
+    THREE.PointsMaterial = Wrapped;
+}
+_installPointSpriteDefault();
+// Belt and braces, and the census the acceptance test reads: walk the live
+// scene and report — or fix — every PointsMaterial that is still a square.
+// `on === false` puts the ones this file adopted back the way they were, which
+// is what makes a same-session A/B possible.
+//
+// CLONES ARE ADOPTED TOO, AND THE LEDGER ALONE DOES NOT FIND THEM. Measured
+// live: 108 materials carry the shared sprite but only 34 are in the ledger.
+// The other 74 are `.clone()`s. Material.clone() is `new this.constructor()`
+// followed by `.copy(this)`, and `this.constructor` resolves through the
+// PROTOTYPE — which is the untouched base class, not the Proxy — so a clone
+// never runs the construct trap. It inherits the `map` pointer from `.copy()`
+// regardless, so it renders round (which is why the shipping visual was always
+// correct), but nothing recorded that this file is why.
+//
+// Identity of the texture closes it: `_POINT_SPRITE_TEX` is a private module
+// object handed out by exactly one function, so a material whose map IS that
+// object got it from here and from nowhere else. Reverting on that test reaches
+// the clones, and a clone that took no alphaTest bump needs none restored (the
+// bump is copied from an already-bumped source, so `null` is the honest
+// pre-adoption value for it).
+function pointSpriteSweep(on) {
+    const seen = new Set();
+    const shared = (on === false) ? _POINT_SPRITE_TEX : null;
+    let total = 0, bare = 0, changed = 0;
+    if (typeof scene === 'undefined' || !scene) return { total, bare, changed };
+    scene.traverse(function (o) {
+        const mm = o.material;
+        if (!mm) return;
+        const list = Array.isArray(mm) ? mm : null;
+        const n = list ? list.length : 1;
+        for (let i = 0; i < n; i++) {
+            const m = list ? list[i] : mm;
+            if (!m || m.type !== 'PointsMaterial' || seen.has(m.uuid)) continue;
+            seen.add(m.uuid); total++;
+            if (on === false) {
+                const owned = _softSpriteOwned.has(m);
+                if (owned || (shared && m.map === shared)) {
+                    const prevAT = owned ? _softSpriteOwned.get(m) : null;
+                    m.map = null;
+                    if (prevAT !== null) m.alphaTest = prevAT;
+                    _softSpriteOwned.delete(m);
+                    m.needsUpdate = true; changed++;
+                }
+            } else if (!m.map && !m.alphaMap) {
+                if (_adoptPointSprite(m)) changed++;
+            }
+            if (!m.map && !m.alphaMap) bare++;
+        }
+    });
+    return { total, bare, changed };
+}
+if (typeof window !== 'undefined') window.pointSpriteSweep = pointSpriteSweep;
+
 // Enhanced 3D Galaxy definitions with spherical coordinates
 const galaxyTypes = [
     { name: 'Spiral', color: 0x4488ff, size: 1200, arms: 3, faction: 'Federation', species: 'Human', mass: 10000 },
@@ -8673,10 +8812,14 @@ function _cullBodyRadius(o) {
 //   * SIZE IS MEASURED, NOT AUTHORED. The quad is sized from the body's real
 //     angular size this frame, so an impostor shrinks as you fly away exactly
 //     like the mesh it replaced. There is no magnitude curve to blow out.
-//   * THE CEILING IS BELOW THE HERO CEILING. IMPOSTOR_MAX_PX (7) < _HERO_MAX_PX
-//     (9), and the disc inside the quad is smaller still, so the very largest
-//     impostor is smaller than the sky's brightest landmark star. It reads as a
-//     world seen from a long way off, which is what it is.
+//   * THE LIT PART IS BELOW THE HERO CEILING. The quad is not the object: it is
+//     the envelope the sprite is drawn INTO, sized so the soft skirt covers the
+//     assembly's halo (see IMPOSTOR_MAX_PX below). What the eye reads as "the
+//     body" is the solid disc, whose radius is a fixed fraction of the BALL's
+//     real screen radius — at the top of the band that is ~2.3 px against
+//     _HERO_MAX_PX's 9 — and whose peak is held under 1.0 by IMPOSTOR_LIT_CEIL
+//     for anything that is not self-luminous. It reads as a world seen from a
+//     long way off, which is what it is.
 //
 // WHY THE SWAP IS INVISIBLE. Three things have to line up at the boundary or the
 // tier trades a frame-rate win for a pop the player sees on every approach:
@@ -8709,8 +8852,34 @@ function _cullBodyRadius(o) {
 // units would smear the entire far field for up to 10 frames — so it subtracts
 // straight into the live buffer through __worldShiftHandlers.
 const CULL_IMPOSTOR_PX = 4.0;       // screen DIAMETER at/below which a world is a dot
-const CULL_IMPOSTOR_BACK_K = 1.22;  // ...and back to a mesh only 22% above it
-const IMPOSTOR_MAX_PX = 7.0;        // quad ceiling, CSS px — under _HERO_MAX_PX (9)
+const CULL_IMPOSTOR_BACK_K = 1.22;  // ...and the width of the handover crossfade
+// THE QUAD CEILING IS DERIVED, NOT AUTHORED — because an authored one drifts.
+// The quad is `screen radius x IMPOSTOR_QUAD_K`: 2.6x the assembly DIAMETER, so
+// the soft skirt lands where the assembly's halo, atmosphere shell and ring
+// plane were. The largest quad the tier can ever ask for is therefore the quad
+// at the biggest radius an impostor is allowed to reach — the top of the
+// handover band, at the loosest quality tier:
+//
+//     rPx_max  = CULL_IMPOSTOR_PX/2 x (1/cullScale_min) x CULL_IMPOSTOR_BACK_K
+//              = 2.0 x (1/0.6) x 1.22 = 4.07 CSS px
+//     quad_max = 4.07 x 5.2          = 21.2 CSS px
+//
+// The ceiling shipped at 7.0 — THREE TIMES SMALLER than that. Measured on the
+// live sweep below, `min(IMPOSTOR_MAX_PX, ...)` was clamping EVERY impostor
+// across the whole top of the band (Saturn, Venus, Mars, Jupiter all reported
+// quad 7.0 at every radius from 1.6 px up to the swap at 2.44 px): the sprite
+// standing in for an 8.1 px assembly was a 7 px quad — physically smaller than
+// the thing it replaced, with the entire halo skirt chopped off. The solid disc
+// is unaffected (vDisc is a RATIO of the quad, so the disc's absolute pixel
+// radius is the same either way) and so is the limb softness (vEdge is floored
+// in absolute pixels for exactly this reason) — what the clamp was destroying
+// was the skirt, which is the only part of the sprite that stands in for the
+// halo the mesh draws. Deriving the number from the handover means it cannot
+// silently fall out of sync with the band again.
+const IMPOSTOR_QUAD_K = 5.2;        // quad diameter / screen RADIUS of the assembly
+const IMPOSTOR_CULL_ANG_MAX = 1 / 0.6;   // loosest tier's cullScale (see __quality.TIERS)
+const IMPOSTOR_MAX_PX = CULL_IMPOSTOR_PX * 0.5 * IMPOSTOR_CULL_ANG_MAX
+                        * CULL_IMPOSTOR_BACK_K * IMPOSTOR_QUAD_K;   // 21.15 CSS px
 const IMPOSTOR_MIN_PX = 2.2;        // enough quad for a soft-edged sub-pixel speck
 // HOW WIDE, AND HOW BRIGHT. All three numbers below were MEASURED against the
 // mesh at the swap boundary, not chosen to look plausible. The rig: render the
@@ -9271,7 +9440,7 @@ function _impostorBodyRadius(o) {
     return r;
 }
 
-function _impostorWrite(o, wx, wy, wz, angR, fade, gain) {
+function _impostorWrite(o, wx, wy, wz, angR, fade, gain, xf) {
     const i = _impCount;
     if (i >= _impCap && !_impostorEnsure(i + 1)) return;
     const paint = _impostorPaint(o);
@@ -9281,7 +9450,7 @@ function _impostorWrite(o, wx, wy, wz, angR, fade, gain) {
     const rPx = Math.max(angR, 0.5);
     // The QUAD still spans the assembly, so the halo skirt lands where the
     // rings and shells used to be; only the DISC inside it shrinks to the ball.
-    const px = Math.min(IMPOSTOR_MAX_PX, Math.max(IMPOSTOR_MIN_PX, rPx * 5.2));
+    const px = Math.min(IMPOSTOR_MAX_PX, Math.max(IMPOSTOR_MIN_PX, rPx * IMPOSTOR_QUAD_K));
     const bodyR = _impostorBodyRadius(o);
     const cullR = bodyR > 0 ? _cullBodyRadius(o) : 0;
     const bodyPx = (cullR > 0 && bodyR < cullR) ? rPx * (bodyR / cullR) : rPx;
@@ -9318,10 +9487,204 @@ function _impostorWrite(o, wx, wy, wz, angR, fade, gain) {
         const ceil = _impTune('ceil', IMPOSTOR_LIT_CEIL);
         if (b > ceil) b = ceil;
     }
+    // THE HANDOVER WEIGHT IS THE LAST THING APPLIED, and the un-weighted value
+    // is kept next to it: the per-frame crossfade tick below re-weights this
+    // row every frame without having to re-run the illumination model, and
+    // `_impBase` is what it re-weights FROM.
+    o.userData._impIdx = i;
+    o.userData._impBase = b;
+    if (xf !== undefined && xf < 1) b *= (xf > 0 ? xf : 0);
     _impBright[i] = b;
     if (o.userData._impPhase === undefined) o.userData._impPhase = Math.random() * 6.283;
     _impPhase[i] = o.userData._impPhase;
     _impCount = i + 1;
+}
+
+// =============================================================================
+// THE HANDOVER CROSSFADE — the swap is a dissolve, not a cut
+// =============================================================================
+// The tier above got the impostor's brightness onto the same ORDER as the mesh
+// it stands in for, and then stopped, because the residual looked irreducible:
+// a one-vertex sprite cannot carry an emissive rim, an unlit ring plane and an
+// additive presence shell, so whatever calibration you fit, the two
+// representations differ by some amount at the boundary — and a BINARY swap
+// puts that entire difference into ONE frame. Measured on the live rig (isolate
+// each body against its own absence, 4 worlds x 3 view directions, 90
+// log-spaced radii from 1 px to 12 px), the swap frame stepped by up to 67/255
+// and cleared 30/255 on five of twelve crossings. That is the pop.
+//
+// A DISSOLVE MAKES THE RESIDUAL IRRELEVANT. Over the band both representations
+// are on screen at once, weighted w and 1-w, so the frame shows
+//
+//     w x mesh(r)  +  (1-w) x impostor(r)
+//
+// which is continuous in r whatever mesh() and impostor() happen to be. The
+// calibration error stops being a STEP and becomes a slow lean from one
+// brightness to the other, spread over the whole band. The bar the tier has to
+// clear is a frame-to-frame step, and a blend whose weight moves a few percent
+// per frame cannot produce one.
+//
+// THE BAND IS THE HYSTERESIS DEADZONE, REUSED. CULL_IMPOSTOR_BACK_K already
+// carved out [R, 1.22R] as the region where a body's representation was
+// allowed to be sticky, precisely so a body sitting on the line could not
+// strobe at the pass cadence. The crossfade uses the SAME region and retires
+// the stickiness with it: a blend weight is a continuous function of the
+// radius, so there is no binary state left to strobe. It also costs no new
+// mesh draws in the steady state — a body in that band could already be
+// submitting a mesh under the old rule (whenever it had arrived from above),
+// and the band is a 22%-wide shell that holds a handful of worlds at a time.
+//
+// WHY THE WEIGHT IS RECOMPUTED EVERY FRAME AND THE BUFFER IS NOT. The cull pass
+// runs at 6 Hz. A weight that only moved on those passes would step in sixths,
+// which is a smaller pop but still a pop. So the pass decides WHICH bodies are
+// mid-handover and hands the per-frame tick a tiny list — index into the point
+// buffer, un-weighted brightness, and the body — and the tick re-derives the
+// radius from the live camera against the position already sitting in _impPos
+// (which the rebase handler keeps correct) and rewrites one float per body.
+// Cost is a few dozen arithmetic ops a frame for the handful of worlds actually
+// crossing; nothing traverses, nothing allocates.
+//
+// HOW A MESH FADES WHEN ITS MATERIALS DISAGREE ABOUT WHAT "FADE" MEANS.
+// A world here is a stock lit sphere (Lambert/Phong) wearing ShaderMaterial
+// shells — atmosphere, night-lights, presence — and a ShaderMaterial ignores
+// `opacity` unless its own program reads it, which these do not. So the fader
+// takes each material on its own terms: stock materials go transparent with a
+// scaled opacity, shader shells are scaled through whichever strength-like
+// scalar uniform they expose, and a shell that exposes none is scaled through
+// its Color uniforms, which for an additive shell is the same dimmer. Verified
+// against the isolation rig rather than assumed: at a fixed vantage the
+// isolated contribution of Jupiter's whole assembly measured 135.6 / 103.9 /
+// 69.4 / 34.8 / 0 for k = 1 / .75 / .5 / .25 / 0 — linear to within 3%, and
+// exactly zero at k=0, which is what makes the blend arithmetic above true.
+//
+// AND IT PUTS EVERYTHING BACK. Materials are captured on first fade and
+// restored from that capture the moment a body leaves the band; any body still
+// carrying a fade that this pass did not re-mark is restored at the end of the
+// pass. A world is never left translucent because a pass took a different
+// branch. (Measured: no material in `planets` is shared between two ROOT
+// worlds — 1,993 unique materials, max owners 1 — so fading one body cannot
+// dim another. The owner stamp below enforces that rather than trusting it.)
+const IMPOSTOR_XFADE_MIN_STEP = 0.004;   // don't touch materials for sub-1% moves
+const _IMP_XF_SCALARS = ['uStrength', 'uOpacity', 'uAlpha', 'uIntensity', 'uPresence', 'opacity'];
+// bodies mid-handover this pass: [obj, bufIndex, baseBright, ...]
+const _impXfObj = [];
+let _impXfN = 0;
+// every body currently carrying a mesh fade, so none can be orphaned
+const _impXfFaded = new Set();
+let _impXfR = 0, _impXfRBack = 0, _impXfPxPerAng = 0;
+
+function _impXfEnabled() {
+    return (typeof window === 'undefined' || window.__impXfade !== false);
+}
+
+// Capture-once / restore-exactly fade of a whole assembly. k=1 restores.
+function _impFadeAssembly(root, k) {
+    root.traverse(function (c) {
+        const mm = c.material;
+        if (!mm) return;
+        const list = Array.isArray(mm) ? mm : null;
+        const nm = list ? list.length : 1;
+        for (let j = 0; j < nm; j++) {
+            const m = list ? list[j] : mm;
+            if (!m) continue;
+            let cap = m.userData && m.userData.__impXf;
+            if (!cap) {
+                if (!m.userData) m.userData = {};
+                // OWNER STAMP: a material reachable from two different worlds is
+                // never faded, because dimming it would dim the other one too.
+                cap = { owner: root.uuid, t: m.transparent, o: m.opacity, dw: m.depthWrite, s: null, c: null };
+                if (m.uniforms) {
+                    for (let s = 0; s < _IMP_XF_SCALARS.length; s++) {
+                        const n = _IMP_XF_SCALARS[s], u = m.uniforms[n];
+                        if (u && typeof u.value === 'number') { (cap.s || (cap.s = {}))[n] = u.value; }
+                    }
+                    if (!cap.s) {
+                        for (const n in m.uniforms) {
+                            const v = m.uniforms[n] && m.uniforms[n].value;
+                            if (v && v.isColor) { (cap.c || (cap.c = {}))[n] = v.clone(); }
+                        }
+                    }
+                }
+                m.userData.__impXf = cap;
+            }
+            // A moon is BOTH a child of its planet's subtree and its own entry
+            // in `planets`, so the same material can be reached by two roots.
+            // Whoever is mid-fade keeps it; a material sitting at full strength
+            // is free for the next body to take. That way the two never fight
+            // over one opacity, and neither is permanently locked out.
+            if (cap.owner !== root.uuid) {
+                if (cap.k !== undefined && cap.k < 1) continue;
+                cap.owner = root.uuid;
+            }
+            cap.k = k;
+            if (k >= 1) {
+                if (cap.s) { for (const n in cap.s) m.uniforms[n].value = cap.s[n]; }
+                if (cap.c) { for (const n in cap.c) m.uniforms[n].value.copy(cap.c[n]); }
+                m.transparent = cap.t; m.opacity = cap.o; m.depthWrite = cap.dw;
+            } else if (cap.s || cap.c) {
+                if (cap.s) { for (const n in cap.s) m.uniforms[n].value = cap.s[n] * k; }
+                if (cap.c) { for (const n in cap.c) m.uniforms[n].value.copy(cap.c[n]).multiplyScalar(k); }
+            } else {
+                // `transparent` is not part of three's program cache key, so
+                // flipping it costs a render-list bucket change and no recompile.
+                m.opacity = cap.o * k; m.transparent = true; m.depthWrite = false;
+            }
+        }
+    });
+}
+
+function _impXfClear() { _impXfN = 0; }
+
+// Called from the cull pass for a body whose radius sits inside the band.
+function _impXfMark(o, k) {
+    _impXfObj[_impXfN++] = o;
+    _impFadeAssembly(o, k);
+    o.userData._impXfK = k;
+    _impXfFaded.add(o);
+}
+
+// End of pass: anything still carrying a fade that this pass did not re-mark
+// goes back to full. A world is never left translucent by a branch change.
+function _impXfSettle() {
+    if (_impXfFaded.size === 0) return;
+    for (const o of _impXfFaded) {
+        if (o.userData._impXfK === undefined) continue;
+        let live = false;
+        for (let i = 0; i < _impXfN; i++) { if (_impXfObj[i] === o) { live = true; break; } }
+        if (!live) { _impFadeAssembly(o, 1); o.userData._impXfK = undefined; _impXfFaded.delete(o); }
+    }
+}
+
+// PER-FRAME: re-weight the handful of worlds mid-handover against the live
+// camera. Runs before the cull pass's own throttle, so the blend is smooth at
+// frame rate even though the decision about WHO is crossing is made at 6 Hz.
+function _impXfTick() {
+    if (_impXfN === 0 || !_impPos || !_impBright) return;
+    if (typeof camera === 'undefined' || !camera) return;
+    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+    const span = _impXfRBack - _impXfR;
+    if (!(span > 0)) return;
+    let dirty = false;
+    for (let i = 0; i < _impXfN; i++) {
+        const o = _impXfObj[i];
+        const idx = o.userData._impIdx;
+        if (idx === undefined || idx >= _impCount) continue;
+        const dx = _impPos[idx * 3] - cx, dy = _impPos[idx * 3 + 1] - cy, dz = _impPos[idx * 3 + 2] - cz;
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (!(d > 0)) continue;
+        const rPx = _cullBodyRadius(o) * _impXfPxPerAng / d;
+        let w = (rPx - _impXfR) / span;
+        w = w <= 0 ? 0 : (w >= 1 ? 1 : w * w * (3 - 2 * w));   // smoothstep: no kink at either edge
+        const prev = o.userData._impXfK;
+        if (prev === undefined || Math.abs(w - prev) >= IMPOSTOR_XFADE_MIN_STEP) {
+            _impFadeAssembly(o, w);
+            o.userData._impXfK = w;
+            const b = o.userData._impBase || 0;
+            _impBright[idx] = b * (1 - w);
+            dirty = true;
+        }
+    }
+    if (dirty && _impGeo) _impGeo.attributes.aBright.needsUpdate = true;
 }
 
 // Publish the pass's buffer. One upload, one draw range, no reallocation.
@@ -9609,6 +9972,10 @@ if (typeof window !== 'undefined') {
             sceneryGroups: _scenRoots ? _scenRoots.length : 0,
             sceneryHidden: _scenHidden,
             px: (typeof window.__impostorPx === 'number') ? window.__impostorPx : CULL_IMPOSTOR_PX,
+            // The handover: how wide the quad may grow, and who is mid-dissolve.
+            maxQuadPx: +IMPOSTOR_MAX_PX.toFixed(2),
+            crossfade: _impXfEnabled(), crossfading: _impXfN,
+            band: [+_impXfR.toFixed(2), +_impXfRBack.toFixed(2)],
             // The illumination model, and the levers the calibration rig moves.
             lights: _impLightN, ambient: +_impAmbient.toFixed(3),
             tune: { lit: _impTune('lit', IMPOSTOR_LIT_GAIN), ceil: _impTune('ceil', IMPOSTOR_LIT_CEIL),
@@ -10084,6 +10451,13 @@ function updateDistanceCulling() {
     // A jump may re-decide at once, but never more than every other frame, so a
     // rebase storm cannot turn this into a per-frame full sweep.
     const forced = jumped && (_cullFrameCount - _cullLastPassFrame) >= 2;
+    // THE HANDOVER CROSSFADE IS THE ONE THING THAT CANNOT WAIT FOR THE PASS.
+    // Everything below decides visibility, which tolerates a 6 Hz cadence. The
+    // blend weight does not: at 6 Hz it would move in sixths and put back a
+    // smaller version of the pop it exists to remove. It is the cheapest work
+    // in this function (a distance and a float per crossing world, and there
+    // are a handful) so it runs on every frame, before the throttle.
+    _impXfTick();
     if (!forced && _cullFrameCount % 10 !== 0) return;
     _cullLastPassFrame = _cullFrameCount;
     _cullPrevCam.x = camera.position.x;
@@ -10125,6 +10499,10 @@ function updateDistanceCulling() {
     // instead of amputating the far sky (the lesson of the range-gate rewrite).
     const _impR = _impPxLim * 0.5 * _cullAng;      // threshold as a screen RADIUS
     const _impRBack = _impR * CULL_IMPOSTOR_BACK_K;
+    // Same band, published for the per-frame crossfade tick above.
+    _impXfR = _impR; _impXfRBack = _impRBack; _impXfPxPerAng = _pxPerAng;
+    const _xfOn = _impOn && _impXfEnabled();
+    _impXfClear();
     _impCount = 0;
     _impPassBegin(cx, cy, cz);   // eye + light table for the illumination term
     _litReset();     // rebuilt by this pass, read by _lightBudgetPass at the end
@@ -10162,16 +10540,34 @@ function updateDistanceCulling() {
                     // the shared point cloud and submit nothing.
                     if (inRange && _impOn) {
                         const rPx = br * _pxPerAng / Math.sqrt(d2);
-                        if (rPx < (o.userData._impostorOn ? _impRBack : _impR)) {
+                        // THE HANDOVER IS A WEIGHT, NOT A SWITCH. w is 0 at the
+                        // impostor threshold and 1 at the top of the band that
+                        // used to be the hysteresis deadzone; in between, both
+                        // representations are on screen, weighted w and 1-w.
+                        // With the crossfade off this collapses exactly back to
+                        // the old sticky binary rule, which is what makes the
+                        // A/B below a real measurement.
+                        let w;
+                        if (_xfOn) {
+                            w = (rPx - _impR) / (_impRBack - _impR);
+                            w = w <= 0 ? 0 : (w >= 1 ? 1 : w * w * (3 - 2 * w));
+                        } else {
+                            w = rPx < (o.userData._impostorOn ? _impRBack : _impR) ? 0 : 1;
+                        }
+                        if (w < 1) {
                             // Dissolve across the last stretch before the floor
                             // so the far end of the band fades out instead of
                             // blinking out — the one seam the old binary switch
                             // left on screen.
                             const f0 = lim * _pxPerAng, f1 = f0 * 3.5;
                             const fade = rPx >= f1 ? 1 : Math.max(0, (rPx - f0) / (f1 - f0));
-                            _impostorWrite(o, _cullWP.x, _cullWP.y, _cullWP.z, rPx, fade);
+                            _impostorWrite(o, _cullWP.x, _cullWP.y, _cullWP.z, rPx, fade, undefined, 1 - w);
                             wantImp = true;
-                            inRange = false;   // no mesh, no rings, no shells
+                            if (w <= 0) {
+                                inRange = false;   // no mesh, no rings, no shells
+                            } else {
+                                _impXfMark(o, w);  // both on screen, blended
+                            }
                         }
                     }
                 }
@@ -10238,6 +10634,10 @@ function updateDistanceCulling() {
     _sceneryPass(_impOn && (typeof window === 'undefined' || window.__sceneryLock !== false),
                  cx, cy, cz, _pxPerAng, _impR, _impRBack,
                  CULL_SUBPIXEL_ANG * _cullAng * _pxPerAng);
+
+    // Anything the pass stopped crossfading goes back to a full-strength mesh
+    // before the frame is published — a world is never left translucent.
+    _impXfSettle();
 
     // Publish the far field the pass just decided: one upload, one draw call.
     _impostorFlush();

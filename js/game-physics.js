@@ -1401,8 +1401,16 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         // Update location in game state
         if (typeof gameState !== 'undefined') {
             gameState.location = locationName;
+            // Anchor the arrival name so the continuous resolver doesn't
+            // immediately overwrite it with a generic regional label. When we
+            // arrive somewhere the galaxy table doesn't cover, the name comes
+            // from the black hole itself ("Companion Core") and only this code
+            // knows it. The anchor is the black-hole OBJECT, not a coordinate,
+            // so floating-origin rebases move it with the scene for free.
+            gameState._locationAnchorObj = targetBlackHole;
+            gameState._locationAnchorName = locationName;
         }
-        
+
         console.log(`Arrived at galaxy ID: ${arrivedGalaxyId} (${locationName})`);
 
         
@@ -1745,6 +1753,136 @@ if (typeof window !== 'undefined') {
     window.getSlingshotRange = getSlingshotRange;
     window.findSlingshotTarget = findSlingshotTarget;
     window.getSlingshotExitDirection = getSlingshotExitDirection;
+}
+
+// =============================================================================
+// CONTINUOUS LOCATION RESOLVER
+// =============================================================================
+// gameState.location used to be written in exactly two situations: the intro
+// pinning it to "Sol System — Sagittarius A Galaxy", and a completed
+// black-hole warp naming the arrival galaxy. Ordinary flight never touched it.
+// So a ship that cruised tens of thousands of units out of Sol under its own
+// power — which is most of a demo run, and any long player flight — kept
+// reading "Sol System" in the SHIP STATUS panel the whole way. The panel was
+// simply lying about where you are.
+//
+// This resolver derives the name from the ship's actual position every time
+// it's called, using the same galaxy table and the same 15000u radius the
+// warp arrival code uses, so a black-hole arrival and free flight agree on
+// the name instead of contradicting each other.
+//
+// Everything here is compared in the CURRENT rebased frame: getGalaxy3DPosition
+// and window.localSystemOffset are both shifted by the floating-origin
+// handlers, so they can be measured against camera.position directly — no
+// worldOriginOffset arithmetic, which would double-count the shift.
+const GALAXY_LOCATION_NAMES = [
+    'Spiral Galaxy - Federation Space',
+    'Elliptical Galaxy - Klingon Empire',
+    'Irregular Galaxy - Rebel Alliance',
+    'Ring Galaxy - Romulan Star Empire',
+    'Dwarf Galaxy - Galactic Empire',
+    'Lenticular Galaxy - Cardassian Union',
+    'Quasar Galaxy - Sith Empire',
+    'Ancient Galaxy - Vulcan High Command'
+];
+
+// Sol has to be tested BEFORE the galaxy sweep and win outright, because the
+// home system physically overlaps the Ancient/Vulcan galaxy's match sphere:
+// measured in-scene, Sol's outermost planet (Neptune) sits 19,238u from Sol,
+// while the nearest galaxy centre — galaxy 7 — is only 23,649u away, so its
+// 15,000u sphere reaches back to ~8,600u from Sol. A radius that stopped short
+// of Neptune would tell a player orbiting Saturn or Uranus that they were in
+// Vulcan space. 21,000u clears every local body and still leaves galaxy 7's
+// own centre (23,649u) outside, so arriving there is still named correctly.
+const SOL_SYSTEM_RADIUS = 21000;
+// 15,000u matches the warp-arrival test, and is unambiguous: the closest two
+// galaxy centres in the table are 36,469u apart, so the spheres never overlap.
+const GALAXY_MATCH_RADIUS = 15000;
+
+// A completed black-hole transit names its destination more precisely than any
+// position lookup can — hold that name until the ship actually leaves.
+const LOCATION_ANCHOR_RADIUS = 3000;
+
+// Distance a ship must travel PAST a region's edge before the panel gives that
+// region up. Sized well above the few-hundred-unit drift of a dogfight so a
+// fight parked on a boundary can't strobe the readout.
+const LOCATION_HYSTERESIS = 1500;
+
+function resolveShipLocationName() {
+    if (typeof camera === 'undefined' || !camera) return null;
+    const pos = camera.position;
+
+    if (typeof gameState !== 'undefined' && gameState._locationAnchorObj) {
+        const anchor = gameState._locationAnchorObj;
+        // parent === null means it was disposed out of the scene.
+        if (anchor.parent && pos.distanceTo(anchor.position) < LOCATION_ANCHOR_RADIUS) {
+            return gameState._locationAnchorName;
+        }
+        gameState._locationAnchorObj = null;
+        gameState._locationAnchorName = null;
+    }
+
+    // Hysteresis: a ship loitering exactly on a boundary would otherwise flip
+    // the panel back and forth every half second (a live run flipped Sol →
+    // Vulcan → Sol → Vulcan inside 4 s). The region you are ALREADY in keeps
+    // its claim until you are LOCATION_HYSTERESIS past its edge, so leaving
+    // reads as one clean change.
+    const current = (typeof gameState !== 'undefined') ? gameState.location : null;
+    const edge = (name, radius) => radius + (current === name ? LOCATION_HYSTERESIS : 0);
+
+    const SOL_NAME = 'Sol System — Sagittarius A Galaxy';
+    const solOrigin = (typeof window !== 'undefined') && window.localSystemOffset;
+    if (solOrigin) {
+        const dx = pos.x - solOrigin.x, dy = pos.y - solOrigin.y, dz = pos.z - solOrigin.z;
+        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < edge(SOL_NAME, SOL_SYSTEM_RADIUS)) {
+            return SOL_NAME;
+        }
+    }
+
+    if (typeof getGalaxy3DPosition === 'function') {
+        let bestName = null, bestScore = Infinity;
+        for (let g = 0; g < GALAXY_LOCATION_NAMES.length; g++) {
+            const name = GALAXY_LOCATION_NAMES[g];
+            const d = pos.distanceTo(getGalaxy3DPosition(g));
+            if (d >= edge(name, GALAXY_MATCH_RADIUS)) continue;
+            // Nearest wins, not first-within-range: first-match made the name
+            // depend on table order rather than on where the ship actually is.
+            // The one we're already in is scored slightly closer so it doesn't
+            // lose a near-tie and flicker.
+            const score = d - (current === name ? LOCATION_HYSTERESIS : 0);
+            if (score < bestScore) { bestScore = score; bestName = name; }
+        }
+        if (bestName) return bestName;
+    }
+
+    // Between the mapped galaxies. The Sagittarius A core is the origin of the
+    // true coordinate frame, so name the neighbourhood off distance from it.
+    const originDist = Math.sqrt(
+        Math.pow(pos.x + ((window.worldOriginOffset && window.worldOriginOffset.x) || 0), 2) +
+        Math.pow(pos.y + ((window.worldOriginOffset && window.worldOriginOffset.y) || 0), 2) +
+        Math.pow(pos.z + ((window.worldOriginOffset && window.worldOriginOffset.z) || 0), 2)
+    );
+    return originDist < 60000
+        ? 'Sagittarius A Galaxy — Outer Systems'
+        : 'Intergalactic Space';
+}
+
+// Called from the animate loop. Only writes when the name actually changes so
+// the UI isn't handed a fresh string every tick.
+function updateShipLocation() {
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
+    // A black-hole transit sets the arrival name itself and briefly teleports
+    // the camera; don't fight it mid-transit.
+    if (gameState.isBlackHoleWarping) return;
+    const name = resolveShipLocationName();
+    if (name && name !== gameState.location) {
+        gameState.location = name;
+    }
+}
+
+if (typeof window !== 'undefined') {
+    window.resolveShipLocationName = resolveShipLocationName;
+    window.updateShipLocation = updateShipLocation;
 }
 
 function executeSlingshot() {

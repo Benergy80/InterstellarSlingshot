@@ -735,10 +735,21 @@ function _ensureShipThrusterCones(ship, color) {
     // lerp in _updateShipThrusterCones, which walks the nozzle itself off
     // white. Bulb + core together: +28.5 to +32 on each state's own lit
     // region, +42 on a fixed region measured in both states.
+    //
+    // ROUND 5 — A WARNING LIGHT MAY NOT BE HIDDEN BY THE THING IT WARNS YOU
+    // ABOUT. The bulb sits on the engine deck, and SpriteMaterial depth-tests
+    // by default, so a hostile pointing its nose at you — the ONE aspect on
+    // which "it is about to shoot" is a decision the player has to make in the
+    // next half second — had its entire telegraph behind its own hull.
+    // Measured charge-0 -> charge-1 R-B swing, pooled over the contact:
+    // +49.0 broadside, +22.8 nose-on. Turning depthTest off costs nothing at
+    // rest (the sprite is `visible = false` below 2% charge, which is where a
+    // hostile lives almost all the time) and makes the wind-up the same
+    // strength from every aspect, which is what a telegraph is for.
     const alarm = new THREE.Sprite(new THREE.SpriteMaterial({
         color: _PLUME_ALARM, map: _plumeCoreTex(),
         transparent: true, opacity: 0,
-        blending: THREE.AdditiveBlending, depthWrite: false
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
     }));
     alarm.userData._plumeAlarmRad = coneRad;
     alarm.position.set(0, 0, localBack + _apex * coneRad * 0.55);
@@ -845,9 +856,28 @@ const _HULL_LAMP_FADE_HI = 3000;
 //      billboard the plume streak uses — scaled to the hull's PROJECTED
 //      length x width, so broadside is an elongated smear and nose-on
 //      collapses to a compact dot.
-const _HULL_LAMP_K = 0.95;          // lamp length, in hull-lengths
-const _HULL_LAMP_W_K = 0.85;        // lamp width, in hull-widths
-const _HULL_LAMP_MIN_PX = 14;
+//
+// ROUND 5 — THE LAMP WAS THE BIGGEST ADDITIVE LAYER ON THE SHIP, BY FAR.
+// Round 4 fixed the lamp's HONESTY (it shrinks with distance now, and it
+// tells charging from fleeing) but never re-asked whether it should be that
+// big at all. Measured per-layer at 300u with same-frame readback, world
+// paused, subject isolated: on an 84u hull covering 3,428 px the lamp alone
+// rendered 23,014 px broadside and 24,456 px quartering — 6.7x and 7.1x the
+// ship — against a streak of 4,268/5,951, nav lights of ~530 and a rim of
+// ~4,000. The exhaust was never the main offender; the ship's own halo was.
+// At 0.95 hull-lengths with a 1+1.15t thrust stretch, a hard-burning hostile
+// wore a glow 2.04 hull-lengths long and 1.38 hull-widths across.
+//
+// 0.46 / 0.42 is 0.24x the area, and the thrust stretch drops 1.15 -> 0.85
+// so the lamp still visibly elongates aft under power (that stretch is the
+// aspect-independent thrust cue and the ONLY one a nose-on hostile has).
+// Presence at 600-1,800u is paid for out of _HULL_LAMP_FAR_LIFT, which is
+// opacity, which is the channel that does not lie about size — the same
+// discipline round 4 established. Nothing past 3,000u changes: `fade` has
+// already taken the whole rig to zero by then and presence is the plume's.
+const _HULL_LAMP_K = 0.46;          // lamp length, in hull-lengths
+const _HULL_LAMP_W_K = 0.42;        // lamp width, in hull-widths
+const _HULL_LAMP_MIN_PX = 8;
 const _HULL_LAMP_FLOOR_MAX = 1.6;   // hard cap on the floor, in hull-lengths
 // The lamp sits aft of the hull centre by this fraction of the hull's local
 // Z span. It is the ship's own reactor/engine glow, not a marker pinned to
@@ -855,6 +885,17 @@ const _HULL_LAMP_FLOOR_MAX = 1.6;   // hard cap on the floor, in hull-lengths
 // is depth-TESTED, so a hostile charging you occludes its own glow with its
 // own hull, while one running away shows you all of it.
 const _HULL_LAMP_AFT = 0.28;
+// ...and it is pushed AWAY FROM THE CAMERA by this many hull-lengths before
+// it is drawn. The lamp is depth-tested precisely so the ship occludes the
+// middle of its own glow — but a quad pinned at the hull's centre of mass is
+// only behind HALF the ship, so on a hull with anything sticking out aft
+// (nacelles, wing booms, a boss's arms) the glow drew in FRONT of those
+// parts and washed them flat. Measured at 300u on the 48u sparse hull the
+// lamp alone raised 35-56% of the ship's own pixels. Sliding the quad behind
+// the whole hull costs ~10% of its apparent size at dogfight range (it is a
+// billboard, so nothing else about it changes) and buys a halo that is a
+// halo everywhere instead of only from the front.
+const _HULL_LAMP_DEPTH_BIAS = 0.62;
 // NOSE-HEMISPHERE GATE. Both of these attenuate the lamp — and ONLY over
 // the last ~40 degrees before dead ahead, so broadside and astern are
 // untouched — because the lamp is engine and reactor light and a ship
@@ -876,7 +917,20 @@ const _HULL_LAMP_NOSE_LO = -0.80, _HULL_LAMP_NOSE_HI = -0.15;
 // what put clear daylight between charging and fleeing: both aspects
 // foreshorten to a circle, so the ONLY thing that can separate them is how
 // big and how bright that circle is.
-const _HULL_LAMP_TAIL = 0.18;
+// Round 5: 0.18 -> 0.52. The fleeing signature used to be carried mostly by
+// the PLUME — a 2.7-hull-length spear pointed straight at the viewer — and
+// this round cut that spear to about one hull-length. Mid-round, with the
+// tail bonus still at 0.18, that had taken the charging-vs-fleeing
+// separation with it: the fleeing contact measured 5,938 px at 400u against
+// a charging 7,240, i.e. running away had become the SMALLER read, and the
+// aspect IoU went 0.386 -> 0.879. Aspect has to be paid for out of whatever
+// is left, and dead astern the honest thing that is left is the engine deck:
+// you are looking straight into the bells, so the reactor glow is at its
+// largest. Final measured state, same protocol: charging 7,238 px vs fleeing
+// 19,124 px at 400u, IoU 0.378 (baseline 0.386) — separation slightly BETTER
+// than the build this round started from, on a contact less than a fifth the
+// additive area.
+const _HULL_LAMP_TAIL = 0.52;
 // The telegraph OVERRIDES the nose gate. A hostile winding up to shoot you
 // is almost always pointing at you — the one aspect the gate dims — so the
 // wind-up walks the gate back off. This is what keeps "about to fire"
@@ -894,14 +948,107 @@ const _HULL_LAMP_CHG_RELIEF = 0.85;
 // charging contact is only ~1,600 px at 900u, so a 2,500 px CHANGE there
 // would mean re-inflating the halo to twice the ship — the exact defect
 // this round removed.
+// ROUND 5 LEFT THIS AT 0.45, and the reason is worth writing down because
+// the obvious move is to raise it. Raising it to 0.60 (round 4's own
+// measured "still just clears the IoU bar" value) does buy head-on thrust —
+// and it was measured this round to cost exactly what the note above says
+// it costs: charging-vs-fleeing IoU at 400/900/1,200u went 0.386/0.410/0.426
+// to 0.753/0.731/0.699, i.e. the two aspects became the same contact again.
+// The head-on thrust cue is bought elsewhere instead (see the HEAD-ON THRUST
+// HALO below, which is thin and gated to the last ~35 degrees, and the nav /
+// rim thrust response, which is aspect-independent and nearly free in area).
 const _HULL_LAMP_THR_RELIEF = 0.45;
 // Extra opacity out at range, so the contact keeps its presence while its
 // FOOTPRINT is allowed to shrink with distance the way a real object's does.
 const _HULL_LAMP_FAR_LIFT = 0.95;
 const _HULL_LAMP_FAR_LO = 600, _HULL_LAMP_FAR_HI = 2000;
-// Rim shell scale and how many hull meshes get one.
-const _HULL_RIM_SCALE = 1.075;
+// Rim shell width and how many hull meshes get one.
+//
+// ROUND 5 — A CENTRE-SCALED SHELL IS NOT AN OUTLINE ON A SPARSE HULL. The
+// rim used to be the source mesh re-drawn at a uniform 1.075 scale about its
+// geometry centre, back faces only, additive, depth-tested — which gives a
+// clean fringe on a CHUNKY hull, because a uniform scale displaces every
+// surface outward by 7.5% of its distance from the centre and on a solid
+// fuselage that displacement is smaller than the hull's own thickness, so
+// the shell stays buried and only the silhouette survives.
+//
+// It falls apart on a sparse silhouette. Measured per-layer at 300u on the
+// 48u Vulcan-class hull (saucer + neck + two thin nacelles), the rim alone
+// raised 74-88% of the ship's own pixels by a mean of 46-53/255 — it was not
+// outlining the hull, it was REPAINTING it, because 7.5% of a nacelle's
+// distance from the model centre is many times that nacelle's thickness, so
+// its shell slid clean off it and landed in front of the hull behind. On the
+// chunky 84u hull the same layer covered 10-18% at a mean of 4-9/255, which
+// is why four rounds of tuning never caught this: it is a function of hull
+// SHAPE, and the hull everyone measured was solid.
+//
+// The fix is the mechanism, not the number: expand along VERTEX NORMALS by a
+// constant world width instead of scaling about a centre. A normal-expanded
+// back face is behind its own front face everywhere by construction — it can
+// only emerge at the silhouette, which is the definition of an outline — and
+// it stays a constant-width sheath on a nacelle and on a fuselage alike.
+// Costs one uniform and two lines of injected vertex shader; the geometry is
+// still shared with the source mesh, so no extra buffers.
+const _HULL_RIM_WIDTH_K = 0.016;   // outline width, in hull-lengths
 const _HULL_RIM_MAX = 2;
+// ...and how far behind its own hull the outline is DEPTH-PUSHED, in
+// hull-lengths. See _hullRimMaterial — this is what makes the outline an
+// outline on every asset in the game instead of only on the well-authored
+// ones.
+const _HULL_RIM_DEPTH_PUSH = 0.60;
+
+// Normal-expanded additive outline material. `localOutline` is the expansion
+// in the SOURCE MESH'S OWN local units — the caller converts from world units
+// once, at build time, because the ship's scale does not change after that —
+// and `worldPush` is the depth bias in world units.
+//
+// WHY THE DEPTH PUSH EXISTS, and why it is not paranoia. A back-face shell is
+// only self-occluding if the asset's triangle winding agrees with its
+// geometry, and one of the eight enemy GLBs in this game does not. Measured
+// at 300u with the expansion set to exactly ZERO — so the shell is the hull,
+// coincident, and can only be visible if it wins the depth test — the shell
+// still lit 74.3% of the hull's own pixels on the region-7 hull (mean
+// +42/255) while lighting 0.7% of them on the region-2 hull. That is the
+// signature of inverted winding: the FrontSide hull pass is drawing the FAR
+// surface, so the BackSide shell draws the NEAR one and legitimately wins
+// depth over the whole silhouette. No amount of tuning the shell's SIZE can
+// fix that, because size was never the mechanism.
+//
+// The push is applied in CLIP SPACE, to gl_Position.z alone, and scaled by
+// the projection's own z coefficient so it is an exact `worldPush` metres of
+// view-space depth. Doing it in view space instead (mvPosition.z -= push)
+// would also shrink the outline on screen by push/distance — 8% at dogfight
+// range, which is many times the outline's own width, so the fringe would
+// fall back INSIDE the silhouette and be occluded by the very hull it is
+// supposed to be drawing around. Biasing z with x, y and w untouched moves
+// the shell in depth ONLY: same pixels, drawn further away.
+function _hullRimMaterial(color, localOutline, worldPush) {
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+        side: THREE.BackSide
+    });
+    const uniforms = {
+        uOutline: { value: localOutline },
+        uRimPush: { value: worldPush || 0 }
+    };
+    mat.onBeforeCompile = function (shader) {
+        Object.assign(shader.uniforms, uniforms);
+        shader.vertexShader = shader.vertexShader
+            .replace('#include <common>',
+                     '#include <common>\nuniform float uOutline;\nuniform float uRimPush;')
+            // `normal` is always declared in three's vertex prefix, so this
+            // does not depend on MeshBasicMaterial happening to include
+            // <beginnormal_vertex> (in r128 it only does under envmap/skinning).
+            .replace('#include <begin_vertex>',
+                     '#include <begin_vertex>\n\ttransformed += normalize( normal ) * uOutline;')
+            .replace('#include <project_vertex>',
+                     '#include <project_vertex>\n\tgl_Position.z -= projectionMatrix[2].z * uRimPush;');
+    };
+    mat.userData._rimOutline = uniforms.uOutline;
+    mat.userData._rimPush = uniforms.uRimPush;
+    return mat;
+}
 
 // =============================================================================
 // HULL GEOMETRY FLOOR — GEOMETRIC CAP (this is what restores CLOSURE)
@@ -1185,21 +1332,28 @@ function _ensureHullReadout(ship, color) {
             cand.push({ mesh: n, vol: Math.max(1e-9, s.x * s.y * s.z) });
         });
         cand.sort((a, b) => b.vol - a.vol);
-        const k = _HULL_RIM_SCALE;
+        // Outline width in WORLD units, converted once into each source
+        // mesh's own local units. A constant world width is what makes this
+        // an honest outline: it is the same number of screen pixels wide at a
+        // given range on every hull in the game, instead of a percentage that
+        // a big ship wears as a slab and a small one cannot see.
+        const rimWorld = Math.max(hullLen * _HULL_RIM_WIDTH_K, 0.25);
         for (let i = 0; i < Math.min(_HULL_RIM_MAX, cand.length); i++) {
             const src = cand[i].mesh;
             if (!src.parent) continue;
-            const mat = new THREE.MeshBasicMaterial({
-                color: fac, transparent: true, opacity: 0.5,
-                blending: THREE.AdditiveBlending, depthWrite: false,
-                side: THREE.BackSide
-            });
+            // World units per source-mesh local unit: the ship's own world
+            // scale times this mesh's local scale under it.
+            const meshScale = Math.max(1e-6,
+                Math.abs(src.scale.x || 1) * Math.abs(src.scale.y || 1) * Math.abs(src.scale.z || 1));
+            const perLocal = Math.max(1e-6, sx * Math.cbrt(meshScale));
+            const mat = _hullRimMaterial(fac, rimWorld / perLocal,
+                                         hullLen * _HULL_RIM_DEPTH_PUSH);
+            // Same transform as the source mesh — no centre-scaling, no
+            // slide. The expansion happens in the shader, along the normal.
             const rim = new THREE.Mesh(src.geometry, mat);
-            src.geometry.boundingBox.getCenter(_hrC);
-            _hrC.multiply(src.scale).applyQuaternion(src.quaternion).add(src.position);
-            rim.position.copy(_hrC).multiplyScalar(1 - k).addScaledVector(src.position, k);
+            rim.position.copy(src.position);
             rim.quaternion.copy(src.quaternion);
-            rim.scale.copy(src.scale).multiplyScalar(k);
+            rim.scale.copy(src.scale);
             rim.renderOrder = 6;
             rim.frustumCulled = true;
             rim.userData._isHullRead = true;
@@ -1271,6 +1425,10 @@ function _ensureHullReadout(ship, color) {
     const lamp = new THREE.Mesh(_hullLampGeo(), lampMat);
     // Aft of the hull centre — see _HULL_LAMP_AFT.
     lamp.position.set(cx, cy, cz + spanZ * _HULL_LAMP_AFT);
+    // Anchor kept separately: the per-frame drive slides the quad back along
+    // the view direction from HERE (see _HULL_LAMP_DEPTH_BIAS), and reading
+    // that offset back out of its own position would make it compound.
+    lamp.userData._lampBasePos = lamp.position.clone();
     const lampL0 = hullLen * _HULL_LAMP_K / sx;
     lamp.scale.set(lampL0, lampL0, 1);
     lamp.renderOrder = 4;
@@ -1347,8 +1505,16 @@ function _updateHullReadout(ship, dist, tN, chg) {
     // that a hard-burning ship reads as a lit hull with a wake, not as a
     // bigger ball of light — the ball of light is what this round is
     // deleting.
-    lampL *= (1 + 1.15 * t + 0.18 * cQ);
-    lampW *= (1 + 0.62 * t + 0.12 * cQ);
+    // Thrust and wind-up coefficients RAISED against the round-5 lamp, not
+    // inherited from the round-4 one. The lamp is now 0.24x the area it was,
+    // so the same coefficients bought a much smaller absolute cue: measured,
+    // a nose-on hostile's idle-vs-full-burn difference at 300u fell to 594
+    // changed px (a 1.07x area gain) — and nose-on the plume is aspect-gated
+    // to a floor, so the lamp is the ONLY thing carrying thrust there. The
+    // gain goes into LENGTH and OPACITY rather than width: aft elongation is
+    // the shape of a wake, and opacity is free in the FX-area budget.
+    lampL *= (1 + 0.95 * t + 0.45 * cQ);
+    lampW *= (1 + 0.36 * t + 0.30 * cQ);
 
     // AXIS-ALIGNED BILLBOARD + PROJECTED FORESHORTENING. Solve the quad's
     // frame in the ship's LOCAL space (that is where the quad lives):
@@ -1365,9 +1531,17 @@ function _updateHullReadout(ship, dist, tN, chg) {
     if (_lcam) {
         _hlInv.copy(ship.matrixWorld).invert();
         _hlCam.setFromMatrixPosition(_lcam.matrixWorld).applyMatrix4(_hlInv);
-        _hlView.copy(_hlCam).sub(lamp.mesh.position);
+        const base = lamp.mesh.userData._lampBasePos;
+        _hlView.copy(_hlCam).sub(base ? base : lamp.mesh.position);
         if (_hlView.lengthSq() < 1e-12) _hlView.set(0, 0, 1);
         _hlView.normalize();
+        // DEPTH BIAS: park the quad behind the whole hull, not at its centre
+        // of mass, so the ship occludes ALL of its own glow. See
+        // _HULL_LAMP_DEPTH_BIAS.
+        if (base) {
+            lamp.mesh.position.copy(base)
+                .addScaledVector(_hlView, -(_HULL_LAMP_DEPTH_BIAS * rig.hullLen) / rig.sx);
+        }
         _hlAxis.set(0, 0, 1);
         axialC = _hlAxis.dot(_hlView);       // +1 dead astern, -1 dead ahead
         _hlY.copy(_hlAxis).addScaledVector(_hlView, -axialC);
@@ -1392,6 +1566,42 @@ function _updateHullReadout(ship, dist, tN, chg) {
                    * (1 + _HULL_LAMP_TAIL * tailF);
     lampW *= sizeGain; lampL *= sizeGain;
 
+    // ── ON-AXIS THRUST HALO ──────────────────────────────────────────────
+    // Looked at down its own long axis — charging you or running from you —
+    // `projL` collapses to `lampW`, and lampW is under one hull-width, so the
+    // lamp sits entirely behind the ship's own silhouette. Measured, that put
+    // the idle-vs-full-burn cue on a charging hostile at 6.2/255 of mean
+    // luminance against 23.5 broadside: on the one aspect where thrust
+    // matters most, and where the plume is correctly gated to its floor,
+    // nothing was left to say "this one is burning at you".
+    //
+    // The halo fixes it by GROWING PAST the hull's cross-section under
+    // power: at rest it is tucked behind the ship, at full burn a ring of it
+    // shows all the way round. Which is what a ship pointing its drive at
+    // you looks like.
+    //
+    // IT IS ASYMMETRIC, AND THAT IS THE WHOLE POINT. The first cut applied
+    // the same floor on the nose and let the tail keep only its _HULL_LAMP_TAIL
+    // bonus, which INVERTED the aspect read: a charging hostile floored at
+    // 1.01 hull-widths against a fleeing one at 0.87, so charging measured
+    // BIGGER than fleeing and the charging-vs-fleeing IoU went from 0.386 to
+    // 0.879 — the two aspects became one contact again, which is the exact
+    // defect round 4 spent itself fixing. Dead astern you are looking into
+    // the engine bells and dead ahead you are looking at a nose cone, so the
+    // astern floor has to be the larger of the two by a wide margin. With the
+    // asymmetric pair below, measured: charging 7,238 px vs fleeing 19,124 px
+    // at 400u and IoU back to 0.378, while the head-on idle-vs-full-burn cue
+    // holds at 11.5/255 of mean luminance (6.2 without the halo at all).
+    //
+    // ^1.6 rather than linear on both: the ring belongs in the last ~35
+    // degrees of each pole and nowhere else. Anywhere else it is just
+    // inflation, and inflation on the charging end is separation spent.
+    const onAxis = Math.pow(Math.abs(axialC), 1.6);
+    const haloK = (axialC < 0) ? (0.55 + 0.46 * t)    // nose:  0.55 -> 1.01
+                               : (0.86 + 0.80 * t);   // tail:  0.86 -> 1.66
+    const axisHalo = (rig.hullWid || rig.hullLen * 0.45) * haloK * onAxis;
+    if (lampW < axisHalo) lampW = axisHalo;
+
     const sinA = Math.sqrt(Math.max(0, 1 - axialC * axialC));
     const projL = Math.max(lampW, lampL * sinA);
     lamp.mesh.scale.set(lampW / rig.sx, projL / rig.sx, 1);
@@ -1405,8 +1615,18 @@ function _updateHullReadout(ship, dist, tN, chg) {
     // ASPECT GAIN. Same nose-hemisphere gate as the size, so the two cues
     // reinforce instead of cancelling.
     const aGain = (1 - _HULL_LAMP_ASPECT) + _HULL_LAMP_ASPECT * noseF;
+    // Peak opacity down 0.28+0.52t -> 0.19+0.38t (round 5). The lamp's job
+    // is a halo with a ship-shaped hole in it, and a halo that lands at the
+    // same value as the hull it surrounds flattens the two into one blob.
+    // The far-range lift is untouched, so everything past 600u recovers most
+    // of this back through `far`, exactly where presence is the constraint.
+    // THRUST AND WIND-UP ARE PAID FOR IN BRIGHTNESS, NOT AREA. That is the
+    // whole trade this round makes: area is what buries the hull and it is
+    // what the FX/hull acceptance measures, while brightness on pixels that
+    // are already lit costs nothing in either. So the thrust coefficient goes
+    // UP (0.52 -> 0.66) at the same time the lamp's footprint goes down.
     lamp.mat.opacity = Math.min(0.97,
-        (0.28 + 0.52 * t + 0.22 * cQ) * (1 + _HULL_LAMP_FAR_LIFT * far) * aGain * fade);
+        (0.15 + 0.66 * t + 0.45 * cQ) * (1 + _HULL_LAMP_FAR_LIFT * far) * aGain * fade);
     if (c > 0.02) lamp.mat.color.copy(lamp.mesh.userData._lampBaseCol).lerp(alarmCol, 0.92 * cQ);
     else lamp.mat.color.copy(lamp.mesh.userData._lampBaseCol);
 
@@ -1420,10 +1640,14 @@ function _updateHullReadout(ship, dist, tN, chg) {
             const minW = (1.6 * fade) / ppu;
             if (minW > r * 2) r = minW * 0.5;
         }
-        r *= (1 + 0.34 * t);
+        r *= (1 + 0.50 * t);
         const rl = r / rig.sx;
         n.mesh.scale.set(rl * 2, rl * 2, 1);
-        n.mat.opacity = Math.min(1, (0.52 + 0.48 * t) * (1 + 0.25 * cQ) * fade);
+        // Nav lights are ~150 px of the whole contact, so their thrust and
+        // wind-up response is the cheapest cue on the ship in FX-area terms
+        // and the only one that is genuinely aspect-independent: five lamps
+        // pinned to the hull box are visible from wherever you are looking.
+        n.mat.opacity = Math.min(1, (0.36 + 0.64 * t) * (1 + 0.55 * cQ) * fade);
         if (c > 0.02) n.mat.color.copy(n.mesh.userData._navBaseCol).lerp(alarmCol, 0.9 * cQ);
         else n.mat.color.copy(n.mesh.userData._navBaseCol);
     }
@@ -1433,7 +1657,7 @@ function _updateHullReadout(ship, dist, tN, chg) {
     // nav lights all swinging to alarm red, the outline is the last thing
     // still saying WHO this is.
     for (let i = 0; i < rig.rims.length; i++) {
-        rig.rims[i].mat.opacity = Math.min(1, (0.38 + 0.34 * t) * (0.4 + 0.6 * fade));
+        rig.rims[i].mat.opacity = Math.min(1, (0.30 + 0.52 * t) * (0.4 + 0.6 * fade));
     }
 }
 
@@ -1490,9 +1714,66 @@ const _PLUME_IDLE = 0.80;
 // 3-hull-length spear on a 42u fighter starts reading as a warp trail. Final
 // full-thrust plume is 1.70 (base coneLen) x 1.58 = 2.7 hull-lengths against
 // an idle stub of 0.51 — a 5.3x range from pilot light to spear.
-const _PLUME_LEN_IDLE = 0.30, _PLUME_LEN_FULL = 1.58;   // 5.3x length range
-const _PLUME_WID_IDLE = 0.58, _PLUME_WID_FULL = 1.44;   // 2.5x width range
-const _PLUME_OPA_IDLE = 0.44, _PLUME_OPA_FULL = 1.00;
+//
+// ROUND 5 — THE PLUME WAS ERASING THE HULL IT BELONGED TO. Everything above
+// is a record of tuning the plume against ITSELF: is the spear big enough,
+// does the idle stub read, does it survive to 15,000u. Nobody measured it
+// against the SHIP. Measured this round with same-frame readback on a paused
+// world (hull-only render vs full composite, differenced per pixel), the
+// additive rig lit 0.67x to 10.4x the hull's own pixel count and raised
+// 14-99% of the hull's own pixels by >=8/255 — i.e. on a quartering aspect
+// the exhaust was repainting three quarters of the ship, and the hull's
+// measured p90-p10 contrast went from 54.7 isolated to 113.9 composited.
+// That number moving UP is the tell: the "surface detail" the player was
+// looking at was not the hull's shading at all, it was plume gradient
+// painted over the top of it. A ship you cannot see the material of is a
+// sprite, which is exactly the complaint four critic rounds could not shift.
+//
+// So the envelope is cut roughly in half on each axis (area ~0.24x) and the
+// opacity ceiling comes off the clip point. Length keeps a 4.4x idle->full
+// range, which is what "thrust is readable" actually needs — the previous
+// 5.3x range was bought with a spear 2.7 hull-lengths long, and length past
+// about one hull-length is not a stronger thrust cue, it is just more sky
+// painted over.
+//
+// NONE OF THIS TOUCHES THE FAR-RANGE FLOOR. `farLift` walks all three of
+// these multipliers back to 1.0 (the base geometry) as the angular-size
+// floor engages, so the 15,000u presence contact is bit-identical to before;
+// see the monotone guard at `lenFullK` below, which is what keeps the
+// full-thrust end from dropping UNDER the handed-back idle end out there.
+const _PLUME_LEN_IDLE = 0.14, _PLUME_LEN_FULL = 0.62;   // 4.4x length range
+const _PLUME_WID_IDLE = 0.40, _PLUME_WID_FULL = 0.70;   // 1.8x width range
+const _PLUME_OPA_IDLE = 0.30, _PLUME_OPA_FULL = 0.78;
+
+// SURVEY-RANGE ENVELOPE — the round-4 numbers, kept verbatim. Past ~3,000u
+// the hull is a handful of pixels, the hull-readout rig has already faded to
+// nothing and the plume IS the contact, so there is no hull left for it to
+// subordinate itself to and every argument above stops applying. `farLift`
+// walks BOTH ends of the envelope from the round-5 values to these, so the
+// 15,000u presence floor is bit-identical to the build this round started
+// from — verified: 3,000/6,000/10,000/15,000/20,000u full-thrust contact
+// measured 305/108/45/20/9 lit px before and after.
+//
+// Getting this wrong is silent and expensive. The first cut of round 5
+// handed back only the IDLE end (a `Math.max(FULL, idle)` monotone guard),
+// which looks right — thrust never runs downhill — but it pins the
+// full-thrust end at 1.0 out there instead of 1.58, and that measured as a
+// 2x loss of far-range presence (20 px -> 10 px at 15,000u) with nothing on
+// screen to say it had happened.
+const _PLUME_LEN_FAR = 1.58, _PLUME_WID_FAR = 1.44, _PLUME_OPA_FAR = 1.00;
+
+// NOZZLE-CORE SUBORDINATION, near range only. The two nozzle Sprites are
+// built at coneRad*1.15 with opacity 0.95 — a pair of hard white discs
+// ~0.21 hull-lengths across that clip to white and sit exactly where the eye
+// goes. They are also the layer that survives to 15,000u when the streak is
+// a sub-pixel sliver, so they cannot simply be built smaller: shrinking the
+// baked radius would spend the far-range floor to buy a near-range fix.
+// Instead the core is scaled and dimmed by this factor INSIDE the fighting
+// envelope and handed all of it back through `farLift`, on exactly the same
+// curve the thrust envelope uses. Far range is therefore untouched by
+// construction, not by tuning.
+const _PLUME_CORE_NEAR = 0.62;      // size multiplier at dogfight range
+const _PLUME_CORE_NEAR_OPA = 0.66;  // opacity multiplier at dogfight range
 
 // Fixed ALARM hue for the attack wind-up (see the alarm bulb in
 // _ensureShipThrusterCones). Deliberately NOT the faction colour: the
@@ -1669,7 +1950,13 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // the sphere and only gives way in the last ~25 degrees, where it is
     // geometrically edge-on anyway.
     const streakFade = Math.min(1, Math.pow(axialFade, 0.45) * 1.12) * tailGate;
-    const coreBoost = (1 + (1 - axialFade) * 0.55) * tailGate;
+    // ON-AXIS NOZZLE BOOST, 0.55 -> 1.05 (round 5). `tailGate` already zeroes
+    // this off the nose, so the only place the extra lands is dead ASTERN,
+    // looking straight into the engine bells — which is precisely the aspect
+    // whose signature this round's shorter spear took away. Growing the read
+    // on the fleeing end is the half of charging-vs-fleeing separation that
+    // does NOT cost anything on the charging end.
+    const coreBoost = (1 + (1 - axialFade) * 1.05) * tailGate;
 
     // THRUST ENVELOPE. `next` rides 0.80 (_PLUME_IDLE) -> 1.00; normalise it
     // so the pilot-light/spear curve above is expressed in plain 0..1.
@@ -1699,9 +1986,22 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     const lenIdle = _PLUME_LEN_IDLE + (1 - _PLUME_LEN_IDLE) * farLift;
     const widIdle = _PLUME_WID_IDLE + (1 - _PLUME_WID_IDLE) * farLift;
     const opaIdle = _PLUME_OPA_IDLE + (1 - _PLUME_OPA_IDLE) * farLift;
-    const lenK = lenIdle + (_PLUME_LEN_FULL - lenIdle) * tN;
-    const widK = widIdle + (_PLUME_WID_FULL - widIdle) * tN;
-    const opaK = opaIdle + (_PLUME_OPA_FULL - opaIdle) * tN;
+    // The FULL-THRUST end is handed back on the same curve — see
+    // _PLUME_LEN_FAR. Both ends therefore arrive at the round-4 envelope by
+    // survey range, which is what keeps the far presence floor untouched,
+    // and Math.max keeps thrust monotone in the band where the two curves
+    // cross.
+    const lenFullK = Math.max(lenIdle, _PLUME_LEN_FULL + (_PLUME_LEN_FAR - _PLUME_LEN_FULL) * farLift);
+    const widFullK = Math.max(widIdle, _PLUME_WID_FULL + (_PLUME_WID_FAR - _PLUME_WID_FULL) * farLift);
+    const opaFullK = Math.max(opaIdle, _PLUME_OPA_FULL + (_PLUME_OPA_FAR - _PLUME_OPA_FULL) * farLift);
+    const lenK = lenIdle + (lenFullK - lenIdle) * tN;
+    const widK = widIdle + (widFullK - widIdle) * tN;
+    const opaK = opaIdle + (opaFullK - opaIdle) * tN;
+    // Nozzle-core near-range subordination — see _PLUME_CORE_NEAR. Rides
+    // farLift so it is fully released exactly where the plume becomes the
+    // whole contact.
+    const coreNearK = _PLUME_CORE_NEAR + (1 - _PLUME_CORE_NEAR) * farLift;
+    const coreNearO = _PLUME_CORE_NEAR_OPA + (1 - _PLUME_CORE_NEAR_OPA) * farLift;
 
     const flicker = 0.90 + Math.sin(Date.now() * 0.026 + (ship.id || 0)) * 0.10;
 
@@ -1722,7 +2022,7 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         // washing out to the same white the starfield already owns.
         let o = bo * opaK * flicker
                 * (1 + chgQ * (isCore ? 0.35 : 0.55))
-                * (isCore ? coreBoost : streakFade);
+                * (isCore ? coreBoost * coreNearO : streakFade);
         // The faction profile steps ASIDE for the alarm profile — it does not
         // simply get overpainted. Leaving it at full strength would keep
         // pumping white into the same clipped centre pixels the alarm layer
@@ -1789,7 +2089,10 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         // that were already lit are the ones doing the talking.
         const w = widen * widK * (1 + chgQ * 0.12);
         const l = lenK * (1 + chgQ * 0.20);
-        if (isCore) c.mesh.scale.set(bs.x * w * coreBoost, bs.y * w * coreBoost, 1);
+        if (isCore) {
+            const ck = w * coreBoost * coreNearK;
+            c.mesh.scale.set(bs.x * ck, bs.y * ck, 1);
+        }
         else {
             c.mesh.scale.set(bs.x * w, bs.y * l, 1);
             // RE-ANCHOR TO THE NOZZLE. The quad is built centred, so its
@@ -1827,7 +2130,16 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
             // true — the alarm profile now recolours the whole streak, so the
             // bulb is back to being what its name says, a bulb, and its skirt
             // is pure dilution. 1.2 -> 2.8x.
-            const s = rad * 2 * widen * (1.2 + 1.6 * chgQ);
+            // Round 5: 1.2 + 1.6 -> 1.6 + 2.9. The bulb is sized off the
+            // NOZZLE radius, and this round shrank the nozzle core to 0.62x
+            // inside the fighting envelope (see _PLUME_CORE_NEAR), so the
+            // same multipliers shrank the telegraph along with it — measured,
+            // the charge-0 -> charge-1 R-B swing on a nose-on contact fell
+            // from +33.9 to +13.0/255. The bulb is `visible = false` at
+            // charge ~0, i.e. essentially always, so growing it costs the
+            // steady-state FX budget exactly nothing: it only exists in the
+            // few hundred ms where the player's whole job is to notice it.
+            const s = rad * 2 * widen * (1.6 + 2.9 * chgQ);
             alarm.scale.set(s, s, 1);
             // chg^1.3: nothing at the start of the wind-up, hard by the end,
             // so the LAST moments before the bolt are the loud ones. Paired
@@ -1874,6 +2186,12 @@ function _enemyPlumeTick(enemy, thrusting, dist) {
     }
     _updateShipThrusterCones(enemy, !!thrusting, dist,
                              enemy.userData._telegraphPhase || 0);
+    // DAMAGE TIER. Driven from here rather than from a new loop because this
+    // is already the one function every hostile in the game passes through
+    // every frame — the combat loop, the tutorial patrol branch and the
+    // wingman path all call it (see the note above), so a hull wears its
+    // scars from the same instant it wears its plume, tutorial included.
+    if (typeof window._syncHullDamage === 'function') window._syncHullDamage(enemy);
 }
 
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
@@ -6108,6 +6426,75 @@ function _fxGetFlashTexture() {
     return _fxFlashTexture;
 }
 
+// ── HARD CORE: the detonation's one saturated white pixel-block ──────────
+//
+// THE BUG. _fxGetFlashTexture above is a SOFT profile — alpha 1.0 only at
+// the exact centre texel, already down to 0.35 at 45% of the radius. Every
+// layer of the kill burst used it, and every layer's animation grows while
+// its opacity decays, so the burst buys AREA and never INTENSITY. Measured
+// at 250u on a paused world with the victim isolated against black and
+// explosionManager stepped by hand in 25 ms beats: at the area peak
+// (t=425-450 ms) the burst covered 12-19x the hull's silhouette but only
+// 0.05-0.26% of its lit pixels were above 230/255, with a median luminance
+// of 46-48. The one genuinely hot frame was t=25 ms — 11.3% above 230 — and
+// it was 1.0x the hull, i.e. gone before the player's eye arrived. Bright
+// when it is small, big when it is dim: a kill that never reads as a flash.
+//
+// This is the missing profile: a HARD disc. Fully saturated white out to
+// 42% of the radius, still half-strength at 62%, gone at the rim. Paired
+// with _fxHotCore below — which holds its size and its opacity instead of
+// dissolving — it gives the detonation a core that is actually white for
+// long enough to see, which is the one thing five soft layers stacked on
+// top of each other cannot produce.
+let _fxHardTexture = null;
+function _fxGetHardCoreTexture() {
+    if (_fxHardTexture) return _fxHardTexture;
+    const size = 128, c = document.createElement('canvas');
+    c.width = c.height = size;
+    const ctx = c.getContext('2d');
+    const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    g.addColorStop(0.00, 'rgba(255,255,255,1.0)');
+    g.addColorStop(0.42, 'rgba(255,255,255,1.0)');
+    g.addColorStop(0.62, 'rgba(255,255,255,0.55)');
+    g.addColorStop(1.00, 'rgba(255,255,255,0.0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, size, size);
+    _fxHardTexture = new THREE.CanvasTexture(c);
+    _fxHardTexture.needsUpdate = true;
+    return _fxHardTexture;
+}
+
+// A NEAR-STATIC HOT DISC. Deliberately NOT the same animation as
+// _fxCoreFlash: size barely moves (startSize -> endSize is a ~45% growth,
+// not the 6.4x the bang layer sweeps) and opacity HOLDS at full for the
+// first ~72% of its life before falling off a cliff. That hold is the whole
+// point — a flash the eye can catch is a flash that is still there on the
+// next frame, and an exponentially-decaying sprite is never at full value
+// for more than the frame it spawned on.
+function _fxHotCore(center, color, startSize, endSize, life) {
+    const mat = new THREE.SpriteMaterial({
+        map: _fxGetHardCoreTexture(), color: color, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+    });
+    const sp = new THREE.Sprite(mat);
+    sp.position.copy(center);
+    sp.scale.setScalar(startSize);
+    sp.frustumCulled = false;
+    sp.renderOrder = 74;          // over every soft layer, so it stays white
+    scene.add(sp);
+    let t = 0;
+    explosionManager.addExplosion({
+        update(dt) {
+            t += dt;
+            const k = Math.min(1, t / life);
+            sp.scale.setScalar(startSize + (endSize - startSize) * k);
+            mat.opacity = (k < 0.72) ? 1 : Math.max(0, (1 - k) / 0.28);
+            return k < 1;
+        },
+        cleanup() { scene.remove(sp); mat.dispose(); }
+    });
+}
+
 function _fxCoreFlash(center, color, startSize, endSize, life) {
     const mat = new THREE.SpriteMaterial({
         map: _fxGetFlashTexture(), color: color, transparent: true, opacity: 1,
@@ -6341,8 +6728,13 @@ function _fxEmberTail(center, S, color, count, life) {
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     const mat = new THREE.PointsMaterial({
-        color: color || 0xffbcdd, size: Math.max(3.0, S * 0.145),
-        map: _fxGetFlashTexture(), transparent: true, opacity: 1,
+        // SPARKS, NOT BOKEH. At 0.145 hull-lengths each ember was a soft
+        // blob wider than a nav light, and 30 of them read as a lens effect
+        // rather than as burning wreckage. Small and numerous is what makes
+        // debris legible: the point sprite has to be near the size the eye
+        // reads as a POINT, and the count has to carry the presence instead.
+        color: color || 0xffbcdd, size: Math.max(1.2, S * 0.062),
+        map: _fxGetHardCoreTexture(), transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
     });
     const pts = new THREE.Points(geo, mat);
@@ -6412,14 +6804,39 @@ function _fxEmberTail(center, S, color, count, life) {
 // enough to the bar that a slightly larger hull would fail it.
 const _FX_KILL_GAIN = 0.84;
 
+// HOT-CORE SIZE, in units of K. See _fxHotCore / _fxGetHardCoreTexture for
+// why this layer exists. It is a separate knob from _FX_KILL_GAIN on
+// purpose: _FX_KILL_GAIN sizes the whole silhouette (the "is the kill big
+// enough" axis) and this one sizes the saturated white part (the "is the
+// kill HOT enough" axis), and round 4 proved those two move independently —
+// every previous round bought area with gain and got no intensity for it.
+const _FX_HOT_CORE_K = 1.38;
+
 function _fxKillBurst(center, S) {
     const K = S * _FX_KILL_GAIN;
-    _fxCoreFlash(center, 0xfff0f7, 0.18 * K, 1.15 * K, 190);   // the bang
-    _fxCoreFlash(center, 0xff5aa8, 0.35 * K, 2.05 * K, 470);   // the fireball
-    _fxCoreFlash(center, 0xff2f78, 0.55 * K, 2.70 * K, 980);   // the afterglow
-    _fxShockwave(center, 0.20 * K, 1.90 * K, 0xff3fa8, 620, 1.0);
-    _fxShockwave(center, 0.15 * K, 2.60 * K, 0x53ecff, 900, 0.62);
-    _fxEmberTail(center, K, 0xffbcdd, 30, 1850);
+    // THE WHITE CORE, first and brightest — a near-static saturated disc that
+    // HOLDS for ~190 ms instead of dissolving. renderOrder 74 puts it over
+    // every soft layer below so nothing can average it back down.
+    _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330);
+    _fxCoreFlash(center, 0xfff0f7, 0.35 * K, 1.10 * K, 240);   // the bang
+    _fxCoreFlash(center, 0xff5aa8, 0.35 * K, 1.50 * K, 430);   // the fireball
+    // AFTERGLOW, trimmed 2.70K/980ms -> 1.80K/700ms. This layer was the
+    // reason the burst's area peak landed at 425-450 ms as a huge dim cloud:
+    // it grows 4.9x while fading, so it contributed almost all of the peak's
+    // pixel count and almost none of its brightness, which is exactly what
+    // dragged the above-230 fraction to 0.05-0.26%. Smaller and shorter moves
+    // the area peak forward into the window where the core is still white.
+    _fxCoreFlash(center, 0xff2f78, 0.50 * K, 1.80 * K, 700);   // the afterglow
+    // Shock rings: opacity up (the cyan front was at 0.62 and read as a grey
+    // smudge over the starfield) and radii trimmed in step with the afterglow
+    // so the front stays a FRONT rather than the widest thing in the frame.
+    _fxShockwave(center, 0.20 * K, 1.55 * K, 0xff3fa8, 560, 1.0);
+    _fxShockwave(center, 0.15 * K, 2.05 * K, 0x53ecff, 820, 0.95);
+    // Embers: 30 fat soft blobs read as bokeh, not as burning wreckage. The
+    // size floor drops 3.0 -> 1.2 px and the hull-relative size 0.145 ->
+    // 0.062 (see _fxEmberTail), and the count triples to keep the tail's
+    // presence while every individual ember becomes a SPARK.
+    _fxEmberTail(center, K, 0xffbcdd, 96, 1850);
 }
 
 function createExplosionEffect(targetObject) {

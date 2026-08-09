@@ -431,6 +431,49 @@ function updateCameraView(camera) {
         // not just reading that way.
         const _exitT = (typeof gameState._warpExitT === 'number') ? gameState._warpExitT : null;
         const _exitSettle = (_exitT !== null) ? (1 - _exitT) : 1;
+
+        // ── FIX 1 — ARRIVAL FRAMING ASSIST ───────────────────────────────
+        // "Warp must arrive somewhere": autopilot.js stages a real body
+        // (gameState._arrivalSubject) as the destination for a warp/jump
+        // that has one, and re-orients toward it every frame of the boost
+        // + drain — but that re-orientation is a capped, gradual turn (so
+        // ordinary flight never snaps), gated by which demo phase happens
+        // to be running that frame. This is the belt-and-suspenders
+        // safety net, living in the one place that runs unconditionally
+        // on every render frame regardless of phase: a SMALL, capped extra
+        // yaw/pitch nudge on the true camera heading, active only while a
+        // subject is staged AND the exit ramp is actually live, so the
+        // destination is not still visibly sliding into frame on the beat
+        // that is supposed to reveal it. Deliberately tiny (~1.1 deg/frame
+        // max) and only within a plausible catch-up cone (<40 deg off-axis)
+        // — this tops up the pilot's own turn, it never substitutes a snap
+        // for one.
+        if (_exitT !== null && camera.isPerspectiveCamera &&
+            gameState._arrivalSubject && gameState._arrivalSubject.obj &&
+            gameState._arrivalSubject.obj.position &&
+            Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 15000) {
+            const _as = gameState._arrivalSubject.obj;
+            if (!cameraState._arrivalDir) cameraState._arrivalDir = new THREE.Vector3();
+            if (!cameraState._arrivalFwd) cameraState._arrivalFwd = new THREE.Vector3();
+            if (!cameraState._arrivalAxis) cameraState._arrivalAxis = new THREE.Vector3();
+            cameraState._arrivalDir.subVectors(_as.position, camera.position).normalize();
+            camera.getWorldDirection(cameraState._arrivalFwd);
+            const _aAngle = cameraState._arrivalFwd.angleTo(cameraState._arrivalDir);
+            if (_aAngle > 0.01 && _aAngle < 0.70) {
+                cameraState._arrivalAxis.crossVectors(cameraState._arrivalFwd, cameraState._arrivalDir);
+                if (cameraState._arrivalAxis.lengthSq() > 1e-8) {
+                    cameraState._arrivalAxis.normalize();
+                    // Fades out as the ramp settles (weight -> 0.6 at exitT=1)
+                    // rather than cutting at a threshold, so it never fights
+                    // the pilot's own steering once the beat has landed.
+                    const _nudge = Math.min(_aAngle, 0.019) * (1 - _exitSettle * 0.4);
+                    if (!cameraState._arrivalQuat) cameraState._arrivalQuat = new THREE.Quaternion();
+                    cameraState._arrivalQuat.setFromAxisAngle(cameraState._arrivalAxis, _nudge);
+                    camera.quaternion.premultiply(cameraState._arrivalQuat);
+                }
+            }
+        }
+
         // ── SUSTAINED SPEED, EASED ONCE PER FRAME ───────────────────────
         // _warpZoom below only moves for warp / slingshot, so the entire
         // reachable sub-warp range — 0 to 4,000 km/s, the whole "whip" — used

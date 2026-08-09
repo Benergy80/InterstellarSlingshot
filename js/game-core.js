@@ -2261,12 +2261,28 @@ function animate(rafTime) {
 
     gameState.frameCount++;
     
+    // Frames that render without simulating (pause, hitstop, victory replay)
+    // must still advance the frame-time clocks. They used to return early
+    // leaving _lastRafTime/lastUpdateTime stale, so the FIRST simulated frame
+    // afterwards measured a delta spanning the whole frozen stretch — clamped
+    // to 50ms, i.e. 3 frames of motion in one step. Every unpause and every
+    // hitstop therefore ended with a visible lurch. Stamping the clocks here
+    // makes the resume cost exactly one frame.
+    // NOTE: deliberately NOT called from the slow-mo skip branch — that one
+    // relies on the stale timestamp to produce a 2-vsync delta which is then
+    // halved back to real time (see _dtMs below).
+    function _markRenderOnlyFrame() {
+        if (typeof rafTime === 'number') gameState._lastRafTime = rafTime;
+        gameState.lastUpdateTime = performance.now();
+    }
+
     if (gameState.paused) {
         // Still render the scene when paused, just don't update game logic
         if (stars) {
             stars.rotation.x += 0.0001;
             stars.rotation.y += 0.0002;
         }
+        _markRenderOnlyFrame();
         gameRender(scene, camera);
         return; // Skip all other game updates when paused
     }
@@ -2276,6 +2292,7 @@ function animate(rafTime) {
     // all game updates are skipped, like the pause branch above.
     if (typeof window !== 'undefined' && window.replaySystem && window.replaySystem.active) {
         if (window.replaySystem.tick()) {
+            _markRenderOnlyFrame();
             gameRender(scene, camera);
             return;
         }
@@ -2285,6 +2302,7 @@ function animate(rafTime) {
     // (bullet-time on a flagship kill): render only, skip the game update.
     const _ajNow = performance.now();
     if (gameState._hitstopUntil && _ajNow < gameState._hitstopUntil) {
+        _markRenderOnlyFrame();
         gameRender(scene, camera);
         return;
     }
@@ -2387,7 +2405,8 @@ function animate(rafTime) {
         if (typeof explosionManager !== 'undefined') {
             explosionManager.update(gameState.dtMs || 16.67);
         }
-        
+
+        _markRenderOnlyFrame();   // same stale-clock trap as pause/hitstop
         gameRender(scene, camera);
         return; // Stop all other game updates when game over
     }
@@ -3334,6 +3353,15 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // position (its own update ran inside physics, pre-integration).
     if (typeof syncShieldPositionToShip === 'function') {
         syncShieldPositionToShip();
+    }
+
+    // Where-am-I string for the SHIP STATUS panel. Resolved from the ship's
+    // real position (see updateShipLocation in game-physics.js) rather than
+    // only at black-hole arrivals, so cruising out of Sol under your own
+    // power actually changes the readout. ~2 Hz is plenty for a text label
+    // and keeps the galaxy-distance scan off the hot path.
+    if (gameState.frameCount % 30 === 0 && typeof updateShipLocation === 'function') {
+        updateShipLocation();
     }
 
     // Update UI every few frames

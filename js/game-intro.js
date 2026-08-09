@@ -1074,6 +1074,23 @@ if (achievementPopup) {
 }
 
 function createCountdownOverlay() {
+    // Idempotent: three separate intro setup paths call this
+    // (setupIntroUI / setupIntroUIContent / setupIntroUIWithoutShowing) and
+    // more than one runs per boot. Without this guard each call appended a
+    // *new* #introCountdownOverlay, so the DOM carried duplicate ids: every
+    // getElementById('introCountdownOverlay') / getElementById('countdownTimer')
+    // in the countdown + teardown code then addressed only the FIRST copy,
+    // leaving orphan overlays (each with its own live countdown text) stacked
+    // at z-index 9999 over the game. Reuse the existing node instead.
+    const existing = document.getElementById('introCountdownOverlay');
+    if (existing) {
+        // Drop any extra copies a previous boot path may already have added.
+        document.querySelectorAll('#introCountdownOverlay').forEach((el) => {
+            if (el !== existing) el.remove();
+        });
+        return;
+    }
+
     const countdownOverlay = document.createElement('div');
     countdownOverlay.id = 'introCountdownOverlay';
     countdownOverlay.className = 'absolute inset-0 pointer-events-none hidden';
@@ -2211,15 +2228,28 @@ function setupNormalGameContent() {
         animate(); // Start the normal game loop now
     }
 
-    // AUTO-START DEMO AUTOPILOT if requested from launch screen
+    // AUTO-START DEMO AUTOPILOT if requested from launch screen.
+    //
+    // This used to fire on a bare 2 s timer from here — but here is still
+    // deep inside the black-screen transition: the reveal fade doesn't even
+    // BEGIN until ~1.5 s later and runs for a further 4 s, and on a loaded
+    // scene the whole chain drifts to ~11 s. The autopilot therefore flew
+    // its entire opening beat (undock, orient, first burn) behind a black
+    // curtain, and the player's first sight of the demo was a ship already
+    // mid-manoeuvre somewhere else.
+    //
+    // Instead we only ARM it here and let startNormalGameplay() — which runs
+    // when the fade has actually finished — pull the trigger. The 2 s timer
+    // survives as a safety net in case that path is ever skipped.
     if (window.demoModeRequested) {
         window.demoModeRequested = false;
+        window.demoAutostartPending = true;
         setTimeout(() => {
-            if (window.demoPilot && typeof window.demoPilot.start === 'function') {
-                console.log('🤖 Auto-starting demo autopilot');
-                window.demoPilot.start();
+            if (window.demoAutostartPending) {
+                console.warn('🤖 Demo autostart fallback fired — reveal never completed');
+                startDemoAutopilotNow();
             }
-        }, 2000); // Give the scene 2 s to fully initialize
+        }, 15000); // Safety net only; the reveal normally beats this easily.
     }
 
     // Debug beacons removed - nebulas now have proper fade-in visibility
@@ -2478,10 +2508,10 @@ function cleanupIntroElementsOnly() {
         fadeOverlay.remove();
     }
     
-    const countdownOverlay = document.getElementById('introCountdownOverlay');
-    if (countdownOverlay) {
-        countdownOverlay.remove();
-    }
+    // querySelectorAll, not getElementById: older boots could leave more than
+    // one overlay behind, and a survivor keeps a 9999-z-index sheet (with live
+    // "LAUNCH SEQUENCE INITIATED" text) parked on top of the running game.
+    document.querySelectorAll('#introCountdownOverlay').forEach((el) => el.remove());
     
     const atmosphereFade = document.getElementById('atmosphereFadeOverlay');
     if (atmosphereFade) {
@@ -2689,16 +2719,35 @@ function startNormalGameplay() {
         animate();
     }
     
+    // DEMO MODE: the screen is now genuinely visible, so this is the moment
+    // the autopilot showcase should begin — not back during the black screen.
+    // Fire it before the cinematic opening below, which we then skip: the
+    // 0-person beat hides the ship, and the autopilot immediately forces
+    // third-person, so running both made the ship blink out and snap back a
+    // few seconds into the demo.
+    if (window.demoAutostartPending) {
+        // Put the camera where the autopilot expects it, in one step, rather
+        // than letting it discover a hidden ship on its first frame.
+        if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+            cameraState.playerShipMesh.visible = true;
+            cameraState.mode = 'third-person';
+            cameraState.isTransitioning = false;
+        }
+        startDemoAutopilotNow();
+        console.log('🎬 Demo mode — skipping the 0-person cinematic opening and tutorial');
+        return;
+    }
+
     // ✨ CINEMATIC OPENING: Start in 0-person, transition to 3rd person, then tutorial
     console.log('🎬 Starting cinematic opening sequence...');
-    
+
     // Step 1: Start in zero-offset (0-person) view - no ship visible
     if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
         cameraState.mode = 'zero-offset';
         cameraState.playerShipMesh.visible = false;
         console.log('📷 Starting in 0-person POV');
     }
-    
+
     // Step 2: After 2 seconds, do slow cinematic transition to 3rd person
     setTimeout(() => {
         console.log('📷 Beginning cinematic transition to 3rd person...');
@@ -2713,13 +2762,24 @@ function startNormalGameplay() {
             cameraState.transitionTargetOffset = cameraState.normalThirdPersonOffset.clone();
         }
     }, 2000);
-    
+
     // Step 3: Start tutorial after cinematic transition completes
     if (typeof startTutorial === 'function') {
         setTimeout(startTutorial, 4500);  // 2s wait + 2s transition + 0.5s settle
     }
-    
+
     console.log('🎬 Normal gameplay fully active - cinematic opening in progress');
+}
+
+// Single entry point for kicking the demo autopilot off, so the reveal-driven
+// path and the safety-net timer can't both start it.
+function startDemoAutopilotNow() {
+    if (!window.demoAutostartPending) return;
+    window.demoAutostartPending = false;
+    if (window.demoPilot && typeof window.demoPilot.start === 'function') {
+        console.log('🤖 Auto-starting demo autopilot (scene fully revealed)');
+        window.demoPilot.start();
+    }
 }
 
 // =============================================================================
