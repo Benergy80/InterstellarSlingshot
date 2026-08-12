@@ -2868,6 +2868,85 @@ function _applyWarpExitRamp(owner) {
     return true;
 }
 
+// ── WARP GUIDANCE ─────────────────────────────────────────────────────────
+// Steers an ACTIVE emergency-warp burn toward wherever the ship's nose is
+// pointing, at a capped rate. Call once per frame, after the exit ramp and
+// before position integration.
+//
+// WHY THIS EXISTS (root cause of "the warp never arrives anywhere"):
+// the O-warp was purely BALLISTIC. velocityVector is written exactly once,
+// at ignition (`velocityVector.copy(capturedForwardDirection)
+// .multiplyScalar(capturedBoostSpeed)` below), and nothing ever rotated it
+// again — the only later writes are magnitude-only (`normalize()
+// .multiplyScalar(...)` in the clamps and in _applyWarpExitRamp). At
+// boostSpeed 100 u/frame for 15,000 ms that is a dead-straight 90,000 u ray
+// fixed by whatever direction the ship happened to face on the frame the O
+// key landed. Turning the nose during the burn changed the VIEW and nothing
+// else.
+//
+// That is why the autopilot's arrival cut-off could never execute: a cut-off
+// can only END a burn, it cannot BEND one. For the destination to be inside
+// a cut-off's forward cone the ray has to pass within a couple of body radii
+// of it — an ignition-time aim accuracy of a fraction of a degree over tens
+// of thousands of units. Nothing in the game (or a human hand) aims that
+// well, so the predicate sat false for the whole burn, every burn, and the
+// stopwatch always won by default.
+//
+// Rotating velocity toward the nose turns the burn into pure pursuit of a
+// stationary point, which converges: hold the nose on the destination and
+// the ray curves onto it, so by cut-off range the lateral miss is small and
+// the arrival predicate is actually reachable. The cap keeps the identity
+// intact — at boost speed 0.012 rad/frame implies a ~8,300 u turn radius, so
+// the tunnel still reads as a straight hyperspace run over a 30-90k leg, it
+// just no longer misses. Direction-only: speed is preserved exactly, so
+// every clamp, damping factor and exit-ramp curve is untouched.
+// Jumps are excluded (a tactical W-jump is a dash, not a journey), and the
+// slower rate during the exit ramp lets the last of the aim settle without
+// the streaks visibly swinging.
+let _warpGuideDir = null, _warpGuideAxis = null;
+function _applyWarpGuidance(forwardDirection, dtF) {
+    if (typeof gameState === 'undefined' || !gameState.velocityVector) return false;
+    const ew = gameState.emergencyWarp;
+    if (!ew || ew.isJump) return false;
+    const rampLive = !!(ew.exitRamp && ew.exitRamp.active);
+    if (!ew.active && !rampLive) return false;
+    const v = gameState.velocityVector;
+    if (v.lengthSq() < 1e-8 || !forwardDirection || typeof THREE === 'undefined') return false;
+    if (!_warpGuideDir) _warpGuideDir = new THREE.Vector3();
+    if (!_warpGuideAxis) _warpGuideAxis = new THREE.Vector3();
+    _warpGuideDir.copy(v).normalize();
+    const dot = Math.max(-1, Math.min(1, _warpGuideDir.dot(forwardDirection)));
+    const angle = Math.acos(dot);
+    if (!(angle > 1e-4)) return false;
+    _warpGuideAxis.crossVectors(_warpGuideDir, forwardDirection);
+    if (_warpGuideAxis.lengthSq() < 1e-10) return false;
+    _warpGuideAxis.normalize();
+    // PROPORTIONAL, NOT FLAT. A flat cap makes this pure pursuit with a fixed
+    // turn radius R = speed/rate, and a pursuer cannot close its miss distance
+    // much below ~0.7 R — measured exactly that way at the flat 0.012 rate:
+    // the lateral miss dropped fast at first and then PLATEAUED at ~900 u
+    // (0.7 x the 1,250 u radius implied by 15 u/frame at 0.012), which is a
+    // fly-past, not an arrival. Scaling the rate with the outstanding error
+    // keeps the cruise portion of the burn as gentle as before (the error is
+    // near zero once converged, so the rate floor governs and the tunnel still
+    // flies straight) while giving the terminal phase — where the line-of-sight
+    // swings fastest — the authority to actually finish the turn. The ceiling
+    // implies a ~215 u turn radius at boost speed, which is what the arrival
+    // framing budget needs (the reachable bodies on a 7,200 u burn are often
+    // 30-40 u moons with a ~200 u corridor), and it is only reached when the
+    // burn is more than ~20 degrees off the nose — i.e. when the ship is
+    // visibly lining up on where it is going, not during steady flight.
+    // `Math.min(angle, ...)` still forbids ever
+    // rotating past the nose, so this can only converge, never oscillate.
+    const rate = ew.active
+        ? Math.min(0.07, Math.max(0.015, angle * 0.25))
+        : 0.005;
+    const step = Math.min(angle, rate * (dtF || 1));
+    const speed = v.length();
+    v.applyAxisAngle(_warpGuideAxis, step).normalize().multiplyScalar(speed);
+    return true;
+}
+
 function updateEnhancedPhysics() {
     // Pause-aware physics
     if (typeof gamePaused !== 'undefined' && gamePaused) {
@@ -3240,7 +3319,28 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     
     // Mark as transitioning to prevent re-triggers
     gameState.emergencyWarp.transitioning = true;
-    
+
+    // BLOCKER 1 of 2 for "the warp never arrives" (blocker 2 is the
+    // ballistic burn — see _applyWarpGuidance above; this one gates the
+    // cut-off's guard, that one makes its geometry unreachable, and BOTH had
+    // to go for the cut to ever execute).
+    // `isJump` is a MODE flag shared by both boosts, but only the Jump path
+    // ever set it — and only the Jump
+    // AUTO-BRAKE COMPLETION ever cleared it (search `isJump = false` below).
+    // That completion requires the ship to coast all the way down to
+    // minVelocity*1.2 while `autoBraking` is on; the demo pilot thrusts and
+    // fights out of a dogfight long before that, so a single tactical W-jump
+    // could leave `isJump` latched TRUE for the rest of the run. Every later
+    // O-warp then inherited it, and every consumer that asks "is this a real
+    // ramped warp?" via `!isJump` silently switched off — including the
+    // autopilot's arrival cut-off, which is why that cut logged ZERO
+    // executions across 17 ramped exits. A warp must declare its own mode on
+    // entry rather than inherit the previous boost's: this IS an emergency
+    // warp, not a jump. Clearing `autoBraking` alongside it stops a stale
+    // jump brake from damping the burn we are about to start.
+    gameState.emergencyWarp.isJump = false;
+    gameState.emergencyWarp.autoBraking = false;
+
     console.log(`🚀 Emergency warp initiated! ${gameState.emergencyWarp.available} charges remaining`);
     
     // Step 1: Animate camera from current view to first-person
@@ -4165,6 +4265,13 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     gameState._warpExitT = null;
     _applyWarpExitRamp(gameState.emergencyWarp);
     _applyWarpExitRamp(gameState.slingshot);
+
+    // WARP GUIDANCE — bend the burn toward the nose (see _applyWarpGuidance
+    // above for why a ballistic warp made every arrival cut-off unreachable).
+    // Runs AFTER the exit ramp so it rotates the ramp's own eased velocity,
+    // and before integration so this frame's step already flies the corrected
+    // heading. Direction only — the ramp still owns the magnitude.
+    _applyWarpGuidance(forwardDirection, dtF);
 
     // Apply velocity to position. velocityVector's unit stays "distance per
     // 60fps frame" (every speed readout/clamp above assumes it) — scaling

@@ -83,7 +83,22 @@
                                          // audible" floor — target at least
                                          // this much over even when the bed
                                          // is momentarily near-silent.
-  const STINGER_MAKEUP_MIN = 0.5;       // sane bounds on the makeup multiplier
+  // Sane bounds on the makeup multiplier — a genuine last-resort clamp, NOT
+  // a musical floor. In real play the bed sits ~0.01-0.03 RMS (st.volume is
+  // 0.25 by default) while a mastered slice's own raw RMS is ~0.1-0.3, so
+  // the CORRECT makeup to land +4 dB over the bed is almost always a
+  // fraction well under 1 (e.g. ~0.35-0.6) — that's attenuation, not
+  // amplification, because the raw slice already outweighs the target.
+  // MIN used to be 0.5: higher than every realistic computed makeup, so it
+  // clamped EVERY stinger to a flat 0.5 on every single fire (confirmed live
+  // — see the 20260811 stinger-gain audit) regardless of the bed's measured
+  // level. That is exactly the open-loop bug this file exists to close: the
+  // delivered level rode each slice's own raw loudness times a constant,
+  // not the bed. MIN now only guards the pathological case (bedRms misread
+  // as ~0 from an analyser glitch, or a mismeasured slice) — well below the
+  // realistic operating range so the closed-loop math is never overridden
+  // in ordinary play.
+  const STINGER_MAKEUP_MIN = 0.02;
   const STINGER_MAKEUP_MAX = 8;         // so a mismeasured slice can't clip
                                          // or vanish
   // A hit that fires before its offline slice measurement has landed (fetch
@@ -268,6 +283,12 @@
     // once), 'pending' mid-measurement, null if measurement failed }. Feeds
     // the makeup gain in playStinger() — see measureStingerSlice().
     stingerSliceRMS: {},
+    // { key: { bedRms, sliceRMS, makeup, level } } from the most recent fire
+    // of that key — TEST-ONLY window into the closed-loop math (debugLevel()
+    // exposes it), so a live/harness readout can catch the servo silently
+    // saturating at STINGER_MAKEUP_MIN/MAX instead of only seeing the
+    // symptom (wrong dB-over-bed) downstream.
+    stingerLastServo: {},
     // Hits that could not fire the instant they were asked for (element
     // still buffering, 900 ms spacing gate, a pause) wait here instead of
     // being thrown away.  Retried every frame until they land or their
@@ -1203,6 +1224,11 @@
       }
       const level = Math.max(STINGER_MAKEUP_MIN, Math.min(STINGER_MAKEUP_MAX, makeup)) * sg * gm;
       try { chain.gain.gain.setTargetAtTime(level, wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
+      st.stingerLastServo[key] = {
+        bedRms: +bedRms.toFixed(5),
+        sliceRMS: (typeof sliceRMS === 'number') ? +sliceRMS.toFixed(5) : sliceRMS,
+        makeup: +makeup.toFixed(4), level: +level.toFixed(4),
+      };
     } else {
       legacyPeak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg * gm));
     }
@@ -2457,7 +2483,15 @@
               // armed = the transient itself is buffered, which is the only
               // thing that decides whether the hit fires on time.
               armed: bufferedAt(el, STINGERS[k].at), pre: el.preload,
-              tries: st._warmTries[k] || 0 }
+              tries: st._warmTries[k] || 0,
+              // TEST-ONLY: the closed-loop gain math from this key's last
+              // fire (bedRms it targeted against, this slice's own measured
+              // RMS, the resulting makeup multiplier, and the final level
+              // pushed to chain.gain.gain) — makes a servo that's silently
+              // pinned at STINGER_MAKEUP_MIN/MAX visible from outside the
+              // closure instead of only showing up as a wrong dB-over-bed
+              // several steps downstream.
+              servo: st.stingerLastServo[k] || null }
           : 'cold';
       });
       sting._pending = st.stingerPending.map(p => p.key);
@@ -2542,12 +2576,23 @@
         } catch (e) { return null; }
       }
       wa.analyser.getFloatTimeDomainData(wa.analyserBuf);
-      let sum = 0;
-      for (let i = 0; i < wa.analyserBuf.length; i++) sum += wa.analyserBuf[i] * wa.analyserBuf[i];
+      let sum = 0, peak = 0;
+      for (let i = 0; i < wa.analyserBuf.length; i++) {
+        const v = wa.analyserBuf[i];
+        sum += v * v;
+        const av = Math.abs(v);
+        if (av > peak) peak = av;
+      }
       const rms = Math.sqrt(sum / wa.analyserBuf.length);
       return {
         rms: rms,
-        bedRms: currentBedRMS(),                 // instantaneous
+        peak: peak,                               // TEST-ONLY: sample-peak on
+                                                    // `master`, so a live
+                                                    // clipping check (>= 1.0 =
+                                                    // the destination is
+                                                    // hard-clipping) doesn't
+                                                    // need its own analyser tap
+        bedRms: currentBedRMS(),                  // instantaneous
         bedRmsRunning: st.fx.bedRmsRunning,       // smoothed — what a stinger's
                                                    // makeup gain actually targets
         db: 20 * Math.log10(rms + 1e-9),

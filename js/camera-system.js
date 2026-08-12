@@ -451,7 +451,7 @@ function updateCameraView(camera) {
         if (_exitT !== null && camera.isPerspectiveCamera &&
             gameState._arrivalSubject && gameState._arrivalSubject.obj &&
             gameState._arrivalSubject.obj.position &&
-            Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 15000) {
+            Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 19000) {
             const _as = gameState._arrivalSubject.obj;
             if (!cameraState._arrivalDir) cameraState._arrivalDir = new THREE.Vector3();
             if (!cameraState._arrivalFwd) cameraState._arrivalFwd = new THREE.Vector3();

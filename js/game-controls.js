@@ -306,6 +306,61 @@ function _plumeCoreTex() {
     _PLUME_CORE_TEX = t; return t;
 }
 
+// NOSE-ON THRUST HALO — the one aspect the plume cannot render at all.
+//
+// WHY THIS EXISTS. Measured at 300u with same-frame readback, plume-only vs
+// hull-only, idle vs full thrust: at yaw 0 the exhaust is 0 px in BOTH states
+// for Klingon, Federation and Sith. Not dim — zero. The aspect gate (see
+// _PLUME_ASPECT_PX_HI) deliberately turns the exhaust down to a 0.12 floor
+// over the last ~30 degrees before dead ahead, and the near-range nozzle
+// subordination (_PLUME_CORE_NEAR, 0.28x) multiplies into that, so what is
+// left of the engine bloom head-on is both sub-pixel AND parked behind the
+// entire hull, which depth-tests it away. The result is that a hostile
+// burning straight at you and a hostile coasting straight at you are the
+// SAME PICTURE — and "is it closing under power" is the single most
+// expensive question in the game to get wrong.
+//
+// The gate itself is right and is not being touched. What was missing is a
+// cue with the OPPOSITE geometry. A plume is a spear: it has to point
+// somewhere, and pointed at the camera it degenerates to nothing. So the
+// head-on read is a RING instead — engine light spilling around the hull's
+// own silhouette, which is what an approaching ship with lit engines
+// actually shows you. That keeps aspect readable by SHAPE rather than by
+// brightness, which matters: the gate exists because head-on and astern
+// were both bright blobs, and answering that with another bright blob would
+// only re-break it. Spear = going away, halo = coming at you.
+//
+// It is hollow on purpose (nothing until 46% of the radius, peak at 72%) so
+// it reads as a rim of light around the engine bay rather than as a decal
+// painted across the ship, and so most of the pixels it lights are sky
+// pixels the eye — and the measurement — can separate from the hull.
+//
+// SIZE IT OFF THE ENGINE DECK, NOT OFF THE HULL. The first cut of this was
+// scaled to the hull's silhouette so the band would sit just outside the
+// ship's outline. Measured at 300u that is a catastrophe of area: a ring
+// hugging a silhouette has a radius comparable to the hull's bounding box,
+// but the hull's LIT pixels are only ~40% of that box, so the ring outweighs
+// the ship it belongs to — FX/hull came back 4.2 (Klingon) to 9.3
+// (Federation) against a 1.0 ceiling. Scaled to the engine deck instead
+// (nozzle separation plus a nozzle radius) it is what its name says, an
+// engine glow, and its area is a fraction of the hull's by construction.
+let _PLUME_NOSE_TEX = null;
+function _plumeNoseHaloTex() {
+    if (_PLUME_NOSE_TEX) return _PLUME_NOSE_TEX;
+    const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grd.addColorStop(0.00, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.46, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.62, 'rgba(255,255,255,0.55)');
+    grd.addColorStop(0.72, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.86, 'rgba(255,255,255,0.34)');
+    grd.addColorStop(1.00, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c);
+    _PLUME_NOSE_TEX = t; return t;
+}
+
 // ALARM PROFILE — the wind-up's replacement for _plumeStreakTex.
 //
 // WHY A SECOND PROFILE AND NOT A TINT. The thing that held every previous
@@ -790,6 +845,62 @@ function _ensureShipThrusterCones(ship, color) {
     ship.add(alarm);
     ship.userData._plumeAlarmSprite = alarm;
 
+    // ── NOSE-ON THRUST HALO ──────────────────────────────────────────────
+    // See _plumeNoseHaloTex for why this shape and not a brighter plume.
+    // Three properties do the work, and each is load-bearing:
+    //
+    //   depthTest FALSE — the whole failure being fixed is that the engine
+    //     bloom is BEHIND the hull at this aspect. A cue that the hull can
+    //     hide is not a cue at this aspect; same reasoning as the alarm
+    //     bulb above, and it costs nothing at rest because the sprite is
+    //     `visible = false` everywhere outside the nose-on hemisphere.
+    //   SIZED OFF THE ENGINE DECK. `sideOff` is the nozzle separation and
+    //     coneRad*1.15 is a nozzle, so their sum is the half-width of the
+    //     lit engine bay — the thing that is actually glowing. See
+    //     _plumeNoseHaloTex for what happened when this was keyed to the
+    //     hull silhouette instead.
+    //   ONE sprite, not one per nozzle. Two overlapping rings just make a
+    //     brighter ring with a lumpy rim.
+    // ...BUT NEVER WIDER THAN THE SHIP'S OWN HEAD-ON CROSS-SECTION. Both
+    // terms of the deck width derive from `coneRad`, which is 9% of the
+    // hull's LONGEST dimension — normally its length. This layer only ever
+    // renders NOSE-ON, where the silhouette is width x height and length is
+    // invisible, so on a sufficiently slender hull the deck estimate could
+    // outgrow the ship the player can actually see.
+    //
+    // Measured across all eight factions, this clamp does NOT currently bind
+    // on any shipped model — the band lands at a uniform 0.36 of the hull's
+    // cross-section half-width, comfortably inside the silhouette. It is
+    // kept as a cheap guard on the one input that could make this layer
+    // absurd (a model whose length dwarfs its frontal area), not as a knob:
+    // if it ever starts binding, that is the signal that a new model needs
+    // looking at, not that this number needs tuning.
+    const _lb = ship.userData._plumeLocalBox;
+    const _crossHalf = _lb
+        ? 0.5 * Math.max(_lb.maxx - _lb.minx, _lb.maxy - _lb.miny)
+        : (hullWideLocal || coneRad * 2) * 0.5;
+    const _engHalf = Math.max(
+        Math.min(sideOff + coneRad * 1.15, _crossHalf * 1.15), coneRad * 0.6);
+    const nose = new THREE.Sprite(new THREE.SpriteMaterial({
+        color: haloCol.clone(), map: _plumeNoseHaloTex(),
+        transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false
+    }));
+    nose.userData._plumeNoseRad = _engHalf * _PLUME_NOSE_R;
+    nose.userData._plumeNoseCol = haloCol.clone();
+    // Centred on the engine deck: between the two nozzles, at their own z.
+    nose.position.set(0, 0, localBack + _apex * coneRad * 0.55);
+    nose.scale.set(nose.userData._plumeNoseRad * 2, nose.userData._plumeNoseRad * 2, 1);
+    nose.visible = false;
+    // Under the streak (80) and the nozzle cores (81): on the rare frames
+    // where both are alive — the hand-back band at survey range — the real
+    // plume is still the thing on top.
+    nose.renderOrder = 79;
+    nose.userData._isThrusterCone = true;
+    _plumeExemptFromDrawBudget(nose);
+    ship.add(nose);
+    ship.userData._plumeNoseHalo = nose;
+
     ship.userData._thrusters = cones;
     ship.userData._plumeApex = _apex;
     // Start at the always-on floor rather than 0 so a hostile that spawns
@@ -1014,6 +1125,62 @@ const _HULL_LAMP_NEAR = 0.55;
 // FOOTPRINT is allowed to shrink with distance the way a real object's does.
 const _HULL_LAMP_FAR_LIFT = 0.95;
 const _HULL_LAMP_FAR_LO = 600, _HULL_LAMP_FAR_HI = 2000;
+// ROUND 7 — THE LAMP GETS RELATIVELY *BIGGER* AS THE HULL SHRINKS, NOT
+// SMALLER. Every term above (_HULL_LAMP_NEAR, the angular-size floor, the
+// astern on-axis halo) is built from WORLD-CONSTANT hull-length/hull-width
+// quantities, so the lamp's own WORLD size is flat-to-rising with distance
+// (lampNearK alone climbs 0.55 -> 1.0 out to 2,000u). The hull it sits on
+// does not get the same deal — past ~930u its screen footprint is capped
+// close to honestly-shrinking 1/d (see the geometric floor's
+// _HULL_GEO_BOOST_MAX=1.25 note above) — so the LAMP/HULL ratio gets worse,
+// not better, as a contact recedes. That is the opposite of "tapers as the
+// hull shrinks" and it is exactly what a same-frame isolated readback
+// caught: the UFO class's worst-case (dead-astern, full thrust) lamp-only
+// vs hull-only pixel ratio measured 0.833 at 300u and 1.569 at 900u — an
+// 88% WORSE ratio at the longer range, on the exact same rig.
+//
+// The fix does not touch presence (that is still _HULL_LAMP_FAR_LIFT,
+// opacity, the channel that does not lie about size) — it adds a second,
+// independent multiplier on top of every size term (natural size, the
+// angular floor's contribution once it has folded into lampW/lampL, and
+// the astern on-axis halo), calibrated at the two ranges this round
+// actually measures against. It is NOT the reciprocal of the near/far
+// growth above (that would just cancel it back to flat) — it is
+// additional damping, because 300u ALONE already failed the <=1.0 FX/hull
+// bar on the astern aspect (0.833 is most of the way there before the
+// aura shell, the ring and the plume are even added in).
+//
+// Calibrated, not derived: _NEAR_K/_FAR_K were chosen so the UFO class's
+// measured worst-case (dead-astern, full thrust) ratio would land near
+// 0.08 at both ends, leaving margin under the <=0.1x-hull lamp budget this
+// round's fix note sets (itself sized so shell+ring+lamp+rim sum with room
+// under the overall <=1.0 FX/hull bar). Re-measured after, same protocol,
+// whole-rig (lamp+nav+rim) vs bare-hull ratio: UFO class 0.10-0.14 across
+// all 4 yaws at BOTH 300u and 900u (previously 0.23-0.85 at 300u, 0.28-1.59
+// at 900u) — the range-dependence the fix targets is gone, and every yaw
+// clears the individual-layer 0.1x reference point or comes within a
+// point of it. Same multiplier, applied identically to every hostile
+// class through this shared function: Romulan and Federation rig/hull
+// dropped from 0.44-1.58 to 0.10-0.20 at 900u, and the 8 roster classes
+// already passing at 300u stayed under 0.62 FX/hull with room to spare —
+// no regression. Below _LO the multiplier holds at _NEAR_K rather than
+// continuing to rise back toward 1 — the fighting envelope this game
+// calibrates against is 50-400u (median ~200u), and nothing in the 300u
+// measurement says a closer contact needs LESS damping than the one this
+// round actually tested.
+//
+// WHAT THIS DOES NOT FIX: for Romulan/Federation, the lamp/rig was never
+// the whole story at 900u — the nozzle core + streak plume (owned by the
+// FX/plume sections of this file, out of scope for this round's lamp-only
+// fix) independently measured 1.1-1.4x hull on the broadside/tail aspects
+// even with the rig at zero, which keeps those two classes' overall
+// FX/hull above the 1.0 bar on those yaws until the plume side lands its
+// own pass. The UFO class has no such gap (its core/streak were already
+// small — this class carries no galaxy-standard plume load), so its own
+// FX/hull<=1.0 acceptance is fully met by this round's fix alone.
+const _HULL_LAMP_FAR_DAMP_LO = 300, _HULL_LAMP_FAR_DAMP_HI = 900;
+const _HULL_LAMP_FAR_DAMP_NEAR_K = 0.31;
+const _HULL_LAMP_FAR_DAMP_FAR_K = 0.226;
 // Rim shell width and how many hull meshes get one.
 //
 // ROUND 5 — A CENTRE-SCALED SHELL IS NOT AN OUTLINE ON A SPARSE HULL. The
@@ -1530,6 +1697,15 @@ function _updateHullReadout(ship, dist, tN, chg) {
                                  (_HULL_LAMP_FADE_HI - _HULL_LAMP_FADE_LO));
     const ppu = _plumePxPerUnit(d);
     const alarmCol = _plumeAlarmColor();
+    // See _HULL_LAMP_FAR_DAMP_LO — additional SIZE-ONLY damping, on top of
+    // (not instead of) lampNearK above, so the lamp/hull pixel ratio stops
+    // getting worse as range increases. Applied below to every size term:
+    // the natural size + angular floor (folded into lampW/lampL by the time
+    // sizeGain runs) and the astern on-axis halo.
+    const rangeDampT = Math.min(1, Math.max(0,
+        (d - _HULL_LAMP_FAR_DAMP_LO) / (_HULL_LAMP_FAR_DAMP_HI - _HULL_LAMP_FAR_DAMP_LO)));
+    const rangeDampK = _HULL_LAMP_FAR_DAMP_NEAR_K +
+        (_HULL_LAMP_FAR_DAMP_FAR_K - _HULL_LAMP_FAR_DAMP_NEAR_K) * rangeDampT;
 
     // ── LAMP ─────────────────────────────────────────────────────────────
     // Natural size first: the hull's own length and width, in world units.
@@ -1625,6 +1801,11 @@ function _updateHullReadout(ship, dist, tN, chg) {
     const sizeGain = (_HULL_LAMP_NOSE_K + (1 - _HULL_LAMP_NOSE_K) * noseF)
                    * (1 + _HULL_LAMP_TAIL * tailF);
     lampW *= sizeGain; lampL *= sizeGain;
+    // See _HULL_LAMP_FAR_DAMP_LO — folds in AFTER sizeGain (not before) so
+    // the nose/broadside/tail relative proportions round 5's asymmetric
+    // pair depends on are scaled uniformly rather than reshaped; only the
+    // absolute footprint shrinks.
+    lampW *= rangeDampK; lampL *= rangeDampK;
 
     // ── ON-AXIS THRUST HALO ──────────────────────────────────────────────
     // Looked at down its own long axis — charging you or running from you —
@@ -1666,7 +1847,7 @@ function _updateHullReadout(ship, dist, tN, chg) {
     // Scaling both ends of the asymmetric pair by the same factor keeps the
     // charging-vs-fleeing ratio — which is what the aspect read is made of —
     // exactly where round 5 measured it.
-    const axisHalo = (rig.hullWid || rig.hullLen * 0.45) * haloK * onAxis * lampNearK;
+    const axisHalo = (rig.hullWid || rig.hullLen * 0.45) * haloK * onAxis * lampNearK * rangeDampK;
     if (lampW < axisHalo) lampW = axisHalo;
 
     const sinA = Math.sqrt(Math.max(0, 1 - axialC * axialC));
@@ -1899,6 +2080,59 @@ function _plumeAlarmColor() {
 // there is a ship there at all.
 const _PLUME_ASPECT_PX_HI = 4.0;
 const _PLUME_ASPECT_PX_LO = 1.5;
+
+// NOSE-ON HALO GEOMETRY AND ENVELOPE (see _plumeNoseHaloTex).
+//
+// _R is the sprite's radius as a multiple of the ENGINE DECK's half-width.
+// The texture peaks at 0.72 of the sprite radius, so 1.05 puts the bright
+// band at 0.76 deck-halves — a rim tight around the nozzles.
+//
+// 1.05 AND NOT 1.25 IS SET BY THE WORST HULL, NOT THE AVERAGE ONE. The
+// binding constraint is FX/hull <= 1.0, and the ship that decides it is the
+// one with the least frontal area: measured at 300u, the Federation hull
+// shows 1,048 lit px inside a 94 px-wide bounding box — head-on it is mostly
+// holes, so it is only ~15% filled. A halo comfortable against Klingon's
+// 2,395 px silhouette is 1.05-1.16 against that one. Since the halo cannot
+// know how filled a silhouette is, it is sized so the emptiest hull in the
+// game still clears the ceiling, which costs the fuller hulls nothing they
+// need: Klingon still moves 30% of its lit pixels between coast and burn,
+// against a 15% bar.
+//
+// _ASPECT_HI/_LO bound the cone this layer lives in, in the same signed
+// aspect the gate uses (-1 = dead ahead, 0 = broadside). Full strength
+// inside -0.80 (about 37 degrees off the nose) and gone by -0.40 (about 66
+// degrees). The far end is the important one: the first cut keyed the halo
+// to `1 - tailGate`, and tailGate's own smoothstep does not reach zero until
+// aspect -0.05, so a contact staged at yaw 90 still had a quarter of a halo
+// and broadside FX/hull went from 0.40 to 6.83 on Sith. Bounding the layer
+// explicitly is what makes "broadside and astern are untouched" a property
+// of the code rather than of the tuning.
+//
+// _IDLE_O / _IDLE_K are what the halo is worth at IDLE, as fractions of its
+// full-thrust opacity and size. They are deliberately not zero: a coasting
+// hostile head-on should still have an engine deck, and this file's standing
+// rule is that a hostile never fully extinguishes. They are deliberately not
+// high either — the whole point of the layer is the DELTA between coasting
+// and burning, and every unit of idle brightness is a unit that delta does
+// not get. 0.22/0.80 keeps the idle halo a pilot light while the thrust
+// state is a 4.5x brightness step on the same pixels.
+//
+// _OPA is the peak. It is held under 1.0 so the band stays a saturated
+// faction hue instead of clipping to the white the starfield already owns —
+// the same reasoning as the streak's opacity ceiling.
+const _PLUME_NOSE_R = 1.05;
+const _PLUME_NOSE_OPA = 0.42;
+const _PLUME_NOSE_IDLE_O = 0.22;
+const _PLUME_NOSE_IDLE_K = 0.80;
+// -0.92, not -0.80: by 45 degrees off the nose the real exhaust is already
+// coming back (the gate's own smoothstep starts releasing at -0.55), and at
+// -0.80 the halo was still at full strength on top of it — measured, that
+// stacked to FX/hull 1.08-1.09 at yaw 45 for Federation and Sith, over the
+// 1.0 ceiling, while dead ahead was comfortably under it. Starting the
+// rolloff at -0.92 hands the read back to the plume as the plume reappears,
+// which is the behaviour the layer wanted anyway.
+const _PLUME_NOSE_ASPECT_HI = -0.92;
+const _PLUME_NOSE_ASPECT_LO = -0.40;
 
 function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     if (!ship || !ship.userData || !ship.userData._thrusters) return;
@@ -2237,6 +2471,55 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
             // with the tighter scale above — density is what carries the hue,
             // area is what dilutes it.
             alarm.material.opacity = Math.min(1, Math.pow(chg, 1.3));
+        }
+    }
+
+    // ── NOSE-ON THRUST HALO ──────────────────────────────────────────────
+    // Two multiplied gates, and both are there to keep this layer from
+    // touching anything that already works:
+    //
+    //   the ASPECT cone — full only inside ~37 degrees of dead ahead, zero
+    //     by ~66 degrees, so the measured broadside spear and the aft torch
+    //     never see this layer at all. It is not merely turned down out
+    //     there, it is `visible = false` and not drawn.
+    //   (1 - presence) — the same survey-range hand-back the aspect gate
+    //     itself uses. Once the plume is a couple of pixels wide the gate
+    //     releases and the real exhaust becomes the whole contact again;
+    //     the halo has to get out of its way on the same schedule, or the
+    //     two would double up on exactly the far contacts that are already
+    //     hardest to read.
+    const nose = ship.userData._plumeNoseHalo;
+    if (nose) {
+        const noseW = (1 - THREE.MathUtils.smoothstep(
+                            aspect, _PLUME_NOSE_ASPECT_HI, _PLUME_NOSE_ASPECT_LO))
+                    * (1 - presence);
+        if (noseW <= 0.02) {
+            if (nose.visible) { nose.visible = false; nose.material.opacity = 0; }
+        } else {
+            nose.visible = true;
+            const r = nose.userData._plumeNoseRad || 1;
+            // Size swings only 0.80 -> 1.00 with thrust. The read is meant to
+            // be the band getting HOT, not the band getting BIG: growing it
+            // walks the ring off the engine deck it is supposed to hug, and
+            // (as the wind-up growth note above records) area spent on dim
+            // rim pixels dilutes the very measurement it is trying to move.
+            // Measured idle -> full thrust at 300u, this lands a mean delta
+            // of 27-33/255 over 23-56% of the hull's own lit pixels.
+            const s = r * 2 * (_PLUME_NOSE_IDLE_K + (1 - _PLUME_NOSE_IDLE_K) * tN);
+            nose.scale.set(s, s, 1);
+            nose.material.opacity = Math.min(1,
+                _PLUME_NOSE_OPA * noseW * flicker *
+                (_PLUME_NOSE_IDLE_O + (1 - _PLUME_NOSE_IDLE_O) * tN) *
+                (1 + chgQ * 0.30));
+            // The halo joins the telegraph rather than diluting it. Nose-on is
+            // precisely where the wind-up matters most and where the bulb had
+            // the least help, and a faction-hued ring sitting in the lit
+            // region would drag the measured R-B swing back down. Same lerp
+            // (not tint) as the nozzle core, for the same reason: multiplying
+            // a cyan faction by red gives near-black.
+            const bc = nose.userData._plumeNoseCol;
+            if (chg > 0.02) nose.material.color.copy(bc).lerp(_plumeAlarmColor(), 0.95 * chgQ);
+            else nose.material.color.copy(bc);
         }
     }
 }
@@ -6969,46 +7252,238 @@ const FACTION_EXPLOSION = {
     7: { name: 'Vulcan',      style: 'goldrings',  core: 0xfff0cc, accent: 0xffcc66, spark: 0xffd699 }
 };
 
+// ─────────────────────────────────────────────────────────────────────────
+// SCREEN-SPACE CAP FOR DEATH EFFECTS
+//
+// Every kill layer in this file grows in WORLD units and every one of them
+// was range-blind: the same 8-unit blob with the same 2.2-per-50ms growth is
+// a tasteful pop at 900u and a whiteout at 60u. Measured on a paused world
+// at 250u with the victim isolated against the live sky, the Klingon
+// shrapnel core peaked at 678,722 of 705,600 framebuffer pixels — 96.2% of
+// the viewport, i.e. the player's entire screen, for ~10 frames — and it did
+// that while its ABOVE-230 fraction was 0.0%. A kill that erases the frame
+// is not a kill you can fight through; it is a blindfold.
+//
+// So the growth stays honest in world space (things really do get bigger
+// when they are closer) and a CAP is applied where the problem actually
+// lives, in framebuffer pixels. `_plumePxPerUnit` is the same helper the
+// plume's angular-size floor uses, so the cap is measured against the
+// DRAWING BUFFER (1120x630 here) rather than the CSS size — the stricter of
+// the two. 0.35 of the half-height = ~110 px of radius = 220 px of diameter
+// against a 630 px buffer: a detonation may own about a third of the frame's
+// height and never more, at any range, on any faction.
+//
+// The cap only ever BINDS closer than roughly 140u for a standard blob.
+// Everywhere out at the median dogfight range (~200u) the effect is running
+// at its natural size and the cap is inert, which is what keeps perspective
+// honest: two kills at different ranges still read as different sizes.
+const _FX_SCREEN_FRAC = 0.35;
+
+// DETONATION FALLOFF PROFILE.
+//
+// The blob was first rebuilt on `_plumeCoreTex()` — the nozzle bloom's
+// profile — because it is a radial falloff that already ships and it does
+// kill the faceted rim. This is a gentler profile for the same job, and the
+// honest reason is MARGIN, not failure. Measured like-for-like at 250u, same
+// sprite size, same opacity, max 1-px step along the centre row:
+//
+//     _plumeCoreTex   31-35 /255
+//     _fxBlastTex     16-19 /255      (bar: < 40)
+//
+// The nozzle profile passes. It passes with about 5/255 of room, because it
+// is tuned for a bloom a handful of pixels across — where a fast shoulder
+// reads as "hot" — and a detonation at combat range is ~40 px across, which
+// stretches the same shoulder over enough pixels to see it. Anything that
+// later makes the blob smaller or brighter (a closer kill, a hotter faction
+// core, the screen cap biting) eats that 5 and puts a visible edge in the
+// one layer whose entire job is to not have one. Doubling the margin costs
+// one 128x128 canvas for the session.
+//
+// The centre still clips to white — that is the hot core, and it is what
+// holds the >=230/255 requirement — the change is entirely in how the
+// shoulder gets to zero.
+let _FX_BLAST_TEX = null;
+function _fxBlastTex() {
+    if (_FX_BLAST_TEX) return _FX_BLAST_TEX;
+    const c = document.createElement('canvas'); c.width = 128; c.height = 128;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grd.addColorStop(0.00, 'rgba(255,255,255,1)');
+    grd.addColorStop(0.15, 'rgba(255,255,255,0.92)');
+    grd.addColorStop(0.30, 'rgba(255,255,255,0.74)');
+    grd.addColorStop(0.45, 'rgba(255,255,255,0.52)');
+    grd.addColorStop(0.60, 'rgba(255,255,255,0.32)');
+    grd.addColorStop(0.75, 'rgba(255,255,255,0.17)');
+    grd.addColorStop(0.88, 'rgba(255,255,255,0.06)');
+    grd.addColorStop(1.00, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+    const t = new THREE.CanvasTexture(c);
+    _FX_BLAST_TEX = t; return t;
+}
+
+function _fxCapPx() {
+    const r = (typeof renderer !== 'undefined' && renderer) ? renderer : window.renderer;
+    let h = 0;
+    if (r && r.domElement) h = r.domElement.height || r.domElement.clientHeight || 0;
+    if (!h) {
+        const cv = document.getElementById('gameCanvas');
+        h = (cv && cv.height) || window.innerHeight || 900;
+    }
+    return _FX_SCREEN_FRAC * (h * 0.5);
+}
+
+// Largest scale multiplier that keeps a world-space radius under the cap.
+// Returns Infinity when there is nothing to measure against, so a missing
+// camera degrades to the old uncapped behaviour instead of to an invisible
+// explosion.
+function _fxMaxScale(pos, worldRadius) {
+    if (!(worldRadius > 0)) return Infinity;
+    const cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+    if (!cam || !cam.position) return Infinity;
+    const ppu = _plumePxPerUnit(cam.position.distanceTo(pos));
+    if (!(ppu > 0)) return Infinity;
+    return _fxCapPx() / (worldRadius * ppu);
+}
+
+// HOW MUCH OF THE CALLER'S GROWTH THE BLOB KEEPS.
+//
+// The recipes below were written against a filled sphere and ask for 1.6-3.4
+// scale units per 50 ms, which is a 20-30x diameter sweep over the layer's
+// life. That number is not a size, it is the whole reason the effect went
+// big exactly as it went dull: opacity decays on a fixed schedule while area
+// grows unbounded, so every extra frame spends brightness on more pixels.
+// The blob is now the HOT half of the effect and the ring is the BIG half
+// (see _fxRing), so the blob keeps ~1/7th of the sweep — it still visibly
+// bursts, it just stops trying to be the shockwave as well.
+const _FX_BLOB_GROWTH = 0.14;
+
+// WHITE-HOT FRACTION AND HOW LONG IT HOLDS.
+//
+// Additive over the sky, a sprite's centre value is colour x opacity, so a
+// faction-hued blob can never be hotter than its own hue is worth: Klingon
+// gold (0xffcc44) tops out at luminance 205 no matter how opaque it is, and
+// the acceptance bar is 230. The fix is the same one the plume streak
+// already uses — value and saturation do not have to be the same pixels.
+// The blob is born nearly WHITE and COOLS to its faction hue across the
+// first ~55% of its life, so the detonation's first frames are genuinely
+// hot and the colour arrives as it fades, which is also what burning metal
+// actually does. `_FX_BLOB_HOLD` is the fraction of life the opacity holds
+// flat before it starts decaying: without it the brightest frame is the
+// spawn frame and the eye never arrives in time.
+const _FX_BLOB_WHITE = 0.85;
+const _FX_BLOB_COOL = 0.55;
+const _FX_BLOB_HOLD = 0.42;
+
+// THE DETONATION BLOB — a camera-facing Sprite on the plume's radial
+// falloff, replacing an UNTEXTURED SphereGeometry(16,12).
+//
+// The old shape was a flat filled disc with a hard faceted rim: measured
+// along a scanline it went 0 -> 98/255 inside 4 px and then sat perfectly
+// flat all the way across, which is the signature of a solid polygon, not
+// of an explosion. The blob is now a camera-facing Sprite on `_fxBlastTex()`
+// — a hot centre that falls off smoothly to nothing, with no rim to facet.
+// (See that function for why detonations do not simply reuse the nozzle
+// bloom's own profile, which was the first thing tried here.)
+//
+// Signature is unchanged — every faction recipe below calls this — and so
+// are the `life`/`opacity` timings. What changed is the shape, the cooling
+// colour ramp, the opacity hold, the cap, and the growth budget.
 function _fxSphere(center, radius, color, opacity, life, growth) {
-    const geo = new THREE.SphereGeometry(radius, 16, 12);
-    const mat = new THREE.MeshBasicMaterial({
-        color: color, transparent: true, opacity: opacity,
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const hue = new THREE.Color(color);
+    const hot = hue.clone().lerp(new THREE.Color(0xffffff), _FX_BLOB_WHITE);
+    const mat = new THREE.SpriteMaterial({
+        map: _fxBlastTex(), color: hot.clone(),
+        transparent: true, opacity: opacity,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
-    const m = new THREE.Mesh(geo, mat);
-    m.position.copy(center);
-    m.frustumCulled = false;
-    scene.add(m);
-    let s = 1, op = opacity;
+    const sp = new THREE.Sprite(mat);
+    sp.position.copy(center);
+    // Sprite scale is the quad's full size and the texture fades to zero at
+    // its edge, so the sprite's visible RADIUS is half its scale.
+    sp.scale.setScalar(radius * 2);
+    sp.frustumCulled = false;
+    sp.renderOrder = 84;          // over the soft layers, so the core stays hot
+    sp.userData.__dbTris = Infinity;
+    scene.add(sp);
+    const lifeMs = life * 50;
+    let s = 1, t = 0;
     explosionManager.addExplosion({
         update(dt) {
-            s += growth * (dt / 50);
-            op -= (opacity / life) * (dt / 50);
-            m.scale.set(s, s, s);
-            mat.opacity = Math.max(0, op);
-            return op > 0;
+            t += dt;
+            s += growth * _FX_BLOB_GROWTH * (dt / 50);
+            const k = Math.min(1, t / lifeMs);
+            const sc = Math.min(s, _fxMaxScale(sp.position, radius));
+            sp.scale.setScalar(radius * 2 * sc);
+            mat.opacity = (k < _FX_BLOB_HOLD)
+                ? opacity
+                : Math.max(0, opacity * (1 - (k - _FX_BLOB_HOLD) / (1 - _FX_BLOB_HOLD)));
+            mat.color.copy(hot).lerp(hue, Math.min(1, k / _FX_BLOB_COOL));
+            return k < 1;
         },
-        cleanup() { scene.remove(m); geo.dispose(); mat.dispose(); }
+        cleanup() { scene.remove(sp); mat.dispose(); }
     });
 }
 
+// THE EXPANDING FRONT. This is now the layer that carries SIZE — the blob
+// above holds still and stays hot, this one sweeps outward and stays thin.
+// Three changes beyond the cap: the annulus is 9% of the radius instead of
+// 18% (a fat band sweeping outward additively is an area machine, which is
+// the exact failure the blob was just taken off), it is re-aimed at the
+// camera every frame instead of only at spawn, so strafing past a kill does
+// not turn the front into an ellipse, and the expansion is EASED.
+//
+// WHY EASED. The growth was linear and, at the rates the recipes ask for,
+// it spent its whole travel almost immediately: measured at 250u, the
+// Romulan front (4u seed, growth 9) went from 113 px to its capped 315 px
+// diameter in 80 ms and then sat perfectly still for the remaining ~600 ms
+// of its life while only its opacity changed. A shock front that stops
+// moving and then dissolves in place is not a front, it is a decal.
+//
+// So the travel is spread across the whole life on the same decelerating
+// curve `_fxShockwave` already uses — fast out of the gate, slowing as it
+// goes, which is what a real pressure front does.
+//
+// The important part is WHAT IT EXPANDS TOWARD. Easing alone did not fix
+// the freeze, it moved it earlier (an ease-OUT is fastest at the start, so
+// it reached the cap at 50 ms instead of 80). The front has to aim at the
+// limit that actually applies: `min(natural end scale, current cap scale)`,
+// re-evaluated each frame. Then the ring spends its entire life expanding
+// no matter the range — out where the cap is inert it arrives at exactly
+// the old endpoint (1 + growth*life, unchanged), and up close it arrives
+// gently at the cap instead of slamming into it in three frames. A front
+// that stops moving reads as a decal; one that decelerates into its limit
+// reads as a front running out of energy, which is what it is.
 function _fxRing(center, radius, color, growth, life, opacity) {
-    const geo = new THREE.RingGeometry(radius, radius * 1.18, 40);
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const geo = new THREE.RingGeometry(radius, radius * 1.09, 48);
     const mat = new THREE.MeshBasicMaterial({
         color: color, transparent: true, opacity: opacity || 0.85,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
     const ring = new THREE.Mesh(geo, mat);
     ring.position.copy(center);
-    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
     ring.frustumCulled = false;
+    ring.renderOrder = 73;
+    ring.userData.__dbTris = Infinity;
+    const _aim = () => {
+        const c = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+        if (c) ring.lookAt(c.position);
+    };
+    _aim();
     scene.add(ring);
-    let s = 1, op = (opacity || 0.85);
+    const o0 = (opacity || 0.85);
+    const sEnd = 1 + growth * life;      // exactly where the old linear ramp ended
+    let t = 0, op = o0;
     explosionManager.addExplosion({
         update(dt) {
-            s += growth * (dt / 50);
-            op -= ((opacity || 0.85) / life) * (dt / 50);
-            ring.scale.set(s, s, 1);
+            t += dt;
+            const k = Math.min(1, t / (life * 50));
+            const lim = Math.min(sEnd, _fxMaxScale(ring.position, radius * 1.09));
+            const sc = 1 + (Math.max(1, lim) - 1) * (1 - Math.pow(1 - k, 2.2));
+            op -= (o0 / life) * (dt / 50);
+            ring.scale.set(sc, sc, 1);
+            _aim();
             mat.opacity = Math.max(0, op);
             return op > 0;
         },
@@ -7073,24 +7548,42 @@ function _fxShards(center, count, color, size, speed, life, kind) {
 // Low-segment ring = a polygon outline (3 = triangle, 5 = pentagon,
 // 6 = hexagon). A crisp geometric alternative to the round shockwave.
 function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
-    const geo = new THREE.RingGeometry(radius, radius * 1.22, Math.max(3, sides), 1);
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    // Same 18% -> 10% thinning, the same screen cap and the same eased
+    // travel as _fxRing: this is Federation's and Imperial's expanding
+    // front, and an uncapped one of these reached 495 world units of radius
+    // on a 5-unit seed.
+    const geo = new THREE.RingGeometry(radius, radius * 1.10, Math.max(3, sides), 1);
     const mat = new THREE.MeshBasicMaterial({
         color: color, transparent: true, opacity: opacity || 0.85,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
     const ring = new THREE.Mesh(geo, mat);
     ring.position.copy(center);
-    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
-    ring.rotation.z = Math.random() * Math.PI;
+    const _spin = Math.random() * Math.PI;
+    const _aim = () => {
+        const c = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+        if (c) ring.lookAt(c.position);
+    };
+    _aim();
+    ring.rotation.z = _spin;
     ring.frustumCulled = false;
+    ring.renderOrder = 73;
+    ring.userData.__dbTris = Infinity;
     scene.add(ring);
-    let s = 1, op = (opacity || 0.85);
+    const sEnd = 1 + growth * life;      // exactly where the old linear ramp ended
+    let t = 0, op = (opacity || 0.85), spin = _spin;
     explosionManager.addExplosion({
         update(dt) {
-            s += growth * (dt / 50);
+            t += dt;
+            const k = Math.min(1, t / (life * 50));
+            const lim = Math.min(sEnd, _fxMaxScale(ring.position, radius * 1.10));
+            const sc = 1 + (Math.max(1, lim) - 1) * (1 - Math.pow(1 - k, 2.2));
             op -= ((opacity || 0.85) / life) * (dt / 50);
-            ring.scale.set(s, s, 1);
-            ring.rotation.z += 0.03 * (dt / 50);
+            _aim();
+            ring.scale.set(sc, sc, 1);
+            spin += 0.03 * (dt / 50);
+            ring.rotation.z = spin;
             mat.opacity = Math.max(0, op);
             return op > 0;
         },
@@ -7214,7 +7707,15 @@ function createFactionExplosion(position, galaxyId, scale) {
             _fxPolyRing(center, 6 * S, cfg.spark, 6, 6, 16, 0.5);
             break;
         case 'spiral': // Cardassian — swirling orange particles + spinning shards
-            _fxSphere(center, 6 * S, cfg.core, 0.9, 14, 2.2);
+            // 6 -> 8u. Cardassian was the only faction whose detonation did
+            // not clear 3x its victim's own silhouette at 250u (measured
+            // 2.49x): it carries its identity in particles and shards and
+            // had the leanest core of the eight, while its hull presents the
+            // widest broadside profile in the roster (3,856 lit px, against
+            // 1,000-3,300 for the rest). 8u is simply its peers' figure
+            // (Klingon 8, Imperial 9, Rebel 9) and does not touch the swirl
+            // that makes it a Cardassian kill.
+            _fxSphere(center, 8 * S, cfg.core, 0.9, 14, 2.2);
             _fxParticles(center, 36, cfg.accent, 2.6 * S, 6 * S, 22, 3.2);
             _fxShards(center, 12, cfg.spark, 3 * S, 5 * S, 20, 'tetra');
             break;
@@ -7236,6 +7737,14 @@ function createFactionExplosion(position, galaxyId, scale) {
             _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
             _fxParticles(center, 24, cfg.spark, 2.4 * S, 7 * S, 14, 0);
     }
+    // BURNING WRECKAGE, for every faction. Measured on the Klingon recipe,
+    // the entire kill was over at 800 ms: the flash layers expire on a
+    // 12-16 beat life and the shards on 16, so the spot where a ship used to
+    // be went completely black while the player was still turning to look at
+    // it. `_fxKillBurst` has had an ember tail for exactly this reason; the
+    // faction recipes never got one, so a faction kill was the SHORTER
+    // event. One Points system, one draw call, outliving the bang by ~1.2 s.
+    _fxEmberTail(center, 14 * S, cfg.spark, 48, 1850);
     try { playSound('explosion'); } catch (e) {}
 }
 if (typeof window !== 'undefined') window.createFactionExplosion = createFactionExplosion;

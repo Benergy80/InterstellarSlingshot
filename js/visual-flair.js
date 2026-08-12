@@ -1517,6 +1517,181 @@ function _warpSpeedRamp() {
     return natural;
 }
 
+// ── 18c. WARP MODE — which KIND of warp is this? ────────────────────────────
+// User report: "It would be nice to see there be some variety and additional
+// consideration given to the various types of warp and their effects."
+//
+// The game has four-and-a-bit distinct ways to go fast and, before this, they
+// all rendered the identical cyan/magenta streak burst. They are genuinely
+// different events and should read as different events. Detection is entirely
+// off flags other files already publish — nothing here writes game state:
+//
+//   'jump'      W-double-tap tactical dash. gameState.emergencyWarp.isJump is
+//               set synchronously at the keypress (game-physics.js) and
+//               cleared by the auto-brake, so it is live for the whole dash.
+//   'emergency' O-key emergency warp. Same emergencyWarp record with
+//               isJump === false — game-physics.js explicitly resets isJump
+//               on the O-key branch precisely so the two can be told apart.
+//   'autowarp'  The demo/autopilot's ramped legs. Autopilot has no warp flag
+//               of its own: it synthesises keys.o, so the state it produces
+//               is indistinguishable from a manual O-warp — EXCEPT that
+//               window.demoPilot.driving is true while it steers. That is
+//               the discriminator, and it is read-only.
+//   'slingshot' Gravity whip. gameState.slingshot.active, with the body being
+//               whipped around available at gameState.slingshotWhip.body.
+//   'blackhole' A slingshot off a black hole (slingshot.fromBlackHole) or an
+//               actual event-horizon transit (gameState.isBlackHoleWarping).
+//
+// Order matters: black hole outranks slingshot, jump outranks the generic
+// emergency record, autopilot outranks manual only because the ramped leg is
+// the calmer of the two and a demo viewer should not be shown the harsh
+// emergency treatment every 30 seconds.
+function _warpMode() {
+    if (typeof gameState === 'undefined') return '';
+    if (gameState.isBlackHoleWarping) return 'blackhole';
+    const s = gameState.slingshot;
+    if (s && s.active) return s.fromBlackHole ? 'blackhole' : 'slingshot';
+    const w = gameState.emergencyWarp;
+    if (w && (w.active || w.transitioning)) {
+        if (w.isJump) return 'jump';
+        const dp = (typeof window !== 'undefined') ? window.demoPilot : null;
+        if (dp && dp.driving) return 'autowarp';
+        return 'emergency';
+    }
+    return '';
+}
+
+// ── 19c. PER-MODE SIGNATURE ─────────────────────────────────────────────────
+// One table, all four signatures, all inside the synthwave palette (cyan /
+// magenta / violet / hot amber — no muddy naturalistic colours, nothing that
+// breaks the neon identity). Every field is a MULTIPLIER or an offset on the
+// existing speed-driven envelope, never a replacement: _warpSpeedRamp and the
+// cruise ceiling still decide how MUCH show there is, this only decides what
+// the show looks like.
+//
+//   len/wid  — shape. A jump is long and thin (a flash-stretch), an emergency
+//              burn is short and thick (a harsh, close, violent field).
+//   white    — how hard the streak head blows out. Jump goes to pure white;
+//              slingshot deliberately keeps its amber/violet so the whip
+//              never reads as "warp".
+//   swirl    — tangential tail bend. Only the gravity modes get it: a whip
+//              and a black hole are curved events, so their streaks curve.
+//   shear    — one-directional lean, aimed at the gravity well (see below).
+//   chroma   — px of hue-signed lateral split; the emergency judder.
+const _WARP_STYLE = {
+    jump:      { colA: 0xffffff, colB: 0x7fe9ff, len: 1.55, wid: 0.60, white: 1.00, swirl: 0.00, shear: 0.00, chroma: 0.0, tunA: 0xdafcff, tunB: 0x6be6ff },
+    emergency: { colA: 0xff3355, colB: 0xff8a3d, len: 0.80, wid: 1.40, white: 0.28, swirl: 0.00, shear: 0.00, chroma: 6.0, tunA: 0xff2d55, tunB: 0xff7a2f },
+    autowarp:  { colA: 0x6be6ff, colB: 0xff5ccd, len: 1.00, wid: 1.00, white: 0.80, swirl: 0.00, shear: 0.00, chroma: 0.0, tunA: 0x6be6ff, tunB: 0xff5ccd },
+    slingshot: { colA: 0xffd76b, colB: 0xb26bff, len: 1.10, wid: 0.90, white: 0.40, swirl: 0.17, shear: 0.13, chroma: 0.0, tunA: 0xffd76b, tunB: 0xb26bff },
+    blackhole: { colA: 0xb26bff, colB: 0x3a2bff, len: 1.28, wid: 1.05, white: 0.30, swirl: 0.11, shear: 0.09, chroma: 1.6, tunA: 0xb26bff, tunB: 0x2f1a6b }
+};
+
+const _wsfStyle = {
+    name: '', level: 0, last: 0,
+    len: 1, wid: 1, white: 0.8, swirl: 0, chroma: 0,
+    shearX: 0, shearY: 0,
+    // colA/colB are the LIVE streak colours (base cross-faded toward the mode);
+    // baseA/baseB are whatever the last warpStreakBurst() caller asked for.
+    // Tunnel colours are not cached here — _wtuPalette reads _WARP_STYLE
+    // directly, on the frame the shaft opens or the mode changes.
+    colA: null, colB: null,
+    baseA: null, baseB: null,
+    _tmpV: null, _tmpQ: null
+};
+
+// Direction, in the streak field's OWN rotated frame, of the body we are
+// being whipped around — so the shear leans the field toward the gravity
+// well instead of toward some fixed screen edge. gameState.slingshotWhip.body
+// is the live handle game-physics.js keeps for the duration of the whip
+// (it is nulled at release, at which point this quietly returns false and
+// the shear eases back to zero).
+function _wsfWellShear(out) {
+    if (typeof gameState === 'undefined' || !_wsfStyle._tmpV || !_wsf.q) return false;
+    const whip = gameState.slingshotWhip;
+    let body = whip && whip.body;
+    if (!body && gameState.slingshot && gameState.slingshot.blackHole) body = gameState.slingshot.blackHole;
+    if (!body || !body.position || typeof camera === 'undefined' || !camera.position) return false;
+    const v = _wsfStyle._tmpV.copy(body.position).sub(camera.position);
+    if (v.lengthSq() < 1e-6) return false;
+    v.normalize();
+    // Into the field's frame: the frame rotates -Z onto the travel axis, so
+    // the inverse of its quaternion takes a world direction into it.
+    _wsfStyle._tmpQ.copy(_wsf.q).invert();
+    v.applyQuaternion(_wsfStyle._tmpQ);
+    const l = Math.sqrt(v.x * v.x + v.y * v.y);
+    // `l < 1e-4` is FALSE for NaN, so a degenerate frame quaternion would
+    // otherwise write NaN straight into the shear accumulator and never
+    // recover. Test for the good case instead of rejecting the bad one.
+    if (!(l > 1e-4)) return false;
+    const ox = v.x / l, oy = v.y / l;
+    if (!isFinite(ox) || !isFinite(oy)) return false;
+    out[0] = ox; out[1] = oy;
+    return true;
+}
+
+const _wsfShearOut = [0, 0];
+
+// Eases the whole signature. Called once per frame from _updateWarpStreaks,
+// AFTER the field's frame quaternion is built (the shear needs it) and
+// BEFORE the uniforms are written. `level` cross-fades the mode look against
+// whatever colours the last warpStreakBurst() caller asked for, so a caller
+// that passes explicit colours still gets them at cruise and the mode only
+// takes over for the duration of the mode.
+function _wsfUpdateStyle(dt, mode) {
+    if (typeof THREE === 'undefined') return;
+    if (!_wsfStyle.colA) {
+        _wsfStyle.colA = new THREE.Color(0x6be6ff);
+        _wsfStyle.colB = new THREE.Color(0xff5ccd);
+        _wsfStyle.baseA = new THREE.Color(0x6be6ff);
+        _wsfStyle.baseB = new THREE.Color(0xff5ccd);
+        _wsfStyle._tmpV = new THREE.Vector3();
+        _wsfStyle._tmpQ = new THREE.Quaternion();
+    }
+    if (mode && mode !== _wsfStyle.name) _wsfStyle.name = mode;
+    const st = _WARP_STYLE[_wsfStyle.name] || _WARP_STYLE.autowarp;
+    const want = mode ? 1 : 0;
+    // Rises inside ~90ms (the signature has to be on the frame the warp
+    // starts, or the entry beat is the wrong colour) and releases over ~0.45s
+    // so the drop-out fades back to the house palette instead of snapping.
+    const tau = (want > _wsfStyle.level) ? 0.09 : 0.45;
+    _wsfStyle.level += (want - _wsfStyle.level) * (1 - Math.exp(-dt / tau));
+    if (_wsfStyle.level < 0.002) _wsfStyle.level = 0;
+    const k = _wsfStyle.level;
+
+    _wsfStyle.len = 1 + (st.len - 1) * k;
+    _wsfStyle.wid = 1 + (st.wid - 1) * k;
+    _wsfStyle.white = 0.8 + (st.white - 0.8) * k;
+    _wsfStyle.swirl = st.swirl * k;
+    // The emergency judder: not a constant fringe but a nervous one. Two
+    // detuned oscillators so it never settles into a readable beat, which is
+    // what makes it feel like the lens is under stress rather than animated.
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const judder = 0.55 + 0.45 * Math.sin(now * 0.047) * Math.cos(now * 0.0173);
+    _wsfStyle.chroma = st.chroma * k * judder;
+
+    // Shear only means anything while there is a well to lean toward.
+    let sx = 0, sy = 0;
+    if (st.shear > 0 && _wsfWellShear(_wsfShearOut)) {
+        sx = _wsfShearOut[0] * st.shear;
+        sy = _wsfShearOut[1] * st.shear;
+    }
+    _wsfStyle.shearX += (sx * k - _wsfStyle.shearX) * (1 - Math.exp(-dt / 0.2));
+    _wsfStyle.shearY += (sy * k - _wsfStyle.shearY) * (1 - Math.exp(-dt / 0.2));
+
+    _wsfStyle.colA.copy(_wsfStyle.baseA).lerp(_wsfStyle._c(st.colA, 0), k);
+    _wsfStyle.colB.copy(_wsfStyle.baseB).lerp(_wsfStyle._c(st.colB, 1), k);
+}
+
+// Two scratch colours so the lerp above allocates nothing per frame.
+_wsfStyle._cA = null; _wsfStyle._cB = null;
+_wsfStyle._c = function (hex, slot) {
+    if (typeof THREE === 'undefined') return null;
+    if (!_wsfStyle._cA) { _wsfStyle._cA = new THREE.Color(); _wsfStyle._cB = new THREE.Color(); }
+    const c = slot ? _wsfStyle._cB : _wsfStyle._cA;
+    c.setHex(hex);
+    return c;
+};
+
 // ── 19. WARP STREAK FIELD — the thing that makes 79,000 km/s LOOK like it ────
 // The whip's release used to be a number change: velocity snapped from ~24 to
 // ~4800 u/s while the background stars stayed discrete stationary dots and the
@@ -1561,6 +1736,19 @@ const _wsf = {
     // follow-through needed.
     draining: false, drainT0: 0, drainMs: 1000, drainT: 0, drainLen0: 0, drainOp0: 0, drainEnv0: 0
 };
+
+// The field's envelope is an accumulator (`env += (target - env) * k`), which
+// makes it a one-way trapdoor: a single NaN or negative value poisons it for
+// the rest of the session — env stays NaN, uLen/uWidth/uOpacity all go NaN,
+// and the mesh keeps reporting visible:true while drawing absolutely nothing.
+// Negative is just as bad: uOpacity is Math.pow(env, 0.62), and Math.pow of a
+// negative base with a fractional exponent is NaN. Both are reachable from
+// values this file does not own (gameState._warpExitT drives the exit drain),
+// so every write to env goes through here.
+function _wsfSaneEnv(v) {
+    if (!(v >= 0)) return 0;          // catches NaN and negatives in one test
+    return v > 2 ? 2 : v;
+}
 
 function _wsfSeed(i, spanZ) {
     const ang = Math.random() * Math.PI * 2;
@@ -1635,7 +1823,30 @@ function _wsfBuild() {
             uRes: { value: new THREE.Vector2(1280, 720) },
             uOpacity: { value: 0 },
             uColA: { value: new THREE.Color(0x6be6ff) },
-            uColB: { value: new THREE.Color(0xff5ccd) }
+            uColB: { value: new THREE.Color(0xff5ccd) },
+            // ── SHIP-ON-TOP CARVE (see §19b) ─────────────────────────────
+            // Screen-space exclusion zone around the player ship's projected
+            // position. uShipS is the ship's centre in pixels-from-centre
+            // (same space as hs/ts below), uShipR its projected radius in px,
+            // uShipZ its view-space depth, uShipK the 0..1 master enable
+            // (0 whenever the ship is not drawn, e.g. cockpit view).
+            uShipS: { value: new THREE.Vector2(0, 0) },
+            uShipR: { value: 0 },
+            uShipZ: { value: 1e9 },
+            uShipK: { value: 0 },
+            // ── PER-MODE SIGNATURE (see §19c) ────────────────────────────
+            // uShear  — lateral tail displacement per unit length: slants the
+            //           whole field to one side (slingshot: toward the well).
+            // uSwirl  — tangential tail displacement: bends streaks into a
+            //           spiral instead of a clean radial burst.
+            // uChroma — hue-signed screen-space split in px: a cheap
+            //           red/blue judder for the emergency-warp signature.
+            // uWhite  — how hard the streak head blows out to white
+            //           (jump = hot white flash, slingshot = keeps its hue).
+            uShear: { value: new THREE.Vector2(0, 0) },
+            uSwirl: { value: 0 },
+            uChroma: { value: 0 },
+            uWhite: { value: 0.8 }
         },
         vertexShader: [
             'attribute float aTail;',
@@ -1646,6 +1857,13 @@ function _wsfBuild() {
             'uniform float uLen;',
             'uniform float uWidth;',
             'uniform vec2 uRes;',
+            'uniform vec2 uShipS;',
+            'uniform float uShipR;',
+            'uniform float uShipZ;',
+            'uniform float uShipK;',
+            'uniform vec2 uShear;',
+            'uniform float uSwirl;',
+            'uniform float uChroma;',
             'varying float vTail;',
             'varying float vSide;',
             'varying float vHue;',
@@ -1655,8 +1873,18 @@ function _wsfBuild() {
             '  float L = uLen * aLenJ;',
             // Head = the star. Tail trails back toward -Z, which IS the travel
             // direction, so every streak points at the vanishing point.
-            '  vec4 hC = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
-            '  vec4 tC = projectionMatrix * modelViewMatrix * vec4(position - vec3(0.0, 0.0, L), 1.0);',
+            // uShear/uSwirl bend that tail sideways: shear is one constant
+            // direction (asymmetric sweep), swirl is tangential to the
+            // streak's own offset from the axis (curved / spiral).
+            '  vec2 rad = position.xy;',
+            '  float rl = max(1e-3, length(rad));',
+            '  vec2 tang = vec2(-rad.y, rad.x) / rl;',
+            '  vec3 tailPos = position - vec3(0.0, 0.0, L);',
+            '  tailPos.xy += (uShear + tang * uSwirl) * L;',
+            '  vec4 hV = modelViewMatrix * vec4(position, 1.0);',
+            '  vec4 tV = modelViewMatrix * vec4(tailPos, 1.0);',
+            '  vec4 hC = projectionMatrix * hV;',
+            '  vec4 tC = projectionMatrix * tV;',
             '  if (hC.w <= 0.02) { gl_Position = vec4(0.0, 0.0, 2.0, 1.0); return; }',
             '  vec4 clip = mix(hC, tC, aTail);',
             // Perpendicular in SCREEN pixels → constant apparent thickness.
@@ -1669,8 +1897,34 @@ function _wsfBuild() {
             // at full strength piles a white blob over the crosshair. Fade by
             // the streak's own SCREEN length — the eye only reads speed from
             // the ones that actually travel.
-            '  vFade = smoothstep(3.0, 34.0, dl);',
+            // Widened from smoothstep(3, 34) per the "not too intense" half of
+            // the user report. Everything in the old 3-34px band is a stub a
+            // few pixels long sitting near the axis: it carries no speed
+            // information (the eye reads speed off the LONG filaments) and it
+            // is exactly what piled into the blown-out core — measured at full
+            // warp, luma inside the middle 22% of frame ran 150 against a
+            // 103 frame average. Raising the band clears that core while the
+            // long peripheral filaments, which are the whole point, are past
+            // 52px and untouched.
+            '  vFade = smoothstep(7.0, 52.0, dl);',
+            // ── SHIP CARVE ───────────────────────────────────────────────
+            // depthTest already hides every streak that is BEHIND the hull.
+            // The ones that bury it are the ones genuinely between the chase
+            // camera and the ship — those are in front, so no depth trick can
+            // touch them. Fade those, and only those: inside the ship's
+            // projected disc AND nearer than the ship.
+            '  if (uShipK > 0.001) {',
+            '    vec2 ps = mix(hs, ts, aTail);',
+            '    float disc = 1.0 - smoothstep(uShipR, uShipR * 2.7, length(ps - uShipS));',
+            '    float vz = -mix(hV.z, tV.z, aTail);',
+            '    float front = 1.0 - smoothstep(uShipZ, uShipZ * 1.7, vz);',
+            '    vFade *= (1.0 - 0.93 * disc * front * uShipK);',
+            '  }',
             '  clip.xy += (nrm * aSide * uWidth * aWid / uRes) * 2.0 * clip.w;',
+            // Hue-signed lateral split — half the field shifts one way, half
+            // the other, which reads as a chromatic judder without a second
+            // draw call. Zero for every mode but emergency warp.
+            '  clip.x += (uChroma * (aHue - 0.5) * 2.0 / uRes.x) * 2.0 * clip.w;',
             '  gl_Position = clip;',
             '}'
         ].join('\n'),
@@ -1678,6 +1932,7 @@ function _wsfBuild() {
             'uniform vec3 uColA;',
             'uniform vec3 uColB;',
             'uniform float uOpacity;',
+            'uniform float uWhite;',
             'varying float vTail;',
             'varying float vSide;',
             'varying float vHue;',
@@ -1687,7 +1942,7 @@ function _wsfBuild() {
             '  edge = edge * edge * (3.0 - 2.0 * edge);',      // soft filament edges
             '  float head = pow(max(0.0, 1.0 - vTail), 1.7);', // hot head, dying tail
             '  vec3 c = mix(uColA, uColB, vHue);',
-            '  c = mix(c, vec3(1.0), pow(max(0.0, 1.0 - vTail), 7.0) * 0.8);',
+            '  c = mix(c, vec3(1.0), pow(max(0.0, 1.0 - vTail), 7.0) * uWhite);',
             '  float a = edge * head * vFade * uOpacity;',
             '  if (a < 0.004) discard;',
             '  gl_FragColor = vec4(c, a);',
@@ -1696,7 +1951,19 @@ function _wsfBuild() {
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        depthTest: false,
+        // SHIP-ON-TOP (was false). With the test off, every one of the 1400
+        // quads painted over the hull regardless of where it actually sat in
+        // space — measured, the player ship's own silhouette collapsed from
+        // 2,680 px at cruise to 465 px at full warp (17%: effectively buried).
+        // The field is anchored to the camera and seeded 0..2,900u AHEAD, so
+        // the great majority of it is genuinely BEHIND the third-person ship
+        // and has no business drawing over it. The ship's material writes
+        // depth (camera-system.js: depthWrite true, renderOrder 100 vs 998
+        // here, so the hull is laid down first), which makes a plain depth
+        // test do exactly the right thing for that majority. The minority
+        // that really is between the chase camera and the ship is handled by
+        // the screen-space carve in the vertex shader above.
+        depthTest: true,
         side: THREE.DoubleSide
     });
 
@@ -1721,6 +1988,7 @@ function _wsfBuild() {
             const w = el.clientWidth || el.width || 1280;
             const h = el.clientHeight || el.height || 720;
             mat.uniforms.uRes.value.set(w, h);
+            _wsfShipCarve(mat, cam, w, h);
         } catch (err) {}
     };
 
@@ -1746,8 +2014,19 @@ function warpStreakBurst(dir, speed, colA, colB, strength) {
         _wsf.kickT0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
         _wsf.kickMs = 1500;
         _wsf.kickAmp = Math.max(0.4, Math.min(1.35, strength || 1));
-        if (colA !== undefined && colA !== null) _wsf.mat.uniforms.uColA.value.setHex(colA);
-        if (colB !== undefined && colB !== null) _wsf.mat.uniforms.uColB.value.setHex(colB);
+        // Caller colours are the field's BASE palette, not the final one: the
+        // per-mode signature (§19c) cross-fades against them, so an explicit
+        // request still wins at cruise and during any mode this file does not
+        // recognise, while a recognised warp mode gets its own look.
+        _wsfUpdateStyle(0, '');
+        if (colA !== undefined && colA !== null) {
+            _wsf.mat.uniforms.uColA.value.setHex(colA);
+            if (_wsfStyle.baseA) _wsfStyle.baseA.setHex(colA);
+        }
+        if (colB !== undefined && colB !== null) {
+            _wsf.mat.uniforms.uColB.value.setHex(colB);
+            if (_wsfStyle.baseB) _wsfStyle.baseB.setHex(colB);
+        }
         if (dir && dir.lengthSq && dir.lengthSq() > 1e-6) _wsf.dir.copy(dir).normalize();
         // Re-seed across the whole depth so the field is FULL on frame one —
         // a field that fills in from the far plane reads as a fade, not a punch.
@@ -1914,6 +2193,79 @@ function _checkJumpExitBeat() {
     _jumpExitWasActive = ew.active;
 }
 
+// ── 19b. SHIP-ON-TOP CARVE ──────────────────────────────────────────────────
+// User report: "we want to make sure the ship appears on top of the warp
+// effect. right now it does not."
+//
+// Measured before this change (same-frame GPU readback, ship toggled
+// visible/hidden between two renders of the identical frame, 566x334 target):
+//   plain cruise, no warp FX ....... 2,680 px of ship silhouette
+//   sustained emergency warp ....... 465 px  (17% — the hull is gone)
+//
+// Two separate mechanisms were burying it, and they need two separate fixes:
+//
+//   1. The streak material had depthTest:false, so all 1,400 additive quads
+//      painted over the hull no matter where they sat in space — including
+//      the ~majority of the field that is seeded AHEAD of the camera and
+//      therefore behind the third-person ship. Turning the depth test on
+//      (see _wsfBuild) fixes that majority for free: the hull writes depth
+//      at renderOrder 100, the streaks draw at 998, so they now test against
+//      it.
+//
+//   2. Depth cannot help with streaks that are genuinely BETWEEN the chase
+//      camera and the ship — they are in front, and drawing them over the
+//      hull is geometrically correct but visually fatal. So the shader gets
+//      a soft screen-space exclusion zone: this function publishes where the
+//      ship is on screen (px from centre), how big it is (px radius) and how
+//      far away (view-space depth), and the vertex shader fades any streak
+//      that is inside that disc AND nearer than the ship.
+//
+// Everything here runs inside onBeforeRender against the RENDER camera, for
+// the same reason the field's own frame does: that is the only point where
+// the interpolated/cinematic camera transform is final. Doing it in the
+// update phase lags a frame, and at warp speed a frame is ~100 units of
+// swim — enough for the carve to sit visibly off the ship.
+const _wsfShipW = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wsfShipV = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wsfShipBox = (typeof THREE !== 'undefined') ? new THREE.Box3() : null;
+const _wsfShipSph = (typeof THREE !== 'undefined') ? new THREE.Sphere() : null;
+
+function _wsfShipCarve(mat, cam, w, h) {
+    const u = mat.uniforms;
+    if (!u.uShipK) return;
+    const cs = (typeof window !== 'undefined') ? window.cameraState : null;
+    const ship = cs && cs.playerShipMesh;
+    // No ship on screen (cockpit / no-ship POV, or not built yet) → no carve.
+    // Checked every frame rather than cached: the POV keys (1/3/0) flip this
+    // mid-warp and a stale carve would punch a hole in empty space.
+    if (!ship || !ship.visible || !ship.parent || !_wsfShipW) {
+        u.uShipK.value = 0;
+        return;
+    }
+    // Bounding radius is measured once per ship instance — the model's scale
+    // is fixed at build time (camera-system.js) and Box3.setFromObject walks
+    // the whole hierarchy, which is not something to do 60 times a second.
+    if (!_wsf.shipR || _wsf.shipRFor !== ship.uuid) {
+        _wsfShipBox.setFromObject(ship);
+        _wsfShipBox.getBoundingSphere(_wsfShipSph);
+        _wsf.shipR = Math.max(1, _wsfShipSph.radius);
+        _wsf.shipRFor = ship.uuid;
+    }
+    _wsfShipW.setFromMatrixPosition(ship.matrixWorld);
+    _wsfShipV.copy(_wsfShipW).applyMatrix4(cam.matrixWorldInverse);
+    const zv = -_wsfShipV.z;
+    if (!(zv > 0.001)) { u.uShipK.value = 0; return; }   // ship behind the lens
+    _wsfShipW.project(cam);
+    const fovR = ((cam.fov || 75) * Math.PI) / 360;
+    const rpx = (_wsf.shipR / zv) * ((h * 0.5) / Math.max(1e-4, Math.tan(fovR)));
+    u.uShipS.value.set(_wsfShipW.x * 0.5 * w, _wsfShipW.y * 0.5 * h);
+    // Floor so a distant/small ship still gets a readable pocket; ceiling so a
+    // near-clip glitch can never blank the entire field.
+    u.uShipR.value = Math.max(20, Math.min(h * 0.42, rpx * 1.2));
+    u.uShipZ.value = zv;
+    u.uShipK.value = 1;
+}
+
 const _wsfUp = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
 const _wsfZero = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 0) : null;
 const _wsfAxisZ = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 0, 1) : null;
@@ -1923,6 +2275,21 @@ function _updateWarpStreaks() {
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     const dt = Math.max(0, Math.min(0.05, (now - (_wsf.last || now)) / 1000));
     _wsf.last = now;
+
+    // Per-mode signature (§19c). Eased here, at the top, so it keeps
+    // resolving through the exit drain's early return below — the drop-out
+    // should fade a jump's white-cyan back to the house palette, not hold it
+    // frozen until the next frame the speed-driven path happens to own.
+    _wsfUpdateStyle(dt, _warpMode());
+    if (_wsf.mat) {
+        const su = _wsf.mat.uniforms;
+        su.uColA.value.copy(_wsfStyle.colA);
+        su.uColB.value.copy(_wsfStyle.colB);
+        su.uWhite.value = _wsfStyle.white;
+        su.uSwirl.value = _wsfStyle.swirl;
+        su.uChroma.value = _wsfStyle.chroma;
+        su.uShear.value.set(_wsfStyle.shearX, _wsfStyle.shearY);
+    }
 
     // ── EXPLICIT EXIT DRAIN ──────────────────────────────────────────────
     // Fired by warpExitBeat() on a warp/slingshot drop-out. Overrides the
@@ -1970,7 +2337,16 @@ function _updateWarpStreaks() {
         // measured live, uLen 15.2 -> 66.8 in a single 33ms frame. Clamping
         // to the running max makes the drain physically incapable of running
         // backwards no matter which clock owns a given frame.
-        _wsf.drainT = Math.max(_wsf.drainT || 0, tRaw);
+        // …and sanitise. Math.max(x, NaN) is NaN, and once drainT is NaN every
+        // downstream uniform is NaN forever (env += NaN sticks), which silently
+        // kills the entire field: measured live as uLen/uWidth/uOpacity all
+        // NaN with the mesh still "visible" and drawing nothing. gameState.
+        // _warpExitT is written by another file's ramp, so this cannot assume
+        // it is well-formed — clamp it into 0..1 and drop anything non-finite.
+        const _tSafe = (typeof tRaw === 'number' && isFinite(tRaw))
+            ? Math.max(0, Math.min(1, tRaw)) : 0;
+        const _tPrev = (typeof _wsf.drainT === 'number' && isFinite(_wsf.drainT)) ? _wsf.drainT : 0;
+        _wsf.drainT = Math.max(_tPrev, _tSafe);
         const t = _wsf.drainT;
         const _spdNow = gameState.velocityVector ? gameState.velocityVector.length() : 0;
         const _overspeed = (_wsf.drainRefSpeed || 0) > 0 && _spdNow > _wsf.drainRefSpeed * 1.5;
@@ -1990,7 +2366,7 @@ function _updateWarpStreaks() {
         const u = _wsf.mat.uniforms;
         u.uLen.value = _wsf.drainLen0 + (lenC - _wsf.drainLen0) * t;
         u.uOpacity.value = _wsf.drainOp0 + (opC - _wsf.drainOp0) * t;
-        _wsf.env = _wsf.drainEnv0 + (envCruise - _wsf.drainEnv0) * t;
+        _wsf.env = _wsfSaneEnv(_wsf.drainEnv0 + (envCruise - _wsf.drainEnv0) * t);
         if (t >= 1 && !_overspeed) {
             // Values above are already converged onto the live speed-driven
             // target, so the speed-driven path below picks up next frame
@@ -2053,7 +2429,7 @@ function _updateWarpStreaks() {
     // sitting at (or converging on) `target` by the time control reaches
     // this path — there's nothing left to snap.
     const tau = (target > _wsf.env) ? 0.085 : 0.42;
-    _wsf.env += (target - _wsf.env) * (1 - Math.exp(-dt / tau));
+    _wsf.env = _wsfSaneEnv(_wsf.env + (target - _wsf.env) * (1 - Math.exp(-dt / tau)));
     const env = _wsf.env;
     if (env <= 0.004) { _wsf.mesh.visible = false; return; }
     _wsf.mesh.visible = true;
@@ -2110,8 +2486,13 @@ function _updateWarpStreaks() {
     // alone. Opacity uses a softer exponent (0.62) so the first streaks are
     // genuinely VISIBLE rather than merely mathematically present, while
     // still leaving headroom for warp to be brighter than the whip.
-    u.uLen.value = Math.min(900, 14 + 560 * Math.pow(env, 1.55));
-    u.uWidth.value = 1.15 + 1.85 * env;
+    // Per-mode shape multipliers ride ON TOP of the speed-driven envelope —
+    // they change what the field looks like, never how much of it there is.
+    // (The exit drain above is deliberately left alone: it is a collapse
+    // toward cruise and the style level is decaying through it anyway, so
+    // re-scaling its endpoints would fight the ratchet.)
+    u.uLen.value = Math.min(1100, (14 + 560 * Math.pow(env, 1.55)) * _wsfStyle.len);
+    u.uWidth.value = (1.15 + 1.85 * env) * _wsfStyle.wid;
     u.uOpacity.value = 0.98 * Math.pow(env, 0.62);
 }
 
@@ -2759,8 +3140,24 @@ function _wtuBuild() {
     _wtu.tmp = new THREE.Vector3();
 }
 
+// Shell colours for the two nested tubes. The bh flag is kept as the caller
+// contract it always was, but the WARP MODE (§18c) now gets first say: the
+// shaft you fly down should match the streaks ripping past it, otherwise a
+// red emergency burn is framed by a cyan tube and the signature falls apart.
+// Only the tunnel's own black-hole special case outranks the mode table, and
+// only because 'blackhole' IS a mode in that table, so the two agree.
 function _wtuPalette(bh) {
     if (!_wtu.inner) return;
+    const st = _WARP_STYLE[_warpMode()];
+    if (st) {
+        // Outer shell is the deeper/duller half of the pair so the two tubes
+        // still read as two tubes rather than one flat wall of colour.
+        _wtu.outer.mat.uniforms.uColA.value.setHex(st.tunB);
+        _wtu.outer.mat.uniforms.uColB.value.setHex(st.tunA);
+        _wtu.inner.mat.uniforms.uColA.value.setHex(st.tunA);
+        _wtu.inner.mat.uniforms.uColB.value.setHex(st.tunB);
+        return;
+    }
     // Black-hole transit goes violet/cyan; ordinary warp keeps the game's
     // cyan/magenta synthwave pair.
     _wtu.outer.mat.uniforms.uColA.value.setHex(bh ? 0x7b2bff : 0x2a6bff);
@@ -2854,7 +3251,14 @@ function _updateWarpTunnel() {
     }
     _wtuBuild();
     if (!_wtu.inner) return;
-    if (!_wtu.inner.mesh.visible) _wtuPalette(_wtu.bh);
+    // Repaint on the frame the tunnel appears AND on any mode change — a
+    // slingshot that rolls straight into an emergency warp has to change
+    // colour with the streaks, not keep whatever palette it opened on.
+    const _tunMode = _warpMode();
+    if (!_wtu.inner.mesh.visible || _wtu.styleName !== _tunMode) {
+        _wtu.styleName = _tunMode;
+        _wtuPalette(_wtu.bh);
+    }
     _wtu.inner.mesh.visible = true;
     _wtu.outer.mesh.visible = true;
 
@@ -3236,4 +3640,32 @@ if (typeof window !== 'undefined') {
     window.warpDebrisBurst = warpDebrisBurst;
     window.warpTunnelBurst = warpTunnelBurst;
     window.warpExitBeat = warpExitBeat;
+    // Read-only telemetry for tuning/QA: what kind of warp is running, how
+    // much spectacle each layer is actually producing, and what the gates
+    // that decide it are returning. Pure getters — calling this never
+    // advances or mutates anything except _warpMomentLevel's own eased
+    // level, which is dt-based and idempotent within a frame by design.
+    window.__vfDebug = function () {
+        const gs = (typeof gameState !== 'undefined') ? gameState : null;
+        const v = (gs && gs.velocityVector) ? gs.velocityVector.length() : 0;
+        return {
+            mode: _warpMode(),
+            styleName: _wsfStyle.name,
+            styleLevel: +(_wsfStyle.level || 0).toFixed(3),
+            streakEnv: +(_wsf.env || 0).toFixed(4),
+            streakLen: _wsf.mat ? +_wsf.mat.uniforms.uLen.value.toFixed(1) : 0,
+            streakOpacity: _wsf.mat ? +_wsf.mat.uniforms.uOpacity.value.toFixed(4) : 0,
+            streakVisible: !!(_wsf.mesh && _wsf.mesh.visible),
+            shipCarveR: _wsf.mat ? +_wsf.mat.uniforms.uShipR.value.toFixed(1) : 0,
+            shipCarveOn: _wsf.mat ? _wsf.mat.uniforms.uShipK.value : 0,
+            tunnel: +(_wtu.level || 0).toFixed(4),
+            sfxLevel: +(_sfx.level || 0).toFixed(4),
+            debrisEnv: +(_wdf.env || 0).toFixed(4),
+            momentLevel: +_warpMomentLevel().toFixed(4),
+            speedRamp: +_warpSpeedRamp().toFixed(4),
+            cruiseCeil: +_spectacleCruiseCeil(v * 1000).toFixed(4),
+            whip: +speedWhipLevel().toFixed(4),
+            vel: +v.toFixed(3)
+        };
+    };
 }

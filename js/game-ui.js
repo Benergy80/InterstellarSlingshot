@@ -2913,6 +2913,20 @@ function renderIndividualMapDot(c, raised) {
         dotSize = c.dotPriority >= 110 ? '9px' : '7px';
         outline = '1px solid rgba(255,255,255,0.9)';
     }
+    // Rim-clamped: this contact's true position is beyond the current
+    // (auto-contracted) draw scale — it's plotted at the rim, bearing-true,
+    // instead of at its real range. Standard RWR convention for an
+    // off-scale contact is small/dim/edge, so demote it back down
+    // regardless of what its type/priority tier gave it above — UNLESS
+    // it's the must-individual contact (current target / active lock),
+    // which the player can't afford to lose track of no matter where on
+    // the disc it lands.
+    if (c.rimClamped && !c.mustIndividual) {
+        dotSize = '3px';
+        shadow = 'none';
+        opacity = '0.4';
+        outline = 'none';
+    }
     // The player's actual locked/selected target — renderClusteredMapDots
     // passes raised=true for the WHOLE vip list, so "raised" alone can't
     // tell this blip apart from a same-tier hostile neighbour sitting
@@ -2966,12 +2980,13 @@ function renderAggregateMapDot(cellKey, group) {
 
     // Dominant category wins colour/size (hostiles outrank neutral traffic
     // outranks scenery); position is the group's centroid.
-    let dominant = group[0], sumPx = 0, sumPy = 0, sumRelY = 0, anyDistress = false;
+    let dominant = group[0], sumPx = 0, sumPy = 0, sumRelY = 0, anyDistress = false, allRim = true;
     for (let i = 0; i < group.length; i++) {
         const c = group[i];
         sumPx += c.px; sumPy += c.py; sumRelY += (c.relY || 0);
         if (c.dotPriority > dominant.dotPriority) dominant = c;
         if (c.distress) anyDistress = true;
+        if (!c.rimClamped) allRim = false;
     }
     const n = group.length;
     const px = Math.round((sumPx / n) * 10) / 10;
@@ -3035,6 +3050,18 @@ function renderAggregateMapDot(cellKey, group) {
         outline = outlineWidth + 'px solid rgba(255,255,255,0.9)';
     }
 
+    // Rim-clamped: every member of this cell is plotted at the disc rim,
+    // beyond the current draw scale — same off-scale demotion a lone
+    // rim-clamped contact gets in renderIndividualMapDot. A cluster never
+    // includes a mustIndividual member (those bypass bucketing into the
+    // VIP list), so there's no "stays salient" exception to preserve here.
+    if (allRim) {
+        size = '3px';
+        shadow = 'none';
+        opacity = '0.4';
+        outline = '';
+    }
+
     if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
     if (s.bg !== dominant.dotColor) { dot.style.backgroundColor = dominant.dotColor; s.bg = dominant.dotColor; }
     if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
@@ -3086,6 +3113,12 @@ function renderAllyMarker(c) {
     }
     const atf = 'translate(' + c.px + 'px,' + c.py + 'px) translate(-50%,-50%) rotate(' + c.angle + 'rad)';
     if (as.tf !== atf) { arrow.style.transform = atf; as.tf = atf; }
+    // Rim-clamped wingman: same off-scale demotion every other rim blip
+    // gets, so a wingman that strayed past the contracted draw scale reads
+    // as "out there, that direction" rather than full-strength right at
+    // the edge of the disc.
+    const aop = c.rimClamped ? '0.5' : '1';
+    if (as.opacity !== aop) { arrow.style.opacity = aop; as.opacity = aop; }
     if (as.vis !== 'visible') { arrow.style.visibility = 'visible'; as.vis = 'visible'; }
     if (_mapTitleTick) {
         const at = (c.name || 'Wingman') + ' (' + c.distance.toFixed(0) + 'u)';
@@ -3104,6 +3137,35 @@ function renderAllyMarker(c) {
 // hostile's distance fluctuates frame to frame.
 const RADAR_RANGE_LADDER = [500, 750, 1000, 1500, 3000];
 const RADAR_RANGE_DWELL_MS = 2500;
+// Round-3 fix: dwell only rate-limits how OFTEN the range can change — it
+// never required the new rung to actually be the right answer for more
+// than an instant, so a `want` value that brushed a hysteresis boundary
+// for a single bad sample could still commit once enough time had passed
+// since the last change. Require the candidate rung to be the snapped
+// answer CONTINUOUSLY for this long before it's allowed to commit; a
+// `want` that reverts before then never switches anything.
+const RADAR_RANGE_PERSIST_MS = 1000;
+// A committed rung change animates the DRAW SCALE over this fixed duration
+// (see _currentRadarRange) instead of jumping straight to it.
+const RADAR_RANGE_LERP_MS = 300;
+// Cull distance for the radar SCAN, decoupled from the DRAW SCALE
+// (radarRange / _currentRadarRange below). Before this fix the two were
+// the SAME number: when radarRange auto-contracted for a close fight,
+// anything beyond the new (smaller) range was dropped from
+// nearbyObjects entirely — a hostile sitting at 800u was on the radar
+// right up until the range animated down to 500u for a DIFFERENT, closer
+// bandit, at which point it just vanished. The scan itself now always
+// reaches out to the ladder's outer rung no matter how contracted the
+// current draw scale is; anything beyond the draw scale but inside this
+// radius rim-clamps instead of disappearing (see the rim-clamp block in
+// updateGalaxyMap).
+const RADAR_SCAN_RADIUS = RADAR_RANGE_LADDER[RADAR_RANGE_LADDER.length - 1];
+// Rim-clamp radius in the map's 0-100 coordinate space (50,50 = disc
+// centre). #galaxyMap (.round-map) is a circle — border-radius:50%,
+// overflow:hidden — so 44 keeps a clamped blip a few px shy of the actual
+// edge in every direction, including the diagonal, instead of visually
+// clipping against the border.
+const RADAR_RIM_RADIUS = 44;
 
 function nearestHostileDistance() {
     if (typeof camera === 'undefined' || typeof enemies === 'undefined') return Infinity;
@@ -3163,25 +3225,57 @@ function _snapRadarRange(want, currentRung) {
 
 // State lives on the function itself (same pattern as
 // updateGalaxyMap._pathDots below) rather than a fresh module-level
-// global. Dwell is a MINIMUM TIME BETWEEN CHANGES, not a delay before the
-// first reaction — a closing hostile snaps the range in immediately, then
-// the range can't flip again for RADAR_RANGE_DWELL_MS.
+// global. `value`/`lastChangeAt` are the COMMITTED rung and when it last
+// actually changed (the dwell gate — a MINIMUM TIME BETWEEN CHANGES).
+// `pending`/`pendingSince` track a CANDIDATE rung that hasn't earned the
+// switch yet: it only commits once it has been the snapped answer
+// CONTINUOUSLY for RADAR_RANGE_PERSIST_MS *and* the dwell since the last
+// real change has also elapsed — a closing hostile still snaps the range
+// in reasonably fast, but a one-frame blip across a hysteresis boundary
+// can no longer commit just because the dwell clock happened to be clear.
+// `shown`/`lerpFrom`/`lerpStart` animate the RENDERED scale from wherever
+// it currently sits to the committed value over a fixed
+// RADAR_RANGE_LERP_MS, so a rung change slides the scale (and every blip
+// on it) into place instead of teleporting the whole radar picture in one
+// frame.
 function _currentRadarRange(nowMs) {
     let st = _currentRadarRange._state;
-    if (!st) st = _currentRadarRange._state = { value: 3000, shown: 3000, lastChangeAt: -Infinity };
+    if (!st) st = _currentRadarRange._state = {
+        value: 3000, shown: 3000, lastChangeAt: -Infinity,
+        pending: null, pendingSince: 0,
+        lerpFrom: 3000, lerpStart: -Infinity
+    };
     const _near = nearestHostileDistance();
     const _want = _near < 900 ? Math.max(500, Math.min(1200, _near * 2.2)) : 3000;
     const snapped = _snapRadarRange(_want, st.value);
-    if (snapped !== st.value && (nowMs - st.lastChangeAt) >= RADAR_RANGE_DWELL_MS) {
-        st.value = snapped;
-        st.lastChangeAt = nowMs;
+
+    if (snapped !== st.value) {
+        if (st.pending !== snapped) {
+            // A new candidate rung (or the first one ever) — (re)start its
+            // persistence clock.
+            st.pending = snapped;
+            st.pendingSince = nowMs;
+        }
+        if ((nowMs - st.pendingSince) >= RADAR_RANGE_PERSIST_MS &&
+            (nowMs - st.lastChangeAt) >= RADAR_RANGE_DWELL_MS) {
+            st.lerpFrom = st.shown;
+            st.lerpStart = nowMs;
+            st.value = snapped;
+            st.lastChangeAt = nowMs;
+            st.pending = null;
+        }
+    } else {
+        // The trigger backed off before it earned the switch — drop the
+        // candidate instead of leaving a stale timer that could fire later.
+        st.pending = null;
     }
-    // st.value is the TARGET rung (steps instantly, gated by hysteresis +
-    // dwell above). st.shown is what actually renders — eased toward the
-    // target every refresh instead of jumping, so a rung change slides the
-    // scale (and every blip on it) over ~300ms instead of teleporting the
-    // whole radar picture in one frame.
-    st.shown += (st.value - st.shown) * 0.12;
+
+    // Fixed-duration ease (smoothstep) from wherever the disc currently is
+    // toward the committed rung — independent of the radar's refresh rate,
+    // so "how long the transition takes" is always ~RADAR_RANGE_LERP_MS.
+    const t = Math.max(0, Math.min(1, (nowMs - st.lerpStart) / RADAR_RANGE_LERP_MS));
+    const eased = t * t * (3 - 2 * t);
+    st.shown = st.lerpFrom + (st.value - st.lerpFrom) * eased;
     return st.shown;
 }
 
@@ -3297,14 +3391,14 @@ planets.forEach(planet => {
         
         // Quick check: Is the entire belt too far?
         const beltDistance = camera.position.distanceTo(planet.userData.beltGroup.position);
-        if (beltDistance > radarRange + 2000) return; // Belt + radius buffer
+        if (beltDistance > RADAR_SCAN_RADIUS + 2000) return; // Belt + radius buffer
         
         // Belt is nearby, now get asteroid's world position
         const worldPos = new THREE.Vector3();
         planet.getWorldPosition(worldPos);
         const distance = camera.position.distanceTo(worldPos);
         
-        if (distance < radarRange && distance > 10) {
+        if (distance < RADAR_SCAN_RADIUS && distance > 10) {
             nearbyObjects.push({
                 position: worldPos,
                 type: planet.userData.type,
@@ -3316,7 +3410,7 @@ planets.forEach(planet => {
     } else {
         // Non-asteroids use direct position (fast)
         const distance = camera.position.distanceTo(planet.position);
-        if (distance < radarRange && distance > 10) {
+        if (distance < RADAR_SCAN_RADIUS && distance > 10) {
             nearbyObjects.push({
                 position: planet.position,
                 type: planet.userData.type,
@@ -3335,7 +3429,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
 
         // Check if system is in radar range
         const systemDistance = camera.position.distanceTo(system.position);
-        if (systemDistance < radarRange + 2000) {
+        if (systemDistance < RADAR_SCAN_RADIUS + 2000) {
 
             // Add all orbiters from this system
             system.userData.orbiters.forEach(orbiter => {
@@ -3344,7 +3438,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 orbiter.getWorldPosition(orbiterWorldPos);
 
                 const distance = camera.position.distanceTo(orbiterWorldPos);
-                if (distance < radarRange) {
+                if (distance < RADAR_SCAN_RADIUS) {
                     nearbyObjects.push({
                         position: orbiterWorldPos,
                         type: orbiter.userData.type,
@@ -3363,7 +3457,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 system.userData.centerObject.getWorldPosition(centerWorldPos);
 
                 const centerDist = camera.position.distanceTo(centerWorldPos);
-                if (centerDist < radarRange) {
+                if (centerDist < RADAR_SCAN_RADIUS) {
                     nearbyObjects.push({
                         position: centerWorldPos,
                         type: system.userData.centerType,
@@ -3383,7 +3477,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             interstellarAsteroids.forEach(asteroid => {
                 if (!asteroid || !asteroid.position) return;
                 const distance = camera.position.distanceTo(asteroid.position);
-                if (distance < radarRange) {
+                if (distance < RADAR_SCAN_RADIUS) {
                     nearbyObjects.push({
                         position: asteroid.position,
                         type: 'interstellar_asteroid',
@@ -3399,7 +3493,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
         enemies.forEach(enemy => {
             if (!enemy || !enemy.position || !enemy.userData || enemy.userData.health <= 0) return;
             const distance = camera.position.distanceTo(enemy.position);
-            if (distance < radarRange) {
+            if (distance < RADAR_SCAN_RADIUS) {
                 nearbyObjects.push({
                     position: enemy.position,
                     type: 'enemy',
@@ -3416,7 +3510,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             allyShips.forEach((ally, idx) => {
                 if (!ally || !ally.position || !ally.userData || ally.userData.health <= 0) return;
                 const distance = camera.position.distanceTo(ally.position);
-                if (distance < radarRange) {
+                if (distance < RADAR_SCAN_RADIUS) {
                     nearbyObjects.push({
                         position: ally.position,
                         type: 'ally',
@@ -3455,7 +3549,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.dysonSpheres.forEach(sphere => {
                     if (!sphere || !sphere.position || sphere.userData.destroyed) return;
                     const distance = camera.position.distanceTo(sphere.position);
-                    if (distance < radarRange) {
+                    if (distance < RADAR_SCAN_RADIUS) {
                         nearbyObjects.push({
                             position: sphere.position,
                             type: 'dyson_sphere',
@@ -3472,7 +3566,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.crystalStructures.forEach(crystal => {
                     if (!crystal || !crystal.position || crystal.userData.destroyed) return;
                     const distance = camera.position.distanceTo(crystal.position);
-                    if (distance < radarRange) {
+                    if (distance < RADAR_SCAN_RADIUS) {
                         nearbyObjects.push({
                             position: crystal.position,
                             type: 'crystal_structure',
@@ -3489,7 +3583,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.spaceWhales.forEach(whale => {
                     if (!whale || !whale.position || whale.userData.destroyed) return;
                     const distance = camera.position.distanceTo(whale.position);
-                    if (distance < radarRange) {
+                    if (distance < RADAR_SCAN_RADIUS) {
                         nearbyObjects.push({
                             position: whale.position,
                             type: 'space_whale',
@@ -3506,7 +3600,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.ringworlds.forEach(ringworld => {
                     if (!ringworld || !ringworld.position) return;
                     const distance = camera.position.distanceTo(ringworld.position);
-                    if (distance < radarRange) {
+                    if (distance < RADAR_SCAN_RADIUS) {
                         nearbyObjects.push({
                             position: ringworld.position,
                             type: 'ringworld',
@@ -3542,10 +3636,35 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             // pins to a max-length stalk instead of an absurd offset.
             const relativeY = (obj.position.y - camera.position.y) / radarRange;
 
-            const screenX = 50 + relativeX * 50; // Scale to fit map
-            const screenZ = 50 + relativeZ * 50;
-            
-            // Only show if within map bounds
+            let screenX = 50 + relativeX * 50; // Scale to fit map
+            let screenZ = 50 + relativeZ * 50;
+
+            // ── Rim clamp (decouple draw scale from visibility) ──────────
+            // `obj` already survived the RADAR_SCAN_RADIUS cull above — it
+            // is a real, in-range contact — so a position that falls
+            // outside the disc at the current (possibly auto-contracted)
+            // draw scale must NOT be dropped here too; that was the bug
+            // (the same radarRange number was both the zoom and the
+            // visibility cull, so contracting for a close fight deleted
+            // every farther contact instead of compressing it onto the
+            // disc). #galaxyMap is a circle, so clamp the RADIAL distance
+            // from centre to the rim while leaving the ANGLE untouched —
+            // that keeps the contact's bearing exact (0° error) and reads
+            // as a standard aviation-RWR "off-scale" edge blip.
+            const _dx = screenX - 50, _dz = screenZ - 50;
+            const _rad = Math.sqrt(_dx * _dx + _dz * _dz);
+            let rimClamped = false;
+            if (_rad > RADAR_RIM_RADIUS) {
+                const _sc = RADAR_RIM_RADIUS / _rad;
+                screenX = 50 + _dx * _sc;
+                screenZ = 50 + _dz * _sc;
+                rimClamped = true;
+            }
+
+            // Only show if within map bounds (the rim clamp above already
+            // guarantees this once RADAR_RIM_RADIUS <= 45, but a contact
+            // that lands inside the disc at the CURRENT draw scale without
+            // clamping still needs this — unchanged from before).
             if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
                 // 0-100 map coords → pixels inside the radar disc, snapped to
                 // 0.1px. Position is ONE transform (no left/top layout pass),
@@ -3579,7 +3698,7 @@ if (obj.type === 'ally') {
         _allyMarkerFwd.set(0, 0, 1).applyQuaternion(obj.ship.quaternion);
         _allyAng = Math.round(Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z) * 100) / 100;
     }
-    _allyCandidates.push({ key: _key, px, py, angle: _allyAng, dotColor, name: obj.name, distance: obj.distance });
+    _allyCandidates.push({ key: _key, px, py, angle: _allyAng, dotColor, name: obj.name, distance: obj.distance, rimClamped });
     return; // skip normal dot styling below
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
@@ -3674,7 +3793,7 @@ if (obj.type === 'ally') {
                 const relY = Math.max(-1, Math.min(1, relativeY));
                 _clusterCandidates.push({
                     key: _key, px, py, relY, dotColor, dotSize, dotPriority, distress,
-                    name: obj.name, distance: obj.distance, mustIndividual
+                    name: obj.name, distance: obj.distance, mustIndividual, rimClamped
                 });
             }
         });
@@ -3777,12 +3896,27 @@ if (obj.type === 'ally') {
     }
 
     // Update current target indicator
-    if (gameState.currentTarget && targetMapPos) {
+    if (gameState.currentTarget && targetMapPos &&
+        camera.position.distanceTo(gameState.currentTarget.position) <= RADAR_SCAN_RADIUS) {
         const targetRelativeX = (gameState.currentTarget.position.x - camera.position.x) / radarRange;
         const targetRelativeZ = (gameState.currentTarget.position.z - camera.position.z) / radarRange;
-        const targetScreenX = 50 + targetRelativeX * 50;
-        const targetScreenZ = 50 + targetRelativeZ * 50;
-        
+        let targetScreenX = 50 + targetRelativeX * 50;
+        let targetScreenZ = 50 + targetRelativeZ * 50;
+
+        // Same rim clamp as the pooled blips (see the nearbyObjects loop
+        // above): the current target is the one contact combat depends on
+        // reading correctly, so it must not blink out just because the
+        // draw scale auto-contracted for a different, closer engagement.
+        // Bounded to RADAR_SCAN_RADIUS above so this stays in lockstep with
+        // what the pooled dot for the same object actually shows.
+        const _tdx = targetScreenX - 50, _tdz = targetScreenZ - 50;
+        const _trad = Math.sqrt(_tdx * _tdx + _tdz * _tdz);
+        if (_trad > RADAR_RIM_RADIUS) {
+            const _tsc = RADAR_RIM_RADIUS / _trad;
+            targetScreenX = 50 + _tdx * _tsc;
+            targetScreenZ = 50 + _tdz * _tsc;
+        }
+
         if (targetScreenX >= 0 && targetScreenX <= 100 && targetScreenZ >= 0 && targetScreenZ <= 100) {
             targetMapPos.style.left = `${targetScreenX}%`;
             targetMapPos.style.top = `${targetScreenZ}%`;

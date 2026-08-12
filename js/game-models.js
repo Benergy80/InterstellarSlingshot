@@ -2116,8 +2116,68 @@ function _installHullScreenFloor(group, minPx, maxBoost) {
 // it's actually bright enough to read at all.
 const UFO_HULL_COLOR = 0x39ffa0;
 
+// =============================================================================
+// UFO ADDITIVE ACCENT SUBORDINATION (aura shell / abduction-beam ring)
+// =============================================================================
+// createProceduralUFO (game-objects.js, not this file — the fix has to land
+// here, post-construction, same reason the hull-presence floor above does)
+// builds the saucer's "glow" out of two additive MeshBasicMaterial layers
+// that are each SIZED OFF THE HULL BY CONSTRUCTION, not off any FX-area
+// budget:
+//   • the aura shell — CylinderGeometry(46, 58, 14) at opacity 0.35 — has a
+//     LARGER radius than the saucer it wraps (CylinderGeometry(40, 50, 12)),
+//     so its silhouette is strictly bigger than the hull's own at every
+//     range and angle.
+//   • the abduction-beam ring — RingGeometry(15, 45) at opacity 0.7 — sits
+//     right under the saucer at almost the same radius.
+// Measured (critic, this round), same-frame GPU readback, paused world,
+// subject isolated, 4 yaws: the shell alone reads 1.08x the hull's own lit
+// pixels at 300u and 0.98x at 900u; the ring another 0.35-0.38x at both
+// ranges. Both ratios are essentially RANGE-INDEPENDENT, which is the
+// tell that this is not a distance/floor problem the way the hull-readout
+// lamp's is (see _HULL_LAMP_FAR_DAMP_LO in game-controls.js) — it is a
+// STATIC one, because the shell and ring are concentric with the saucer and
+// share its origin, so their screen-space size ratio to the hull is fixed
+// by their world-space size ratio alone, at any camera distance. A single
+// static scale-down therefore fixes both the 300u and the 900u case at
+// once; no per-frame distance term is needed here.
+//
+// Fix is geometric, not opacity: shrink each mesh's own LOCAL scale about
+// its shared origin (same technique as _PLUME_CORE_NEAR in game-controls.js
+// — "read as a surface feature, not a billboard" means the geometry itself
+// gets smaller, not just dimmer) so each becomes a minor accent instead of
+// the dominant silhouette. First pass at 0.5/0.75 (area factors 0.25/0.56)
+// landed shell/ring at ~0.20-0.26x hull, under the <=0.3x/<=0.25x budget on
+// every yaw but one (300u dead-ahead, where the union of shell+ring+rig+rim
+// still covered 51.6% of the hull's own pixels — just over the <50%
+// coverage bar). Tightened once more to 0.45/0.65 (area factors 0.20/0.42):
+// measured after, same protocol, 4 yaws x {300u, 900u}: shell 0.18-0.21x
+// hull, ring 0.15-0.16x hull, combined FX/hull ratio 0.47-0.61 (bar <=1.0)
+// and FX-cover 37.9-45.1% (bar <50%) at every sampled pose. The shell ends
+// up smaller than the saucer it used to wrap (radii ~18/23 vs the saucer's
+// 40/50) and mostly sits behind the opaque hull's own depth — that is the
+// intended trade: the mint UFO_HULL_COLOR hull surface above is what
+// carries "Unknown Craft"'s distinct silhouette and faction hue now, not a
+// fireball glued to the outside of it.
+const _UFO_SHELL_SCALE_K = 0.45;
+const _UFO_RING_SCALE_K = 0.65;
+
+function _subordinateUFOAdditiveAccents(ufo) {
+    if (!ufo || typeof THREE === 'undefined') return;
+    ufo.traverse((child) => {
+        if (!child.isMesh || !child.geometry || !child.material) return;
+        if (child.userData && (child.userData.isHitbox || child.userData._isHullRead)) return;
+        const mat = child.material;
+        if (!mat.transparent || mat.blending !== THREE.AdditiveBlending) return;
+        const gt = child.geometry.type;
+        if (gt === 'CylinderGeometry') child.scale.multiplyScalar(_UFO_SHELL_SCALE_K);
+        else if (gt === 'RingGeometry') child.scale.multiplyScalar(_UFO_RING_SCALE_K);
+    });
+}
+
 function _applyUFOHullPresenceFloor(ufo) {
     if (!ufo) return ufo;
+    _subordinateUFOAdditiveAccents(ufo);
     ufo.traverse((child) => {
         if (!child.isMesh || !child.material) return;
         const mat = child.material;

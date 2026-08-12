@@ -60,7 +60,14 @@
     get driving() { return ap.active && !ap.paused; },
     get paused() { return ap.paused; },
     get navStatus() { return ap._navStatus || null; },
-    get phase() { return ap.phase; }
+    get phase() { return ap.phase; },
+    // Last executed warp arrival cut-off, and how many have fired this run.
+    // Read-only proof that the cut path RUNS (it logged zero executions across
+    // 17 ramped exits before the guidance fix) — the same record the
+    // "🎯 WARP ARRIVAL CUT" console line is built from, in machine-readable
+    // form so instrumentation doesn't have to scrape the console.
+    get lastArrivalCut() { return ap._lastArrivalCut || null; },
+    get arrivalCuts() { return ap._arrivalCuts || 0; }
   };
 
   // Per-frame enemy buffs + swarm — previously only applied while demo
@@ -661,7 +668,7 @@
     // still catching up, the moment the tunnel finishes collapsing.
     if (typeof gameState !== 'undefined' && gameState._arrivalSubject &&
         gameState._arrivalSubject.obj && gameState._arrivalSubject.obj.position &&
-        Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 15000 &&
+        Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 19000 &&
         window.orientTowardsTarget) {
       const _ew = gameState.emergencyWarp;
       const _sl = gameState.slingshot;
@@ -687,7 +694,23 @@
         // flip since JS never yields mid-expression. This file may not
         // edit game-physics.js, so this is the in-bounds way to get the
         // faster rate without a `fast` parameter it doesn't accept.
-        const _wantFastOrient = (typeof gameState._warpExitT === 'number') &&
+        //
+        // THE FAST RATE NOW COVERS THE WHOLE BURN, not just the ramp. Measured
+        // reason: the phase driving the leg (phaseCoastToNebulaCluster) also
+        // calls orientTowardsTarget every frame, at the nebula CENTRE — a
+        // different point from the staged body. Two exponential pulls at the
+        // same 0.016 rad/frame cap settle at a weighted midpoint, so the nose
+        // never actually reached the subject, and since warp guidance
+        // (game-physics.js) steers the burn toward the NOSE, the trajectory
+        // inherited that error: the lateral miss to the subject sat dead
+        // constant at ~2,430 u for the entire boost instead of converging,
+        // and the arrival cut-off's framing test could not pass. Running this
+        // call at the auto-nav rate (0.045, ~3x the phase's) makes the staged
+        // subject the decisive authority for as long as the boost owns the
+        // ship — which is exactly the window in which "where the warp is
+        // going" should outrank "where the phase was cruising".
+        const _wantFastOrient = ((typeof gameState._warpExitT === 'number') ||
+            !!(_ew && _ew.active && !_ew.isJump)) &&
           typeof window !== 'undefined' && window.demoPilot && window.demoPilot.driving;
         if (_wantFastOrient) {
           const _prevPaused = ap.paused;
@@ -700,50 +723,115 @@
       }
     }
 
-    // ARRIVAL CUT-OFF: "the warp never arrives anywhere" — physics ends the
-    // O-key emergency-warp boost purely on a stopwatch (timeRemaining <= 0),
-    // always flying its full fixed distance regardless of what's staged as
-    // the reveal subject. That leaves the arrival distance this same system
-    // computes for itself (arriveDist, above) as dead code on the warp path
-    // — the boost sails past the staged body and fires the exit beat while
-    // RECEDING from it. End the burn where the reveal actually reads instead
-    // of where the timer says to: every frame a non-jump warp is active with
-    // a live staged subject, check the CURRENT range and cut the boost
-    // (mirrors the dist<=500 combat-intercept cut below/elsewhere in this
-    // file — physics already treats timeRemaining=0 as "stop now" from any
-    // source) once we're within arriveDist plus one ramp-length of lead: the
-    // exit ramp (camera-system.js / visual-flair.js) still eats roughly
-    // 0.35 * speed * 60 * 1s of ground while it eases warp -> cruise, so
-    // cutting exactly AT arriveDist would coast straight through the
-    // standoff and still overshoot the framing.
+    // ARRIVAL CUT-OFF — ARRIVAL IS THE TERMINATOR, THE STOPWATCH IS THE
+    // FALLBACK. Physics ends the O-warp boost on `timeRemaining <= 0` and
+    // nothing else, so left alone every burn flies its full fixed distance
+    // (boostSpeed 100 u/frame x 60 x 15 s = ~90,000 u) and fires the exit
+    // beat wherever that lands. This block ends the burn at the reveal
+    // instead: physics already treats timeRemaining = 0 as "stop now" from
+    // any source, so writing it here makes arrival primary while the 15 s
+    // timer stays underneath as the fallback for legs with no subject.
+    //
+    // ROUND-3 ROOT CAUSE, MEASURED: the round-2 version of this cut logged
+    // ZERO executions across 17 ramped exits, and the reason was not this
+    // predicate's guard — it was that the burn was BALLISTIC (velocity frozen
+    // at ignition; see _applyWarpGuidance in game-physics.js). A cut-off can
+    // only stop a burn, never bend one, so the staged body simply never
+    // entered any forward cone and the boost always ran out its stopwatch.
+    // With guidance in place the ray now converges on the subject and this
+    // predicate is reachable — but its own geometry had to change too:
+    //
+    //   * the lateral tolerance was `arriveDist * 0.35`, an ABSOLUTE distance
+    //     (~48 u for a mid-size planet) that had to hold at a cut range of
+    //     ~2,200 u — a 1.2 deg corridor, i.e. a near-collision course. It is
+    //     now `<= arriveDist`, which is the tolerance that actually matters:
+    //     `_off` is the PERPENDICULAR MISS of a straight burn, so it is also
+    //     (near enough) the final distance's lateral leg, and holding it at
+    //     or under the standoff keeps the subject at >= ~20 deg of angular
+    //     size when the streaks finish.
+    //   * the stop distance was a magic `0.35 * speed * 60`. It is now
+    //     integrated from the exit ramp's OWN curve: _applyWarpExitRamp eases
+    //     ease-out-cubic from the boost speed to the cruise target over 1 s,
+    //     and the mean of 1-(1-t)^3 is 0.75, so the ground covered is
+    //     (0.25*boost + 0.75*cruise) * 60, plus a couple of frames of
+    //     trigger latency at boost speed.
+    //   * the ship now aims to stop at `stand` (_arrivalStandoff) rather than
+    //     exactly on arriveDist. arriveDist is a 40 deg full-angle standoff —
+    //     beautiful, but for a typical body that is under two radii of
+    //     clearance, and the post-ramp coast is still ~240 u/s. `stand` backs
+    //     off to 1.25x, which keeps the reveal well over the 15 deg bar
+    //     (measured 19.6-28.3 deg on live arrivals, growing as the coast
+    //     closes) while leaving the demo room to brake.
+    //
+    // The second clause is a pure anti-overshoot fail-safe: once the subject
+    // is within one stopping distance of being ABEAM (or already behind),
+    // this burn is out of runway and must end this frame whatever the cone
+    // says — sailing past is the one outcome that can never be recovered.
     if (typeof gameState !== 'undefined' && gameState._arrivalSubject &&
         gameState._arrivalSubject.obj && gameState._arrivalSubject.obj.position &&
         gameState.emergencyWarp && gameState.emergencyWarp.active &&
         !gameState.emergencyWarp.isJump &&
-        Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 15000) {
+        Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 19000) {
       const _as = gameState._arrivalSubject;
       const _cp = camPos();
       const _speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
-      const _lead = 0.35 * _speed * 60 * 1.0;
-      // FORWARD-CONE TEST (was a scalar sphere test: `_d <= arriveDist +
-      // lead`, which any point on that sphere satisfies — including abeam
-      // or BEHIND the ship). Decompose the vector to the subject along the
-      // camera's boresight: `_along` is how far ahead it is (negative means
-      // it's already behind us — never a valid cut), `_off` is the lateral
-      // miss distance off that boresight. Cutting only when the subject is
-      // both within range AND within a narrow forward cone (off <=
-      // arriveDist * 0.35, ~19deg at this standoff) is what actually
-      // guarantees it's still near the center of the frame when the streaks
-      // finish draining, since the framing hold above only has ~1s and a
-      // 55-155 deg/s cap to correct any residual aim error.
+      // Ground the exit ramp will still eat after the cut (ease-out cubic,
+      // 1 s, boost -> cruise) plus ~2 frames of trigger latency.
+      const _cruise = Math.min(_speed, (gameState.maxVelocity || 4));
+      const _stop = (0.25 * _speed + 0.75 * _cruise) * 60 + _speed * 2;
+      // Standoff computed when the subject was staged (_arrivalStandoff):
+      // 1.25x the 40-degree arriveDist, clamped so the body still subtends
+      // >= 17 deg and never inside its own danger radius.
+      const _stand = _as.stand || (_as.arriveDist * 1.25);
+      // DECOMPOSE ALONG THE FLIGHT PATH, NOT THE BORESIGHT. The round-2 test
+      // projected onto camera.getWorldDirection() — but the ship does not
+      // travel along its boresight during a warp, it travels along
+      // velocityVector, and the demo's framing hold is simultaneously holding
+      // the boresight ON the subject. That makes the boresight decomposition
+      // degenerate: `off` reads ~0 and `along` reads ~range no matter how
+      // badly the actual trajectory misses, so the cone test measures the
+      // pilot's aim rather than where the burn is going. Projecting onto the
+      // velocity direction measures the thing that decides the arrival: how
+      // much runway is left before the subject is abeam (`_along`) and what
+      // the closest approach of this burn will be (`_off`, the perpendicular
+      // miss — invariant along a straight path, and the lateral leg of the
+      // final standoff). Warp guidance is what drives `_off` down; this is
+      // what reads it. Boresight is still the right frame for ON-SCREEN
+      // centring, and that is already owned by the framing hold above and the
+      // camera nudge in camera-system.js.
       if (typeof camera !== 'undefined' && _arriveFwdTmp && _arriveToTmp) {
-        camera.getWorldDirection(_arriveFwdTmp);
+        if (_speed > 1e-3) {
+          _arriveFwdTmp.copy(gameState.velocityVector).normalize();
+        } else {
+          camera.getWorldDirection(_arriveFwdTmp);
+        }
         _arriveToTmp.subVectors(_as.obj.position, _cp);
         const _along = _arriveToTmp.dot(_arriveFwdTmp);
         const _offSq = Math.max(0, _arriveToTmp.lengthSq() - _along * _along);
         const _off = Math.sqrt(_offSq);
-        if (_along > 0 && _along <= _as.arriveDist + _lead && _off <= _as.arriveDist * 0.35) {
+        const _maxOff = _as.maxOff || (_stand * 0.45);
+        const _framed = _along > 0 && _along <= _stand + _stop && _off <= _maxOff;
+        const _outOfRunway = _along <= _stop;
+        if (_framed || _outOfRunway) {
           gameState.emergencyWarp.timeRemaining = 0;
+          // LOG PROOF that this path executed — one line per burn (latched on
+          // the staged subject so a multi-frame cut can't spam the console),
+          // plus a machine-readable record for instrumentation.
+          if (!_as._cutLogged) {
+            _as._cutLogged = true;
+            ap._lastArrivalCut = {
+              at: Date.now(), reason: _framed ? 'framed' : 'outOfRunway',
+              along: Math.round(_along), off: Math.round(_off),
+              stand: Math.round(_stand), stop: Math.round(_stop),
+              arriveDist: Math.round(_as.arriveDist),
+              subject: (_as.obj.userData && (_as.obj.userData.name || _as.obj.userData.type)) || 'body'
+            };
+            ap._arrivalCuts = (ap._arrivalCuts || 0) + 1;
+            console.log('🎯 WARP ARRIVAL CUT (' + ap._lastArrivalCut.reason + ') → ' +
+              ap._lastArrivalCut.subject + '  along=' + ap._lastArrivalCut.along +
+              'u off=' + ap._lastArrivalCut.off + 'u (stand=' + ap._lastArrivalCut.stand +
+              ' stop=' + ap._lastArrivalCut.stop + ')');
+          }
         }
       }
     }
@@ -1138,7 +1226,7 @@
       const _canOWarp = !_warpBusyNow && canEmergencyWarp() &&
           Date.now() - (ap._lastBHWarp || 0) > 20000;
       if (dist > 5000 && _canOWarp && _facingEnemy > 0.9) {
-        if (triggerOKeyWarp()) {
+        if (triggerOKeyWarp(enemy)) {
           ap._lastBHWarp = Date.now();
           ap._pirateNoBrake = true;
           setStatus('Emergency warp → ' + (enemy.userData.name || 'hostile') + ' (' + (dist | 0) + ' u)');
@@ -1627,7 +1715,14 @@
     if (_coneVec && camera) {
       _coneVec.subVectors(targetPos, camera.position).normalize();
       camera.getWorldDirection(_coneFwd);
-      warpAligned = _coneFwd.dot(_coneVec) > 0.85;
+      // 0.97 (~14 deg) — was 0.85, which is a 31.8 deg cone. Warp guidance
+      // can bend a burn back onto its destination, but every degree of
+      // ignition error is distance spent curving instead of arriving, and on
+      // a short leg a 30 deg start can eat the whole burn. 14 deg closes well
+      // inside the first second of a 15 s boost. This does not risk stalling
+      // the phase: the hard fallback below still punches the warp at t > 8 s
+      // whatever the alignment.
+      warpAligned = _coneFwd.dot(_coneVec) > 0.97;
     }
 
     setStatus(warpAligned
@@ -1635,7 +1730,13 @@
       : ('Aligning for warp → ' + targetName));
 
     keys().w = true;
-    if (warpAligned && t > 1200 && canEmergencyWarp() && triggerOKeyWarp()) {
+    // `target` (the nebula / twin-cluster centre) is handed to the warp so
+    // this leg is DESTINATION-BEARING: triggerOKeyWarp resolves a real body
+    // at that centre as the arrival subject, which is what the per-frame
+    // arrival cut-off and the exit framing converge on. Previously this — the
+    // demo's main long-haul leg — fired with no argument at all, so it fell
+    // through to the heading-estimate staging and usually claimed nothing.
+    if (warpAligned && t > 1200 && canEmergencyWarp() && triggerOKeyWarp(target)) {
       ap.warpStartedAt = Date.now();
       ap.warpsUsed++;
       goPhase('coastToNebulaCluster');
@@ -1645,7 +1746,7 @@
     // Hard fallback — punch the warp even if alignment never settles
     // (extended window when a slingshot approach was in progress)
     if (t > (ap.slingshotPlanet ? 16000 : 8000)) {
-      if (canEmergencyWarp() && triggerOKeyWarp()) {
+      if (canEmergencyWarp() && triggerOKeyWarp(target)) {
         ap.warpStartedAt = Date.now();
         ap.warpsUsed++;
         goPhase('coastToNebulaCluster');
@@ -1854,7 +1955,7 @@
         (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning);
       if (distToNebula > 2500 && !_ovWarpBusy && _ovFacing > 0.9 &&
           canEmergencyWarp() && Date.now() - (ap._lastBHWarp || 0) > 8000) {
-        if (triggerOKeyWarp()) {
+        if (triggerOKeyWarp(ap.currentNebula)) {
           ap._lastBHWarp = Date.now();
           setStatus('Overshot — emergency warp to re-aim (' + (distToNebula | 0) + ' u)');
           return;
@@ -2605,14 +2706,87 @@
     return best ? { obj: best, radius: bestRadius } : null;
   }
 
+  // THE DISTANCE THE BURN ACTUALLY AIMS TO STOP AT, and whether this body can
+  // be framed as an arrival at all.
+  //
+  // arriveDist is the beautiful number (40 deg full angle) but it is only two
+  // to three radii of clearance, and the ship is still coasting at ~cruise
+  // when the ramp finishes — so stopping exactly there leaves the demo about
+  // a second from the body's own danger radius. `stand` backs off to 1.8x,
+  // which still reads as a real arrival (~22 deg) and leaves room to brake.
+  //
+  // `maxForAngle` is the far limit that still clears a 19 deg full angle. The
+  // margin over the 15 deg bar is deliberate: the cut also tolerates a lateral
+  // miss up to 0.45x the standoff, which stretches the final range by up to
+  // ~10%, so the worst framed arrival still lands around 17 deg.
+  // Small bodies whose danger radius floor pushes arriveDist past that
+  // limit CANNOT be revealed as an arrival (they would read as a speck no
+  // matter where the burn stops), so they are rejected as subjects outright
+  // rather than being claimed and then under-delivered.
+  function _arrivalStandoff(radius, dangerR) {
+    const arriveDist = _idealArriveDist(radius, dangerR);
+    // Furthest the ship may end up and still show this body at >= 17 deg full
+    // angle (the 15 deg bar plus margin).
+    const maxRange = radius / Math.tan(8.5 * _DEG2RAD);
+    // 1.25x, not 1.8x. The standoff and the lateral budget trade against each
+    // other on the same hypotenuse: every unit of extra standoff is a unit
+    // taken out of maxOff. Measured in the demo's actual operating region, the
+    // bodies within a 7,200 u burn are mostly moons of 30-40 u radius, and at
+    // 1.8x their whole lateral budget was ~150 u — under what a turn-rate
+    // limited burn can hit, so they were all rejected and four consecutive
+    // legs staged nothing. 1.25x still lands a ~32 degree head-on reveal (the
+    // 40 degree arriveDist backed off just enough to clear the danger radius
+    // and leave braking room) while nearly doubling the corridor the burn is
+    // allowed to arrive through.
+    const stand = Math.max(dangerR * 1.25, Math.min(arriveDist * 1.25, maxRange * 0.75));
+    // THE LATERAL BUDGET, DERIVED RATHER THAN GUESSED. A straight burn's
+    // closest approach is `stand` along-track and `off` across it, so the
+    // final range is the hypotenuse. Round 2 capped `off` at a flat fraction
+    // of the standoff, which is either far too strict (it was arriveDist*0.35
+    // — a 1.2 deg corridor at cut range, hence zero executions) or arbitrary.
+    // Solve the hypotenuse instead: this is exactly how far off-axis the burn
+    // may pass and still deliver the >= 17 deg reveal. Measured on a live
+    // arrival: stand 3,066 u with a 2,430 u miss reads at 18.0 deg — inside
+    // this budget, and a flat 0.45x rule would have rejected it.
+    const maxOff = Math.sqrt(Math.max(0, maxRange * maxRange - stand * stand));
+    // DELIVERABILITY FLOOR. maxOff is what the geometry ALLOWS; this is what
+    // the ship can actually HIT. Warp guidance is turn-rate limited, so its
+    // achievable miss distance bottoms out near 0.7x the implied turn radius —
+    // ~230 u at boost speed with the proportional rate in game-physics.js.
+    // Claiming a subject whose whole lateral budget is under that is claiming
+    // an arrival the burn cannot deliver: measured, a 33 u moon (budget 150 u)
+    // was staged, the burn passed 951 u wide, and the "arrival" resolved at
+    // 4.0 degrees. The threshold is not guessed — it is where the measured
+    // arrivals separate cleanly:
+    //     budget 1,106 / 2,883 / 3,560 u  ->  19.6 / 20.7 / 28.3 deg, centred
+    //     budget   150 /   189 /   452 u  ->   4.0 /  6.9 /  3.7 deg, missed
+    // Every body above ~1,000 u of budget was delivered; every body below it
+    // was flown past. That line corresponds to roughly a 220 u radius — the
+    // system-primary class — which is also the only class whose reveal is
+    // worth stopping a warp for. Below it the honest answer is to claim no
+    // arrival and let the stopwatch end the leg.
+    const ARRIVAL_MIN_LATERAL_BUDGET = 1000;
+    return {
+      arriveDist: arriveDist, stand: stand, maxOff: maxOff,
+      framable: stand < maxRange && maxOff > dangerR &&
+        maxOff >= ARRIVAL_MIN_LATERAL_BUDGET
+    };
+  }
+
   function _setArrivalSubject(obj, radius) {
     if (typeof gameState === 'undefined') return;
     const dangerR = _arrivalDangerR(obj);
+    const _so = _arrivalStandoff(radius, dangerR);
     gameState._arrivalSubject = {
       obj: obj,
       radius: radius,
       dangerR: dangerR,
-      arriveDist: _idealArriveDist(radius, dangerR),
+      // Where the arrival cut-off aims to leave the ship, and how far off-axis
+      // the burn may pass and still deliver the reveal (see _arrivalStandoff).
+      stand: _so.stand,
+      maxOff: _so.maxOff,
+      framable: _so.framable,
+      arriveDist: _so.arriveDist,
       // Bounds how long a staged subject stays "live" for the framing hold
       // / camera nudge (see the two consumers below and in camera-system.js)
       // — this jump/warp's own boost+drain is always well under this, so it
@@ -2628,63 +2802,112 @@
     if (typeof gameState !== 'undefined') gameState._arrivalSubject = null;
   }
 
-  // Reactive staging for the O-key long-haul warp: boost distance/duration
-  // are physics-fixed (not something the pilot can shorten), so instead of
-  // committing to a subject in advance, estimate where THIS boost will
-  // actually end (current heading × the boost's own distance) and look for
-  // a body near that landing point. A long interstellar hop that lands in
-  // open space between clusters honestly has no arrival subject — better to
-  // claim nothing than to bias the camera at emptiness.
   const _owarpFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-  const _owarpPosTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const _owarpToTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-  function _stageOWarpArrivalSubject() {
-    if (typeof camera === 'undefined' || !_owarpFwdTmp || typeof gameState === 'undefined') return;
-    camera.getWorldDirection(_owarpFwdTmp);
-    const ew = gameState.emergencyWarp || {};
-    const boostSpeed = ew.boostSpeed || 15;
-    const boostDur = ew.boostDuration || 8000;
-    const estBoostDist = boostSpeed * 60 * (boostDur / 1000); // u/frame*60fps*seconds
-    _owarpPosTmp.copy(camPos()).addScaledVector(_owarpFwdTmp, estBoostDist);
-    const cand = _findArrivalSubject(_owarpPosTmp, Math.max(3000, estBoostDist * 0.6));
-    if (cand) {
-      // REJECT GUARANTEED FLYBYS: a candidate near the ESTIMATED landing
-      // point can still be one the burn will sail past — e.g. staged near
-      // the far edge of that search radius while already close to the ship
-      // today. Only claim a subject the boost can actually stop at: its
-      // CURRENT range (from here, now) must fit within estBoostDist minus
-      // the standoff arriveDist reserves for the reveal, so there's enough
-      // burn left to reach the arrival cut-off (below/in the per-frame
-      // tick) before overshooting it.
-      const dangerR = _arrivalDangerR(cand.obj);
-      const arriveDist = _idealArriveDist(cand.radius, dangerR);
-      const curRange = camPos().distanceTo(cand.obj.position);
-      // REJECT LATERALLY-OFFSET CANDIDATES: distance-to-landing-point alone
-      // (via _findArrivalSubject's maxDist) still accepts a body sitting well
-      // off to the side of the actual boost RAY — close enough to the
-      // estimated endpoint to qualify by radius, but never something the
-      // straight-line burn passes near. Project the candidate onto the ray
-      // from here (camPos()) along the current heading (_owarpFwdTmp) and
-      // measure its perpendicular miss distance; only claim it as a subject
-      // if that offset is inside the same forward-cone half-width the
-      // per-frame arrival cut-off (above) will require at cut time —
-      // otherwise the cut-off's cone test can never fire and the boost just
-      // runs its full stopwatch past a subject that was never reachable.
-      let offOK = true;
-      if (_owarpToTmp) {
-        _owarpToTmp.subVectors(cand.obj.position, camPos());
-        const along = _owarpToTmp.dot(_owarpFwdTmp);
-        const offSq = Math.max(0, _owarpToTmp.lengthSq() - along * along);
-        offOK = Math.sqrt(offSq) <= arriveDist * 0.35;
-      }
-      if (curRange <= estBoostDist - arriveDist && offOK) {
-        _setArrivalSubject(cand.obj, cand.radius);
-      } else {
-        _clearArrivalSubject();
-      }
-    } else {
-      _clearArrivalSubject();
+
+  // How far THIS boost can actually carry the ship. Measured live rather than
+  // assumed: boostSpeed is 15 u/frame and boostDuration 8,000 ms once the game
+  // has initialised (the pre-init defaults are 100/15,000), so the real reach
+  // is ~7,200 u — two orders of magnitude short of the 30-90k interstellar
+  // legs the demo flies. Every arrival decision has to be made against this
+  // number; the round-2 staging never consulted it on the destination path,
+  // which is why a nebula 37,000 u away was staged as the arrival subject of a
+  // 7,200 u burn. The burn then could not possibly reach it, the cut-off never
+  // came into range, and the stopwatch ended the leg mid-flight — measured:
+  // subject still 30,510 u out (2.3 deg) when the streaks finished.
+  function _oWarpBoostDist() {
+    const ew = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || {};
+    return (ew.boostSpeed || 15) * 60 * ((ew.boostDuration || 8000) / 1000);
+  }
+
+  // Ground the exit ramp eats after the cut fires — see the arrival cut-off in
+  // update() for the derivation (ease-out-cubic mean of 0.75 over 1 s, plus a
+  // couple of frames of trigger latency).
+  function _oWarpStopDist() {
+    const ew = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || {};
+    const boost = ew.boostSpeed || 15;
+    const cruise = Math.min(boost, (gameState.maxVelocity || 4));
+    return (0.25 * boost + 0.75 * cruise) * 60 + boost * 2;
+  }
+
+  // BEST BODY THIS BURN CAN ACTUALLY ARRIVE AT, searched along the ray it is
+  // about to fly. Replaces the old "guess the landing point, then look for
+  // something near it" staging, which reasoned about a POINT when the thing
+  // that decides an arrival is a SEGMENT: everything between here and the end
+  // of the burn is reachable, not just the far tip.
+  //
+  // A candidate qualifies when the burn can both REACH it and STOP at it:
+  //   * its RANGE (not its projection) is inside boostDist plus its own
+  //     stopping allowance. Range, because a guided burn flies an arc, not the
+  //     ray — and the cut fires when the remaining along-track distance is
+  //     stand+stop, so a body out at that limit is still caught with the
+  //     boost's last frames. That is what lets a leg keep nearly its full
+  //     ~7,200 u of progress AND still arrive.
+  //   * it is not already on top of us (range > 1.3x its standoff) — that is
+  //     a place we are at, not one to fly to.
+  //   * it lies inside a 30 deg cone about the intended direction. A cone,
+  //     because warp guidance (game-physics.js) bends the burn toward the nose
+  //     at 0.012 rad/frame — at 15 u/frame that is a ~1,250 u turn radius, and
+  //     measured live an 8,647 u lateral miss collapsed to 1,648 u inside
+  //     600 ms. The first version of this search used a narrow perpendicular
+  //     corridor and found nothing at all on real legs (measured: four
+  //     consecutive O-warps staged no subject), because it was testing a
+  //     ballistic ray the ship no longer flies. 30 deg still keeps the leg
+  //     genuinely pointed at where the phase is going.
+  //   * it is framable at all (see _arrivalStandoff) — a pebble whose danger
+  //     radius forces a standoff where it reads as a speck is not an arrival.
+  // Score prefers big bodies far down the burn, well centred: a bigger reveal,
+  // more of the leg's distance actually flown, less curving to get there.
+  const _ARRIVAL_CONE_COS = Math.cos(30 * Math.PI / 180);
+  function _findArrivalSubjectAlongRay(from, dir, boostDist) {
+    if (typeof planets === 'undefined' || !from || !dir || !_owarpToTmp) return null;
+    const stopD = _oWarpStopDist();
+    let best = null, bestRadius = 0, bestScore = -Infinity;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      const ud = p && p.userData;
+      if (!p || !p.position || !ud) continue;
+      if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
+      const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || ud.size || 20;
+      const so = _arrivalStandoff(radius, _arrivalDangerR(p));
+      if (!so.framable) continue;
+      _owarpToTmp.subVectors(p.position, from);
+      const range = _owarpToTmp.length();
+      if (range <= so.stand * 1.3) continue;
+      if (range > boostDist + so.stand + stopD) continue;
+      const cosA = _owarpToTmp.dot(dir) / Math.max(1e-6, range);
+      if (cosA < _ARRIVAL_CONE_COS) continue;
+      // WILL THE BURN ACTUALLY GET INSIDE THIS BODY'S CORRIDOR? The cone alone
+      // is not enough: an angle that is trivial for a 3,500 u budget is fatal
+      // for a 450 u one. Guidance removes roughly half of the standing lateral
+      // offset over a burn (measured: 1,273 u -> 553 u on an arrival that
+      // landed at 28 deg; and a candidate staged 2,062 u off-axis with only a
+      // 452 u budget was still 2,477 u wide at the end and resolved at
+      // 3.7 deg, off-screen). So require the offset the burn starts with to be
+      // within twice what the reveal can absorb. This is the test that stops
+      // the demo claiming an arrival it will fly straight past.
+      const offNow = range * Math.sqrt(Math.max(0, 1 - cosA * cosA));
+      if (offNow > so.maxOff * 2) continue;
+      // Radius dominates: a big body is both a better reveal and a far more
+      // forgiving target (its lateral budget scales with it), so prefer one
+      // decisively over a nearer moon. Then distance flown, then centring.
+      const score = radius * 8 + range * 0.25 - (1 - cosA) * range;
+      if (score > bestScore) { bestScore = score; best = p; bestRadius = radius; }
     }
+    return best ? { obj: best, radius: bestRadius } : null;
+  }
+
+  // Fallback staging for a warp with no destination in hand: search along the
+  // current heading. A hop that lands in open space between clusters honestly
+  // has no arrival subject — better to claim nothing (and let the stopwatch
+  // end the leg) than to bias the camera at emptiness.
+  function _stageOWarpArrivalSubject() {
+    if (typeof camera === 'undefined' || !_owarpFwdTmp || typeof gameState === 'undefined') return false;
+    camera.getWorldDirection(_owarpFwdTmp);
+    const cand = _findArrivalSubjectAlongRay(camPos(), _owarpFwdTmp, _oWarpBoostDist());
+    if (cand) { _setArrivalSubject(cand.obj, cand.radius); return true; }
+    _clearArrivalSubject();
+    return false;
   }
 
   // ─── navigateTo: closed-loop travel controller ─────────────────────────────
@@ -2833,7 +3056,7 @@
     const _warpMinDist = Math.max(15000, approachRange ? approachRange + 12000 : 0);
     if (allowWarp && dist > _warpMinDist && facing > 0.9 && canEmergencyWarp() &&
         Date.now() - (ap._lastBHWarp || 0) > 20000) {
-      if (triggerOKeyWarp()) {
+      if (triggerOKeyWarp(targetObj)) {
         ap._lastBHWarp = Date.now();
         ap.warpStartedAt = Date.now();
         ap._navStatus = 'warping';
@@ -3370,13 +3593,81 @@
   // O-key emergency warp — full 15 s warp boost.  Uses a charge.
   // Preferred for crossing interstellar distances when no slingshot
   // planet is within reach.
-  function triggerOKeyWarp() {
+  // `dest` (optional) is THIS leg's actual destination — the body or point
+  // the phase decided to fly to. Every caller in this file has one in hand,
+  // so pass it: a warp that knows where it is going can end ON its
+  // destination (see the arrival cut-off in update()), while one that does
+  // not can only run its stopwatch out into whatever happens to be ahead.
+  function triggerOKeyWarp(dest) {
     if (!canEmergencyWarp()) return false;
-    // FIX 1 — ARRIVAL SUBJECT: stage what this boost will actually reveal
-    // BEFORE firing, so camera-system's exit framing and the orientation
-    // hold below have a real body to converge on the instant the tunnel
-    // starts collapsing.
-    _stageOWarpArrivalSubject();
+    // ARRIVAL SUBJECT: stage what this boost will actually reveal BEFORE
+    // firing, so camera-system's exit framing, the orientation hold, and the
+    // arrival cut-off all have a real body to converge on the instant the
+    // tunnel starts collapsing.
+    //
+    // A DESTINATION IS A DIRECTION, NOT ALWAYS A LANDING SITE. The leg knows
+    // where it is ultimately going, so that is the direction to search — but
+    // ONE burn only covers ~7,200 u (see _oWarpBoostDist) while the demo's
+    // nebula legs are 30,000-90,000 u. Round 2 staged the destination itself
+    // unconditionally, which is why a subject 37,619 u away was claimed by a
+    // burn that could carry the ship 7,200 u: the cut-off never came into
+    // range, the stopwatch ended the leg in deep space, and the "arrival"
+    // resolved on a 2.3-degree speck 30,510 u out (measured, this build).
+    //
+    // So resolve in two steps:
+    //   1) if the burn can actually reach and stop at the destination's body,
+    //      that body IS the arrival;
+    //   2) otherwise take the best real body ON THE WAY that this burn can
+    //      stop at — the leg still spends nearly its whole boost closing on
+    //      the nebula, and it still ends ON something instead of nowhere.
+    // Only when neither exists does the leg go subject-less and let the
+    // stopwatch end it, which is the honest outcome for a hop across genuinely
+    // empty space.
+    let staged = false;
+    const _boostDist = _oWarpBoostDist();
+    const _stopDist = _oWarpStopDist();
+    if (dest) {
+      const dp = dest.position || (dest.isVector3 ? dest : null);
+      if (dp && _owarpFwdTmp && _owarpToTmp) {
+        // Prefer a real renderable body at/near the destination (a waypoint
+        // vector or a nebula centre is not itself something to look at); fall
+        // back to the destination object itself when IT is the body.
+        let cand = _findArrivalSubject(dp, 6000);
+        if (!cand && (dest.geometry || (dest.userData && dest.userData.type))) {
+          cand = {
+            obj: dest,
+            radius: (dest.geometry && dest.geometry.parameters && dest.geometry.parameters.radius) ||
+              (dest.userData && dest.userData.size) || 20
+          };
+        }
+        if (cand && cand.obj && cand.obj.position) {
+          const so = _arrivalStandoff(cand.radius, _arrivalDangerR(cand.obj));
+          const range = camPos().distanceTo(cand.obj.position);
+          // No off-axis gate here, unlike the corridor search below: this is
+          // the leg's OWN destination and the phase has already aimed at it
+          // (the warp gate needs facing > 0.97) — adding a heading test here
+          // only rejected legs whose destination was genuinely reachable,
+          // measured as 14 consecutive legs staging nothing.
+          if (so.framable && range <= _boostDist + so.stand + _stopDist) {
+            _setArrivalSubject(cand.obj, cand.radius);
+            staged = true;
+          }
+        }
+        if (!staged) {
+          // Out of reach — search the corridor toward it for something this
+          // burn CAN arrive at.
+          _owarpFwdTmp.subVectors(dp, camPos());
+          if (_owarpFwdTmp.lengthSq() > 1e-6) {
+            _owarpFwdTmp.normalize();
+            const way = _findArrivalSubjectAlongRay(camPos(), _owarpFwdTmp, _boostDist);
+            if (way) { _setArrivalSubject(way.obj, way.radius); staged = true; }
+          }
+        }
+      }
+    }
+    // No destination handed in (or nothing reachable toward it) — fall back to
+    // the current heading, which still refuses to claim a reveal in open space.
+    if (!staged) _stageOWarpArrivalSubject();
     keys().o = true;
     setTimeout(() => { keys().o = false; }, 100);
     return true;
@@ -3412,9 +3703,9 @@
 
   // Legacy alias — callers that just need "any warp" can use this.
   // Prefers slingshot (if near planet), falls back to O-key warp.
-  function triggerEmergencyWarp() {
+  function triggerEmergencyWarp(dest) {
     if (!canEmergencyWarp()) return false;
-    return triggerOKeyWarp();
+    return triggerOKeyWarp(dest);
   }
 
   // Hide lasers after 400 ms by setting .visible = false.  This does NOT
@@ -4524,6 +4815,77 @@
 
   // ─── Expose update to game loop ────────────────────────────────────────────
   window.demoPilot.update = update;
+
+  // ─── TEMP WARP DIAGNOSTIC (localStorage.warpdiag === '1') ─────────────────
+  // Survives page reloads so a long demo run can be sampled across them.
+  // Records every warp/jump cycle and, per frame of an active burn, which
+  // clause of the arrival cut-off predicate holds. Zero cost when off.
+  if (typeof window !== 'undefined' && window.localStorage &&
+      localStorage.getItem('warpdiag') === '1') {
+    const D = window.__warpdiag = { legs: [], triggers: [], cur: null, fs: null,
+      prevTrans: false, prevAct: false, prevTR: null };
+    const _v = () => new THREE.Vector3();
+    const _nm = (o) => o ? ((o.userData && (o.userData.name || o.userData.type)) || o.name || 'unnamed') : null;
+    function _pred() {
+      const ew = gameState.emergencyWarp, as = gameState._arrivalSubject;
+      const c = { hasSubject: !!(as && as.obj && as.obj.position), active: !!(ew && ew.active),
+        notJump: !!(ew && !ew.isJump), fresh: !!(as && Date.now() - (as.stagedAt || 0) < 19000) };
+      c.guardPass = c.hasSubject && c.active && c.notJump && c.fresh;
+      if (c.hasSubject) {
+        const f = _v(); camera.getWorldDirection(f);
+        const to = _v().subVectors(as.obj.position, camera.position);
+        c.along = to.dot(f);
+        c.off = Math.sqrt(Math.max(0, to.lengthSq() - c.along * c.along));
+        const sp = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+        c.lead = 0.35 * sp * 60;
+        c.rangePass = c.along > 0 && c.along <= as.arriveDist + c.lead;
+        c.conePass = c.off <= as.arriveDist * 0.35;
+      }
+      return c;
+    }
+    D.frame = function () {
+      try {
+        if (typeof gameState !== 'undefined' && gameState.emergencyWarp && typeof camera !== 'undefined') {
+          const ew = gameState.emergencyWarp, as = gameState._arrivalSubject;
+          const trans = !!ew.transitioning, act = !!ew.active;
+          if (trans && !D.prevTrans) {
+            D.triggers.push({ kind: ew.isJump ? 'JUMP' : 'OWARP', at: Date.now(),
+              subjectAtTrigger: !!(as && as.obj), subjName: _nm(as && as.obj) });
+          }
+          if (act && !D.prevAct) {
+            const L = D.triggers[D.triggers.length - 1];
+            if (L) { L.burn = true; L.isJumpAtBurn = !!ew.isJump; L.subjectAtBurn = !!(as && as.obj); }
+            D.cur = { startedAt: Date.now(), isJump: !!ew.isJump, samples: [] };
+            D.fs = { frames: 0, hasSubject: 0, notJump: 0, fresh: 0, guardPass: 0, rangePass: 0, conePass: 0, cutPass: 0 };
+          }
+          if (act) {
+            const c = _pred(), s = D.fs;
+            if (s) { s.frames++;
+              if (c.hasSubject) s.hasSubject++;
+              if (c.notJump) s.notJump++;
+              if (c.fresh) s.fresh++;
+              if (c.guardPass) s.guardPass++;
+              if (c.guardPass && c.rangePass) s.rangePass++;
+              if (c.guardPass && c.conePass) s.conePass++;
+              if (c.guardPass && c.rangePass && c.conePass) s.cutPass++; }
+          }
+          if (!act && D.prevAct && D.cur) {
+            const c = _pred();
+            D.cur.endedAt = Date.now(); D.cur.fs = D.fs;
+            D.cur.exitAlong = c.along != null ? Math.round(c.along) : null;
+            D.cur.exitOff = c.off != null ? Math.round(c.off) : null;
+            D.cur.exitSubj = _nm(gameState._arrivalSubject && gameState._arrivalSubject.obj);
+            D.cur.cutFired = !!(D.prevTR != null && D.prevTR > 600);
+            D.legs.push(D.cur); D.cur = null; D.fs = null;
+          }
+          D.prevTrans = trans; D.prevAct = act; D.prevTR = ew.timeRemaining;
+        }
+      } catch (e) { D.err = String(e); }
+      requestAnimationFrame(D.frame);
+    };
+    requestAnimationFrame(D.frame);
+    console.log('🔬 warpdiag armed');
+  }
 
   console.log('🤖 autopilot.js loaded');
 })();

@@ -5984,25 +5984,57 @@ try {
     }
 
     // =============================================================================
-    // NEBULA SKYBOX BACKDROP — the actual fix for "no background sky": until
-    // now scene.background was never set, and the only backdrop layers (CMB
-    // shader sphere + Hubble deep-field sphere, both below) render at low
-    // opacity (0.2 / 0.10), so most of the celestial sphere still read as
-    // literal black between them — confirmed by pointing the camera away from
-    // the local cluster and getting an empty frame with a couple dozen
-    // sub-pixel dots. This bakes ONE full equirectangular nebula texture
-    // (dust lanes, a milky-way band, warm/cool color zones, 3 distant galaxy
-    // features, and a fine pinprick starfield) once at load time onto a
-    // canvas, then wraps it on a giant BackSide sphere — same technique
-    // hubbleSkybox2 already uses below (a static texture on a sphere costs
-    // one texture sample per pixel per frame, not a re-evaluated shader), so
-    // there is no ongoing per-frame cost. It sits outside every other
-    // backdrop layer (largest radius, most-negative renderOrder) so the
-    // CMB/Hubble/imposter layers still composite their extra detail on top of
-    // it exactly as before.
+    // NEBULA SKYBOX BACKDROP — the beauty layer. ONE equirectangular texture
+    // baked at load time onto a giant BackSide sphere (same technique
+    // hubbleSkybox2 uses below: one texture sample per pixel per frame, no
+    // re-evaluated shader, no per-frame cost). It is the outermost layer
+    // (largest radius, most-negative renderOrder) so CMB / Hubble / imposters
+    // still composite on top of it.
+    //
+    // WHY THIS BAKE WAS REWRITTEN — the two previous passes both tuned the
+    // same wrong axis. The sky was painted as a stack of ~45 soft, hugely
+    // overlapping blurred radial gradients. A gradient tail is unbounded, so
+    // that stack has no structure and no zeros: it is a single low-frequency
+    // dome-wide smear whose only free parameter is how bright the smear is.
+    // Pass 1 turned it down and got a black card (meanLum 8.5, 66% of the
+    // frame under 8/255). Pass 2 turned it up with a black-point subtract
+    // (bp 0.020 / gamma 0.85 / gain 1.70) — but a gamma BELOW 1 with a 1.7x
+    // gain LIFTS the tails hardest, so it turned the smear into milk:
+    // measured live at three vantages, meanLum 65-91 but p50 64-95 and p99
+    // only 94-136, i.e. an almost uniform grey-lavender fog with the stars
+    // dissolved into it and no black anywhere in frame. Both results are the
+    // same object rescaled.
+    //
+    // The fix is structure, not level. A nebula field reads as a nebula field
+    // because it is LOW-FREQUENCY COLOUR multiplied by HIGH-FREQUENCY
+    // TURBULENCE: broad synthwave complexes decide what colour a region of
+    // sky is, and a fractal density field decides which parts of that region
+    // are lit filament and which are empty void. Multiplication is what
+    // creates the true zeros — a gradient can only approach zero, a mask hits
+    // it — and true zeros in an ADDITIVE layer contribute exactly nothing at
+    // any opacity, which is what lets the dome run bright enough for hot
+    // cores while the void behind it stays void and the stars still bite.
     // =============================================================================
     console.log('Creating procedural nebula skybox backdrop...');
     try {
+        const _nebT0 = (typeof performance !== 'undefined') ? performance.now() : 0;
+        // SEEDED. The bake used to draw from Math.random(), which made the sky
+        // a different sky on every load — and not subtly: the turbulence
+        // pyramid's coarsest octave is only 5x2 cells, so ten random numbers
+        // decided whether whole hemispheres landed above or below the density
+        // threshold. Two consecutive loads of the same build measured texture
+        // meanLum 23.3 and 49.5 (hot texels 1.25% vs 6.39%) — i.e. the sky's
+        // exposure was a dice roll and no tuning could be verified. A fixed
+        // seed makes the backdrop an art-directed constant, which is what a
+        // skybox should be, and makes every measurement below reproducible.
+        let _nebSeed = 0x5eed1337;
+        const _nebRnd = () => {
+            // xorshift32 → [0,1)
+            _nebSeed ^= _nebSeed << 13; _nebSeed >>>= 0;
+            _nebSeed ^= _nebSeed >>> 17;
+            _nebSeed ^= _nebSeed << 5;  _nebSeed >>>= 0;
+            return _nebSeed / 4294967296;
+        };
         const _nebW = _isMobileRenderTier() ? 1024 : 2048;
         const _nebH = _nebW / 2;
         const _nebCanvas = document.createElement('canvas');
@@ -6010,105 +6042,230 @@ try {
         _nebCanvas.height = _nebH;
         const _nctx = _nebCanvas.getContext('2d');
 
-        // 1) Base gradient — TRUE BLACK poles, a whisper of violet toward the
-        //    equator. Everything painted in steps 1-4 is run through an
-        //    explicit BLACK-POINT SUBTRACT in step 4.5 before the stars go
-        //    down, so this gradient exists only to tint the dust that
-        //    survives the subtract; on its own it lands under the black point
-        //    and is erased to literal zero. That is why the blobs below can
-        //    finally be painted at full synthwave strength again (they were
-        //    cut 4x in an earlier pass purely to hold the luminance floor
-        //    down, which drained the colour out of the whole sky).
-        const _baseGrad = _nctx.createLinearGradient(0, 0, 0, _nebH);
-        _baseGrad.addColorStop(0.00, '#000000');
-        _baseGrad.addColorStop(0.35, '#03030f');
-        _baseGrad.addColorStop(0.50, '#080522');
-        _baseGrad.addColorStop(0.65, '#03030f');
-        _baseGrad.addColorStop(1.00, '#000000');
-        _nctx.fillStyle = _baseGrad;
+        // -----------------------------------------------------------------
+        // 1) TURBULENCE FIELD (the mask that carves filaments out of cloud)
+        //
+        // Built as an fBm pyramid the cheap way: each octave is a TINY canvas
+        // of white noise stretched over the whole sphere, and the 2D engine's
+        // own bilinear filter does the interpolation in native code. Six
+        // octaves cost six drawImage calls instead of ~10M per-pixel noise
+        // evaluations in JS — the entire field lands in single-digit ms.
+        //
+        // Each octave tile is generated one column WIDER than it is used, with
+        // that extra column copied from column 0, so the stretched octave is
+        // periodic across the equirect seam and the dome has no visible join.
+        // -----------------------------------------------------------------
+        function _nebNoiseTile(cx, cy) {
+            const c = document.createElement('canvas');
+            c.width = cx + 1; c.height = cy + 1;
+            const g = c.getContext('2d');
+            const img = g.createImageData(cx + 1, cy + 1);
+            const d = img.data;
+            for (let j = 0; j <= cy; j++) {
+                for (let i = 0; i <= cx; i++) {
+                    const o = (j * (cx + 1) + i) * 4;
+                    // last column repeats the first → seamless wrap in x
+                    const v = (i === cx) ? d[(j * (cx + 1)) * 4]
+                                         : (_nebRnd() * 256) | 0;
+                    d[o] = d[o + 1] = d[o + 2] = v;
+                    d[o + 3] = 255;
+                }
+            }
+            g.putImageData(img, 0, 0);
+            return c;
+        }
+
+        const _densCanvas = document.createElement('canvas');
+        _densCanvas.width = _nebW; _densCanvas.height = _nebH;
+        const _dctx = _densCanvas.getContext('2d');
+        _dctx.fillStyle = '#000000';
+        _dctx.fillRect(0, 0, _nebW, _nebH);
+        _dctx.imageSmoothingEnabled = true;
+        _dctx.imageSmoothingQuality = 'high';
+        _dctx.globalCompositeOperation = 'lighter';
+        // Amplitudes halve per octave (sum ≈ 0.98, so the field cannot clip)
+        // and cells double: 5x2 → 160x80 features across the sphere.
+        for (let o = 0, cells = 5, amp = 0.5; o < 6; o++, cells *= 2, amp *= 0.5) {
+            _dctx.globalAlpha = amp;
+            const tile = _nebNoiseTile(cells, Math.max(2, cells >> 1));
+            _dctx.drawImage(tile, 0, 0, tile.width, tile.height, 0, 0, _nebW, _nebH);
+        }
+        _dctx.globalAlpha = 1;
+        _dctx.globalCompositeOperation = 'source-over';
+
+        // Sharpen the fBm into FILAMENTS and voids. smoothstep(lo,hi) with a
+        // high `lo` is what puts real zeros on the sphere: everything below
+        // 0.36 of the field — well over half of it — becomes literal black and
+        // therefore contributes literally nothing through additive blending.
+        // The pow afterwards keeps the surviving knots from going flat.
+        // A gentle pole fade rides along in the same pass.
+        try {
+            const _dImg = _dctx.getImageData(0, 0, _nebW, _nebH);
+            const _dPx = _dImg.data;
+            // AUTO-LEVEL on percentiles rather than fixed thresholds. What we
+            // actually want to specify is "this fraction of the sphere is
+            // empty void" and "this is where cloud saturates" — those are
+            // properties of the field's DISTRIBUTION, and an fBm's
+            // distribution shifts with its seed. Reading them back off the
+            // histogram makes the void fraction and the highlight point hold
+            // no matter what the noise drew.
+            const _dHist = new Uint32Array(256);
+            for (let i = 0; i < _dPx.length; i += 4) _dHist[_dPx[i]]++;
+            const _dN = _nebW * _nebH;
+            const _dPct = (frac) => {
+                let acc = 0;
+                for (let v = 0; v < 256; v++) { acc += _dHist[v]; if (acc >= _dN * frac) return v / 255; }
+                return 1;
+            };
+            const LO = _dPct(0.26);   // 26% of the field resolves to hard zero
+            const HI = _dPct(0.960);  // top 4% is full-density cloud
+            const SHARP = 1.20;
+            const _dLut = new Uint8ClampedArray(256);
+            for (let v = 0; v < 256; v++) {
+                let t = (v / 255 - LO) / Math.max(0.02, HI - LO);
+                t = t < 0 ? 0 : (t > 1 ? 1 : t);
+                t = t * t * (3 - 2 * t);
+                _dLut[v] = Math.round(Math.pow(t, SHARP) * 255);
+            }
+            // The pole fade rides along in the same pass: equirect rows
+            // converge at the poles and un-faded turbulence pinches into a
+            // visible swirl there. Folding it in here is deliberate — doing it
+            // instead as a canvas 'multiply' fillRect measured 1576ms against
+            // 464ms for the whole bake, because large-canvas blend modes take
+            // an unaccelerated path in Chrome.
+            for (let y = 0; y < _nebH; y++) {
+                // 1.0 across the middle, easing to 0.42 in the outer 9% of rows
+                const edge = Math.min(y, _nebH - 1 - y) / (_nebH * 0.09);
+                const poleK = edge >= 1 ? 1 : 0.42 + 0.58 * (edge * edge * (3 - 2 * edge));
+                for (let x = 0; x < _nebW; x++) {
+                    const o = (y * _nebW + x) * 4;
+                    const v = _dLut[_dPx[o]] * poleK;
+                    _dPx[o] = _dPx[o + 1] = _dPx[o + 2] = v;
+                }
+            }
+            _dctx.putImageData(_dImg, 0, 0);
+        } catch (densErr) {
+            console.warn('⚠️ Nebula density shaping skipped:', densErr);
+        }
+
+        // -----------------------------------------------------------------
+        // 2) LOW-FREQUENCY COLOUR LAYOUT — which region of sky is which
+        //    colour. Painted on pure black, at full synthwave saturation,
+        //    because the turbulence mask (not a hand-shrunk alpha) is what
+        //    will police the floor.
+        // -----------------------------------------------------------------
+        _nctx.fillStyle = '#000000';
         _nctx.fillRect(0, 0, _nebW, _nebH);
 
-        // Helper: soft radial-gradient blob, drawn three times (x-W, x, x+W)
-        // so anything overlapping the horizontal seam tiles seamlessly.
-        function _nebBlob(cx, cy, r, stops, blur, composite) {
-            _nctx.save();
-            _nctx.filter = blur ? `blur(${blur}px)` : 'none';
-            _nctx.globalCompositeOperation = composite || 'lighter';
+        // Soft radial blob, drawn three times (x-W, x, x+W) so anything
+        // crossing the horizontal seam tiles seamlessly.
+        function _nebBlob(ctx, cx, cy, r, stops, blur, composite) {
+            ctx.save();
+            ctx.filter = blur ? `blur(${blur}px)` : 'none';
+            ctx.globalCompositeOperation = composite || 'lighter';
             [cx - _nebW, cx, cx + _nebW].forEach((x) => {
-                const grad = _nctx.createRadialGradient(x, cy, 0, x, cy, r);
+                const grad = ctx.createRadialGradient(x, cy, 0, x, cy, r);
                 stops.forEach(([offset, color]) => grad.addColorStop(offset, color));
-                _nctx.fillStyle = grad;
-                _nctx.beginPath();
-                _nctx.arc(x, cy, r, 0, Math.PI * 2);
-                _nctx.fill();
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(x, cy, r, 0, Math.PI * 2);
+                ctx.fill();
             });
-            _nctx.restore();
+            ctx.restore();
         }
 
-        // 2) Milky-way band — a broad, gently curved strip of denser dust
-        //    running the width of the sphere, brighter/warmer than the base.
-        //    NOTE ON ALPHAS: every blob below is drawn with 'lighter' onto an
-        //    opaque base, so its alpha acts as a pure ADDITIVE intensity and
-        //    26 overlapping band blobs stack. The stack of soft, hugely
-        //    overlapping tails is exactly what used to smear a low-level wash
-        //    across the ENTIRE celestial sphere and lift the frame's black
-        //    floor. The previous pass fought that by cutting every alpha 4x,
-        //    which killed the colour along with the wash. The real fix is the
-        //    black-point subtract in step 4.5: it deletes the overlap tails
-        //    outright (they land below the black point and resolve to zero)
-        //    while leaving the blob CORES intact. So the alphas here are
-        //    painted for the look we want in the dust lanes and the subtract
-        //    — not the artist — polices the floor.
-        //    These are ~2.2x the previous pass's values. That pass paired
-        //    timid alphas with an aggressive 0.115 black point and the two
-        //    compounded: the band and dust body landed UNDER the black point
-        //    and were deleted, leaving a texture that was 43.79% literal
-        //    zero. With the black point now at 0.020 the alphas have to carry
-        //    the mid-tone body themselves — this is the paint, 4.5 is still
-        //    the floor police.
-        const _bandY = _nebH * (0.42 + Math.random() * 0.16);
-        for (let i = 0; i < 26; i++) {
-            const x = (i / 26) * _nebW * 1.4 - _nebW * 0.2;
-            const y = _bandY + Math.sin(i * 0.7) * _nebH * 0.05;
-            _nebBlob(x, y, _nebH * (0.16 + Math.random() * 0.08),
-                [[0, 'rgba(200,190,255,0.275)'], [0.5, 'rgba(140,120,220,0.121)'], [1, 'rgba(0,0,0,0)']],
-                50, 'lighter');
+        // 2a) Galactic band — the warm dust road across the sphere.
+        const _bandY = _nebH * (0.44 + _nebRnd() * 0.12);
+        for (let i = 0; i < 22; i++) {
+            const x = (i / 22) * _nebW * 1.4 - _nebW * 0.2;
+            const y = _bandY + Math.sin(i * 0.7) * _nebH * 0.06;
+            _nebBlob(_nctx, x, y, _nebH * (0.18 + _nebRnd() * 0.10),
+                [[0, 'rgba(196,180,255,0.42)'], [0.5, 'rgba(122,96,214,0.21)'], [1, 'rgba(0,0,0,0)']],
+                46, 'lighter');
         }
 
-        // 3) Dust-lane / warm-cool nebula blobs in synthwave palette
-        const _nebPalette = [
-            ['rgba(255,45,190,0.473)', 'rgba(255,45,190,0)'],  // magenta dust
-            ['rgba(0,220,255,0.440)', 'rgba(0,220,255,0)'],    // cyan dust
-            ['rgba(140,60,255,0.473)', 'rgba(140,60,255,0)'],  // violet dust
-            ['rgba(255,160,60,0.341)', 'rgba(255,160,60,0)'],  // amber — warm zone
-            ['rgba(40,220,190,0.308)', 'rgba(40,220,190,0)']   // teal — cool zone
+        // 2b) Named complexes — the landmarks a hero vista is pointed AT.
+        //     Big, saturated, and deliberately clustered so that some
+        //     headings are rich and others are honest empty void; a sphere
+        //     that is uniformly interesting is the same failure as a sphere
+        //     that is uniformly grey.
+        const _nebComplexes = [
+            { x: 0.11, y: 0.40, r: 0.38, c: [255, 60, 190] },  // magenta
+            { x: 0.22, y: 0.58, r: 0.28, c: [150, 70, 255] },  // violet neighbour
+            { x: 0.34, y: 0.26, r: 0.33, c: [0, 210, 255] },   // cyan
+            { x: 0.47, y: 0.66, r: 0.26, c: [40, 225, 190] },  // teal
+            { x: 0.56, y: 0.40, r: 0.24, c: [80, 150, 255] },  // cobalt bridge
+            { x: 0.68, y: 0.46, r: 0.36, c: [255, 80, 170] },  // magenta twin
+            { x: 0.79, y: 0.30, r: 0.23, c: [255, 165, 70] },  // amber warm zone
+            { x: 0.86, y: 0.66, r: 0.28, c: [0, 200, 235] },   // cyan south-east
+            { x: 0.95, y: 0.44, r: 0.30, c: [130, 90, 255] },  // violet
+            { x: 0.30, y: 0.87, r: 0.22, c: [90, 130, 255] },  // southern blue
+            { x: 0.58, y: 0.11, r: 0.21, c: [200, 90, 255] }   // northern violet
         ];
-        for (let i = 0; i < 16; i++) {
-            const p = _nebPalette[i % _nebPalette.length];
-            const cx = Math.random() * _nebW;
-            const cy = _nebH * 0.12 + Math.random() * _nebH * 0.76;
-            const r = _nebH * (0.14 + Math.random() * 0.22);
-            _nebBlob(cx, cy, r, [[0, p[0]], [1, p[1]]], 55, 'lighter');
-        }
+        _nebComplexes.forEach((k) => {
+            const cx = k.x * _nebW, cy = k.y * _nebH, r = k.r * _nebH;
+            const rgb = k.c.join(',');
+            // body (what the turbulence will carve) …
+            _nebBlob(_nctx, cx, cy, r,
+                [[0, `rgba(${rgb},0.66)`], [0.45, `rgba(${rgb},0.33)`], [1, `rgba(${rgb},0)`]],
+                52, 'lighter');
+            // … plus a whiter inner shoulder so the middle of a complex is
+            // luminous cloud rather than saturated colour alone.
+            _nebBlob(_nctx, cx, cy, r * 0.32,
+                [[0, 'rgba(255,240,255,0.16)'], [1, 'rgba(255,240,255,0)']],
+                34, 'lighter');
+        });
 
-        // 4) Distant galaxy features — 3 large, bright landmarks with a
-        //    tight core, soft halo, and faint spiral-arm streaks.
+        // -----------------------------------------------------------------
+        // 3) COLOUR x TURBULENCE. This single multiply is the whole point of
+        //    the rewrite: it replaces the smear with filaments AND writes the
+        //    true zeros that keep deep space deep.
+        // -----------------------------------------------------------------
+        _nctx.save();
+        _nctx.globalCompositeOperation = 'multiply';
+        _nctx.drawImage(_densCanvas, 0, 0);
+        _nctx.restore();
+
+        // 3b) Put a little unmasked cloud back — a whisper of the complexes'
+        //     own glow (alpha 0.10, radius bounded to the complex) so the
+        //     filaments sit inside a body instead of floating in a vacuum.
+        //     Local and small on purpose: an unbounded version of exactly
+        //     this is what the previous two passes smeared over the sphere.
+        _nebComplexes.forEach((k) => {
+            const rgb = k.c.join(',');
+            _nebBlob(_nctx, k.x * _nebW, k.y * _nebH, k.r * _nebH * 0.85,
+                [[0, `rgba(${rgb},0.06)`], [1, `rgba(${rgb},0)`]], 60, 'lighter');
+        });
+
+        // 3c) HOT CORES — small, near-white, tinted by their complex. These
+        //     are the only near-white pixels on the sphere and they are what
+        //     gives a hero vista its highlight (p99) instead of a ceiling of
+        //     mid-grey. Small enough that they can never become the wash.
+        _nebComplexes.forEach((k, i) => {
+            if (i % 4 === 3) return;                      // not every complex ignites
+            const tint = k.c.map(v => Math.round(180 + v * 0.29)).join(',');
+            _nebBlob(_nctx, k.x * _nebW, k.y * _nebH, k.r * _nebH * 0.11,
+                [[0, `rgba(${tint},0.78)`], [0.35, `rgba(${tint},0.26)`], [1, `rgba(${tint},0)`]],
+                18, 'lighter');
+        });
+
+        // -----------------------------------------------------------------
+        // 4) Distant galaxy landmarks — tight core, soft halo, arm streaks.
+        //    Drawn after the multiply so they stay crisp objects rather than
+        //    being eaten by the dust mask.
+        // -----------------------------------------------------------------
         const _nebGalaxies = [
             { x: _nebW * 0.18, y: _nebH * 0.30, r: _nebH * 0.10, hue: 'rgba(255,235,210,' },
             { x: _nebW * 0.62, y: _nebH * 0.68, r: _nebH * 0.085, hue: 'rgba(200,220,255,' },
             { x: _nebW * 0.85, y: _nebH * 0.22, r: _nebH * 0.075, hue: 'rgba(255,205,240,' }
         ];
-        //    Halos and arms are painted at full strength again (the subtract
-        //    below eats their outer falloff); the tight CORES stay hot on
-        //    purpose — like the baked stars below they are the crisp, small,
-        //    high-contrast detail that survives the additive opacity and
-        //    gives the void something to bite against.
         _nebGalaxies.forEach((g) => {
-            _nebBlob(g.x, g.y, g.r * 3.2, [[0, g.hue + '0.080)'], [1, g.hue + '0)']], 60, 'lighter');
-            _nebBlob(g.x, g.y, g.r, [[0, g.hue + '1.0)'], [0.3, g.hue + '0.42)'], [1, g.hue + '0)']], 6, 'lighter');
+            _nebBlob(_nctx, g.x, g.y, g.r * 2.6, [[0, g.hue + '0.10)'], [1, g.hue + '0)']], 60, 'lighter');
+            _nebBlob(_nctx, g.x, g.y, g.r, [[0, g.hue + '1.0)'], [0.3, g.hue + '0.42)'], [1, g.hue + '0)']], 6, 'lighter');
             _nctx.save();
+            _nctx.globalCompositeOperation = 'lighter';
             _nctx.translate(g.x, g.y);
-            _nctx.rotate(Math.random() * Math.PI);
+            _nctx.rotate(_nebRnd() * Math.PI);
             _nctx.scale(1, 0.35);
             _nctx.filter = 'blur(3px)';
             _nctx.strokeStyle = g.hue + '0.170)';
@@ -6122,68 +6279,49 @@ try {
             _nctx.restore();
         });
 
-        // 4.5) BLACK-POINT SUBTRACT — the single change that lets open sky
-        //      resolve to the clear colour again.
-        //
-        //      This dome is the outermost additive layer and it covers every
-        //      pixel of every frame, so whatever its darkest texel is becomes
-        //      the game's luminance FLOOR. The problem was never the bright
-        //      dust: it was that 26 band blobs + 16 dust blobs + 3 galaxy
-        //      halos, each a soft radial gradient with a wide tail, sum with
-        //      'lighter' into a low-level wash of ~10-25/255 across the WHOLE
-        //      sphere, with no texel anywhere reading zero. Multiply that by
-        //      the material's additive opacity and every frame gained a few
-        //      counts of plum haze it could never lose — measured floor
-        //      RGB(13,9,16), and a controlled A/B (hide this one mesh) moved
-        //      the open-void vantage from 24% to 85% of pixels under 0.02
-        //      luma. The dome, on its own, WAS the milk.
-        //
-        //      A gradient's tail is unbounded, so no choice of alpha ever
-        //      makes it reach zero — you can only make the whole sky dimmer,
-        //      which is what the previous 4x cut did (and why the sky went
-        //      grey and lifeless). Subtracting a black point fixes the tails
-        //      instead of the peaks: everything below `bp` is clamped to
-        //      literal 0 — an additive texel of 0 contributes EXACTLY nothing
-        //      no matter what opacity the dome runs at — while what survives
-        //      is renormalised and gamma-crushed so the dust lanes come back
-        //      HOTTER and more saturated than before. Blacks and colour, not
-        //      blacks or colour.
-        //
-        //      Runs before the pinprick starfield below so the stars are
-        //      composited on top of the graded dust at full brightness
-        //      instead of being crushed with it. One pass over the canvas at
-        //      load time (256-entry LUT, no per-pixel pow) — zero per-frame
-        //      cost, and it is the last thing to touch the dust layer.
-        //      CALIBRATION (measured on the live 2048x1024 canvas, then on the
-        //      rendered frame at a frozen vantage):
-        //      0.115 was the right IDEA at the wrong SETTING. It did not just
-        //      eat the gradient tails — it ate the nebula's entire mid-tone
-        //      body with them and kept only the small hot cores. At 0.115 the
-        //      baked texture measured 43.79% of texels at EXACTLY RGB(0,0,0),
-        //      51.15% under 8/255, mean 14.89/255, and only 0.73% above half
-        //      white. Because the dome is AdditiveBlending a zero texel adds
-        //      exactly nothing at ANY opacity, so the sky could not be turned
-        //      back on from the opacity knob: hiding the dome entirely gave
-        //      frame meanLum 31.86, op=0.30 gave 36.88, and op=1.00 — 3.3x
-        //      more light — gave only 48.55, against a 104.57 reference. You
-        //      cannot scale a near-black texture into a luminous one.
-        //      0.020 keeps the fix's purpose (the far tail, which is what
-        //      washed the whole sphere, still resolves to hard 0 — dead-black
-        //      pixels in frame are unchanged at ~0.5%) while letting the
-        //      mid-tone body through. Gamma flips below 1 so those recovered
-        //      mids are LIFTED rather than crushed, and the gain carries the
-        //      lanes. Re-measured with these three constants: texture zeros
-        //      43.79% → 8.14%, frame meanLum 36.90 → 105.73, meanChroma
-        //      26.59 → 47.59, flat-background card 2.72% → 0.00%.
-        const _NEB_BLACK_POINT = 0.020;   // texels dimmer than this → hard 0
-        const _NEB_GAMMA = 0.85;          // lift the mids that survive
-        const _NEB_GAIN = 1.70;           // then put the punch back in the lanes
+        // -----------------------------------------------------------------
+        // 5) GRADE — an S-CURVE, not a lift. The previous pass used gamma
+        //    0.85 with a 1.7x gain, which is the transfer function that
+        //    boosts the DIMMEST texels the most; that is arithmetically how
+        //    you manufacture fog. This one pins the toe to hard zero, keeps
+        //    the shoulder hot, and expands what is between them, so the
+        //    contrast the multiply just created survives to the screen.
+        // -----------------------------------------------------------------
+        //    The curve is: hard toe → power crush → EXPONENTIAL SHOULDER.
+        //    The shoulder is the part that matters and it is why the paint
+        //    alphas above are deliberately modest. 'lighter' compositing
+        //    clips at 255 IN THE CANVAS, before any grade can see it, so
+        //    painting the complexes hot enough to look right where they
+        //    overlap fuses whole regions into flat white that no LUT can
+        //    unbake (measured: three overlapping complexes gave a heading of
+        //    meanLum 142 at p50 134 — a white-out — while the heading next to
+        //    it read 29). Painting well below clip and letting
+        //    1-exp(-kt) do the lifting gives the same brightness with a soft
+        //    plateau instead of a clipped plate: mids come up hard, the top
+        //    end compresses smoothly, and nothing fuses.
+        const _NEB_TOE = 0.045;      // below this → hard 0 (void stays void)
+        const _NEB_TOE_POW = 1.35;   // crush what is just above the toe
+        const _NEB_GAIN = 2.60;      // then lift the cloud body, LINEARLY
+        const _NEB_KNEE = 0.70;      // soft roll-off only above here
         try {
             const _nebLut = new Uint8ClampedArray(256);
-            const _nebSpan = 1 - _NEB_BLACK_POINT;
             for (let v = 0; v < 256; v++) {
-                const t = Math.max(0, (v / 255) - _NEB_BLACK_POINT) / _nebSpan;
-                _nebLut[v] = Math.round(Math.min(1, Math.pow(t, _NEB_GAMMA) * _NEB_GAIN) * 255);
+                let t = (v / 255 - _NEB_TOE) / (1 - _NEB_TOE);
+                if (t <= 0) { _nebLut[v] = 0; continue; }
+                const u = Math.pow(t, _NEB_TOE_POW) * _NEB_GAIN;
+                // Linear below the knee — local contrast, i.e. the filament
+                // structure the multiply just created, passes through
+                // untouched. A pure saturating curve (1-exp(-kt)) was tried
+                // first and it lifted the mean fine but flattened every lit
+                // region to the same plateau: measured meanAvg 60-68 with the
+                // bright headings reading as smooth featureless glow ramps,
+                // which is the milk problem again, just brighter. Only the
+                // part ABOVE the knee gets compressed, so highlights roll off
+                // instead of clipping and the cloud keeps its texture.
+                const s = u <= _NEB_KNEE
+                    ? u
+                    : _NEB_KNEE + (1 - _NEB_KNEE) * (1 - Math.exp(-(u - _NEB_KNEE) / (1 - _NEB_KNEE)));
+                _nebLut[v] = Math.round(Math.min(1, s) * 255);
             }
             const _nebImg = _nctx.getImageData(0, 0, _nebW, _nebH);
             const _nebPx = _nebImg.data;
@@ -6196,30 +6334,27 @@ try {
         } catch (nebGradeError) {
             // getImageData can throw on a tainted canvas; the dome is still
             // usable ungraded, just hazier, so this must never be fatal.
-            console.warn('⚠️ Nebula skybox black-point subtract skipped:', nebGradeError);
+            console.warn('⚠️ Nebula skybox grade skipped:', nebGradeError);
         }
 
-        // 5) Fine pinprick starfield baked straight into the backdrop — fills
-        //    the gaps between the live Points starfield so a distant frame
-        //    never reads as bare black between sparse dots, denser near the
-        //    milky-way band like a real sky.
+        // -----------------------------------------------------------------
+        // 6) Pinprick starfield, baked last so the stars composite on top of
+        //    the graded dust at full brightness instead of being crushed with
+        //    it. Denser near the band, like a real sky.
+        // -----------------------------------------------------------------
         _nctx.globalCompositeOperation = 'lighter';
         const _nebStarCount = _isMobileRenderTier() ? 3500 : 7000;
         for (let i = 0; i < _nebStarCount; i++) {
-            const x = Math.random() * _nebW;
-            const y = Math.random() * _nebH;
+            const x = _nebRnd() * _nebW;
+            const y = _nebRnd() * _nebH;
             const nearBand = Math.max(0, 1 - Math.abs(y - _bandY) / (_nebH * 0.3));
-            if (Math.random() > 0.35 + nearBand * 0.5) continue;
-            const size = Math.random() < 0.92 ? Math.random() * 0.9 + 0.2 : Math.random() * 1.6 + 1.0;
-            const warm = Math.random() < 0.28;
-            // Pushed toward full brightness (was 0.35..0.85). The dust around
-            // them got 4x darker and the whole layer now composites at 0.25
-            // additive, so stars need the headroom to stay CRISP pinpricks
-            // against real black instead of dissolving into the wash.
-            const alpha = 0.62 + Math.random() * 0.38;
+            if (_nebRnd() > 0.35 + nearBand * 0.5) continue;
+            const size = _nebRnd() < 0.92 ? _nebRnd() * 0.9 + 0.2 : _nebRnd() * 1.6 + 1.0;
+            const warm = _nebRnd() < 0.28;
+            const alpha = 0.62 + _nebRnd() * 0.38;
             _nctx.fillStyle = warm
-                ? `rgba(255,${200 + Math.floor(Math.random() * 40)},${150 + Math.floor(Math.random() * 60)},${alpha})`
-                : `rgba(${200 + Math.floor(Math.random() * 40)},${225 + Math.floor(Math.random() * 30)},255,${alpha})`;
+                ? `rgba(255,${200 + Math.floor(_nebRnd() * 40)},${150 + Math.floor(_nebRnd() * 60)},${alpha})`
+                : `rgba(${200 + Math.floor(_nebRnd() * 40)},${225 + Math.floor(_nebRnd() * 30)},255,${alpha})`;
             _nctx.beginPath();
             _nctx.arc(x, y, size, 0, Math.PI * 2);
             _nctx.fill();
@@ -6232,36 +6367,40 @@ try {
         nebulaSkyboxTexture.needsUpdate = true;
 
         const nebulaSkyboxGeometry = new THREE.SphereGeometry(195000, 48, 32);
-        // ADDITIVE, not opaque. Previously this drew as a solid MeshBasic
-        // wash: because it is the outermost layer with the most-negative
-        // renderOrder, every one of its texels became the literal minimum
-        // luminance of that direction of sky, and the darkest texel was a
-        // violet ~#120e2a — so NOTHING in the game could ever be blacker
-        // than that. Additive at 0.30 means this layer can only ADD light
-        // on top of the near-black clear colour: void stays void, dust
-        // lanes and baked stars still bloom.
+        // ADDITIVE, so this layer can only ADD light on top of the near-black
+        // clear colour: a texel of 0 contributes exactly nothing at ANY
+        // opacity, which is why the void survives even at the high base
+        // opacity below.
         //
-        // 0.30 is the same number as updateNebulaSkyboxOpacity()'s minOp, so
-        // the very first frame already sits on the distance ramp instead of
-        // stepping down onto it once the fade starts ticking.
+        // 0.94 (was 0.30). With the old smear that number was a fog budget —
+        // every extra count of opacity went straight into the wash, so it had
+        // to stay small and the sky could never be luminous. Now that better
+        // than half the sphere is a hard zero, opacity buys BRIGHTNESS WHERE
+        // THERE IS CLOUD and buys nothing at all where there isn't, so it can
+        // run near 1.0: a 255 core texel lands at ~224 on screen (hot cloud,
+        // real highlights) while an empty heading still resolves to the
+        // scene.background void. Same number as updateNebulaSkyboxOpacity()'s
+        // minOp so frame one already sits on the distance ramp.
         const nebulaSkyboxMaterial = new THREE.MeshBasicMaterial({
             map: nebulaSkyboxTexture,
             side: THREE.BackSide,
             fog: false,
             transparent: true,
-            opacity: 0.30,
+            opacity: 0.94,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
         });
         const nebulaSkybox = new THREE.Mesh(nebulaSkyboxGeometry, nebulaSkyboxMaterial);
+        nebulaSkybox.name = 'NebulaSkybox';
         nebulaSkybox.renderOrder = -5; // furthest-back layer — everything else composites on top
         nebulaSkybox.frustumCulled = false;
         scene.add(nebulaSkybox);
         window.nebulaSkybox = nebulaSkybox;
         window.nebulaSkyboxTexture = nebulaSkyboxTexture;
         // Design opacity the distance fade below modulates around.
-        nebulaSkybox.userData._nebBaseOpacity = 0.30;
+        nebulaSkybox.userData._nebBaseOpacity = 0.94;
+        console.log(`🎨 Nebula backdrop baked in ${(((typeof performance !== 'undefined') ? performance.now() : 0) - _nebT0).toFixed(0)}ms`);
 
         // scene.background is the true floor of the frame now that the
         // backdrop is additive — it is the colour of every pixel the sky
@@ -6277,7 +6416,7 @@ try {
         // synthwave palette a ground to read against instead of a hole.
         scene.background = new THREE.Color(0x0a0a1a);
 
-        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.30)`);
+        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.94)`);
     } catch (nebulaSkyboxError) {
         console.error('❌ Error creating nebula skybox backdrop:', nebulaSkyboxError);
     }
@@ -18146,19 +18285,30 @@ function updateCMBOpacity() {
 // player spawns ~9.3k units out, and an origin-anchored ramp would open the
 // game already half-lit.
 //
-//   • Open void near Sol → 0.30: dust is a rumour, but the sky is LIT.
-//   • Deep travel / galactic core → 0.55: the sky opens up and the dust
-//     lanes and baked galaxy cores bloom, so distance READS as spectacle.
-//   • Boss battle → ~0, so only the pulsing blood-red boss dome shows
-//     (identical policy to hubbleSkybox2).
+//   • Open void near Sol → 0.94: the authored bake, full strength.
+//   • Deep travel / galactic core → 1.00: the sky opens up and the dust
+//     lanes and baked cores bloom, so distance READS as spectacle.
+//   • Boss battle → 0.40 (NOT ~0), see below.
 //
-// These were 0.12 / 0.20 — below the authored base opacity, and half of what
-// this very comment block used to promise. The effect was that the sky was
-// switched off: a 16-heading sweep at three vantages measured mean luminance
-// 8.5-8.7/255 with 66-69% of the frame under 8/255 (dead black), and the
-// worst single heading was 97% dead black. The celestial bodies, the neon
-// and the particle work were all being composited onto an unlit black card.
-// 0.30/0.55 is the same ramp SHAPE, just actually turned on.
+// Two things changed here.
+//
+// (a) LEVEL. 0.30/0.55 belonged to the old smeared bake, where opacity was a
+//     fog budget. The rewritten bake is better than half hard zeros, so
+//     opacity now buys brightness only where there is actually cloud. Anything
+//     under ~0.8 just dims the filaments and the hot cores back into mid-grey
+//     without darkening the void at all — the void is already zero.
+//
+// (b) THE BOSS BRANCH. This is the gameplay predicate that was switching the
+//     sky off inside the running demo, and it is not a paint value: it is
+//     isBossBattleActive(). The autopilot demo hunts boss-tier ships, so for
+//     long stretches of the demo this predicate is TRUE, and it drove the
+//     beauty layer to 0.02 — i.e. off — while hubbleSkybox2 went to 0 at the
+//     same time. Every frame of a demo boss fight was staged on a black card
+//     no matter what the bake looked like, which is why two rounds of sky work
+//     could measure fine at a frozen vantage and still look like nothing in
+//     the demo. The blood-red dome does need to own the sky during a set
+//     piece, but it owns it by being loud, not by everything else being
+//     deleted: 0.40 keeps the nebula readable behind the storm.
 // =============================================================================
 function updateNebulaSkyboxOpacity() {
     const sky = (typeof window !== 'undefined') ? window.nebulaSkybox : null;
@@ -18174,8 +18324,8 @@ function updateNebulaSkyboxOpacity() {
 
     const fadeStart = 1500;
     const fadeEnd = 70000;
-    const minOp = 0.30;
-    const maxOp = 0.55;
+    const minOp = 0.94;
+    const maxOp = 1.00;
 
     let targetOpacity;
     if (distanceFromStart < fadeStart) {
@@ -18187,8 +18337,9 @@ function updateNebulaSkyboxOpacity() {
         targetOpacity = minOp + progress * (maxOp - minOp);
     }
 
+    // Dim for the set piece, never delete it (see (b) above).
     if (typeof isBossBattleActive === 'function' && isBossBattleActive()) {
-        targetOpacity = 0.02;
+        targetOpacity = 0.40;
     }
 
     const cur = sky.material.opacity;
@@ -18250,11 +18401,13 @@ function updateHubbleSkybox2Opacity() {
         targetOpacity = 0.32 + (progress * 0.13); // 0.32 → 0.45
     }
     
-    // Boss / elite-guardian battle: hide this deeper Hubble layer too so
-    // only the pulsing blood-red boss skybox shows. Auto-resumes when
-    // the boss/guardian is defeated.
+    // Boss / elite-guardian battle: pull the deep-field plate DOWN so the
+    // pulsing blood-red dome dominates — but not to 0. Paired with the
+    // nebula dome's own boss branch above, a hard 0 here meant the demo's
+    // boss fights (which the autopilot seeks out constantly) rendered on a
+    // bare black card. 0.12 keeps the distant galaxies faintly present.
     if (typeof isBossBattleActive === "function" && isBossBattleActive()) {
-        targetOpacity = 0;
+        targetOpacity = 0.12;
     }
 
     // Smoothly transition to target opacity
