@@ -76,7 +76,11 @@
     get lastArrivalExt() { return ap._lastArrivalExt || null; },
     get arrivalExts() { return ap._arrivalExts || 0; },
     get lastArrivalPark() { return ap._lastArrivalPark || null; },
-    get arrivalParks() { return ap._arrivalParks || 0; }
+    get arrivalParks() { return ap._arrivalParks || 0; },
+    // How many times a new leg (warp / slingshot) was DEFERRED because a park
+    // still owned the beat — the interlock that makes a park survivable at
+    // all, in machine-readable form. See _parkOwnsBeat.
+    get arrivalParkDefers() { return ap._parkDefers || 0; }
   };
 
   // Per-frame enemy buffs + swarm — previously only applied while demo
@@ -648,6 +652,43 @@
         transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
         goPhase('bossEngage');
         break;
+      }
+    }
+
+    // ── THE PARK HOLDS THE SHOT — AND IT HAS TO HOLD IT FIRST ────────────────
+    // Parking the ship and holding the shot are two different jobs, and with
+    // the interlock keeping the park alive for its whole beat the second one
+    // became measurable for the first time. Measured, three orientTowardsTarget
+    // calls land in one demo frame while a park runs — the PHASE's (at its own
+    // cruise target), the arrival framing hold's, and the park's own — and the
+    // budget is not shared evenly between them: orientTowardsTarget slices its
+    // turn from wall-clock delta since the LAST call, so the first caller in a
+    // frame gets the whole ~16.7 ms and everyone after it gets the 4 ms floor.
+    // The park's hold sits LAST (its block runs after the dispatch below, so it
+    // can overrule the phase's keys), which made it structurally the weakest
+    // steering authority in the frame. Measured per frame on a live park:
+    // call 1 (the phase) +2.20 deg AWAY from the destination, call 2 -0.62,
+    // call 3 (the park) -0.22 — net +1.36 deg/frame of drift, and the
+    // destination walked 23 deg -> 41 deg -> 90 deg off the nose over one 12 s
+    // park, ending behind the camera with the standoff itself rock solid.
+    //
+    // So take the frame's turn budget BEFORE the phase can spend it, at the
+    // rate the burn-window hold already borrows for the same reason (see the
+    // ap.paused toggle in the arrival framing hold below — same trick, same
+    // justification: while an arrival owns the ship, where the arrival is
+    // pointing outranks where the phase was cruising). With the park first the
+    // arithmetic inverts: 0.113 x angle per frame toward the destination
+    // against ~0.22 deg/frame of leftover pull, i.e. a standing error of ~4
+    // deg instead of 90.
+    if (typeof gameState !== 'undefined' && window.orientTowardsTarget && _parkOwnsBeat()) {
+      const _pkHold = gameState._arrivalSubject;
+      const _pkHoldEw = gameState.emergencyWarp;
+      if (_pkHold.obj && _pkHold.obj.position && !gameState.slingshotWhip &&
+          !(_pkHoldEw && (_pkHoldEw.active || _pkHoldEw.transitioning))) {
+        const _prevPaused = ap.paused;
+        ap.paused = true;
+        window.orientTowardsTarget(_pkHold.obj);
+        ap.paused = _prevPaused;
       }
     }
 
@@ -1318,6 +1359,13 @@
         // the middle of an arrival beat.
         const _k = keys();
         _k.w = false; _k.s = false; _k.a = false; _k.d = false;
+        // ...INCLUDING THE ONE INPUT THAT IS NOT A KEY HELD DOWN. The combat
+        // and approach jumps (four sites) set `keys.wDoubleTap` plus
+        // `gameState._pendingJumpMs` as a one-shot latch that physics consumes
+        // on its own; clearing w/s/a/d does not touch it, and the jump it
+        // fires sets emergencyWarp.isJump — the exact flag this park stands
+        // down for. Swallow the latch while the arrival is being looked at.
+        _k.wDoubleTap = false;
         // Hold the destination on the nose: the framing hold and the camera
         // assist have both just expired with the ramp, and the reverse thrust
         // below acts along the nose.
@@ -1331,6 +1379,20 @@
           // the geometry ends up being.
           _k.x = true;
           if (_pkClose > PARK_CLOSE_MAX) _pkEw.autoBraking = true;
+          // ...AND A DECAY CANNOT NULL A VELOCITY SOMETHING KEEPS RE-ADDING.
+          // The brake is a multiplier (x0.975/frame), so against any sustained
+          // input it settles at an equilibrium rather than at zero. Measured on
+          // the fatal leg of run B (Olympus Nebula Prime): the phase underneath
+          // was commanding a 1.6 u/frame approach, the park braked, and the two
+          // balanced at a dead-constant 0.90-0.93 u/frame of closing for the
+          // WHOLE 12,000 ms — never once under the 0.3 latch, and never under
+          // PARK_FLARE_SPEED either, so the station-keep below (the one stage
+          // that pushes BACK instead of just bleeding) was never reached. So
+          // while the range is still shrinking and the ship is not actually
+          // travelling, spend the engine as well as the brake: reverse thrust
+          // acts along the nose, which the hold above keeps on the subject, so
+          // it is anti-radial.
+          if (!_pkCruising && _pkClose > PARK_CLOSE_MAX) _k.s = true;
         } else {
           // STAGE 2 — STATION-KEEP. Below the flare threshold the ship is at
           // the engine's floor and only its DIRECTION is still negotiable.
@@ -2644,8 +2706,51 @@
     const dist = camPos().distanceTo(nebCenter);
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
-    // Approach the nebula, then orbit at a fixed radius around the center.
-    const ORBIT_RADIUS = 500;
+    // Approach the nebula, then orbit at a radius that CLEARS WHAT IS AT THE
+    // CENTRE. A flat 500 u lap is a hull-scraping radius at a nebula whose
+    // prime body is 550 u across — and that is the same body the warp just
+    // arrived at, so the demo flies its lap straight through its own
+    // destination. Measured twice, once per instrumented run: the arrival
+    // parked cleanly at 2,400-2,600 u, the park's clock ran out, this phase
+    // took the stick and flew the ship 1,987 -> 650 u at a commanded 1.6 u/f
+    // until "PLANETARY IMPACT — Ship destroyed by collision with Atlantis
+    // Nebula Prime" (and, in the other run, with Olympus Nebula Prime). The
+    // arrival already knows the right number: the standoff it was framed at.
+    // Cached per nebula — the candidate search walks the body list, which is
+    // not a per-frame cost.
+    // Recomputed when the nebula changes OR when a new arrival subject lands —
+    // the phase can be entered before the leg has staged one, and the first
+    // answer would otherwise stick at the unsafe default. Both keys change at
+    // most once per leg, so the body search below is never a per-frame cost.
+    const _oAsObj = (gameState._arrivalSubject && gameState._arrivalSubject.obj) || null;
+    if (ap._orbitRadiusFor !== ap.currentNebula || ap._orbitRadiusAs !== _oAsObj) {
+      ap._orbitRadiusFor = ap.currentNebula;
+      ap._orbitRadiusAs = _oAsObj;
+      ap._orbitRadius = 500;
+      // The body the warp just arrived at IS the body at this centre — it is
+      // the one the staging rules picked for exactly that reason — so ask it
+      // first and only fall back to a search. (Searching alone missed Olympus
+      // Nebula Prime, whose centre offset is wider than the search window, and
+      // the demo flew the 500 u lap straight into it: measured 2,855 -> 851 u
+      // at a flat 4 u/frame, "PLANETARY IMPACT".)
+      let _oObj = null, _oRad = 0;
+      const _oAs = gameState._arrivalSubject;
+      if (_oAs && _oAs.obj && _oAs.obj.position &&
+          _oAs.obj.position.distanceTo(nebCenter) < 6000) {
+        _oObj = _oAs.obj; _oRad = _oAs.radius;
+      } else {
+        const _oCand = _findArrivalSubject(nebCenter, 3000);
+        if (_oCand && _oCand.obj) { _oObj = _oCand.obj; _oRad = _oCand.radius; }
+      }
+      if (_oObj) {
+        const _oSo = _arrivalStandoff(_oRad, _arrivalDangerR(_oObj));
+        // Measured from the CENTRE, so carry the body's own offset from it —
+        // a lap sized to clear the body has to clear it from where it sits.
+        ap._orbitRadius = Math.max(500,
+          Math.round(_oSo.stand + _oObj.position.distanceTo(nebCenter)));
+      }
+    }
+    const ORBIT_RADIUS = ap._orbitRadius || 500;
     if (dist > ORBIT_RADIUS + 200) {
       setStatus('Approaching nebula center — ' + (dist | 0) + ' u');
       flyToward(ap.orbitTarget, 1.6);
@@ -3369,8 +3474,62 @@
     };
   }
 
+  // ─── THE PARK INTERLOCK ────────────────────────────────────────────────────
+  // IS AN ARRIVAL STILL BEING LOOKED AT RIGHT NOW? Every piece of park state
+  // (`_parkT0`, `_parkedAt`, the closing-rate filter) lives as a property of
+  // `gameState._arrivalSubject`, so replacing or nulling that object does not
+  // stop the park — it DELETES it, mid-beat, with the ship still travelling
+  // and no record that an arrival was ever in progress. Measured, this build:
+  // leg 1 (Atlantis Nebula Prime) cut clean, decelerated 12.09 -> 1.14 u/frame
+  // and was 2.4 s into its 12 s park when the next leg fired and overwrote the
+  // subject — the arrival was abandoned at 3,409 u against a 2,129 u standoff
+  // (+60 %), still closing at 63 u/s, framed in the top-right corner at NDC
+  // (0.795, 0.823). The replacement leg then flew 2,655 -> 1,423 -> 690 ->
+  // 149 u, inside its own 436 u standoff, and killed the ship. Across a
+  // 12m25s instrumented session `demoPilot.arrivalParks` was 0: not a tuning
+  // miss, a structurally unreachable success state — the park's own latch sits
+  // downstream of an object anybody could swap out from under it.
+  //
+  // So the park owns the beat while its clocks say it does: from `_parkT0`
+  // until PARK_MAX_MS, and (once it has latched "stopped") until its
+  // PARK_SETTLE_MS hold expires. Inside that window every staging path — a new
+  // O-warp, a slingshot, a tactical jump's subject swap, even a plain clear —
+  // is refused and reports false, which is what the phases at :2318, :2328 and
+  // :2534 already read as "not this frame, try the next one". The leg is not
+  // cancelled, only deferred by at most PARK_MAX_MS, and the ship spends that
+  // deferral parked at a destination instead of stutter-hopping through it.
+  function _parkOwnsBeat() {
+    const _prev = (typeof gameState !== 'undefined' && gameState._arrivalSubject) || null;
+    if (!_prev || !_prev._parkT0) return false;
+    const _now = Date.now();
+    // Hard ceiling first: a pathological park always hands the leg back.
+    if (_now - _prev._parkT0 >= PARK_MAX_MS) return false;
+    // Latched parks additionally release once the settle hold is served.
+    if (_prev._parkedAt && _now - _prev._parkedAt >= PARK_SETTLE_MS) return false;
+    return true;
+  }
+
+  // Record a deferral so the interlock is provable from telemetry rather than
+  // inferred from the absence of a crash. One console line per park (latched
+  // on the subject) plus a counter; always returns false so refusal sites can
+  // `return _parkDefer(...)`.
+  function _parkDefer(what) {
+    ap._parkDefers = (ap._parkDefers || 0) + 1;
+    const _pk = gameState._arrivalSubject;
+    if (_pk && !_pk._deferLogged) {
+      _pk._deferLogged = true;
+      console.log('⏸ PARK HOLDS THE BEAT → deferred ' + what + ' → ' +
+        ((_pk.obj && _pk.obj.userData && (_pk.obj.userData.name || _pk.obj.userData.type)) || 'body') +
+        ' park age=' + (Date.now() - _pk._parkT0) + 'ms' +
+        (_pk._parkedAt ? ' (latched, settling)' : ' (still braking)'));
+    }
+    return false;
+  }
+
   function _setArrivalSubject(obj, radius) {
-    if (typeof gameState === 'undefined') return;
+    if (typeof gameState === 'undefined') return false;
+    // A park in progress outranks any new claim (see _parkOwnsBeat).
+    if (_parkOwnsBeat()) return false;
     const dangerR = _arrivalDangerR(obj);
     const _so = _arrivalStandoff(radius, dangerR);
     gameState._arrivalSubject = {
@@ -3396,10 +3555,17 @@
       // burn before staging, so boostDuration is already this burn's.
       liveMs: _arrivalSubjectLiveMs()
     };
+    return true;
   }
 
   function _clearArrivalSubject() {
-    if (typeof gameState !== 'undefined') gameState._arrivalSubject = null;
+    if (typeof gameState === 'undefined') return false;
+    // Nulling the subject mid-park destroys the park exactly as thoroughly as
+    // replacing it does — the staging paths that "claim nothing" (:3763,
+    // :3952, :4580) have to respect the beat too.
+    if (_parkOwnsBeat()) return false;
+    gameState._arrivalSubject = null;
+    return true;
   }
 
   const _owarpFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
@@ -3768,9 +3934,13 @@
   // Arm this burn to expire at the subject, THEN stage it. Order matters:
   // _setArrivalSubject captures its live-window from the armed duration.
   function _stageAndArm(obj, radius) {
+    // Ask BEFORE arming: _armWarpBurn writes this leg's duration into
+    // gameState.emergencyWarp, so staging that is going to be refused must not
+    // leave a re-armed burn behind for the park's own subject to inherit.
+    if (_parkOwnsBeat()) return false;
     const so = _arrivalStandoff(radius, _arrivalDangerR(obj));
     _armWarpBurn(camPos().distanceTo(obj.position), so.stand);
-    _setArrivalSubject(obj, radius);
+    return _setArrivalSubject(obj, radius);
   }
 
   // ─── navigateTo: closed-loop travel controller ─────────────────────────────
@@ -3945,15 +4115,22 @@
     let _jumpTail = 700;
     if (!approachRange) {
       const _arrivalCand = _findArrivalSubject(targetObj.position, Math.max(1500, Math.min(dist, 4000)));
-      if (_arrivalCand) {
-        _setArrivalSubject(_arrivalCand.obj, _arrivalCand.radius);
+      // Size the tail from what the setter ACCEPTED, not from whatever is in
+      // gameState afterwards: under the park interlock the set can be refused,
+      // and reading the live subject then would size this jump's landing from
+      // a DIFFERENT body — the one currently parked at.
+      if (_arrivalCand && _setArrivalSubject(_arrivalCand.obj, _arrivalCand.radius)) {
         _jumpTail = Math.min(gameState._arrivalSubject.arriveDist, dist * 0.6, 4500);
-      } else {
+      } else if (!_arrivalCand) {
         _clearArrivalSubject();
       }
     }
     const _jumpGap = approachRange ? (dist - approachRange) : (dist - _jumpTail);
-    if (allowJump && dist > 1200 && _jumpGap > 500 && dist < jumpMaxDist && speed < 4 &&
+    // A tactical jump sets emergencyWarp.isJump, which the park explicitly
+    // stands down for — so an unguarded jump does not merely disturb the
+    // arrival, it silently switches the park off and boosts away from it.
+    if (allowJump && !_parkOwnsBeat() &&
+        dist > 1200 && _jumpGap > 500 && dist < jumpMaxDist && speed < 4 &&
         facing > 0.9 && gameState.energy > 25 &&
         Date.now() - (ap._lastJumpTap || 0) > 5000) {
       ap._lastJumpTap = Date.now();
@@ -4440,6 +4617,36 @@
     if (window.fireWeapon) window.fireWeapon();
   }
 
+  // ─── DO NOT WARP THROUGH THE THING WE JUST ARRIVED AT ──────────────────────
+  // A burn is hands-off from ignition: physics owns the ship, nothing steers
+  // around anything, and the arrival standoff deliberately parks the demo a
+  // couple of thousand units off a body big enough to be worth looking at. Fire
+  // the next leg on a heading that still has that body in front of the nose and
+  // the burn drives straight through it. Measured, run D: parked and lapping
+  // 2,570-2,660 u off Atlantis Nebula Prime, the phase warped toward Nebula-4
+  // and 2.5 s into the boost — "PLANETARY IMPACT — Ship destroyed by collision
+  // with Atlantis Nebula Prime". Only the body we are actually standing next to
+  // is tested (the staged subject), because that is the only one the standoff
+  // rules put us close enough to hit before the burn has any spread.
+  const _depTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _depFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function _departureBlocked() {
+    if (typeof gameState === 'undefined' || typeof camera === 'undefined') return false;
+    if (!_depTmp || !_depFwd) return false;
+    const as = gameState._arrivalSubject;
+    if (!as || !as.obj || !as.obj.position) return false;
+    camera.getWorldDirection(_depFwd);
+    _depTmp.subVectors(as.obj.position, camPos());
+    const along = _depTmp.dot(_depFwd);
+    // Behind us, or further than a burn can carry: not in the way.
+    if (along <= 0 || along > _oWarpMaxBoostDist()) return false;
+    const off = Math.sqrt(Math.max(0, _depTmp.lengthSq() - along * along));
+    // Clear it by its own danger radius plus a ship-length of margin. Refusing
+    // is cheap: the caller retries next frame and the demo is always moving, so
+    // a blocked heading opens within a second or two of lap.
+    return off < (as.dangerR || 0) + 300;
+  }
+
   // Emergency warp is gated: the autopilot is NOT allowed to use its own
   // warp charges until at least 3 enemies have been defeated this demo run.
   // Returns true if the warp actually fired.
@@ -4463,6 +4670,16 @@
   // not can only run its stopwatch out into whatever happens to be ahead.
   function triggerOKeyWarp(dest) {
     if (!canEmergencyWarp()) return false;
+    // NOT WHILE AN ARRIVAL IS STILL BEING LOOKED AT (see _parkOwnsBeat). This
+    // has to be the FIRST thing the trigger does, ahead of _disarmWarpBurn()
+    // below and the O key press at the bottom: a refusal that happened further
+    // down would still have reset the live park's burn arming and still have
+    // fired the warp. Returning false here is the whole leg deferred, which
+    // every caller retries on the next frame.
+    if (_parkOwnsBeat()) return _parkDefer('O-warp');
+    // ...and not straight through the body we are parked next to (see
+    // _departureBlocked). Same contract: false means "not this frame".
+    if (_departureBlocked()) return false;
     // ARRIVAL SUBJECT: stage what this boost will actually reveal BEFORE
     // firing, so camera-system's exit framing, the orientation hold, and the
     // arrival cut-off all have a real body to converge on the instant the
@@ -4570,6 +4787,11 @@
   function triggerSlingshot() {
     if (gameState.energy < 20) return false;
     if (gameState.slingshot && gameState.slingshot.active) return false;
+    // The whip arc drives position on a rail and ignores keys, so firing one
+    // during a park does not just replace the subject — it physically throws
+    // the ship off the standoff the burn just bought. Defer (see
+    // _parkOwnsBeat); callers already retry.
+    if (_parkOwnsBeat()) return _parkDefer('slingshot');
     // FIX 1 — ARRIVAL SUBJECT: the slingshot is explicitly launched TOWARD
     // gameState.currentTarget (callers set it just before triggering, e.g.
     // "Aim target = the nebula" above) — resolve a real body near that aim

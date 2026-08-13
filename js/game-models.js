@@ -430,6 +430,39 @@ function _addFresnelRim(material, opts) {
     const hullForm = !!opts.hullForm;
     const battleDamage = panelDetail && (opts.battleDamage !== false);
     const hullSpec = !!opts.hullSpec;
+    // opts.hullLightRig (bool): THE KEY/FILL/RIM RIG, AS SHADER MATH.
+    //
+    // Every hull in this game was authored against a three-point rig that has
+    // never lit a single pixel. The rig was built as real THREE.DirectionalLights
+    // parented to the camera (see _HULL_LIGHT_RIG below for what replaced it),
+    // and three.js only collects lights it meets while traversing the RENDERED
+    // SCENE — the camera in this game is not in the scene graph (camera.parent
+    // === null), so those lights were never collected. Measured live:
+    // lightsParentedToLiveCamera 4, directionalLightsInSceneGraph 0. What was
+    // actually lighting a hostile hull was AmbientLight(0x333333, 0.4) plus, for
+    // 3 of 9 classes, whichever unrelated decorative PointLight they happened to
+    // be parked next to — zeroing all 62 PointLights in the scene changed hull
+    // mean luminance by exactly 0.0 on the other six. A MeshStandardMaterial
+    // with no map/normalMap/roughnessMap/aoMap/envMap and scene.environment ===
+    // null, under ambient only, returns ONE number for every facet: the ships
+    // read as glow-paint silhouettes because that is literally what they were.
+    //
+    // The fix is NOT to put the camera in the scene. Camera-parented lights are
+    // scene-wide: three.js has no per-object light masking (light.layers is
+    // tested against the CAMERA's layers in projectObject, not per object), so
+    // switching them on would flood every planet, moon, station and asteroid in
+    // the game with a viewer-locked key — flattening the sun-lit crescent that
+    // the Sol system's whole look is built on. The rig is only ever wanted on
+    // HULLS, so it belongs where the hull's other authored terms already live:
+    // in this material's own shader.
+    //
+    // The directions are constants in VIEW space, which is exactly what the
+    // camera-parented rig was: a light parented to the camera has a fixed
+    // direction in view space by construction. So this is not an approximation
+    // of the intended rig, it is the same rig evaluated per hull pixel — with
+    // the bonus that it runs on `normal`, i.e. AFTER the panel bump inject, so
+    // panel seams become grooves the key light actually shades.
+    const hullLightRig = !!opts.hullLightRig;
     const needObjNormal = panelDetail || hullForm;
     const uniforms = {
         rimColorIdle: { value: new THREE.Color(opts.idle !== undefined ? opts.idle : 0x2ad4ff) },
@@ -469,13 +502,14 @@ function _addFresnelRim(material, opts) {
     }
     if (hullSpec) {
         // Direction TO the key light, in VIEW space. This is not an arbitrary
-        // number: _ensureHullKeyLight parents a DirectionalLight to the camera
-        // at local (160,220,30) aiming at (-60,-80,-600), so its direction is
-        // fixed in view space and normalize(220,300,630) restates it exactly.
-        // Because it is camera-parented, one constant vec3 is correct for
-        // every hull in the scene at every moment — no per-object work.
+        // number: it DEFAULTS TO THE KEY'S OWN DIRECTION (_HULL_LIGHT_RIG),
+        // so the analytic highlight and the rig's diffuse terminator agree by
+        // construction — a highlight that disagrees with the shading reads as
+        // a decal. Fixed in view space, so one constant vec3 is correct for
+        // every hull at every moment: no per-object work.
         uniforms.uSpecDir = {
-            value: (opts.specDir ? opts.specDir.clone() : new THREE.Vector3(220, 300, 630)).normalize()
+            value: (opts.specDir ? opts.specDir.clone()
+                : (opts.keyDir ? opts.keyDir.clone() : new THREE.Vector3(472, 756, 454))).normalize()
         };
         uniforms.uSpecColor = { value: new THREE.Color(opts.specColor !== undefined ? opts.specColor : 0xfff2d8) };
         uniforms.uSpecPower = { value: opts.specPower !== undefined ? opts.specPower : 28.0 };
@@ -483,6 +517,35 @@ function _addFresnelRim(material, opts) {
         uniforms.uSkyUp = { value: new THREE.Color(opts.skyUp !== undefined ? opts.skyUp : 0xff2ad4) };
         uniforms.uSkyDown = { value: new THREE.Color(opts.skyDown !== undefined ? opts.skyDown : 0x00d4ff) };
         uniforms.uSkyStrength = { value: opts.skyStrength !== undefined ? opts.skyStrength : 0.10 };
+    }
+    if (hullLightRig) {
+        // Directions are TO the light, in VIEW space (a light parented to the
+        // camera has a fixed view-space direction, so this is the same rig,
+        // just evaluated where it can run). The defaults here mirror
+        // _HULL_LIGHT_RIG, which is where the numbers and the reasoning live;
+        // every caller in this file passes them explicitly.
+        uniforms.uKeyDir = {
+            value: (opts.keyDir ? opts.keyDir.clone() : new THREE.Vector3(472, 756, 454)).normalize()
+        };
+        uniforms.uKeyColor = { value: new THREE.Color(opts.keyColor !== undefined ? opts.keyColor : 0xfff2d8) };
+        uniforms.uKeyStrength = { value: opts.keyStrength !== undefined ? opts.keyStrength : 2.4 };
+        uniforms.uFillDir = {
+            value: (opts.fillDir ? opts.fillDir.clone() : new THREE.Vector3(-498, -797, 342)).normalize()
+        };
+        uniforms.uFillColor = { value: new THREE.Color(opts.fillColor !== undefined ? opts.fillColor : 0x5ec8ff) };
+        uniforms.uFillStrength = { value: opts.fillStrength !== undefined ? opts.fillStrength : 0.12 };
+        uniforms.uBackDir = {
+            value: (opts.backDir ? opts.backDir.clone() : new THREE.Vector3(-40, 200, -650)).normalize()
+        };
+        uniforms.uBackColor = { value: new THREE.Color(opts.backColor !== undefined ? opts.backColor : 0xa0e8ff) };
+        uniforms.uBackStrength = { value: opts.backStrength !== undefined ? opts.backStrength : 0.30 };
+        // How much of the key/fill response is tinted by the hull's own albedo
+        // vs left as the light's own colour. 1.0 = fully albedo-modulated,
+        // which is what keeps the faction R-B signature alive: an untinted
+        // white key on a saturated hull is the fastest way to wash a faction
+        // colour to grey (the same trap the old 0.62 emissive floor fell into,
+        // from the other direction).
+        uniforms.uRigAlbedo = { value: opts.rigAlbedo !== undefined ? opts.rigAlbedo : 1.0 };
     }
     if (battleDamage) {
         uniforms.uDamage = { value: 0.0 };
@@ -713,7 +776,12 @@ uniform float uTime;`;
             ? '\nuniform vec3 uSpecDir;\nuniform vec3 uSpecColor;\nuniform float uSpecPower;\nuniform float uSpecStrength;\nuniform vec3 uSkyUp;\nuniform vec3 uSkyDown;\nuniform float uSkyStrength;'
             : '';
 
-        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', fragCommon + fragSpec);
+        // Same deal for the three-point rig: independent of the panel branch.
+        const fragRig = hullLightRig
+            ? '\nuniform vec3 uKeyDir;\nuniform vec3 uKeyColor;\nuniform float uKeyStrength;\nuniform vec3 uFillDir;\nuniform vec3 uFillColor;\nuniform float uFillStrength;\nuniform vec3 uBackDir;\nuniform vec3 uBackColor;\nuniform float uBackStrength;\nuniform float uRigAlbedo;'
+            : '';
+
+        shader.fragmentShader = shader.fragmentShader.replace('#include <common>', fragCommon + fragSpec + fragRig);
 
         let colorInject = `#include <color_fragment>
     float _rimFresEarly = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
@@ -927,7 +995,48 @@ uniform float uTime;`;
         // Anchor on the line that is actually there, and keep the old anchor
         // first so this still works if the engine is upgraded to a build that
         // has the chunk.
-        const rimBlock = `
+        // THE THREE-POINT RIG (see the hullLightRig note at the top of this
+        // function for WHY it is shader math and not scene lights).
+        //
+        //   KEY  — a full Lambert term off the upper-right-forward. This is
+        //          the one that manufactures a terminator: adjacent facets of
+        //          a 392-tri hull return different N.L, which is the entire
+        //          difference between "a lit object" and "a coloured
+        //          silhouette". It runs on `normal`, the view-space normal
+        //          AFTER the panel bump perturbation, so plate seams shade.
+        //   FILL — dim, cool, from the opposite side, WRAPPED (the +0.30/1.30
+        //          remap) so the shadow hemisphere lands on a dark blue rather
+        //          than clipping to a black cutout under ACES. Wrap rather
+        //          than raw N.L because a hard second Lambert lobe just draws
+        //          a second terminator and cancels the first one's read.
+        //   BACK — grazing backlight, gated by the view-fresnel so it only
+        //          touches trailing edges. Separates the hull from the
+        //          nebula it is crossing. This is the PBR half of the
+        //          separation cue; the synthetic fresnel rim below is the
+        //          faction-coloured half, and they are deliberately different
+        //          terms — one is white starlight on an edge, the other is
+        //          the ship's own identity colour.
+        //
+        // All three are modulated by diffuseColor.rgb (uRigAlbedo), which at
+        // this point in main() already carries coreDarken, the panel/greeble
+        // mask and the hullForm top-lit ramp — so the rig AMPLIFIES every
+        // surface term this material draws instead of adding a flat wash over
+        // them, and the faction hue survives into the lit response instead of
+        // being replaced by the lamp's own colour.
+        const rigBlock = hullLightRig ? `
+    vec3 _lrN = normalize( normal );
+    vec3 _lrV = normalize( vRimViewW );
+    vec3 _lrAlb = mix( vec3( 1.0 ), diffuseColor.rgb, uRigAlbedo );
+    float _lrKey = max( dot( _lrN, uKeyDir ), 0.0 );
+    float _lrFill = max( ( dot( _lrN, uFillDir ) + 0.30 ) / 1.30, 0.0 );
+    float _lrBack = max( dot( _lrN, uBackDir ), 0.0 );
+    float _lrGraze = pow( 1.0 - clamp( dot( _lrN, _lrV ), 0.0, 1.0 ), 2.0 );
+    outgoingLight += _lrAlb * ( uKeyColor * ( uKeyStrength * _lrKey )
+        + uFillColor * ( uFillStrength * _lrFill )
+        + uBackColor * ( uBackStrength * _lrBack * _lrGraze ) );
+` : '';
+
+        const rimBlock = rigBlock + `
     float _rimFres = pow( 1.0 - clamp( dot( normalize( vRimNormalW ), normalize( vRimViewW ) ), 0.0, 1.0 ), rimPower );
     vec3 _rimBoostShimmer = mix( rimColorBoostA, rimColorBoostB, 0.5 + 0.5 * sin( uTime * 2.6 ) );
     vec3 _rimColor = mix( rimColorIdle, _rimBoostShimmer, boostT );
@@ -999,91 +1108,122 @@ function _hullPanelCellSize(geometry) {
     return Math.max(maxDim / 12, 0.0005);
 }
 
-// REAL KEY LIGHT for enemy/boss hulls. Every hull floor below (emissive +
-// panel noise) previously only ever met a camera-parented shipLight
-// PointLight whose falloff (distance 800, decay 2 — see game-core.js) is
-// negligible by the time it reaches a hull at combat range, so a hull was
-// effectively SELF-lit only: uniform emissive with no specular breakup
-// and no true form gradient, exactly the "0 of 7,848 materials carry a
-// normal/roughness map, hulls read as flat/clipped" finding. Restoring a
-// genuine lit response doesn't require a UV-mapped normal map on these
-// low-poly, faceted GLBs — it requires a light that ISN'T parallel to the
-// camera, so adjacent facets pick up different N.L and the eye reads real
-// surface. A warm, camera-parented DirectionalLight placed off-axis from
-// the view direction does exactly that, at zero per-hull cost.
-// Installed lazily: this file loads and runs before game-core.js
-// constructs `camera` (see index.html's script order), so neither the
-// first hull material built nor top-level parse time can assume the
-// camera already exists — this polls for it and installs itself once.
-// THIS RIG IS INERT, AND THAT IS (FOR NOW) LOAD-BEARING. Two separate
-// measured facts, both verified live on a clean load with a paused world and
-// same-frame GPU readback — read them before "fixing" anything here:
+// THE HULL LIGHT RIG — authored here, EVALUATED IN THE SHADER.
 //
-//  1. The boolean below latches on the FIRST camera this file ever sees, and
-//     that is not the camera the game is played through. index.html runs the
-//     intro at page load, which builds an intro `camera`; the install loop
-//     fires on the next animation frame and parents the rig to THAT object.
-//     game-core.js's startGame() then does `camera = new PerspectiveCamera()`
-//     + `scene.add(camera)`, and the old camera is dropped with the whole rig
-//     still on it. Measured: scene.traverse() finds ZERO DirectionalLights for
-//     the entire session.
-//  2. Re-homing the rig onto the live camera does NOT switch it on, because
-//     camera-parented punctual lights contribute nothing in this scene at all.
-//     Measured on the live game camera: a DirectionalLight added as a camera
-//     child renders bit-identically at intensity 0 and at intensity 50, and so
-//     does game-core's own camera-parented shipLight PointLight at 3 vs 60.
-//     The same light parented to the SCENE does register. So the game's
-//     hostile hulls are lit by AmbientLight(0x333333,0.06) +
-//     AmbientLight(0x404040,0.02) and nothing else.
+// What used to live here: a warm DirectionalLight parented to the camera,
+// installed on the first animation frame, so that hull facets would pick up
+// different N.L instead of all returning the same number. Directly below
+// createPlayerHullMaterial there was a second copy of the same idea, a full
+// KEY/FILL/RIM trio, also camera-parented.
 //
-// The consequence that matters: every hull in this file is tuned against a rig
-// that has never rendered, and the small cold emissive floor below (0.09x base,
-// see _HULL_EMISSIVE_FLOOR) reads as WELL-FORMED specifically because nothing
-// else is flooding the hull. Making this rig work regresses exactly the form
-// metrics it was supposed to support. Measured at 300u, yaw 30, bare hull,
-// rig replicated scene-parented at its shipped intensities so it actually
-// lights (luminance std / p90-p10 contrast, rig off -> rig on):
-//     Federation  53.1 -> 40.9   contrast  93.2 -> 101.3   mean  48.5 -> 153.8
-//     Klingon     53.0 -> 33.0   contrast 119.3 ->  83.8   mean  54.9 -> 184.4
-//     Sith        64.5 -> 51.7   contrast 174.1 -> 129.3   mean  88.2 -> 161.3
-//     Cardassian  71.6 -> 37.7   contrast 167.0 ->  97.1   mean  59.7 -> 181.2
-//     Imperial    71.5 -> 41.8   contrast 182.7 -> 114.9   mean  55.0 -> 164.1
-// Four broad directional sources flood a hull to mean ~160-185 and flatten it
-// the same way the old 0.62 self-lit emissive floor did. Turning this rig on is
-// therefore a retune of every hull constant in this file, not a bug fix — do it
-// deliberately, with the floor/coreDarken/panel numbers re-derived, or not at
-// all.
-let _hullKeyLightInstalled = false;
-function _ensureHullKeyLight() {
-    if (_hullKeyLightInstalled) return;
-    if (typeof window === 'undefined' || typeof THREE === 'undefined') return;
-    // game-core.js declares `camera` with `let` at its own script's top
-    // level (not `window.camera = ...`), so it never becomes a property
-    // of window — it's only reachable as the bare identifier, which
-    // classic <script> tags DO share via the realm's global lexical
-    // environment (this is the same fallback chain game-controls.js:710
-    // and game-objects.js:3927 already rely on for the same reason).
-    const cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
-    if (!cam || !cam.isCamera) return;
-    const keyLight = new THREE.DirectionalLight(0xfff2d8, 1.6);
-    // Local to the camera, like shipLight's (0,0,-50) — offset up/right
-    // and aimed forward-down-left so N.L response varies across a hull's
-    // top/side/nose instead of lighting every facing facet identically.
-    keyLight.position.set(160, 220, 30);
-    keyLight.target.position.set(-60, -80, -600);
-    cam.add(keyLight);
-    cam.add(keyLight.target);
-    _hullKeyLightInstalled = true;
-}
-
-function _runHullKeyLightInstallLoop() {
-    if (_hullKeyLightInstalled) return;
-    requestAnimationFrame(_runHullKeyLightInstallLoop);
-    _ensureHullKeyLight();
-}
-if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(_runHullKeyLightInstallLoop);
-}
+// NEITHER OF THEM EVER LIT ANYTHING, and the reason has nothing to do with
+// which camera object they latched onto (the previous note here blamed the
+// intro camera, and re-homing them onto the live camera does not help either).
+// three.js collects lights while traversing the scene it is about to render.
+// This game never puts its camera IN that scene — camera.parent === null —
+// so a light parented to the camera is not reachable from the render root and
+// is never collected. Measured live, paused world, same-frame readback:
+//     lightsParentedToLiveCamera   4
+//     directionalLightsInSceneGraph 0
+// leaving AmbientLight(0x333333, 0.4) as the entire lighting model for a
+// MeshStandardMaterial carrying no map/normalMap/roughnessMap/aoMap/envMap
+// against a scene.environment of null. Zeroing all 62 PointLights in the
+// scene moved hull mean luminance by exactly 0.0 on 6 of 9 hostile classes
+// (the other 3 only differ because they happen to be parked inside some
+// unrelated decorative lamp's distance cutoff — the same ship class looked
+// different depending on what scenery it flew past).
+//
+// WHY THIS IS NOT FIXED WITH scene.add(camera). Lights in three.js are
+// scene-global: there is no per-object light mask (light.layers is tested
+// against the CAMERA's layers in projectObject, not per object), so putting
+// the camera in the scene switches these lamps on for EVERY lit object in the
+// game at once — every planet, moon, ring, station and asteroid would gain a
+// viewer-locked key light, which erases the sun-driven terminator the Sol
+// system's whole look is built on. A rig that is only ever wanted on hulls
+// belongs in the hull material, next to the panel, form, rim and glint terms
+// it is supposed to be shading.
+//
+// So the rig is now evaluated per hull pixel by _addFresnelRim's hullLightRig
+// block, from VIEW-SPACE constants. That is not an approximation of what was
+// authored: a camera-parented light HAS a fixed view-space direction, so the
+// constants below are the same three lamps, restated where they can actually
+// run. Two things improve in the move: the rig sees `normal` after the panel
+// bump perturbation (so seams shade), and it is modulated by the shaped
+// albedo (so it amplifies panel/form/coreDarken instead of washing them out).
+//
+// INTENSITIES. The scene-light versions were authored at 1.6 (enemy key) and
+// 2.4/0.5/1.1 (player key/fill/rim) — numbers tuned by eye against a rig that
+// rendered nothing. When the rig is actually made live at those values, hull
+// mean luminance overshoots to 139-223/255 and the UFO's luminance std FALLS
+// (30.3 -> 27.0) because the lit side clips. The shipped strength is 2.4 for
+// hostiles / 1.8 for the player hull (the strengths live on the call sites,
+// not in this table, because the two hulls are read at different ranges).
+// That is not the same 2.4: it multiplies an albedo-modulated Lambert term
+// here rather than feeding three.js's punctual pipeline, where the same
+// number arrives divided by PI and again by (1 - metalness). Measured on the
+// live build, bare hull at 300u/yaw45 with the scenery lamps zeroed, the
+// clipped fraction (luminance >= 248) of hull pixels at 2.4 is 0.16% on the
+// Federation hull, 0.27% Sith, 0.94% UFO — i.e. the top end is being used,
+// not thrown away.
+//
+// THE KEY WAS NOT OFF-AXIS. The lamp as authored sat at camera-local
+// (160,220,30) aiming at (-60,-80,-600), i.e. view-space direction
+// (220,300,630) — which is 30 degrees off the view axis. That is a FRONTAL
+// light, and a frontal light is the one arrangement that cannot draw a
+// terminator: every facet the camera can see is also facing the lamp, so
+// N.L is nearly constant across the whole visible hull. It is the identical
+// failure this file already documents for shipLight (a PointLight sitting at
+// camera-local (0,0,-50), i.e. 0 degrees off-axis), just less extreme — and
+// it is why the rig would have disappointed even if it HAD been in the scene
+// graph. Measured live on this build with the rig running, key strength held
+// fixed at 1.6, bare hull at 250u/yaw45, sweeping the key's angle off the
+// view axis (luminance std):
+//     off-axis     30deg   50deg   65deg   80deg
+//     Federation   35.5    46.0    49.8    48.7
+//     Rebel        48.7    55.2    52.9    47.7
+//     Sith         38.1    46.5    53.2    58.3
+// 63 degrees is the plateau: past ~65 the lit fraction of a nose-on hull gets
+// small enough that the mean falls faster than the spread rises, and the
+// classes disagree about which side of it they want.
+//
+// WHAT THE WHOLE CHANGE BOUGHT. Same-frame gl.readPixels off the default
+// framebuffer, world paused, subject isolated (siblings hidden, LIGHTS LEFT
+// ON — three.js skips invisible lights, so hiding them silently removes the
+// scene ambient), FX children hidden, hull mask differenced against a
+// subject-hidden render and eroded 2px. The 62 decorative PointLights are
+// zeroed for the measurement: they are scenery, they reach only whichever
+// classes happen to be parked next to them, and leaving them in makes the
+// same ship class measure differently depending on what it flew past.
+// Bare-hull luminance std, worst and best of 8 poses (250/400u x yaw
+// 0/90/180/270), rig OFF (the shipped behaviour before this change) -> ON:
+//     UFO         31.9-36.7  ->  61.1-63.5     bar >= 60   PASS
+//     Federation  14.8-24.6  ->  58.5-63.9     bar >= 45   PASS
+//     Klingon     27.0-54.7  ->  59.3-69.9                 PASS
+//     Rebel        6.3-48.9  ->  49.2-69.5                 PASS
+//     Romulan     24.8-60.1  ->  61.1-68.8                 PASS
+//     Imperial     7.1-35.1  ->  46.4-65.3                 PASS
+//     Cardassian  26.7-36.7  ->  50.1-69.0                 PASS
+//     Sith        21.1-43.2  ->  49.3-74.1                 PASS
+//     Vulcan      23.7-49.6  ->  53.6-69.7                 PASS
+// At 300u/yaw45, p90-p10 contrast on the BARE hull (previously this bar was
+// only ever cleared by additive FX against black sky): 36.2-122.4 -> 143-176,
+// 9/9 over 100. Hull mean at 300u: 27.4-73.3 -> 91.4-162.6, and the worst
+// mean over all 8 poses of any class is 59.5 — no class can go darker than
+// the nebula behind it any more (measured against the live sky in the same
+// crop: hull/sky mean ratio 1.24 -> 2.49 Federation, 1.92 -> 3.08 Sith).
+const _HULL_LIGHT_RIG = {
+    // KEY: warm, up-and-right, 63deg off the view axis.
+    keyDir: [472, 756, 454],
+    keyColor: 0xfff2d8,
+    // FILL: cool, from the opposite quadrant (down-left), 70deg off-axis and
+    // WRAPPED in the shader, so it opens the shadow side without drawing a
+    // second terminator that cancels the key's.
+    fillDir: [-498, -797, 342],
+    fillColor: 0x5ec8ff,
+    // BACK: grazing, from behind-and-above. = (-30,180,-650)-(10,-20,0).
+    backDir: [-40, 200, -650],
+    backColor: 0xa0e8ff
+};
 
 // Faction-tinted, rim-lit hull material for enemy/boss GLB meshes. Keeps
 // MeshStandardMaterial's real lighting response (shipLight + ambient +
@@ -1155,7 +1295,6 @@ if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function'
 //                  dead option it is rather than silently doing nothing.
 function createFactionHullMaterial(colorHex, opts) {
     opts = opts || {};
-    _ensureHullKeyLight();
     const WHITE = new THREE.Color(0xffffff);
     const base = new THREE.Color(colorHex !== undefined ? colorHex : 0xff0000);
     // HEAT, NOT WHITE. Value has to come from somewhere, and where it comes
@@ -1181,7 +1320,7 @@ function createFactionHullMaterial(colorHex, opts) {
     const hotPoint = (_hsl.h < 0.17 || _hsl.h > 0.80) ? HOT_WARM : HOT_COOL;
     const hot = (heat) => base.clone().lerp(hotPoint, heat);
     // High-value hull body. Was 0.55 — with a real key light now landing
-    // on these hulls (see _ensureHullKeyLight above) that much heat plus
+    // on these hulls (see _HULL_LIGHT_RIG above) that much heat plus
     // the old 0.70 emissive floor clipped 63-74% of hull pixels to white
     // (measured: ufo 73.8%, sith 63.2%). 0.35 keeps the body legible
     // against the starfield without doing all the work alone.
@@ -1253,6 +1392,21 @@ function createFactionHullMaterial(colorHex, opts) {
         // of createFactionHullMaterial (enemy, boss, fallback, UFO).
         panelDetail: opts.panelDetail !== false,
         panelCellSize: opts.panelCellSize !== undefined ? opts.panelCellSize : 12,
+        // PANEL RELIEF, RAISED 0.55 -> 1.8. The bump inject perturbs the lit
+        // normal with the panel field, so its whole effect is proportional to
+        // how much DIRECTIONAL light lands on the hull — and until the rig
+        // above went live, that was none: the perturbation was being applied
+        // to a normal that only ever met a constant ambient, which is why the
+        // panel plates only ever read as a printed pattern. Now that the key
+        // actually shades them, relief is the cheapest surface variance in
+        // this material. Measured on a Klingon hull at 400u tail-on (its
+        // worst pose — a broad flat rear plate facing the camera, where a
+        // smooth Lambert term has almost nothing to say), bare hull, world
+        // paused, key held at 2.2: bump 0.55 -> std 39.3, bump 1.2 -> 49.5,
+        // bump 2.0 -> 56.8. Every other class gains from it too, and it costs
+        // brightness rather than buying it (grooves shade DOWN), so it is the
+        // one term here that raises spread without raising the mean.
+        panelBump: opts.panelBump !== undefined ? opts.panelBump : 1.8,
         // The hard specular that makes a hostile read as a lit metal object
         // rather than a shaded solid. On by default for every enemy, boss,
         // fallback and UFO hull — the mechanism is shared, there are no
@@ -1293,6 +1447,20 @@ function createFactionHullMaterial(colorHex, opts) {
         specStrength: opts.specStrength !== undefined ? opts.specStrength : 0.5,
         specPower: opts.specPower !== undefined ? opts.specPower : 90.0,
         skyStrength: opts.skyStrength !== undefined ? opts.skyStrength : 0.10,
+        // THE RIG. On by default for every enemy, boss, fallback and UFO hull
+        // — this is the term that turns a faction-coloured silhouette into a
+        // lit object, and there are no per-class tiers here for the same
+        // reason there are none anywhere else in this material.
+        hullLightRig: opts.hullLightRig !== false,
+        keyDir: new THREE.Vector3().fromArray(_HULL_LIGHT_RIG.keyDir),
+        keyColor: opts.keyColor !== undefined ? opts.keyColor : _HULL_LIGHT_RIG.keyColor,
+        keyStrength: opts.keyStrength !== undefined ? opts.keyStrength : 2.4,
+        fillDir: new THREE.Vector3().fromArray(_HULL_LIGHT_RIG.fillDir),
+        fillColor: opts.fillColor !== undefined ? opts.fillColor : _HULL_LIGHT_RIG.fillColor,
+        fillStrength: opts.fillStrength !== undefined ? opts.fillStrength : 0.12,
+        backDir: new THREE.Vector3().fromArray(_HULL_LIGHT_RIG.backDir),
+        backColor: opts.backColor !== undefined ? opts.backColor : _HULL_LIGHT_RIG.backColor,
+        backStrength: opts.backStrength !== undefined ? opts.backStrength : 0.30,
         hullForm: opts.hullForm !== false,
         formFloor: opts.formFloor !== undefined ? opts.formFloor : 0.66,
         formTop: opts.formTop !== undefined ? opts.formTop : 1.72,
@@ -1502,7 +1670,7 @@ function _attachEngineGlow(model, colorHex, box, sizeScale, radiusFactor, radius
 // took that hull from std 34.0 to 70.0), and the same second half of that
 // fix: with the floor no longer spending the value range, coreDarken can
 // widen the facing/grazing split far enough for the rim to read as a rim.
-// The key/fill/rim rig (_ensureHullKeyLight) and the panel/greeble/spec
+// The key/fill/rim rig (_HULL_LIGHT_RIG) and the panel/greeble/spec
 // injections were already live on every one of these hulls — they were just
 // being drowned by a constant.
 const _HULL_EMISSIVE_FLOOR = {
@@ -1868,91 +2036,18 @@ const PLAYER_BOOST_REFERENCE_SPEED = 6.8;
 // to resolve.
 const PLAYER_HULL_PANEL_CELL = 0.015;
 
-// REAL 3-POINT RIG for the player hull specifically. _ensureHullKeyLight
-// (above) gives enemy/boss hulls ONE camera-parented DirectionalLight and
-// that was enough to pass their own contrast bar — but createPlayerHullMaterial
-// never called it, so the player's own hull, the one thing on screen
-// centre-frame 100% of the time, was never lit by anything with direction at
-// all. Its only near light was shipLight, a PointLight sitting AT (0,0,-50)
-// in camera space — i.e. head-on with the view axis by construction, which
-// cannot put a terminator on a surface no matter how bright it is (N.L is
-// close to constant across every facet the camera can even see). Measured
-// live, isolated player hull, paused world: luminance std 34.0/255, below
-// this file's own >55 target.
-//
-// A single extra key light would already do most of the job (see the enemy
-// number above), but the player hull is closer, more central and the one
-// surface the player's eye calibrates "material" against, so it gets a full
-// KEY/FILL/RIM rig instead of a single lamp:
-//   KEY  — bright, warm, steeply off-axis (upper-right-ish, aimed down-left-
-//          forward). This is what actually manufactures the terminator: it
-//          is what the GLINT specular term (uSpecDir below) is built to
-//          agree with, so the analytic highlight and the real PBR highlight
-//          land in the same place.
-//   FILL — dim, cool, the OPPOSITE side from KEY. Without this the shadow
-//          hemisphere would clip to black under ACES the moment KEY was
-//          strong enough to matter; FILL keeps it a dark blue instead of a
-//          cutout while staying weak enough that it can't erase KEY's
-//          terminator.
-//   RIM  — from behind-and-above, grazing. Separates the hull's trailing
-//          edges from a dark starfield the way a photographed 3-point rig
-//          separates a subject from its background; the shader's own
-//          fresnel term does a SYNTHETIC version of this already, but a
-//          real backlight also feeds the standard PBR diffuse/specular
-//          response, which the fresnel term does not.
-// All three are DirectionalLights (position only sets DIRECTION, not
-// falloff) parented to the camera exactly like shipLight and
-// _ensureHullKeyLight's lamp, so they stay "attached" to the view as the
-// camera turns and light every hull in the scene uniformly regardless of
-// world position — including the player's own mesh, which camera-system.js
-// re-parents from camera to scene in third person (see cameraState.
-// playerShipMesh), a move that would otherwise strand it outside any
-// camera-child light's effect if that effect depended on position. It does
-// not: THREE.DirectionalLight has no distance falloff.
-// INERT for both reasons documented on _ensureHullKeyLight above (latches onto
-// the intro camera startGame() discards, AND camera-parented lights do not
-// light anything in this scene). Same warning applies: the player hull's floor
-// was cut from ~0.48x base to 0.09x base in favour of a KEY/FILL/RIM response
-// that has never been in the rendered scene graph, so switching this on is a
-// retune of the player hull, not a bug fix.
-let _playerHullLightRigInstalled = false;
-function _ensurePlayerHullLightRig() {
-    if (_playerHullLightRigInstalled) return;
-    if (typeof window === 'undefined' || typeof THREE === 'undefined') return;
-    const cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
-    if (!cam || !cam.isCamera) return;
-
-    const key = new THREE.DirectionalLight(0xfff2d8, 2.4);
-    key.position.set(180, 260, 60);
-    key.target.position.set(-90, -140, -400);
-    cam.add(key);
-    cam.add(key.target);
-
-    const fill = new THREE.DirectionalLight(0x5ec8ff, 0.5);
-    fill.position.set(-160, -80, 50);
-    fill.target.position.set(70, 50, -400);
-    cam.add(fill);
-    cam.add(fill.target);
-
-    const rim = new THREE.DirectionalLight(0xa0e8ff, 1.1);
-    rim.position.set(-30, 180, -650);
-    rim.target.position.set(10, -20, 0);
-    cam.add(rim);
-    cam.add(rim.target);
-
-    _playerHullLightRigInstalled = true;
-}
-function _runPlayerHullLightRigInstallLoop() {
-    if (_playerHullLightRigInstalled) return;
-    requestAnimationFrame(_runPlayerHullLightRigInstallLoop);
-    _ensurePlayerHullLightRig();
-}
-if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(_runPlayerHullLightRigInstallLoop);
-}
+// THE PLAYER HULL TAKES THE SAME RIG. It used to carry its own copy — a
+// second set of camera-parented KEY/FILL/RIM DirectionalLights declared right
+// here — which was inert for exactly the same reason the hostile lamp above
+// was (see the _HULL_LIGHT_RIG note: the camera is not in the scene graph, so
+// nothing parented to it is ever collected). Both copies are now one shader
+// rig evaluated in _addFresnelRim, so the player's hull and the fleet it is
+// shooting at are lit by the same three lamps from the same three view-space
+// directions — which is what makes them read as being in the same room.
+// The player hull is closer, more central and metalness 0.65 rather than 0.35,
+// so it takes the rig at its own strengths (below) rather than the hostiles'.
 
 function createPlayerHullMaterial() {
-    _ensurePlayerHullLightRig();
     // Presence floor, in the ship's own accent cyan. This used to be the term
     // doing ALL the work (base*0.42 at intensity 1.15, effective ~0.48*base)
     // because nothing else was lighting the hull — emissive is added AFTER
@@ -1961,7 +2056,7 @@ function createPlayerHullMaterial() {
     // normal, which is precisely why an isolated hull measured luminance std
     // 34.0/255 (target >55) despite carrying a real rim/panel/spec rig: the
     // floor was spending the entire value range before any of those terms
-    // got a turn. Now that _ensurePlayerHullLightRig above gives this hull an
+    // got a turn. Now that the shared shader rig (_HULL_LIGHT_RIG) gives this hull an
     // actual KEY/FILL/RIM response, the floor only has to do the ORIGINAL
     // job — keep the ship a legible cyan shape in genuinely unlit space —
     // not carry the whole presence read, so it drops to a fraction of base
@@ -2007,6 +2102,20 @@ function createPlayerHullMaterial() {
         specStrength: 2.6,
         specPower: 34.0,
         skyStrength: 0.07,
+        // The same three lamps the fleet is lit by (see _HULL_LIGHT_RIG),
+        // taken slightly hotter: this hull is metalness 0.65 against the
+        // hostiles' 0.35 and sits 10-30u from the camera rather than 200-900u,
+        // so it can carry a stronger terminator without the lit side clipping.
+        hullLightRig: true,
+        keyDir: new THREE.Vector3().fromArray(_HULL_LIGHT_RIG.keyDir),
+        keyColor: _HULL_LIGHT_RIG.keyColor,
+        keyStrength: 1.8,
+        fillDir: new THREE.Vector3().fromArray(_HULL_LIGHT_RIG.fillDir),
+        fillColor: _HULL_LIGHT_RIG.fillColor,
+        fillStrength: 0.12,
+        backDir: new THREE.Vector3().fromArray(_HULL_LIGHT_RIG.backDir),
+        backColor: _HULL_LIGHT_RIG.backColor,
+        backStrength: 0.30,
         // The damage tier is a HOSTILE-legibility cue ("that one is nearly
         // dead") and the player's own hull already has a HUD hull-integrity
         // bar six inches from the crosshair. Off here so the player ship does
@@ -2025,7 +2134,11 @@ function createPlayerHullMaterial() {
         // bump inject in _addFresnelRim) instead of only a flat pre-lit
         // albedo multiply, so the panel seams this hull's rig draws are
         // grooves the new KEY light can actually shade — not a print.
-        panelBump: 0.6
+        // Held well under the hostiles' 1.8: this hull's panel cell is
+        // PLAYER_HULL_PANEL_CELL (0.015 of hull length, ~3x finer than a
+        // hostile's) and it is viewed from 10-30u, so the same relief that
+        // reads as plating on a 40px hostile reads as boiling noise here.
+        panelBump: 0.9
     });
 
     return { material: material, uniforms: uniforms };

@@ -717,12 +717,11 @@ function generateSphericalGalaxyPositions() {
 // comment as a performance measure. Two things were wrong with it:
 //
 //  1. The player does not live at the world origin. The local system sits at
-//     localSystemOffset (|8000,0,4800| = 9,331 from the core), and a 75s
-//     sample of the demo autopilot put the camera 1,743-3,448u from that
-//     anchor for the entire run. A shell around the origin therefore put the
-//     NEAREST volumetric cloud 22,669u away — measured contribution to the
-//     hero frame 0.047/255, i.e. the best-looking code in this file was
-//     rendering into nothing and the sky was 100% painted equirect.
+//     localSystemOffset (|8000,0,4800| = 9,331 from the core), and a shell
+//     around the origin put the NEAREST volumetric cloud 22,669u away —
+//     measured contribution to the hero frame 0.047/255, i.e. the
+//     best-looking code in this file was rendering into nothing and the sky
+//     was 100% painted equirect.
 //  2. The performance argument is dead. Every nebulaPoints is
 //     frustumCulled=true, NEB_VOL.maxPointPx clamps the sprite quad at 110px
 //     so the fill rate cannot run away up close, and particle counts did not
@@ -743,6 +742,21 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
 
     // [min, max] distance from the local system, per cluster index.
+    //
+    // CLUSTER 0's BAND IS ONLY A SEED. Anchoring the near cluster to the local
+    // system at all was the second half of the same mistake: the demo camera
+    // is not at the local system either. 240 samples over 60s of the running
+    // demo put it 6,315-7,334u from localSystemOffset (median 6,794) — so a
+    // cluster sitting 4,200-5,600u from that anchor ended up a median 10,161u
+    // from the camera, d/R = 2.05, contributing 1.08/255 instead of the ~25
+    // the same cloud measures head-on at d/R = 0.9. From the first frames of
+    // play onward cluster 0 is owned by updateNearNebulaAnchor(), which holds
+    // it around the CAMERA at ~1.05 radii; this band only decides where it
+    // starts before the escort's first placement. Clusters 1-3 are still
+    // world-anchored and this band is the whole story for them.
+    //
+    // The rest of this note is the original derivation of the seed value and
+    // still describes the (R/d)^2 physics the escort is built on.
     //
     // 5,000-6,600 for the near one, and that number is not a taste call — it
     // falls out of a measured curve. Aim the demo camera at a cluster-0 cloud
@@ -1959,6 +1973,12 @@ function findNearestTwinNebulaCenter(fromPos) {
         const n = nebulaClouds[i];
         if (!n || !n.userData) continue;
         if (n.userData.isDistant || n.userData.isExoticCore) continue;
+        // Escort clouds are held around the camera by
+        // updateNearNebulaAnchor(), so they are never a place you can be
+        // told to fly TO. Pointing the white liberation path at something
+        // that moves with the player would turn the game's one long-range
+        // objective into a 5,000u no-op.
+        if (n.userData.isEscort) continue;
         const ci = n.userData.cluster;
         if (ci === undefined || ci === null) continue;
         (clusters[ci] = clusters[ci] || []).push(n);
@@ -8682,6 +8702,383 @@ function createExoticCoreNebulas() {
 }
 
 // =============================================================================
+// NEAR-NEBULA ESCORT ANCHOR
+//
+// The volumetric near cluster used to be nailed to a fixed world point (the
+// local system offset) and sized so that R/d ~= 1 *from that point*. That is
+// only a valid tuning if the camera stays near the anchor, and it does not.
+// 240 live samples over 60s of the running demo put the camera 6,315-7,334u
+// from window.localSystemOffset (median 6,794) — never once inside the
+// 1,743-3,448u envelope the old comment at generateSphericalNebulaPositions()
+// assumed. With the cluster in its [4200,5600] band that left the NEAREST
+// near cloud 9,640-10,548u away (median d/R = 2.05), and because a nebula's
+// screen presence is solid angle — contribution goes as (R/d)^2 — 2.05 radii
+// is 0.24x the design brightness. Measured: the whole volumetric system added
+// a median 1.08/255 to the frame while costing ~18% of the frame rate. The
+// shader, the lane carving, the sprite sizing and the palette were all fine.
+// The placement policy was wrong.
+//
+// So cluster 0 is no longer anchored to the world at all. It is an ESCORT:
+// three clouds held around the camera at ~1.05 radii, re-placed one at a time
+// whenever one drifts past 1.35 radii. Two live measurements set every number
+// here, both taken with the world paused and the same-frame A/B readback
+// (render full, hide the volumetric groups, render again, diff mean luma):
+//
+//   (1) ONE CLOUD IS NOT A SKY. A single near cloud isolated in the frame
+//       (every other volumetric group hidden) measures, against the angle
+//       between the camera forward vector and the cloud centre:
+//                     0deg    25deg   50deg   75deg
+//         d/R 0.85    14.1     9.8     2.7     2.4
+//         d/R 1.05    13.7     7.2     2.2     2.1
+//         d/R 1.35     5.1     4.6     1.4     1.5
+//         d/R 2.05     1.5     2.4     0.6     0.4    <- where it used to sit
+//       Two things fall out. The (R/d)^2 law is real — 2.05 radii is a tenth
+//       of 1.0 radii. And the angular falloff is steep: the billow field puts
+//       its mass inside ~30deg of the centre, so ONE cloud head-on is only
+//       worth 14, and a cloud on the flank is worth nothing. No single-cloud
+//       placement rule can hold a >=12 median.
+//
+//   (2) FIVE CLOUDS ON A RING CAN BE. Three cannot: with the near cluster's
+//       three clouds held on a ~120deg ring at 0.78 radii, 20 live demo
+//       probes cleared the contribution bar (deltaVol median 14.4) and
+//       nothing else — frame mean median 38.5 against a 45-75 band, with 2
+//       headings in 20 finding no cloud ink in frame at all. Five clouds on
+//       a golden-spiral ring, same measurement, 8 headings sampled uniformly
+//       over the sphere and the world paused:
+//         d/R    deltaVol min/med/max  >=12   frame mean min/med/max   p99
+//         0.45     11.3 / 14.1 / 15.9   7/8      36.3 / 42.0 / 55.5    195
+//         0.62     14.7 / 18.8 / 26.4   8/8      41.9 / 46.7 / 65.5    209
+//         0.85     13.4 / 23.0 / 29.3   8/8      40.5 / 51.0 / 65.1    221
+//         1.10      7.8 / 16.4 / 21.8   5/8      35.5 / 44.0 / 60.2    213
+//       There is no hole in the sky any more between 0.45 and 0.85, and the
+//       whole band sits inside the 45-75 frame requirement. 0.70 is the hold
+//       point, with the re-place at 1.10: the camera drifts INWARD from
+//       wherever a cloud is dropped (it only leaves the band by outrunning
+//       it), so holding at 0.70 puts the working distribution over
+//       ~0.5-0.9 radii — the most uniform part of the table, and the part
+//       where five caps of ink leave no gap. A live 24-probe run holding at
+//       0.90 instead measured the same median contribution but a wider
+//       spread, because the clouds spend their time nearer 1.0 where each
+//       one's ink has shrunk to a ~25deg cap.
+//
+//       Note how little the contribution moves across that range — that is
+//       not the geometry, it is the near-field ramp in
+//       updateVolumetricNebulaProximity(), which was re-shaped as part of
+//       this work so that k/(d/R)^2 is constant inside one radius. Before
+//       that, closing from 0.85 to 0.44 radii took the layer from 20/255 to
+//       97/255 and the frame to 129 — the magenta whiteout, live, in the
+//       middle of a dogfight. See that function for the argument.
+//
+//   (3) TURN RATE. Over the same 60s trace the demo camera's forward vector
+//       moves a median 44deg in 3s, 64deg in 5s and 117deg in 10s. That is
+//       what makes an off-screen placement pay off: a cloud dropped on the
+//       flank is in front of you within seconds, without ever having been
+//       seen to move.
+//
+// So the policy is: hold the five near clouds at ~0.70 radii, re-place one
+// when it drifts past 1.10 radii, and never let the player watch it happen.
+// At 0.70 radii the camera is INSIDE the cloud's envelope, so "place it
+// outside the frustum" is not available at the destination — the cloud is
+// all around you by construction. The move is therefore covered by a fade
+// instead: the group's opacity is driven to 0, the position is written while
+// it is invisible, and it comes back over ~2.5s. That is the same gesture
+// updateNebulaVisibility() already uses for the distant families, and it
+// costs one multiply in the per-frame proximity ramp. When the cloud happens
+// to be outside the frustum anyway — which is the common case, since a
+// re-place is triggered at 1.10 radii where its ink subtends only ~43deg —
+// the fade-out half is skipped and only the fade-in runs.
+//
+// Placement is held >=70deg off the velocity vector. That started as a
+// safety rule — a cloud dropped straight ahead on the flight line is one the
+// autopilot flies into, and flying into it is what produced a MISSION FAILED
+// in an earlier run — and 45deg was enough for that. 70 is the number the
+// GEOMETRY wants: at 45deg the ship still closes on the cloud at cos45 = 0.7
+// of its speed, which is how a live run ended up a median 0.35 radii inside
+// the complex; at 70deg it closes at 0.34, so a placement lasts twice as long
+// before it needs recycling and the ship spends its time alongside the
+// nebulas rather than inside them. The centre is
+// also kept >=70deg off forward (outside the ~57deg frustum corner at
+// fov 75 / 16:9) so a cloud CENTRE never resolves in the middle of frame,
+// and the five are kept >=50deg apart as seen from the camera so the escort
+// spreads across the sky instead of stacking into one lobe.
+//
+// Nothing here touches the far clusters: 1-3 stay world-anchored, so the
+// deep field still parallaxes against the near complex and against the dome,
+// and findNearestTwinNebulaCenter() skips the escort entirely — a landmark
+// you are told to fly to must not be one that follows you.
+// =============================================================================
+const _NEB_ESCORT_SNAP_DR  = 1.10;  // re-place once a cloud drifts past this many radii
+const _NEB_ESCORT_NEAR_DR  = 0.32;  // ...or once the ship has flown down INTO it
+const _NEB_ESCORT_PLACE_DR = 0.70;  // ...and drop it back at this many radii
+const _NEB_ESCORT_MIN_OFF  = 70;    // deg off camera forward: centre never lands in frame
+const _NEB_ESCORT_MAX_OFF  = 160;   // ...but not dead astern, or the swing never finds it
+const _NEB_ESCORT_MIN_VEL  = 70;    // deg off the velocity vector — do not build a wall
+const _NEB_ESCORT_MIN_SEP  = 50;    // deg between two escort clouds, seen from the camera
+// Fraction of the nominal radius that actually holds ink. The billow field
+// puts its mass well inside the nominal sphere, so testing the full R against
+// the frustum would mean "outside" is only ever true dead astern. 0.75 is the
+// radius at which the density mask has fallen to a few percent.
+const _NEB_ESCORT_INK = 0.75;
+// Fade rates, per escort tick (the tick runs every 6 frames, ~10Hz).
+const _NEB_ESCORT_FADE_IN  = 0.04;  // ~2.5s to come back
+const _NEB_ESCORT_FADE_OUT = 0.09;  // ~1.1s to go away when we have to force a move
+// How long a cloud is allowed to sit overdue waiting for a free (off-screen)
+// re-place before we spend the fade-out on it. Long enough that the ordinary
+// case never pays it: the camera clears 95deg of arc in well under 10s.
+const _NEB_ESCORT_GRACE_MS = 9000;
+// Minimum gap between two placements, across the whole escort. Ordinary
+// flight never touches this — a cloud placed at 0.62 radii needs ~2,100u of
+// travel to fall out of the band, which is a minute at cruise. It exists for
+// warp: a demo excursion to the galactic core (dSol 300,000) outran the
+// clouds continuously and logged 86 placements in 70s, i.e. the escort was
+// re-forming every frame it could and paying the fade each time. Under warp
+// the right behaviour is to let the clouds fall behind and re-form once.
+const _NEB_ESCORT_COOLDOWN_MS = 3500;
+
+let _nebEscortFrame = 0;
+let _nebEscortLastPlace = 0;
+const _nebEscortFrustum = (typeof THREE !== 'undefined') ? new THREE.Frustum() : null;
+const _nebEscortM4 = (typeof THREE !== 'undefined') ? new THREE.Matrix4() : null;
+const _nebEscortSphere = (typeof THREE !== 'undefined') ? new THREE.Sphere() : null;
+const _nebEscortFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _nebEscortVel = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _nebEscortDir = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _nebEscortTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _nebEscortList = [];
+
+function _nebEscortMembers() {
+    _nebEscortList.length = 0;
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds) return _nebEscortList;
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const g = nebulaClouds[i];
+        if (!g || !g.userData || !g.userData.isEscort) continue;
+        if (g.userData.isDistant || g.userData.isExoticCore) continue;
+        if (!g.userData.size) continue;
+        _nebEscortList.push(g);
+    }
+    return _nebEscortList;
+}
+
+// Everything in the world that was placed RELATIVE to this cloud and has to
+// travel with it. A nebula is not just ink: assignFactionsToNebulas() hangs a
+// faction on it, createTradingShipsInNebulas() hangs 26-40 civilian ships on
+// it, and createGalaxyToNebulaLine() draws a dashed intel line to it. Leave
+// those behind and the escort strands a shoal of freighters orbiting empty
+// space and points a guidance line at nothing.
+//
+// Freighter CARAVANS are deliberately not carried. Their ships are drawn from
+// source/destination each frame, so moving an endpoint would teleport the
+// convoy; a caravan whose lane now ends a little off the nebula is invisible
+// (it is a line between two points in deep space), a convoy that jumps 10,000u
+// is not.
+const _nebEscortDelta = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _nebEscortCarry(cloud, delta) {
+    const name = cloud.userData && cloud.userData.name;
+    if (!name) return;
+
+    if (typeof tradingShips !== 'undefined' && tradingShips) {
+        for (let i = 0; i < tradingShips.length; i++) {
+            const s = tradingShips[i];
+            const ud = s && s.userData;
+            if (!ud || ud.nebulaName !== name) continue;
+            s.position.add(delta);
+            if (ud.nebulaPosition && ud.nebulaPosition.add) ud.nebulaPosition.add(delta);
+            // Destinations are position CLONES, not live planet references
+            // (see createTradingShip), so shifting them keeps each ship's
+            // errand at the same offset from its nebula.
+            if (Array.isArray(ud.nearbyPlanets)) {
+                for (let k = 0; k < ud.nearbyPlanets.length; k++) {
+                    if (ud.nearbyPlanets[k] && ud.nearbyPlanets[k].add) ud.nearbyPlanets[k].add(delta);
+                }
+            }
+            if (ud.destination && ud.destination.add) ud.destination.add(delta);
+        }
+    }
+
+    const lines = (typeof nebulaIntelSystem !== 'undefined' && nebulaIntelSystem)
+        ? nebulaIntelSystem.galaxyLines : null;
+    if (lines) {
+        for (let i = 0; i < lines.length; i++) {
+            const e = lines[i];
+            if (!e || e.nebula !== cloud || !e.line || !e.blackHole) continue;
+            const geom = e.line.geometry;
+            if (!geom || !geom.setFromPoints) continue;
+            geom.setFromPoints([e.blackHole.position.clone(), cloud.position.clone()]);
+            geom.computeBoundingSphere();
+            if (e.line.computeLineDistances) e.line.computeLineDistances();
+        }
+    }
+}
+
+function updateNearNebulaAnchor() {
+    if (!_nebEscortFrustum) return;
+    // 10Hz-ish. The decision is a handful of dot products over 3 objects and
+    // the outcome cannot change meaningfully inside 6 frames (the camera
+    // translates ~4u in that time against a 5,000u radius).
+    if ((++_nebEscortFrame % 6) !== 0) return;
+    if (typeof camera === 'undefined' || !camera || !camera.position) return;
+    if (typeof gameState !== 'undefined' && gameState && gameState.warping) return;
+
+    const members = _nebEscortMembers();
+    if (members.length === 0) return;
+
+    camera.updateMatrixWorld();
+    _nebEscortM4.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    _nebEscortFrustum.setFromProjectionMatrix(_nebEscortM4);
+    camera.getWorldDirection(_nebEscortFwd);
+
+    let haveVel = false;
+    if (typeof gameState !== 'undefined' && gameState && gameState.velocityVector &&
+        gameState.velocityVector.lengthSq() > 1e-4) {
+        _nebEscortVel.copy(gameState.velocityVector).normalize();
+        haveVel = true;
+    }
+
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+
+    // Pass 1: measure. Nothing is written here — deciding who fades before
+    // knowing who is worst is how you end up dimming two clouds at once.
+    let worst = null, worstBad = 0, worstHidden = false;
+    let forceTarget = null, forceBad = 0;
+    for (let i = 0; i < members.length; i++) {
+        const g = members[i];
+        const ud = g.userData;
+        if (ud._escortFade === undefined) ud._escortFade = 1;
+
+        const R = ud.size;
+        const dR = camera.position.distanceTo(g.position) / R;
+        // Out of band on EITHER side. The far side is the obvious one. The
+        // near side is what a live 30-probe run found the demo doing: over one
+        // flight the autopilot flew down into the complex until the nearest
+        // cloud centre was a median 0.35 radii away and a minimum of 0.09,
+        // where the flattened ramp is holding brightness constant but the
+        // cloud has stopped being a vista — you are inside thin fog, the
+        // frame mean fell to a 43 median (band is 45-75) and the volumetric
+        // fill rate cost 12.9% of the frame rate instead of 7.6%. Inside 0.32
+        // radii a cloud has no composition left to give, so it gets recycled
+        // to somewhere it can be seen from.
+        //
+        // "How far out of band" has to be one number so the two sides can be
+        // ranked against each other; the near side is weighted x3 because its
+        // whole range is only 0.32 wide against the far side's open end.
+        const bad = Math.max(dR - _NEB_ESCORT_SNAP_DR, (_NEB_ESCORT_NEAR_DR - dR) * 3);
+        const overdue = bad > 0;
+
+        if (!overdue) { ud._escortDueSince = 0; }
+        else if (!ud._escortDueSince) { ud._escortDueSince = now; }
+
+        // Hidden right now — either off-screen, or already faded out?
+        _nebEscortSphere.center.copy(g.position);
+        _nebEscortSphere.radius = R * _NEB_ESCORT_INK;
+        const offScreen = !_nebEscortFrustum.intersectsSphere(_nebEscortSphere);
+        const invisible = ud._escortFade <= 0.02;
+        ud._escortWantFade = false;
+
+        if (overdue && !offScreen && !invisible &&
+            ud._escortDueSince && (now - ud._escortDueSince) > _NEB_ESCORT_GRACE_MS &&
+            bad > forceBad) {
+            forceTarget = g; forceBad = bad;    // one candidate only, the worst one
+        }
+
+        if (!overdue || bad <= worstBad) continue;
+        if (!offScreen && !invisible) continue;   // never move it while it can be seen
+        worst = g; worstBad = bad; worstHidden = invisible && !offScreen;
+    }
+
+    // Pass 2: write the fades. Exactly one cloud may be on its way out at a
+    // time; everything else walks back to full.
+    if (forceTarget) forceTarget.userData._escortWantFade = true;
+    for (let i = 0; i < members.length; i++) {
+        const ud = members[i].userData;
+        if (ud._escortWantFade) {
+            ud._escortFade = Math.max(0, ud._escortFade - _NEB_ESCORT_FADE_OUT);
+        } else if (ud._escortFade < 1) {
+            ud._escortFade = Math.min(1, ud._escortFade + _NEB_ESCORT_FADE_IN);
+        }
+    }
+
+    if (!worst) return;
+    if (now - _nebEscortLastPlace < _NEB_ESCORT_COOLDOWN_MS) return;
+
+    const R = worst.userData.size;
+    const minOff = Math.cos(_NEB_ESCORT_MAX_OFF * Math.PI / 180);
+    const maxOff = Math.cos(_NEB_ESCORT_MIN_OFF * Math.PI / 180);
+    const velCut = Math.cos(_NEB_ESCORT_MIN_VEL * Math.PI / 180);
+    const sepCut = Math.cos(_NEB_ESCORT_MIN_SEP * Math.PI / 180);
+
+    let best = null, bestScore = -Infinity;
+    for (let t = 0; t < 64; t++) {
+        // Uniform on the sphere (inverse-CDF on cos, not two raw angles —
+        // two raw angles bunch at the poles).
+        const u = Math.random() * 2 - 1;
+        const ph = Math.random() * Math.PI * 2;
+        const s = Math.sqrt(Math.max(0, 1 - u * u));
+        _nebEscortDir.set(s * Math.cos(ph), u, s * Math.sin(ph));
+
+        const dotF = _nebEscortDir.dot(_nebEscortFwd);
+        if (dotF < minOff || dotF > maxOff) continue;              // 70-160deg off forward
+        if (haveVel && _nebEscortDir.dot(_nebEscortVel) > velCut) continue;  // >=70deg off velocity
+
+        // Angular separation from the other escort clouds, seen from here.
+        let sep = 1, ok = true;
+        for (let j = 0; j < members.length; j++) {
+            const o = members[j];
+            if (o === worst) continue;
+            _nebEscortTmp.copy(o.position).sub(camera.position);
+            if (_nebEscortTmp.lengthSq() < 1e-6) continue;
+            const c = _nebEscortDir.dot(_nebEscortTmp.normalize());
+            if (c > sepCut) { ok = false; break; }
+            sep = Math.min(sep, -c);
+        }
+        if (!ok) continue;
+
+        // Among the legal directions prefer the one furthest from the other
+        // clouds, then a mild bias off the ecliptic so the complex keeps the
+        // vertical the cluster placement was written to give it.
+        const score = sep + 0.25 * Math.abs(_nebEscortDir.y);
+        if (score > bestScore) { bestScore = score; best = _nebEscortDir.clone(); }
+    }
+    // Separation is a nicety; forward-band and velocity are not. If 64 draws
+    // could not satisfy all three, wait for the next pass rather than placing
+    // something illegal — the geometry changes as the camera turns.
+    if (!best) return;
+
+    _nebEscortDelta.copy(camera.position).addScaledVector(best, _NEB_ESCORT_PLACE_DR * R)
+        .sub(worst.position);
+    worst.position.add(_nebEscortDelta);
+    worst.updateMatrixWorld(true);
+    // Keep the world-shift cache in step: applyWorldShift() rebases
+    // userData.position3D, so a stale copy would be dragged to a phantom
+    // location on the next floating-origin rebase.
+    if (worst.userData.position3D && worst.userData.position3D.copy) {
+        worst.userData.position3D.copy(worst.position);
+    }
+    _nebEscortCarry(worst, _nebEscortDelta);
+
+    // Come back from zero however we left. At 0.70 radii the camera is inside
+    // the cloud's envelope, so there is no destination that is off-screen —
+    // the fade-in IS the cover, and it also hides the one-frame window before
+    // updateVolumetricNebulaProximity() next runs. Verified live: 17 of 17
+    // re-placements over 120s of demo flight had material.opacity exactly
+    // 0.0000 on the tick the position jumped.
+    worst.userData._escortFade = 0;
+    worst.userData._escortDueSince = 0;
+    worst.userData._escortPlacedAt = now;
+    // Zero BOTH channels: material.opacity for this frame, and the published
+    // currentOpacity that updateNebulaBreathing() multiplies its breath
+    // around — writing only the material would be undone by breathing before
+    // anything was drawn.
+    worst.userData.currentOpacity = 0;
+    if (worst.children[0] && worst.children[0].material) {
+        worst.children[0].material.opacity = 0;
+    }
+    _nebEscortLastPlace = now;
+    worst.userData._escortMoves = (worst.userData._escortMoves || 0) + 1;
+    worst.userData._escortForced = (worst.userData._escortForced || 0) + (worstHidden ? 1 : 0);
+}
+if (typeof window !== 'undefined') window.updateNearNebulaAnchor = updateNearNebulaAnchor;
+
+// =============================================================================
 // NEBULA VISIBILITY UPDATE - Called each frame to show/hide distant nebulas based on range
 // Includes smooth fade-in/fade-out effect
 // =============================================================================
@@ -8689,10 +9086,17 @@ function createExoticCoreNebulas() {
 let _nebulaVisibilityFrameCount = 0;
 
 function updateNebulaVisibility() {
+    // The escort runs off this call site because game-core.js:2423 already
+    // ticks updateNebulaVisibility() once per frame and index.html /
+    // game-core.js are sealed this wave. It goes ABOVE the 15-frame throttle
+    // on purpose: it has its own (6-frame) cadence and it must keep running
+    // on frames the visibility walk skips.
+    updateNearNebulaAnchor();
+
     // PERF: Only check every 15 frames instead of every frame
     _nebulaVisibilityFrameCount++;
     if (_nebulaVisibilityFrameCount % 15 !== 0) return;
-    
+
     if (typeof nebulaClouds === 'undefined' || nebulaClouds.length === 0) return;
     if (typeof camera === 'undefined') return;
     
@@ -17727,10 +18131,25 @@ function createNebulas() {
         // clusters are a depth ladder rather than one shell: a live 6-sample
         // run of the demo found the near cloud in frame on 1 heading in 6, so
         // the sky read as "there is a nebula over there somewhere" instead of
-        // "we are at the edge of a nebula". Three clouds in the near cluster,
-        // spread over ~2,300u at 4,200-5,600u out, cover a ~120deg arc of sky
-        // between them; the remaining five keep the outer three layers.
-        const clusterIndex = (i < 3) ? 0 : (1 + ((i - 3) % (nebulaClusterPositions.length - 1)));
+        // "we are at the edge of a nebula".
+        //
+        // FIVE in the near cluster, not three. Cluster 0 is the escort set
+        // (updateNearNebulaAnchor holds it around the camera), and three is
+        // measurably not enough of it: with three clouds held at 0.62 radii,
+        // 8 of 20 live demo probes still found a heading with almost no cloud
+        // ink in frame (deltaVol 0.1-8.0 against a target of 12) because each
+        // cloud's ink only subtends ~30deg of sky — the billow field puts its
+        // mass well inside the nominal radius. Five caps cover ~1.7x the
+        // sphere of three, and the clouds cost nothing extra to have close:
+        // an interleaved live A/B (three 6s reps each way) measured 36.6 fps
+        // with every volumetric group visible against 34.6 with all of them
+        // hidden, i.e. the layer is inside the noise of the demo's own load.
+        //
+        // The outer rungs keep a TRUE PAIR at 13,000-18,000 — findNearest-
+        // TwinNebulaCenter() needs two clouds in one cluster to call it a
+        // twin, and the white liberation path needs a twin that does not
+        // move — plus a single far cloud at 34,000-45,000 for depth.
+        const clusterIndex = (i < 5) ? 0 : (i < 7 ? 1 : 3);
         const cluster = nebulaClusterPositions[clusterIndex];
         
         // Position within cluster using 3D spherical distribution
@@ -17879,6 +18298,12 @@ function createNebulas() {
             size: nebulaSize,
             color: nebulaColor,
             cluster: clusterIndex,
+            // The near cluster is the escort set: updateNearNebulaAnchor()
+            // owns its position at runtime and keeps it around the camera.
+            // Anything that treats a nebula as a FIXED PLACE — the white
+            // liberation path to the twins, above all — has to skip these,
+            // because a landmark that follows you is not a destination.
+            isEscort: _nearCluster,
             rotationSpeed: (Math.random() - 0.5) * 0.0008,
             position3D: nebulaGroup.position.clone()
         };
@@ -19004,12 +19429,17 @@ function updateCMBOpacity() {
 // player spawns ~9.3k units out, and an origin-anchored ramp would open the
 // game already half-lit.
 //
-//   • Home system → 0.32: the near volumetric cluster owns this sky, and the
+//   • Home system → 0.24: the near volumetric escort owns this sky, and the
 //     painting's job is to fill the headings it does not cover.
-//   • Deep travel / galactic core → 0.55: out here there are no volumetric
-//     clouds within 20,000u, so the painting takes the sky back and distance
-//     READS as spectacle.
-//   • Boss battle → 0.19 (NOT ~0), see below.
+//   • Deep travel / galactic core → 0.34: the ramp survives, at a tenth of
+//     its old span. The premise it used to rest on ("out here there are no
+//     volumetric clouds within 20,000u, so the painting takes the sky back")
+//     is gone — updateNearNebulaAnchor() keeps five clouds within one radius
+//     of the player wherever the player goes — so the painting no longer has
+//     an empty sky to inherit. Left at 0.55 the two layers simply stacked:
+//     a demo excursion 300,000u out measured the dome alone at 43.5/255
+//     against a <=20 ceiling, with the frame at 150.
+//   • Boss battle → 0.17 (NOT ~0), see below.
 //
 // Two things changed here.
 //
@@ -19048,8 +19478,21 @@ function updateNebulaSkyboxOpacity() {
 
     const fadeStart = 1500;
     const fadeEnd = 70000;
-    const minOp = 0.32;
-    const maxOp = 0.55;
+    // 0.24/0.34, trimmed from 0.32/0.55. Same argument as the 0.94 -> 0.32
+    // trim below, applied once more now that updateNearNebulaAnchor() holds
+    // FIVE volumetric clouds inside the flight envelope instead of parking
+    // three of them 10,000u out: the painting covers much less bare sky than
+    // it did when 0.32 was chosen, so the same opacity buys a bigger share of
+    // the frame. Measured over 20 demo probes at 0.32 the painted dome was
+    // contributing a median 17.1/255 against a <=20 ceiling and breaching it
+    // on 5 of 20 headings, while the volumetric layer carried 20.8. The trim
+    // holds the ratio the right way round without touching the volumetrics.
+    //
+    // The far end comes down much further, 0.55 -> 0.34, because the premise
+    // under it is gone (see the note above this function). The "sky opens up
+    // as you travel" gesture now belongs to the nebulas, not the painting.
+    const minOp = 0.24;
+    const maxOp = 0.34;
 
     let targetOpacity;
     if (distanceFromStart < fadeStart) {
@@ -19063,7 +19506,7 @@ function updateNebulaSkyboxOpacity() {
 
     // Dim for the set piece, never delete it (see (b) above).
     if (typeof isBossBattleActive === 'function' && isBossBattleActive()) {
-        targetOpacity = 0.19;
+        targetOpacity = 0.17;
     }
 
     const cur = sky.material.opacity;
@@ -19089,19 +19532,42 @@ if (typeof window !== 'undefined') window.updateNebulaSkyboxOpacity = updateNebu
 // thin gas — so the correct answer is LESS light, not the same stack of
 // sprites crushed into the near plane at 4x clamp compensation.
 //
-// So: full strength everywhere OUTSIDE the cloud (d >= R), easing to 0.45x at
-// the centre. It is a two-line ramp per cloud over ~22 clouds, run from the
-// existing per-frame backdrop pass, and it is what lets the cluster live in
-// flight range at all.
+// The ramp used to be `0.45 + 0.55*(d/R)^2` below one radius: full strength
+// outside, easing to 0.45x at the centre. That shape does not do the job, and
+// the escort is what exposed it. A cloud's contribution goes as k/(d/R)^2 —
+// solid angle times surface brightness — so with k bottoming out at 0.45 the
+// (R/d)^2 term still wins by a mile as you close in. Measured live, with five
+// escort clouds held around the camera: at 0.60 radii the whole volumetric
+// layer added a median 20.8/255 to the frame and the frame sat at 50.5, right
+// in the acceptance band; on a run where the camera drifted in to 0.41-0.44
+// radii the same layer added 95-97/255 and the frame hit 127-129. That is not
+// a nebula, it is the magenta whiteout, and it eats the dogfight.
 //
-// The threshold is exactly 1.0 radii and not a hair more: a first pass at 1.35
-// was measurably dimming the cloud at the ordinary cruise distance (0.30 of an
-// authored 0.34 at d = 1.2R), i.e. it was quietly taxing the very frames this
-// whole piece exists to fill. Outside the volume you see the whole column and
-// you get all of it.
+// So the ramp is now `k = (d/R)^2`, clamped to [0.10, 1]:
+//
+//     k / (d/R)^2  =  1  =  constant, for every d/R below 1
+//
+// i.e. the layer's SCREEN CONTRIBUTION IS FLAT once you are inside one
+// radius, instead of exploding as you close. Physically that is the honest
+// answer for the same reason the old ramp gave the honest answer at the
+// centre: these sprites stand in for an integral through a column of gas, and
+// once you are inside the medium the column stops getting longer as you move.
+// Compositionally it is better too — closing in now spreads the same ink over
+// more sky (a veil that wraps the frame) rather than concentrating it into a
+// hot magenta blob, and it makes the escort's hold distance a free parameter
+// for COVERAGE instead of a brightness knob that has to be re-tuned.
+//
+// The one setpoint that remains is the threshold itself, because the flat
+// level is 1/START^2 — it is the layer's surface-brightness knob and the only
+// one. 0.90 is where a live 26-probe demo run lands the volumetric layer at a
+// median 20/255 against a >=12 requirement, with the frame at a median ~55
+// inside its 45-75 band and the painted dome behind it at ~15. Raising it
+// dims the layer as 1/START^2; lowering it brightens the same way. Nothing
+// else in this piece needs a brightness tuning any more, which is the point
+// of making k/(d/R)^2 constant.
 // =============================================================================
-const _NEB_NEAR_FADE_START = 1.0;   // in cloud radii — untouched outside the volume
-const _NEB_NEAR_FADE_FLOOR = 0.45;  // never darker than this, even dead centre
+const _NEB_NEAR_FADE_START = 0.90;  // in cloud radii — untouched outside this
+const _NEB_NEAR_FADE_FLOOR = 0.10;  // never darker than this, even dead centre
 function updateVolumetricNebulaProximity() {
     if (typeof nebulaClouds === 'undefined' || !nebulaClouds || !nebulaClouds.length) return;
     if (typeof camera === 'undefined' || !camera || !camera.position) return;
@@ -19135,14 +19601,40 @@ function updateVolumetricNebulaProximity() {
         let k = 1;
         if (dR < _NEB_NEAR_FADE_START) {
             const t = Math.max(0, dR / _NEB_NEAR_FADE_START);  // 0 at centre, 1 at the edge
-            k = _NEB_NEAR_FADE_FLOOR + (1 - _NEB_NEAR_FADE_FLOOR) * (t * t);
+            k = Math.max(_NEB_NEAR_FADE_FLOOR, t * t);         // k/(d/R)^2 is constant here
         }
 
-        const target = base * k;
-        const cur = pts.material.opacity;
+        // The escort's own fade rides on top of the proximity ramp: it is 1
+        // except in the second or two around a re-placement, when it dips to
+        // 0 so the cloud can be moved without the player watching it happen.
+        // See updateNearNebulaAnchor().
+        const ef = (g.userData._escortFade === undefined) ? 1 : g.userData._escortFade;
+
+        const target = base * k * ef;
+        // PUBLISH, don't just write. updateNebulaBreathing() runs six lines
+        // later in animate() and, for any cloud without a userData
+        // .currentOpacity, latches material.opacity ONCE into _breathBase and
+        // then writes base*breath every frame from that stale latch. That made
+        // this entire ramp dead code in the running game: traced live with a
+        // property setter on one escort cloud's material, opacity was written
+        // 50 times in 1.2s from here and 50 times from updateNebulaBreathing,
+        // and breathing — being last — won every frame. Which is why the
+        // whiteout this function exists to prevent was still measurable at
+        // 97/255, and why the escort's move fade below did nothing.
+        //
+        // currentOpacity is exactly the channel breathing is documented to
+        // multiply around ("the base opacity the visibility system computed").
+        // updateNebulaVisibility() owns it for the isDistant / isExoticCore
+        // families and never reaches these clouds, so publishing it here makes
+        // this function the visibility system for the volumetric family and
+        // the two compose instead of fighting.
+        const cur = (typeof g.userData.currentOpacity === 'number')
+            ? g.userData.currentOpacity : pts.material.opacity;
         // Damped: a hard cut would pop the whole cloud on a fast pass.
-        pts.material.opacity = (Math.abs(target - cur) < 0.002)
+        const next = (Math.abs(target - cur) < 0.002)
             ? target : cur + (target - cur) * 0.08;
+        g.userData.currentOpacity = next;
+        pts.material.opacity = next;
     }
 }
 if (typeof window !== 'undefined') window.updateVolumetricNebulaProximity = updateVolumetricNebulaProximity;

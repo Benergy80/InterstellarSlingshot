@@ -355,6 +355,20 @@
     // once), 'pending' mid-measurement, null if measurement failed }. Feeds
     // the makeup gain in playStinger() — see measureStingerSlice().
     stingerSliceRMS: {},
+    // { key: AudioBuffer } — the SAME decode measureStingerSlice() already
+    // does for the RMS pass, kept instead of thrown away. This is what lets
+    // playStinger() fire from an AudioBufferSourceNode (sample-accurate
+    // start on the Web Audio clock) instead of seeking a shared <audio>
+    // element (async — currentTime often reads back 0 at play() time, so
+    // the transient arrived hundreds of ms after the envelope had already
+    // opened; see the 20260813 gap audit). Populated by measureStingerSlice(),
+    // never populated = fall back to the <audio>-element path below.
+    stingerBuf: {},
+    // { key: AudioBufferSourceNode } — the currently-sounding one-shot buffer
+    // source for that key, if the buffer path fired it. stopStinger() halts
+    // and disconnects it; a fresh node is created per fire (one-shot nodes
+    // cannot be restarted).
+    stingerBufSrc: {},
     // { key: { bedRms, sliceRMS, makeup, level } } from the most recent fire
     // of that key — TEST-ONLY window into the closed-loop math (debugLevel()
     // exposes it), so a live/harness readout can catch the servo silently
@@ -422,11 +436,28 @@
     ctx: null,
     bus: null,        // music bed only — riser/duck automation lives here
     filter: null,
-    master: null,      // bus + stinger chains summed here, then to destination —
-                        // the ONE node that represents "what the player hears"
-                        // and the ONE node debugLevel()'s analyser is allowed
-                        // to tap (see the 20260810c postmortem: an analyser on
-                        // `bus` alone is structurally blind to stingers).
+    master: null,      // bus + stinger chains summed here, then through the
+                        // limiter to destination — the ONE node debugLevel()'s
+                        // analyser is allowed to tap (see the 20260810c
+                        // postmortem: an analyser on `bus` alone is
+                        // structurally blind to stingers). Pre-limiter, so it
+                        // reads the same "what did the mix ASK for" number it
+                        // always has; the limiter downstream is what keeps
+                        // that number from actually reaching the speakers hot.
+    limiter: null,     // safety net between master and destination — measured
+                        // +1.26 dBFS sample peak on master with nothing here
+                        // at music volume 1.0 (bed + a +10dB-over-bed stinger
+                        // sum past 0dBFS). Never relied on for the mix's
+                        // actual loudness target — that's still the
+                        // bed/stinger gain staging above it — this only
+                        // catches the sum. Smooth gain-reduction stage; see
+                        // hardClip below for the actual ceiling guarantee.
+    hardClip: null,    // exact per-sample clamp after the limiter — a
+                        // DynamicsCompressor alone has no lookahead, so a
+                        // fast transient can still punch through its
+                        // threshold before the envelope follower reacts
+                        // (measured live). This is what makes "peak <=
+                        // -1dBFS" an actual guarantee instead of "usually".
     bedAnalyser: null,  // small tap on `bus` ONLY, used to read the bed's live
                         // level so a stinger's makeup gain can target N dB
                         // over whatever the bed is actually doing right now.
@@ -465,7 +496,40 @@
       wa.master = ctx.createGain();
       wa.master.gain.setValueAtTime(1, ctx.currentTime);
       wa.bus.connect(wa.master);
-      wa.master.connect(ctx.destination);
+      // Limiter: master's sum (bed + any stinger currently sounding, the
+      // stinger unclamped by design so it can genuinely sit N dB over the
+      // bed — see STINGER_OVER_BED_DB) can exceed 0dBFS. Fast attack so it
+      // actually catches a stinger's own attack transient, moderate release
+      // so it doesn't audibly pump the bed once the transient has passed.
+      wa.limiter = ctx.createDynamicsCompressor();
+      wa.limiter.threshold.setValueAtTime(-3, ctx.currentTime);
+      wa.limiter.knee.setValueAtTime(0, ctx.currentTime);
+      wa.limiter.ratio.setValueAtTime(20, ctx.currentTime);
+      wa.limiter.attack.setValueAtTime(0.003, ctx.currentTime);
+      wa.limiter.release.setValueAtTime(0.25, ctx.currentTime);
+      // DynamicsCompressorNode has no lookahead, so a fast transient can
+      // still punch through its threshold before the envelope follower
+      // reacts — measured +0.57 dBFS sample peak live with the compressor
+      // alone. A hard clip after it is the actual brick wall: exact
+      // per-sample clamp (oversample 'none' — a '4x' curve can ring back
+      // over the ceiling on reconstruction, defeating the guarantee this
+      // exists for), floored a couple dB under the -1dBFS acceptance target
+      // for margin.
+      wa.hardClip = ctx.createWaveShaper();
+      wa.hardClip.oversample = 'none';
+      (function () {
+        const ceil = Math.pow(10, -1.5 / 20);   // ≈0.841, a hair under -1dBFS
+        const n = 1024;
+        const curve = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const x = (i / (n - 1)) * 2 - 1;
+          curve[i] = Math.max(-ceil, Math.min(ceil, x));
+        }
+        wa.hardClip.curve = curve;
+      })();
+      wa.master.connect(wa.limiter);
+      wa.limiter.connect(wa.hardClip);
+      wa.hardClip.connect(ctx.destination);
       wa.ctx = ctx;
       wa.ok = true;
       Object.keys(st.loaded).forEach(k => waRoute(st.loaded[k]));
@@ -1096,6 +1160,11 @@
       .then(r => r.arrayBuffer())
       .then(buf => wa.ctx.decodeAudioData(buf))
       .then(audioBuf => {
+        // Cache the decode itself — this used to be thrown away the instant
+        // the RMS pass below finished. Keeping it is what lets playStinger()
+        // fire from an AudioBufferSourceNode instead of seeking a shared
+        // <audio> element (see st.stingerBuf comment at its declaration).
+        st.stingerBuf[key] = audioBuf;
         const sr = audioBuf.sampleRate;
         const startSample = Math.max(0, Math.floor(spec.at * sr));
         const endSample = Math.min(audioBuf.length, Math.floor((spec.at + spec.dur) * sr));
@@ -1259,6 +1328,12 @@
       clearInterval(st.stingerTimers[key]);
       st.stingerTimers[key] = null;
     }
+    if (st.stingerBufSrc[key]) {
+      const src = st.stingerBufSrc[key];
+      try { src.stop(); } catch (e) { /* already ended — fine */ }
+      try { src.disconnect(); } catch (e) { /* ignore */ }
+      st.stingerBufSrc[key] = null;
+    }
     const el = st.stingerEls[key];
     const spec = STINGERS[key];
     if (el) {
@@ -1353,14 +1428,37 @@
       return _retry ? false : deferStinger(key, pos, now);
     }
 
-    const el = stingerEl(key);
-    if (!el) return false;
-    // The transient must be buffered, otherwise the hit lands late — which
-    // reads worse than not playing it at all.  Warm it and hold the beat:
-    // canplaythrough drains the queue the instant the slice is playable.
-    if (!stingerArmed(key)) {
-      warmStinger(key);
-      return _retry ? false : deferStinger(key, pos, now);
+    // Routing. Two paths:
+    //   BUFFER (primary) — measureStingerSlice() already fetches+decodes the
+    //   whole file for its RMS pass; st.stingerBuf[key] is that same decode,
+    //   kept instead of thrown away. Firing from it via an
+    //   AudioBufferSourceNode.start(t, spec.at, spec.dur) is sample-accurate
+    //   on the Web Audio clock — no seek, so no async gap between "the
+    //   envelope opens" and "the transient actually arrives". The 20260813
+    //   gap audit measured 6 of 7 slices still reporting currentTime===0 at
+    //   play()-time on the old <audio>-seek path — the media seek is async,
+    //   so the transient landed hundreds of ms late, sometimes (kill,
+    //   dur=0.50s) after the envelope had already closed. One in three live
+    //   onsets carried zero stinger energy for exactly this reason.
+    //   ELEMENT (fallback) — used only until the decode lands, or if it
+    //   never does (decode failure, Web Audio never came up, file://). Same
+    //   <audio>-element + seek path as before this fix; every liveness/
+    //   fallback behavior on it is unchanged.
+    waEnsure();
+    const buf = st.stingerBuf[key];
+    const bufReady = wa.ok && buf && typeof buf === 'object';
+
+    let el = null;
+    if (!bufReady) {
+      el = stingerEl(key);
+      if (!el) return false;
+      // The transient must be buffered, otherwise the hit lands late — which
+      // reads worse than not playing it at all.  Warm it and hold the beat:
+      // canplaythrough drains the queue the instant the slice is playable.
+      if (!stingerArmed(key)) {
+        warmStinger(key);
+        return _retry ? false : deferStinger(key, pos, now);
+      }
     }
 
     st.stingerGateUntil = now + STINGER_SPACING;
@@ -1374,26 +1472,53 @@
     const sg = spatialGain(pos);
     const gm = (typeof gainMul === 'number') ? gainMul : 1;
 
-    // Stereo placement + the chain that will carry the makeup gain.
-    waEnsure();
-    const chain = waRouteStinger(el);
-    if (chain && chain.pan) {
-      try { chain.pan.pan.setTargetAtTime(spatialPan(pos), wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
+    // The chain that will carry the makeup gain. Buffer path builds its own
+    // fresh gain (+ pan) node here, since the AudioBufferSourceNode itself is
+    // one-shot and gets a fresh node every fire; element path reuses the
+    // persistent per-key MediaElementSource chain from waRouteStinger().
+    let chain = null;
+    let bufSrc = null;
+    if (bufReady) {
+      try {
+        bufSrc = wa.ctx.createBufferSource();
+        bufSrc.buffer = buf;
+        const gainNode = wa.ctx.createGain();
+        gainNode.gain.setValueAtTime(0, wa.ctx.currentTime);
+        let panNode = null;
+        if (typeof wa.ctx.createStereoPanner === 'function') {
+          panNode = wa.ctx.createStereoPanner();
+          panNode.pan.setValueAtTime(spatialPan(pos), wa.ctx.currentTime);
+          bufSrc.connect(panNode);
+          panNode.connect(gainNode);
+        } else {
+          bufSrc.connect(gainNode);
+        }
+        gainNode.connect(wa.master);
+        chain = { gain: gainNode, pan: panNode };
+      } catch (e) { chain = null; bufSrc = null; }
+    }
+    if (!chain && el) {
+      chain = waRouteStinger(el);
+      if (chain && chain.pan) {
+        try { chain.pan.pan.setTargetAtTime(spatialPan(pos), wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
+      }
     }
 
     // LEVEL.
-    //  - Web Audio chain available (the normal path): el.volume below carries
-    //    ONLY the 0..1 attack/hold/release SHAPE. The actual output level
-    //    lives on chain.gain.gain, which — unlike el.volume — is not capped
-    //    at 1.0, so it can genuinely exceed the bed instead of being a
-    //    fraction of the same slider that sets it (the 20260810c bug).  Its
-    //    makeup gain is `target RMS ÷ this slice's own offline-measured RMS`,
-    //    where target RMS tracks the bed's LIVE running RMS (read fresh off
-    //    wa.bedAnalyser, not a snapshot) at STINGER_OVER_BED_DB(+4dB), with a
-    //    small per-spec offset (relDb) so relative prominence across event
-    //    types (liberation > bossSpawn > kill) survives WITHOUT ever letting
-    //    a low-`gain` spec (kill=0.55) get crushed back under the bed the
-    //    way a straight `* spec.gain` multiply on the target would.
+    //  - Web Audio chain available (the normal path, either routing): el.volume
+    //    (element path) or the shape×level product written straight onto
+    //    chain.gain.gain (buffer path — see the envelope below) carries the
+    //    0..1 attack/hold/release SHAPE. The actual output level itself is
+    //    NOT capped at 1.0, so it can genuinely exceed the bed instead of
+    //    being a fraction of the same slider that sets it (the 20260810c
+    //    bug). Its makeup gain is `target RMS ÷ this slice's own
+    //    offline-measured RMS`, where target RMS tracks the bed's LIVE
+    //    running RMS (read fresh off wa.bedAnalyser, not a snapshot) at
+    //    STINGER_OVER_BED_DB(+4dB), with a small per-spec offset (relDb) so
+    //    relative prominence across event types (liberation > bossSpawn >
+    //    kill) survives WITHOUT ever letting a low-`gain` spec (kill=0.55)
+    //    get crushed back under the bed the way a straight `* spec.gain`
+    //    multiply on the target would.
     //  - No Web Audio (file://, context never came up): fall back to the
     //    legacy el.volume-only peak — still capped at 1.0, unchanged from
     //    before this fix, since chain.gain doesn't exist to carry the level.
@@ -1450,18 +1575,48 @@
       };
       return level;
     }
-    if (chain) {
-      const level0 = computeLevel();
+    const level0 = chain ? computeLevel() : 0;
+    if (chain && bufSrc) {
+      // Buffer path: schedule the ATTACK as a real AudioParam ramp on the
+      // Web Audio clock, right now, before the source even starts — sample-
+      // accurate and immune to the main-thread stalls that hit the old
+      // setInterval envelope (tickMax measured at 1629ms live). The sustain
+      // and release are still driven by the 40ms tick below (so the level
+      // keeps chasing the bed for the hit's whole life — see the big
+      // comment above), but the attack no longer waits on that tick to even
+      // begin.
+      try {
+        chain.gain.gain.setValueAtTime(0, wa.ctx.currentTime);
+        chain.gain.gain.linearRampToValueAtTime(level0, wa.ctx.currentTime + Math.max(0.005, spec.atk));
+      } catch (e) { /* ignore */ }
+    } else if (chain) {
       try { chain.gain.gain.setTargetAtTime(level0, wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
     } else {
       legacyPeak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg * gm));
     }
 
     stopStinger(key);
-    try { el.currentTime = spec.at; } catch (e) { /* ignore */ }
-    el.volume = 0;
-    const p = el.play();
-    if (p && p.catch) p.catch(() => {});
+    if (bufSrc) {
+      st.stingerBufSrc[key] = bufSrc;
+      try { bufSrc.start(wa.ctx.currentTime, spec.at, spec.dur); } catch (e) { /* ignore */ }
+      // Release whatever this fire's nodes are holding once the source
+      // itself has genuinely finished — stopStinger() already tears them
+      // down on the envelope's own clock, this is just the backstop for a
+      // node that outlives its envelope for any reason.
+      bufSrc.onended = function () {
+        if (st.stingerBufSrc[key] === bufSrc) st.stingerBufSrc[key] = null;
+        try { bufSrc.disconnect(); } catch (e) { /* ignore */ }
+        if (chain) {
+          try { chain.gain.disconnect(); } catch (e) { /* ignore */ }
+          if (chain.pan) { try { chain.pan.disconnect(); } catch (e) { /* ignore */ } }
+        }
+      };
+    } else if (el) {
+      try { el.currentTime = spec.at; } catch (e) { /* ignore */ }
+      el.volume = 0;
+      const p = el.play();
+      if (p && p.catch) p.catch(() => {});
+    }
 
     // Sidechain: the bed steps back under the hit and swells back after.
     // Every stinger ducks something now — `spec.duck` overrides depth/ms for
@@ -1479,20 +1634,41 @@
     const relMs = Math.max(STEP, spec.rel * 1000);
     const totalMs = spec.dur * 1000;
     const t0 = now;
+    let releaseScheduled = false;   // buffer path only — schedule the release
+                                     // ramp exactly once, not every tick
     st.stingerTimers[key] = setInterval(() => {
       const t = Date.now() - t0;
       let shape;   // 0..1 attack/hold/release SHAPE only
       if (t < atkMs) shape = t / atkMs;
       else if (t > totalMs - relMs) shape = Math.max(0, (totalMs - t) / relMs);
       else shape = 1;
-      // Vanish instantly on mute. With a chain, el.volume carries only the
-      // shape — the absolute level lives on chain.gain.gain, RE-COMPUTED
-      // every tick (see computeLevel() above) so it keeps chasing the bed's
-      // actual movement for the hit's whole life instead of coasting on
-      // whatever the bed was doing at t=0. Without a chain (legacy
-      // fallback), el.volume has to carry both, as before this fix.
-      if (st.muted || !st.enabled) el.volume = 0;
-      else if (chain) {
+      if (st.muted || !st.enabled) {
+        if (el) el.volume = 0;
+        if (bufSrc && chain) { try { chain.gain.gain.setTargetAtTime(0, wa.ctx.currentTime, 0.02); } catch (e) { /* ignore */ } }
+      } else if (bufSrc && chain) {
+        // Buffer path: no el.volume to hold the shape separately, so this
+        // one node has to carry shape × level combined — the same product
+        // the element path gets acoustically for free from el.volume(shape)
+        // sitting in series with chain.gain.gain(level) in the signal chain.
+        if (t < atkMs) {
+          // Attack is already running as a precise ramp scheduled above —
+          // don't fight it with a coarser 40ms step target.
+        } else if (t <= totalMs - relMs) {
+          // Sustain: keep chasing the bed's own movement for the rest of
+          // this hit's life (see the big RE-TRACKED comment above) — a
+          // fast-ish 80ms time constant, same as the element path.
+          try { chain.gain.gain.setTargetAtTime(computeLevel(), wa.ctx.currentTime, 0.08); } catch (e) { /* ignore */ }
+        } else if (!releaseScheduled) {
+          releaseScheduled = true;
+          const relEndS = Math.max(0.01, (totalMs - t) / 1000);
+          try {
+            const now2 = wa.ctx.currentTime;
+            chain.gain.gain.cancelScheduledValues(now2);
+            chain.gain.gain.setValueAtTime(chain.gain.gain.value, now2);
+            chain.gain.gain.linearRampToValueAtTime(0, now2 + relEndS);
+          } catch (e) { /* ignore */ }
+        }
+      } else if (chain) {
         el.volume = Math.max(0, Math.min(1, shape));
         // 80ms time constant: fast enough to follow a real phrase-to-phrase
         // swing within a couple of ticks, slow enough (vs. the 10ms initial
@@ -1500,7 +1676,7 @@
         // 25Hz zipper riding on top of the bed's own smoothing.
         try { chain.gain.gain.setTargetAtTime(computeLevel(), wa.ctx.currentTime, 0.08); } catch (e) { /* ignore */ }
       }
-      else el.volume = Math.max(0, Math.min(1, legacyPeak * shape));
+      else if (el) el.volume = Math.max(0, Math.min(1, legacyPeak * shape));
       if (t >= totalMs) stopStinger(key);
     }, STEP);
     return true;
@@ -2726,22 +2902,43 @@
       const sting = {};
       Object.keys(STINGERS).forEach(k => {
         const el = st.stingerEls[k];
-        sting[k] = el
-          ? { ready: el.readyState, t: +el.currentTime.toFixed(2), vol: +el.volume.toFixed(3),
-              playing: !el.paused,
-              // armed = the transient itself is buffered, which is the only
-              // thing that decides whether the hit fires on time.
-              armed: bufferedAt(el, STINGERS[k].at), pre: el.preload,
-              tries: st._warmTries[k] || 0,
-              // TEST-ONLY: the closed-loop gain math from this key's last
-              // fire (bedRms it targeted against, this slice's own measured
-              // RMS, the resulting makeup multiplier, and the final level
-              // pushed to chain.gain.gain) — makes a servo that's silently
-              // pinned at STINGER_MAKEUP_MIN/MAX visible from outside the
-              // closure instead of only showing up as a wrong dB-over-bed
-              // several steps downstream.
-              servo: st.stingerLastServo[k] || null }
-          : 'cold';
+        const buf = st.stingerBuf[k];
+        // servo: the closed-loop gain math from this key's last fire
+        // (bedRms it targeted against, this slice's own measured RMS, the
+        // resulting makeup multiplier, and the final level pushed to
+        // chain.gain.gain) — makes a servo that's silently pinned at
+        // STINGER_MAKEUP_MIN/MAX visible from outside the closure instead of
+        // only showing up as a wrong dB-over-bed several steps downstream.
+        // Populated by computeLevel() on EITHER routing path.
+        const servo = st.stingerLastServo[k] || null;
+        // Buffer readiness gates the route the SAME way playStinger() itself
+        // decides it (bufReady checked before ever touching `el`) — an
+        // <audio> element existing here does NOT mean the element path is
+        // what actually fires next: warmStingerBank() creates one for every
+        // key unconditionally (the fallback path's own low-latency
+        // preloading), regardless of whether the buffer decode has already
+        // made that element moot. Checking `el` first would report
+        // 'element' for a key that's really firing sample-accurately off
+        // its buffer, which is exactly backwards for what this exists to
+        // show a harness.
+        if (buf && typeof buf === 'object') {
+          // Buffer path (the normal case post-fix): fires sample-accurately
+          // off the cached decode; `playing` reflects the live one-shot
+          // AudioBufferSourceNode, if any. An <audio> element may ALSO
+          // exist (warmed as a fallback that's simply unused) — irrelevant
+          // to what actually sounds.
+          sting[k] = { route: 'buffer', armed: true, playing: !!st.stingerBufSrc[k], servo: servo };
+        } else if (el) {
+          sting[k] = { route: 'element', ready: el.readyState, t: +el.currentTime.toFixed(2), vol: +el.volume.toFixed(3),
+            playing: !el.paused,
+            // armed = the transient itself is buffered, which is the only
+            // thing that decides whether the hit fires on time on this path.
+            armed: bufferedAt(el, STINGERS[k].at), pre: el.preload,
+            tries: st._warmTries[k] || 0,
+            servo: servo };
+        } else {
+          sting[k] = (buf === 'pending') ? 'decoding' : 'cold';
+        }
       });
       sting._pending = st.stingerPending.map(p => p.key);
       // Who owns element volume right now, and what the outgoing half of a

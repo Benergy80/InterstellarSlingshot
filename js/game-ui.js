@@ -2537,9 +2537,17 @@ let _universeDecorLive = false;      // nebula dots / path lines are attached
 // ── Radar declutter: bucket candidate blips, render individuals or one
 // aggregate per crowded cell ────────────────────────────────────────────
 // Cell size in radar px — matches the ~4-6px grid a dense clump was
-// observed stacking into (a screen-space cell, not a world-space one, so
-// it scales with however zoomed-in the radar currently is).
+// observed stacking into. It's expressed in screen px so it scales with
+// however zoomed-in the radar currently is, but _bucketWithBudget converts
+// it to a WORLD-space cell before bucketing (see that function) — a
+// screen-space grid is anchored to the player and slides under every
+// contact in flight, re-keying stationary clumps for no reason.
 const MAP_CLUSTER_CELL_PX = 5;
+// Minimum time a tier's chosen bucketing pitch (cellPx, possibly widened
+// by _bucketWithBudget's 1.7x escalation loop) must hold before it's
+// allowed to change again — see _bucketWithBudget. Kills pitch-flap churn
+// where a borderline item count widens one refresh and narrows the next.
+const MAP_PITCH_LATCH_MS = 1000;
 // Hard ceiling on DOM nodes the WHOLE radar refresh may claim — VIPs,
 // hostiles, objectives, allies AND scenery all draw from this ONE pool now,
 // spent in strict priority order (current target > hostiles > objectives >
@@ -2822,7 +2830,7 @@ function _ensureMapDepthBar(galaxyMap) {
     return depthBar;
 }
 
-// Buckets `items` onto a screen-space grid (same declutter idea the old
+// Buckets `items` onto a WORLD-space grid (same declutter idea the old
 // per-tier loops used), widening the cell up to 4x if the natural
 // bucketing still produces more nodes than `target`. Unlike the old
 // per-tier FIXED constants, `target` here is today's REMAINING shared
@@ -2839,27 +2847,80 @@ function _ensureMapDepthBar(galaxyMap) {
 // individualMax: cells with <= this many members render as individual
 // dots (0 disables that entirely — every surviving cell is an aggregate,
 // which is how scenery always wants it).
+//
+// Cell pitch (cellPxStart/cellPx) is expressed in radar SCREEN px, same as
+// always — but the grid the cells are actually cut on is WORLD space, not
+// screen space. A screen-space grid is anchored to the player (px/py move
+// every frame just from flying, even toward a perfectly stationary clump),
+// so a stable clump got re-bucketed into a new cell key constantly and its
+// aggregate DOM node died/respawned a cell over — measured at ~6 aggregate
+// deaths/sec, 27.6% of them flickering back within 250ms. Bucketing raw
+// world coords (c.wx/c.wz) instead fixes a clump's cell for as long as the
+// clump physically holds together; renderAggregateMapDot then hands the
+// SAME pooled node to the same physical clump indefinitely, and it glides
+// 1-2px/refresh instead of teleporting.
+//
+// The screen-px pitch is converted to its world-space equivalent using the
+// COMMITTED radar rung (_currentRadarRange._state.value), never the
+// animated `shown` value the 300ms rescale lerp is sliding — using `shown`
+// would re-key every cell continuously for the length of every lerp.
 function _bucketWithBudget(items, cellPxStart, target, individualMax, keyPrefix) {
     if (target <= 0 || items.length === 0) return { entries: [], nodeCount: 0 };
 
     const cost = g => (individualMax > 0 && g.length <= individualMax) ? g.length : 1;
 
-    let cellPx = cellPxStart;
-    let groups;
-    let total = 0;
-    for (let attempt = 0; attempt < 4; attempt++) {
-        groups = new Map(); // cellKey -> array of candidates
+    const _rangeState = _currentRadarRange._state;
+    const _committedRange = (_rangeState && _rangeState.value) || RADAR_SCAN_RADIUS;
+    // radar px -> world units: px = w/2 + (w/2)*(world-cam)/range, so a
+    // delta of 1 screen px is (2*range/w) world units at the committed rung.
+    const _worldPerScreenPx = (2 * _committedRange) / mapDotPool.w;
+    const _cellWorldFor = px => px * _worldPerScreenPx;
+
+    const _bucketAt = cellPx => {
+        const cellWorld = _cellWorldFor(cellPx);
+        const g2 = new Map(); // cellKey -> array of candidates
         for (let i = 0; i < items.length; i++) {
             const c = items[i];
-            const ck = Math.floor(c.px / cellPx) + '_' + Math.floor(c.py / cellPx);
-            let g = groups.get(ck);
-            if (!g) { g = []; groups.set(ck, g); }
+            const ck = Math.floor(c.wx / cellWorld) + '_' + Math.floor(c.wz / cellWorld);
+            let g = g2.get(ck);
+            if (!g) { g = []; g2.set(ck, g); }
             g.push(c);
         }
-        total = 0;
+        return g2;
+    };
+
+    // Latch the chosen pitch per tier (keyPrefix) for >=1s. Recomputing
+    // cellPx fresh every refresh means a borderline frame (item count or
+    // spread wobbling right at the fit/overflow line) can widen this frame
+    // and narrow back the next, re-keying EVERY cell in the tier purely
+    // because the pitch changed — nothing in the world actually moved.
+    // That accounted for the other slice of aggregate churn (worst single
+    // refreshes: whole aggregate set replaced). Holding the pitch steady
+    // is safe even if it's briefly stale for a growing cluster: the
+    // overflow fold below still guarantees the node cap regardless of how
+    // many cells the stale pitch produces.
+    if (!_bucketWithBudget._pitchState) _bucketWithBudget._pitchState = new Map();
+    const _pitchMap = _bucketWithBudget._pitchState;
+    const _nowMs = Date.now();
+    const _latched = _pitchMap.get(keyPrefix);
+
+    let cellPx;
+    let groups;
+    let total = 0;
+    if (_latched && (_nowMs - _latched.at) < MAP_PITCH_LATCH_MS) {
+        cellPx = _latched.cellPx;
+        groups = _bucketAt(cellPx);
         groups.forEach(g => { total += cost(g); });
-        if (total <= target || attempt === 3) break;
-        cellPx *= 1.7;
+    } else {
+        cellPx = cellPxStart;
+        for (let attempt = 0; attempt < 4; attempt++) {
+            groups = _bucketAt(cellPx);
+            total = 0;
+            groups.forEach(g => { total += cost(g); });
+            if (total <= target || attempt === 3) break;
+            cellPx *= 1.7;
+        }
+        _pitchMap.set(keyPrefix, { cellPx, at: _nowMs });
     }
 
     if (total <= target) {
@@ -4031,7 +4092,14 @@ if (obj.type === 'ally') {
                 // instead of stacking dozens of nodes on top of each other.
                 const relY = Math.max(-1, Math.min(1, relativeY));
                 _clusterCandidates.push({
-                    key: _key, px, py, relY, dotColor, dotSize, dotPriority, distress,
+                    // wx/wz: raw world-space position, carried alongside the
+                    // screen-space px/py so aggregate bucketing can key cells
+                    // in WORLD space (see _bucketWithBudget) instead of on a
+                    // screen grid that slides under every contact as the
+                    // player flies — the dominant source of aggregate-blip
+                    // churn (a clump's screen position moves even though the
+                    // clump itself hasn't).
+                    key: _key, px, py, wx: obj.position.x, wz: obj.position.z, relY, dotColor, dotSize, dotPriority, distress,
                     name: obj.name, distance: obj.distance, mustIndividual, rimClamped
                 });
             }

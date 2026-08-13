@@ -6870,19 +6870,112 @@ function _fxGetHardCoreTexture() {
     return _fxHardTexture;
 }
 
-// A NEAR-STATIC HOT DISC. Deliberately NOT the same animation as
-// _fxCoreFlash: size barely moves (startSize -> endSize is a ~45% growth,
-// not the 6.4x the bang layer sweeps) and opacity HOLDS at full for the
-// first ~72% of its life before falling off a cliff. That hold is the whole
-// point — a flash the eye can catch is a flash that is still there on the
-// next frame, and an exponentially-decaying sprite is never at full value
-// for more than the frame it spawned on.
-// `capFrac`: this layer's share of the screen cap, as a fraction of the cap
-// RADIUS. Omitted = 1 (uncapped relative to the cap itself). A Sprite's
+// ── GLARE: the shoulder that makes the core read as LIGHT ────────────────
+//
+// THE BUG THIS FIXES. The hot core above is the only saturated element in
+// the kill, and on its own it is a HARD-EDGED WAFER: measured on a paused
+// world, hand-stepped in 25 ms beats at 250 u, the composited burst was a
+// CLIPPED FLAT PLATEAU at 243.8/255 from r = 0 out to r = 24 px, terminated
+// by a 61/255-in-one-pixel cliff at r = 49 px. A gradient-free disc of
+// clipped white with a hard rim is exactly how the eye encodes a SPHERE —
+// a moon, an untextured white ball — and not an explosion. Real light does
+// not end at an edge; it falls off around the source, and a camera renders
+// that falloff as a wide, smooth glare shoulder.
+//
+// There is no bloom pass in this renderer to make that shoulder for us
+// (js/atmospheric-perspective.js only sets ACESFilmicToneMapping, which
+// COMPRESSES highlights instead of spreading them, so a clipped core stays
+// a clipped core), so the shoulder is drawn explicitly: a wide GAUSSIAN
+// sprite, no plateau and no rim, riding the same k as the hard core.
+//
+// NOT A PURE GAUSSIAN. A gaussian has no edge — which fixes the cliff — but
+// it also has no TAIL: at s = 0.28 it is already down to 0.006 at two thirds
+// of the radius, so the halo dies inside the fireball and the composite is
+// still a hard disc with a 20 px soft edge. Rendered and read back at t =
+// 100 ms that measured 255/255 flat out to r = 60 px and background by
+// r = 80 px — a white ball with a fuzz, i.e. the same object the critic saw.
+//
+// Real glare is a bright gaussian centre riding a long POWER-LAW skirt, and
+// the skirt is the half that says "light" rather than "sphere". This is a
+// half-and-half mix of the two:
+//     a(r) = [ 0.5 exp(-r^2 / 2(0.20)^2) + 0.5 / (1 + (r/0.34)^2) ] x window
+// 1.00 at the centre, 0.35 at 0.35 R, 0.18 at 0.50 R, 0.10 at 0.70 R. That
+// last number is the point: at 0.55 opacity it is still +13/255 over a 12/255
+// starfield two-thirds of the way out, where a gaussian would be at +0.2.
+// The window is a smoothstep over the outer 30% so the skirt reaches exactly
+// zero at the quad's edge instead of stepping off it; it bites where the
+// profile is already under 0.1, so it costs the falloff nothing.
+let _fxGlareTexture = null;
+function _fxGetGlareTexture() {
+    if (_fxGlareTexture) return _fxGlareTexture;
+    const N = 128, h = N / 2;
+    const c = document.createElement('canvas'); c.width = c.height = N;
+    const g = c.getContext('2d');
+    const img = g.createImageData(N, N), d = img.data;
+    const inv = 1 / (2 * 0.20 * 0.20), b2 = 0.34 * 0.34;
+    const ss = (e0, e1, x) => {
+        const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+        return t * t * (3 - 2 * t);
+    };
+    for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+            const dx = (x + 0.5 - h) / h, dy = (y + 0.5 - h) / h;
+            const rr = dx * dx + dy * dy;
+            let a = 0;
+            if (rr < 1) {
+                a = (0.5 * Math.exp(-rr * inv) + 0.5 / (1 + rr / b2)) *
+                    (1 - ss(0.70, 1.0, Math.sqrt(rr)));
+            }
+            const i = (y * N + x) * 4;
+            d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
+            d[i + 3] = Math.round(255 * Math.min(1, Math.max(0, a)));
+        }
+    }
+    g.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    _fxGlareTexture = t; return t;
+}
+
+// The glare's radius as a multiple of the hard core's, and its peak opacity.
+// 4.6x puts the glare's rim at 1.63K — outside the fireball body's early
+// radius and inside the inner shock front's 1.88K, so the skirt is visible
+// AROUND the solid part of the kill from the first frame (that is what makes
+// it read as light) without ever being the layer that sets the bounding box
+// the 35% cap is measured on. Its cap share works out at 0.64 of the cap
+// radius, against a measured peak burst radius of 0.94, so it cannot.
+// 0.55 opacity keeps the skirt under the fronts: the travelling ring is
+// still the brightest band once the flash is spent.
+const _FX_GLARE_MULT = 4.6;
+const _FX_GLARE_OPA  = 0.55;
+
+// A NEAR-STATIC HOT DISC, PLUS ITS GLARE. Deliberately NOT the same
+// animation as _fxCoreFlash: size barely moves (startSize -> endSize is a
+// ~34% growth, not the 6.4x the bang layer sweeps) and opacity HOLDS at full
+// for the first ~72% of its life before falling off a cliff. That hold is
+// the whole point — a flash the eye can catch is a flash that is still there
+// on the next frame, and an exponentially-decaying sprite is never at full
+// value for more than the frame it spawned on.
+//
+// Two sprites, ONE explosionManager entry and ONE k: the hard disc that
+// carries the >= 230/255 intensity bar, and the gaussian glare at
+// _FX_GLARE_MULT its radius that carries the falloff. They share
+// renderOrder 74 so nothing soft can average either of them back down, and
+// they cross-fade together so the shoulder never outlives the light that
+// is supposed to be casting it.
+// `capFrac`: the HARD CORE's share of the screen cap, as a fraction of the
+// cap RADIUS. Omitted = 1 (uncapped relative to the cap itself). A Sprite's
 // scale is its FULL size and its visible radius is half that, so the largest
-// legal scale is _fxMaxScale(pos, 0.5 / capFrac) — see _fxMaxScale.
-function _fxHotCore(center, color, startSize, endSize, life, capFrac) {
+// legal scale is _fxMaxScale(pos, 0.5 / capFrac) — see _fxMaxScale. The
+// glare's own share is capFrac * _FX_GLARE_MULT, so when the cap bites at
+// point-blank range the pair is squeezed together and keeps its shape.
+// `glareColor` tints the shoulder; omitted, it matches the core. It exists
+// because a white shoulder three and a half times the core's radius is the
+// single most desaturating thing in the frame, and the kill has to keep its
+// faction hue — see _fxKillBurst.
+function _fxHotCore(center, color, startSize, endSize, life, capFrac, glareColor) {
     const _cf = (capFrac > 0) ? capFrac : 1;
+    const _cg = Math.min(1, _cf * _FX_GLARE_MULT);
     const mat = new THREE.SpriteMaterial({
         map: _fxGetHardCoreTexture(), color: color, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
@@ -6893,6 +6986,18 @@ function _fxHotCore(center, color, startSize, endSize, life, capFrac) {
     sp.frustumCulled = false;
     sp.renderOrder = 74;          // over every soft layer, so it stays white
     scene.add(sp);
+    const gmat = new THREE.SpriteMaterial({
+        map: _fxGetGlareTexture(),
+        color: (glareColor === undefined || glareColor === null) ? color : glareColor,
+        transparent: true, opacity: _FX_GLARE_OPA,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+    });
+    const gs = new THREE.Sprite(gmat);
+    gs.position.copy(center);
+    gs.scale.setScalar(startSize * _FX_GLARE_MULT);
+    gs.frustumCulled = false;
+    gs.renderOrder = 74;
+    scene.add(gs);
     let t = 0;
     explosionManager.addExplosion({
         update(dt) {
@@ -6902,10 +7007,18 @@ function _fxHotCore(center, color, startSize, endSize, life, capFrac) {
             // Trajectory compressed, not clipped — see _fxShockwave.
             const maxS = _fxMaxScale(sp.position, 0.5 / _cf);
             sp.scale.setScalar(endSize > maxS ? want * (maxS / endSize) : want);
-            mat.opacity = (k < 0.72) ? 1 : Math.max(0, (1 - k) / 0.28);
+            const gEnd = endSize * _FX_GLARE_MULT, gWant = want * _FX_GLARE_MULT;
+            const gMax = _fxMaxScale(gs.position, 0.5 / _cg);
+            gs.scale.setScalar(gEnd > gMax ? gWant * (gMax / gEnd) : gWant);
+            const o = (k < 0.72) ? 1 : Math.max(0, (1 - k) / 0.28);
+            mat.opacity = o;
+            // The shoulder outlasts the disc slightly (^0.7) so the hard core
+            // never fades out from under its own glare and re-exposes an edge
+            // on the way down.
+            gmat.opacity = _FX_GLARE_OPA * Math.pow(o, 0.7);
             return k < 1;
         },
-        cleanup() { scene.remove(sp); mat.dispose(); }
+        cleanup() { scene.remove(sp); mat.dispose(); scene.remove(gs); gmat.dispose(); }
     });
 }
 
@@ -7055,7 +7168,27 @@ function _fxFireBody(center, r0, r1, color, life, opacity, capFrac, hold) {
             const lim = _fxMaxScale(sp.position, 1 / cf);
             if (r1 > lim) r *= lim / r1;
             sp.scale.setScalar(2 * r);
-            mat.opacity = op * Math.min(1, k / 0.05) *
+            // THE BODY IS NOT PART OF THE FLASH. It used to reach full
+            // opacity in k/0.05 — 45 ms — which put a 0.78-opacity disc of
+            // radius 0.83K under the hot core, the glare, both core flashes
+            // AND the two shock fronts while every one of them was still at
+            // peak. Their additive sum CLIPS, so the first ~250 ms of every
+            // kill was a flat 255/255 plate: a white ball, measured and
+            // photographed. Layer-isolated readback at t = 200 ms, 250 u,
+            // paused: body alone 178/255 FLAT from r = 0 to r = 64 px, fronts
+            // alone 222/255 at r = 80 px, core+glare alone a clean 255 -> 26
+            // falloff. Only the sum is a disc; the body is the flat half of
+            // it and it buys nothing there, because the frame is already
+            // clipped before it is drawn.
+            // Ramping it over k/0.34 — 306 ms at the kill's 900 ms life —
+            // hands the detonation beat to the core and its glare (a small
+            // saturated centre inside a wide smooth skirt, i.e. a LIGHT) and
+            // the middle beat to the travelling fronts, then brings the body
+            // up to fill the fireball. Nothing about the area, fill or
+            // annulus acceptance moves: all three are measured at the burst's
+            // peak, ~700 ms, where this ramp is long finished.
+            const fadeIn = Math.min(1, k / 0.34);
+            mat.opacity = op * fadeIn * fadeIn * (3 - 2 * fadeIn) *
                           (k < hd ? 1 : Math.pow((1 - k) / (1 - hd), 0.85));
             return k < 1;
         },
@@ -7079,8 +7212,11 @@ function _fxLayeredBurst(position, o) {
     // flashes whose peak value is colour x opacity, which for a gold or a
     // cyan loot tell can never reach 230/255. White here, hue everywhere
     // else: value and saturation do not have to be the same pixels.
+    // The glare shoulder (7th arg) takes the variant's own core hue rather
+    // than white, for the same reason as _fxKillBurst: a wide white falloff
+    // greys out the loot tell it is supposed to be announcing.
     _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330,
-               _FX_CAP_HOTCORE);
+               _FX_CAP_HOTCORE, o.core || 0xffcf9a);
     // THE BODY IS NOW HULL-RELATIVE, LIKE THE FRONTS. These two flashes were
     // the last fixed-world-unit sizes left in any kill: 74 and 128 units of
     // sprite scale (radii 37 u and 64 u) regardless of what died, while the
@@ -7628,7 +7764,16 @@ const _FX_KILL_GAIN = 0.84;
 // the burst read as a blown-out ball. Its job is to be the hottest thing in
 // the frame, not the widest; the >=230/255 requirement is about INTENSITY
 // and survives the area cut, while the front now owns the outward motion.
-const _FX_HOT_CORE_K = 1.06;
+//
+// ROUND 10 — HALVED AGAIN, 1.06 -> 0.53, AND PAIRED WITH A GLARE. At 1.06K
+// this layer WAS the kill's silhouette out to r = 49 px, a clipped 243.8/255
+// plateau ending in a 61/255-in-one-pixel cliff: a white ball, not a light.
+// The area it gives up goes to the gaussian glare that _fxHotCore now draws
+// beside it at _FX_GLARE_MULT (4.6x) this radius, whose half-brightness
+// circle lands at 1.24x the surviving core's rim — the disc's own roll-off
+// now happens on top of a still-strong smooth field instead of straight down
+// to black. Same peak VALUE, same >= 230/255 hold, none of the edge.
+const _FX_HOT_CORE_K = 0.53;
 
 // SCREEN-CAP SHARES. _fxCapPx() is one radius — 35% of viewport HEIGHT as a
 // diameter — and every layer of the kill is now clamped against it. Each
@@ -7666,14 +7811,18 @@ const _FX_BODY_K      = 1.88;     // fireball body — reaches the inner front's
 const _FX_GLOW_K      = 0.68;     // afterglow   (was 0.325K)
 const _FX_FIRE_K      = 0.56;     // fireball    (was 0.31K)
 const _FX_BANG_K      = 0.36;     // bang        (was 0.275K)
-const _FX_HOTCORE_R_K = 0.58;     // hot core peak radius
+// Hot core PEAK radius = _FX_HOT_CORE_K * 1.34 / 2 = 0.355K. The glare that
+// rides with it reaches _FX_GLARE_MULT x that, 1.63K — inside the inner
+// front's 1.88K, so the shoulder fills the middle without touching the
+// bounding box the 35% cap is measured on.
+const _FX_HOTCORE_R_K = 0.36;     // hot core peak radius (glare: x4.6 = 1.63K)
 
 // SCREEN-CAP SHARES, derived from the ladder above. The outer front owns
 // the whole cap; everything else is squeezed toward it in proportion.
 const _FX_CAP_FRONT_OUT = 1.00;
 const _FX_CAP_FRONT_IN  = _FX_FRONT_IN_K  / _FX_FRONT_OUT_K;   // 0.718
 const _FX_CAP_BODY      = _FX_BODY_K      / _FX_FRONT_OUT_K;   // 0.482
-const _FX_CAP_HOTCORE   = _FX_HOTCORE_R_K / _FX_FRONT_OUT_K;   // 0.216
+const _FX_CAP_HOTCORE   = _FX_HOTCORE_R_K / _FX_FRONT_OUT_K;   // 0.138 (glare 0.50)
 const _FX_CAP_GLOW      = _FX_GLOW_K      / _FX_FRONT_OUT_K;   // 0.309
 const _FX_CAP_FIRE      = _FX_FIRE_K      / _FX_FRONT_OUT_K;   // 0.255
 const _FX_CAP_BANG      = _FX_BANG_K      / _FX_FRONT_OUT_K;   // 0.164
@@ -7707,8 +7856,16 @@ function _fxKillBurst(center, S, cfg) {
     // THE WHITE CORE, first and brightest — a near-static saturated disc that
     // HOLDS for ~190 ms instead of dissolving. renderOrder 74 puts it over
     // every soft layer below so nothing can average it back down.
+    //
+    // The 7th argument is the GLARE's tint (see _fxHotCore). The disc itself
+    // stays 0xffffff because 230/255 is a VALUE bar and no faction hue can
+    // clear it — but the shoulder is 3.6x its radius, and a white shoulder
+    // that wide is the single most desaturating element in the frame. The
+    // measured mid-life cloud came out 0.10 saturated, i.e. grey dust. The
+    // glare therefore carries the synthwave rose, pulled 42% toward the
+    // faction, so the light around the white centre still has a hue.
     _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330,
-               _FX_CAP_HOTCORE);
+               _FX_CAP_HOTCORE, _fxTintHue(0xffb4d8, c.core, 0.42));
     // THE CORE STOPS CHASING THE FRONT. These three end sizes were 1.10K /
     // 1.50K / 1.80K, which as sprite RADII (a Sprite's scale is its full
     // size) is 0.55K / 0.75K / 0.90K — running right up under the two shock
@@ -7751,8 +7908,17 @@ function _fxKillBurst(center, S, cfg) {
     // at t = 750 ms while the front was still travelling — the annulus
     // re-opened in the back half of every kill (measured trough 12.0-13.4/255
     // at t = 750-900 ms). The body now holds until the front is nearly spent.
+    // ROUND 10 — THE BODY CARRIES HUE, NOT ASH. 0xffc2e0 at a 34% faction
+    // mix is only 0.24 saturated before the additive stack washes it, and
+    // measured mid-life the cloud came back 0.10 saturated — grey dust with
+    // a pink memory. This is the widest long-lived layer in the kill, so it
+    // is the one that decides what colour the back half of a death is.
+    // 0xff86c8 is 0.47 saturated and the mix goes to 0.46, which keeps the
+    // synthwave rose as the base while letting a Klingon kill actually read
+    // gold-shifted. VALUE is unchanged (red stays 255), so nothing about the
+    // intensity or area acceptance moves.
     _fxFireBody(center, 0.52 * K, _FX_BODY_K * K,
-                _fxTintHue(0xffc2e0, c.core, 0.34), 900, 0.78, _FX_CAP_BODY, 0.62);
+                _fxTintHue(0xff86c8, c.core, 0.46), 900, 0.78, _FX_CAP_BODY, 0.62);
     // AFTERGLOW, trimmed 2.70K/980ms -> 1.80K/700ms. This layer was the
     // reason the burst's area peak landed at 425-450 ms as a huge dim cloud:
     // it grows 4.9x while fading, so it contributed almost all of the peak's
@@ -7932,7 +8098,7 @@ function _fxSparkTex() {
 // them at load costs the same few milliseconds while the intro screen is up.
 try {
     if (typeof THREE !== 'undefined' && typeof document !== 'undefined') {
-        _fxGetFlashTexture(); _fxGetHardCoreTexture(); _fxBlastTex();
+        _fxGetFlashTexture(); _fxGetHardCoreTexture(); _fxGetGlareTexture(); _fxBlastTex();
         _fxSparkTex(); _fxShockTex(); _fxBodyTex();
     }
 } catch (e) { /* textures stay lazy if anything here is not ready yet */ }
