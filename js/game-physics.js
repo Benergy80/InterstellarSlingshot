@@ -2299,7 +2299,7 @@ function _fovKick(strength) {
         typeof camera !== 'undefined' && camera.isPerspectiveCamera) {
         const spike = 1 + 0.45 + 0.45 * s;              // 1.90 planet → 2.13 BH
         cs._warpZoom = Math.max(cs._warpZoom || 1, spike);
-        camera.fov = 75 + (cs._warpZoom - 1) * 20;      // land it THIS frame
+        camera.fov = 75 + Math.min(12, (cs._warpZoom - 1) * 20); // land it THIS frame, capped like the rig's own composite
         camera.updateProjectionMatrix();
         return;
     }

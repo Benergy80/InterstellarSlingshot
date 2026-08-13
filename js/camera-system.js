@@ -519,7 +519,10 @@ function updateCameraView(camera) {
         if (_exitT !== null) cameraState._warpZoom = 1 + (cameraState._warpZoom - 1) * _exitSettle;
         const _zAmt = cameraState._warpZoom - 1;
         if (Math.abs(_zAmt) > 0.004) {
-            currentOffset.multiplyScalar(cameraState._warpZoom);
+            // Damped (0.55x) so the warp dolly-back reads as a lean, not an
+            // abandonment: full _warpZoom multiply left the hull at ~21% of
+            // its cruise screen area under the spike + FOV widen combined.
+            currentOffset.multiplyScalar(1 + _zAmt * 0.55);
             // Slow cinematic float while warped-out
             const _wt = performance.now();
             currentOffset.x += Math.sin(_wt * 0.0008) * 0.6 * _zAmt;
@@ -619,7 +622,10 @@ function updateCameraView(camera) {
         if (camera.isPerspectiveCamera) {
             //   • the sustained sub-warp whip level, so the lens widens
             //     continuously with speed instead of only ever at warp
-            let _fovT = 75 + _zAmt * 20 + Math.abs(cameraState._whipLean) * 5 +
+            // Warp term capped at +12°: sustained warp (_zAmt 0.55) sits at
+            // +11, so the cap only tames the _fovKick spikes (up to +22.6°)
+            // that were shrinking the ship to ~1/5 of its cruise screen area.
+            let _fovT = 75 + Math.min(12, _zAmt * 20) + Math.abs(cameraState._whipLean) * 5 +
                 (cameraState._whipCrack || 0) * 6 +
                 (cameraState._whipFov || 0) * 7.5;
             if (cameraState._fovPulseAmp) {
