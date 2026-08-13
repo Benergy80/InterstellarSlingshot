@@ -2618,34 +2618,35 @@ function _mapStalkRgba(hex, alpha) {
     return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
 }
 
-// Applies the shared elevation "drop-line" treatment to a claimed dot: the
-// dot itself shifts vertically by `dy` px (elevated contacts render higher
-// on the disc, contacts below render lower), and its permanent stalk child
-// (added once in mapDotPool._fresh) is sized to bridge back down/up to the
-// contact's true flat-plane position. Returns dy so the caller can fold it
-// into the dot's own translate(). Fully compare-and-set: an unmoved blip
-// (same dy + colour) writes nothing.
+// Applies the shared elevation "drop-line" treatment to a claimed dot.
 //
-// `dyMin`/`dyMax` (px, optional) hard-bound the returned offset. Two
-// callers rely on this:
-//   - rim-clamped contacts pass 0/0, so the elevation stalk can never
-//     re-push an already-exact rim/bearing position off the disc (see
-//     _stalkDyRange and the "second gap" writeup at the call sites below —
-//     round-1 of this fix decoupled the RADIAL cull from the draw scale,
-//     but left the stalk free to shove the result back out again).
+// Round-2 gap (critic-caught): this used to ALSO shift the dot itself
+// vertically by `dy` px and return that offset so the caller folded it
+// into the dot's own translate(). That made elevation lie about bearing
+// and range everywhere EXCEPT the rim: a contact sitting well inside the
+// draw scale (e.g. 380u on a 500u scale) could get walked by its own
+// stalk all the way out to the rim's 94px radius, making it visually
+// indistinguishable from an off-scale contact 2600u away. The rim clamp
+// itself was never the bug — the stalk re-displacing an ALREADY-correct
+// (px, py) after the fact was.
+//
+// Fixed by never touching the dot's own position here: `dyRaw` is used
+// ONLY to size/orient the permanent stalk child (added once in
+// mapDotPool._fresh) as a drop-line hanging off the dot's true, exact
+// (px, py) — the standard 3D-radar drop-line idiom. The dot itself is
+// always bearing- and range-true; elevation reads purely from the stalk's
+// length/direction plus the ▲/▼ caret _syncRimElevCaret adds alongside it.
+// Always returns 0 so a caller that still folds the "offset" into its
+// translate() is a no-op, not a regression back to the old lie.
+//
+// `dyMin`/`dyMax` (px, optional) still hard-bound the STALK's drawn
+// length (no longer the dot's position) so a stalk can't visually
+// overrun the pooled node's own clip container:
+//   - rim-clamped contacts pass 0/0, suppressing the stalk entirely —
+//     elevation there reads from the caret alone.
 //   - every OTHER contact passes the geometric window left around its own
-//     (px, py) — see _stalkDyRange — so a contact sitting close to
-//     RADAR_RIM_RADIUS with a large elevation can't get walked past the
-//     rim by the stalk either — the offset just clips at whatever room is
-//     actually left, rather than teleporting the dot past the disc edge or
-//     off the end of the pooled node's own clip container. The window is
-//     NOT symmetric around 0 (only around the contact's OWN pre-stalk
-//     offset from the disc centre) — a point sitting near the rim already
-//     has most of its "budget" spent just getting there, and clamping to
-//     a plain ±cap ignores that, which is exactly the geometry bug this
-//     comment used to describe before it was caught in verification (a
-//     dot at px=139.5 with dx=32.5 from centre was still measured 5.77px
-//     outside the rim with a naive symmetric cap).
+//     (px, py) — see _stalkDyRange — capping how far the drop-line can
+//     visually extend before it would overrun the disc edge.
 function _applyMapDotStalk(dot, s, relY, dotColor, dyMin, dyMax) {
     const dyRaw = (relY || 0) * mapDotPool.h * 0.30;
     let dy = Math.round(dyRaw * 10) / 10;
@@ -2665,7 +2666,7 @@ function _applyMapDotStalk(dot, s, relY, dotColor, dyMin, dyMax) {
             s.stalk = stalkKey;
         }
     }
-    return dy;
+    return 0;
 }
 
 // The [min, max] window of allowed FINAL vertical stalk offset (px) that
@@ -3112,23 +3113,27 @@ function renderIndividualMapDot(c, raised) {
     // Off-scale elevation cue: a caret on the dot's own box, never a radial
     // displacement (see _syncRimElevCaret) — independent of the chevron
     // shape above, so an off-scale hostile still shows above/below too.
-    _syncRimElevCaret(dot, s, c.dotColor, c.relY, c.rimClamped);
-    // Elevation cue: shift the dot itself by dy and grow its stalk to
-    // bridge back to the true flat-plane point (see _applyMapDotStalk).
-    // Rim-clamped contacts pass a 0/0 window — their (px, py) IS the exact
-    // bearing-true rim point the clamp above computed, and the stalk must
-    // not move it again (that was the bug: a stalk offset applied AFTER
-    // the rim clamp could push a "rim-clamped" blip radius past the rim it
-    // was supposedly clamped to, and even off the edge of the disc's own
-    // clipped container). Everything else gets the geometric window left
-    // around ITS OWN (px, py) before the radial distance would cross the
-    // rim (see _stalkDyRange), so a contact sitting close to the rim
-    // can't get walked past it by its stalk either.
+    //
+    // Round-2 gap (critic-caught): `active` used to be `c.rimClamped`, so
+    // the caret only ever fired for off-scale contacts — every contact
+    // INSIDE the draw scale still carried elevation as a raw stalk
+    // displacement of the dot itself, which is bearing/range-true ONLY at
+    // the rim (see _applyMapDotStalk's round-2 writeup). Now that the
+    // stalk never moves the dot, ALL contacts need the caret to still
+    // read their elevation — so this fires unconditionally.
+    _syncRimElevCaret(dot, s, c.dotColor, c.relY, true);
+    // Elevation cue: grow the stalk into a drop-line hanging off the dot's
+    // OWN exact (px, py) — see _applyMapDotStalk. The dot's position is
+    // never touched here any more (the function always returns 0); `dy`
+    // is kept only because `_applyMapDotStalk` still needs the dyMin/dyMax
+    // window to cap how far the drop-line can visually extend before
+    // overrunning the disc edge (see _stalkDyRange). Rim-clamped contacts
+    // pass 0/0, suppressing the stalk entirely — their elevation reads
+    // from the caret alone.
     const _dyRange = c.rimClamped ? null : _stalkDyRange(c.px, c.py);
-    const dy = _applyMapDotStalk(dot, s, c.relY, c.dotColor,
+    _applyMapDotStalk(dot, s, c.relY, c.dotColor,
         c.rimClamped ? 0 : _dyRange.min, c.rimClamped ? 0 : _dyRange.max);
-    const py2 = Math.round((c.py - dy) * 10) / 10;
-    const tf = 'translate(' + c.px + 'px,' + py2 + 'px) translate(-50%,-50%)' +
+    const tf = 'translate(' + c.px + 'px,' + c.py + 'px) translate(-50%,-50%)' +
         (isOffScaleHostile ? ' rotate(' + chevronDeg + 'deg)' : '');
     if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
     if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
@@ -3270,19 +3275,20 @@ function renderAggregateMapDot(cellKey, group) {
     }
     if (!s.aggregate) { dot.classList.add('aggregate-map-dot'); s.aggregate = true; }
     // Off-scale elevation cue: caret, not radial displacement — mirrors
-    // renderIndividualMapDot (see _syncRimElevCaret).
-    _syncRimElevCaret(dot, s, dominant.dotColor, meanRelY, allRim);
-    // Elevation cue uses the GROUP's mean relY — same stalk treatment as a
-    // lone contact, so a crowded cell still tells you roughly how high/low
-    // its members sit as a whole. Same rim-safety window as the individual
-    // path: allRim clamps to 0/0 (exact rim point, never re-pushed off the
-    // disc by the stalk), everything else gets the geometric window left
-    // around ITS OWN centroid before the radius would cross the rim.
+    // renderIndividualMapDot (see _syncRimElevCaret and its round-2
+    // writeup there). Fires for every cell now, not just rim-clamped
+    // ones, since the stalk below no longer moves the dot at any range.
+    _syncRimElevCaret(dot, s, dominant.dotColor, meanRelY, true);
+    // Elevation cue uses the GROUP's mean relY to grow a drop-line off the
+    // centroid's OWN exact (px, py) — see _applyMapDotStalk. Same
+    // stalk-length window as the individual path: allRim clamps to 0/0
+    // (stalk suppressed, caret carries elevation alone), everything else
+    // gets the geometric window left around ITS OWN centroid before the
+    // drop-line would visually cross the rim.
     const _aggDyRange = allRim ? null : _stalkDyRange(px, py);
-    const dy = _applyMapDotStalk(dot, s, meanRelY, dominant.dotColor,
+    _applyMapDotStalk(dot, s, meanRelY, dominant.dotColor,
         allRim ? 0 : _aggDyRange.min, allRim ? 0 : _aggDyRange.max);
-    const py2 = Math.round((py - dy) * 10) / 10;
-    const tf = 'translate(' + px + 'px,' + py2 + 'px) translate(-50%,-50%)' +
+    const tf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%)' +
         (isOffScaleHostile ? ' rotate(' + chevronDeg + 'deg)' : '');
     if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
     if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
@@ -3332,7 +3338,13 @@ function renderAllyMarker(c) {
 // STEPS between states instead of continuously breathing as the nearest
 // hostile's distance fluctuates frame to frame.
 const RADAR_RANGE_LADDER = [500, 750, 1000, 1500, 3000];
-const RADAR_RANGE_DWELL_MS = 2500;
+// Was 2500ms — exactly HALF the "no more than once per 5s" acceptance
+// threshold, which is why a fight sitting near a rung boundary could
+// legally commit two rung changes inside a single 5s window (dwell only
+// blocks a SECOND change from landing sooner than this after the last
+// one; two changes 2.5s apart both individually satisfy a 2500ms dwell).
+// Raised to 5000 so the dwell timer alone enforces the acceptance bar.
+const RADAR_RANGE_DWELL_MS = 5000;
 // Round-3 fix: dwell only rate-limits how OFTEN the range can change — it
 // never required the new rung to actually be the right answer for more
 // than an instant, so a `want` value that brushed a hysteresis boundary

@@ -454,6 +454,11 @@ function _addFresnelRim(material, opts) {
         // How much of the panel mask reaches the EMISSIVE floor (0 = the old
         // albedo-only behaviour, 1 = the floor is fully panelled).
         uniforms.uPanelEmis = { value: opts.panelEmissive !== undefined ? opts.panelEmissive : 0.85 };
+        // Strength of the NORMAL-PERTURBATION path (see the bump inject
+        // after normal_fragment_maps below). This is what makes a panel
+        // seam a groove the scene's real lights can shade, instead of a
+        // value the eye can only read as printed-on. 0 = perturbation off.
+        uniforms.uPanelBump = { value: opts.panelBump !== undefined ? opts.panelBump : 0.55 };
         // _rimPlateOctave calls fwidth(). On a WebGL2 context (which this
         // game gets — verified live: renderer.capabilities.isWebGL2 true)
         // derivatives are core and three.js emits no #extension line at all,
@@ -538,6 +543,7 @@ uniform float rimCoreDarken;
 uniform float uRimPanelCell;
 uniform float uRimPanelFine;
 uniform float uPanelEmis;
+uniform float uPanelBump;
 ${hullForm ? 'uniform float uFormFloor;\nuniform float uFormTop;\nuniform float uFormNoseSign;\nuniform float uFormNoseDark;' : ''}
 ${battleDamage ? 'uniform float uDamage;\nuniform vec3 uDamageEmber;' : ''}
 uniform float uTime;
@@ -645,7 +651,15 @@ float _rimPanelMask( vec2 uv, float cell ) {
 }
 
 float _rimPanelDetail( vec3 posObj, vec3 normalObj, float cell ) {
-    vec3 blend = pow( abs( normalize( normalObj ) ), vec3( 4.0 ) );
+    // Exponent was 4.0: too soft a winner-take-most on a 474-tri hull with
+    // large oblique faces, so two of the three planar projections stayed
+    // co-resident on the same panel and their two grids multiplied into a
+    // diamond/fishnet cross-hatch (visible on the player wings and the UFO
+    // saucer) instead of one clean set of seams. 12.0 makes the dominant
+    // axis win almost alone on any face more than ~20deg off that axis,
+    // which is every face on a low-poly hull except the handful that sit
+    // near a perfect 45, so the seams read as ONE lattice per panel.
+    vec3 blend = pow( abs( normalize( normalObj ) ), vec3( 12.0 ) );
     blend /= max( blend.x + blend.y + blend.z, 0.0001 );
     float mXY = _rimPanelMask( posObj.xy, cell );
     float mYZ = _rimPanelMask( posObj.yz, cell );
@@ -707,9 +721,22 @@ uniform float uTime;`;
 `;
         if (panelDetail) {
             // Kept in a named local: the emissive inject further down main()
-            // needs the SAME mask (see uPanelEmis).
+            // AND the bump inject after normal_fragment_maps below both need
+            // the SAME mask (see uPanelEmis / uPanelBump).
+            //
+            // diffuseColor.rgb *= _panelM at full strength was the bug: an
+            // UNLIT multiply applied before any lighting runs is a flat,
+            // pre-lit stamp — it looks identical from every angle under
+            // every light, which is exactly what "printed fabric" means as
+            // opposed to "recessed plating". Cut to a partial mix (an unlit
+            // floor still needed so the plates read even where the bump
+            // term's specular has nothing to catch — nose-on or in deep
+            // shadow) and hand the rest of the read to the bump inject
+            // below, which perturbs the LIT normal instead, so the exact
+            // same field now darkens grooves by real N.L falloff and puts a
+            // moving specular catch-light on raised plate edges.
             colorInject += `    float _panelM = _rimPanelDetail( vRimPosObj, vRimNormalObj, uRimPanelCell );
-    diffuseColor.rgb *= _panelM;
+    diffuseColor.rgb *= mix( 1.0, _panelM, 0.35 );
 `;
         }
         if (battleDamage) {
@@ -747,6 +774,48 @@ uniform float uTime;`;
 
         shader.fragmentShader = shader.fragmentShader
             .replace('#include <color_fragment>', colorInject);
+
+        if (panelDetail) {
+            // BUMP: perturb the LIT normal with the SAME _panelM field that
+            // shapes diffuseColor/emissive above, so panel seams get a real
+            // light-direction response — a groove that darkens as N.L falls
+            // off and a raised edge that can catch the GLINT specular lobe
+            // as the hull turns — instead of only ever being a flat pre-lit
+            // multiply that reads the same from every angle.
+            //
+            // This is three.js's own USE_BUMPMAP math (verified live against
+            // this build's THREE.ShaderChunk.bumpmap_pars_fragment —
+            // perturbNormalArb, r128), inlined instead of switched on via
+            // the USE_BUMPMAP define because that path also compiles in a
+            // bumpMap/bumpScale uniform pair and a UV-sampled dHdxy_fwd()
+            // this hull has no use for (no TEXCOORD — see the player-hull
+            // note above _rimPanelDetail). What's reused verbatim is the
+            // tangent-frame reconstruction: surf_pos = -vViewPosition (the
+            // same varying and the same sign three.js's own callers pass)
+            // and surf_norm = normal (the view-space normal normal_fragment_
+            // begin just wrote, and faceDirection is the local it already
+            // computed) — the only thing swapped in is dHdxy, which here is
+            // the screen-space gradient of _panelM itself (already computed
+            // above, so this needs no second field evaluation) instead of a
+            // texture height sample. No tangent/UV attribute required either
+            // way: dFdx/dFdy of the view-space position reconstructs the
+            // local tangent frame straight from whichever two screen-space
+            // directions the triangle actually spans.
+            const bumpBlock = `#include <normal_fragment_maps>
+    {
+        vec3 _pSurfPos = -vViewPosition;
+        vec3 _pSigmaX = vec3( dFdx( _pSurfPos.x ), dFdx( _pSurfPos.y ), dFdx( _pSurfPos.z ) );
+        vec3 _pSigmaY = vec3( dFdy( _pSurfPos.x ), dFdy( _pSurfPos.y ), dFdy( _pSurfPos.z ) );
+        vec3 _pR1 = cross( _pSigmaY, normal );
+        vec3 _pR2 = cross( normal, _pSigmaX );
+        float _pDet = dot( _pSigmaX, _pR1 ) * faceDirection;
+        vec2 _pDHdxy = vec2( dFdx( _panelM ), dFdy( _panelM ) ) * uPanelBump;
+        vec3 _pGrad = sign( _pDet ) * ( _pDHdxy.x * _pR1 + _pDHdxy.y * _pR2 );
+        normal = normalize( abs( _pDet ) * normal - _pGrad );
+    }
+`;
+            shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', bumpBlock);
+        }
 
         if (hullForm || battleDamage || panelDetail) {
             let emisInject = '#include <emissivemap_fragment>\n';
@@ -1707,20 +1776,102 @@ const PLAYER_BOOST_REFERENCE_SPEED = 6.8;
 // to resolve.
 const PLAYER_HULL_PANEL_CELL = 0.015;
 
+// REAL 3-POINT RIG for the player hull specifically. _ensureHullKeyLight
+// (above) gives enemy/boss hulls ONE camera-parented DirectionalLight and
+// that was enough to pass their own contrast bar — but createPlayerHullMaterial
+// never called it, so the player's own hull, the one thing on screen
+// centre-frame 100% of the time, was never lit by anything with direction at
+// all. Its only near light was shipLight, a PointLight sitting AT (0,0,-50)
+// in camera space — i.e. head-on with the view axis by construction, which
+// cannot put a terminator on a surface no matter how bright it is (N.L is
+// close to constant across every facet the camera can even see). Measured
+// live, isolated player hull, paused world: luminance std 34.0/255, below
+// this file's own >55 target.
+//
+// A single extra key light would already do most of the job (see the enemy
+// number above), but the player hull is closer, more central and the one
+// surface the player's eye calibrates "material" against, so it gets a full
+// KEY/FILL/RIM rig instead of a single lamp:
+//   KEY  — bright, warm, steeply off-axis (upper-right-ish, aimed down-left-
+//          forward). This is what actually manufactures the terminator: it
+//          is what the GLINT specular term (uSpecDir below) is built to
+//          agree with, so the analytic highlight and the real PBR highlight
+//          land in the same place.
+//   FILL — dim, cool, the OPPOSITE side from KEY. Without this the shadow
+//          hemisphere would clip to black under ACES the moment KEY was
+//          strong enough to matter; FILL keeps it a dark blue instead of a
+//          cutout while staying weak enough that it can't erase KEY's
+//          terminator.
+//   RIM  — from behind-and-above, grazing. Separates the hull's trailing
+//          edges from a dark starfield the way a photographed 3-point rig
+//          separates a subject from its background; the shader's own
+//          fresnel term does a SYNTHETIC version of this already, but a
+//          real backlight also feeds the standard PBR diffuse/specular
+//          response, which the fresnel term does not.
+// All three are DirectionalLights (position only sets DIRECTION, not
+// falloff) parented to the camera exactly like shipLight and
+// _ensureHullKeyLight's lamp, so they stay "attached" to the view as the
+// camera turns and light every hull in the scene uniformly regardless of
+// world position — including the player's own mesh, which camera-system.js
+// re-parents from camera to scene in third person (see cameraState.
+// playerShipMesh), a move that would otherwise strand it outside any
+// camera-child light's effect if that effect depended on position. It does
+// not: THREE.DirectionalLight has no distance falloff.
+let _playerHullLightRigInstalled = false;
+function _ensurePlayerHullLightRig() {
+    if (_playerHullLightRigInstalled) return;
+    if (typeof window === 'undefined' || typeof THREE === 'undefined') return;
+    const cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+    if (!cam || !cam.isCamera) return;
+
+    const key = new THREE.DirectionalLight(0xfff2d8, 2.4);
+    key.position.set(180, 260, 60);
+    key.target.position.set(-90, -140, -400);
+    cam.add(key);
+    cam.add(key.target);
+
+    const fill = new THREE.DirectionalLight(0x5ec8ff, 0.5);
+    fill.position.set(-160, -80, 50);
+    fill.target.position.set(70, 50, -400);
+    cam.add(fill);
+    cam.add(fill.target);
+
+    const rim = new THREE.DirectionalLight(0xa0e8ff, 1.1);
+    rim.position.set(-30, 180, -650);
+    rim.target.position.set(10, -20, 0);
+    cam.add(rim);
+    cam.add(rim.target);
+
+    _playerHullLightRigInstalled = true;
+}
+function _runPlayerHullLightRigInstallLoop() {
+    if (_playerHullLightRigInstalled) return;
+    requestAnimationFrame(_runPlayerHullLightRigInstallLoop);
+    _ensurePlayerHullLightRig();
+}
+if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(_runPlayerHullLightRigInstallLoop);
+}
+
 function createPlayerHullMaterial() {
-    // Presence floor, in the ship's own accent cyan. 0.18 x 0.7 = 0.126
-    // effective was tuned against the shipLight sitting 50u in front of the
-    // camera, but coreDarken (0.62) knocks the diffuse back down again and the
-    // rest of space contributes essentially nothing — so in third person the
-    // hull read as a near-black cut-out at exactly the moment the background
-    // got brighter. Emissive is added after coreDarken and independent of every
-    // light in the scene, so this is the term that guarantees the ship is
-    // always a legible cyan silhouette; the rim/panel work still owns the
-    // close-up shading and the boost color shift.
+    _ensurePlayerHullLightRig();
+    // Presence floor, in the ship's own accent cyan. This used to be the term
+    // doing ALL the work (base*0.42 at intensity 1.15, effective ~0.48*base)
+    // because nothing else was lighting the hull — emissive is added AFTER
+    // coreDarken and is independent of every light in the scene, so a floor
+    // that big pins every surface to nearly the same value regardless of its
+    // normal, which is precisely why an isolated hull measured luminance std
+    // 34.0/255 (target >55) despite carrying a real rim/panel/spec rig: the
+    // floor was spending the entire value range before any of those terms
+    // got a turn. Now that _ensurePlayerHullLightRig above gives this hull an
+    // actual KEY/FILL/RIM response, the floor only has to do the ORIGINAL
+    // job — keep the ship a legible cyan shape in genuinely unlit space —
+    // not carry the whole presence read, so it drops to a fraction of base
+    // small enough that the lit terms are what the eye actually reads.
     const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(PLAYER_HULL_BASE_COLOR),
-        emissive: new THREE.Color(PLAYER_HULL_BASE_COLOR).multiplyScalar(0.42),
-        emissiveIntensity: 1.15,
+        emissive: new THREE.Color(PLAYER_HULL_BASE_COLOR).multiplyScalar(0.09),
+        emissiveIntensity: 1.0,
         metalness: 0.65,
         roughness: 0.32,
         side: THREE.FrontSide,
@@ -1739,8 +1890,10 @@ function createPlayerHullMaterial() {
         // These were raised twice against a rim term that was never in the
         // compiled shader, so the "measured rim/core ratio 0.64" they were
         // chasing was a measurement of no rim at all. At 2.4/4.2 a now-live
-        // rim floods a hull that already carries a 1.15-intensity emissive
-        // floor.
+        // rim floods a hull whose emissive floor is now small (0.09*base)
+        // but which now also carries a real KEY/FILL/RIM lit response —
+        // stacking a strong shader rim on top of a strong PHYSICAL rim light
+        // would double up the same visual role.
         baseStrength: 1.0,
         boostStrength: 1.8,
         coreDarken: 0.62,    // was 0.55 — dim facing panels so the rim reads brighter than the core instead of losing to it; raised further to widen core/rim luminance spread (measured hull-pixel std 41.5/255 during boost, target >55/255)
@@ -1761,11 +1914,20 @@ function createPlayerHullMaterial() {
         // bar six inches from the crosshair. Off here so the player ship does
         // not pay for a shader branch that would never be driven above zero.
         battleDamage: false,
-        // The player hull is lit (shipLight sits 50u ahead of it) and its
-        // emissive is a deliberate flat presence floor at 1.15 intensity, so
-        // panelling that floor as hard as the enemies' would dim the one term
-        // guaranteeing the ship is a legible silhouette. Half strength.
-        panelEmissive: 0.45
+        // Was half strength (0.45) to protect a big flat presence floor from
+        // being panelled away. That floor is now 0.09*base (was ~0.48*base
+        // effective) specifically so it stops being the dominant term, and
+        // this hull gets the same real KEY/FILL/RIM lighting the enemy fleet
+        // does — so it gets the enemies' own full-strength value too: the
+        // panel/greeble structure should show up on the one always-on term
+        // that survives regardless of viewing angle, same as everywhere else
+        // in the game.
+        panelEmissive: 0.85,
+        // Feeds the same _panelM field into a normal perturbation (see the
+        // bump inject in _addFresnelRim) instead of only a flat pre-lit
+        // albedo multiply, so the panel seams this hull's rig draws are
+        // grooves the new KEY light can actually shade — not a print.
+        panelBump: 0.6
     });
 
     return { material: material, uniforms: uniforms };

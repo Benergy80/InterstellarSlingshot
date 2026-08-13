@@ -879,13 +879,72 @@
               subject: (_as.obj.userData && (_as.obj.userData.name || _as.obj.userData.type)) || 'body'
             };
             ap._arrivalCuts = (ap._arrivalCuts || 0) + 1;
+            // ARRIVE AND STAY. The cut ends the burn at the standoff, but the
+            // exit ramp still hands the ship ~240 u/s of cruise and nothing in
+            // a combat or discovery leg brakes it (only coastToNebulaCluster
+            // does, and only for its own legs). Measured: a Saturn arrival read
+            // 15.3 deg at 269 ms and then slid 715 -> 817 -> 924 -> 1,460 u,
+            // finishing at 5.48 deg — the reveal was delivered and then thrown
+            // away over the next two seconds. Brake through the drain so the
+            // arrival the cut just bought is still there when the player looks.
+            ap._arrivalBrakeUntil = Date.now() + 2600;
             console.log('🎯 WARP ARRIVAL CUT (' + ap._lastArrivalCut.reason + ') → ' +
               ap._lastArrivalCut.subject + '  along=' + ap._lastArrivalCut.along +
               'u off=' + ap._lastArrivalCut.off + 'u (stand=' + ap._lastArrivalCut.stand +
               ' stop=' + ap._lastArrivalCut.stop + ')');
           }
+        } else if (_converged &&
+                   gameState.emergencyWarp.timeRemaining <= BURN_EXTEND_STEP_MS &&
+                   _along > 0 && _range > _nearRadius &&
+                   (_as._burnExtMs || 0) < BURN_EXTEND_MAX_MS) {
+          // ── ARRIVAL IS THE TERMINATOR; THE STOPWATCH IS THE FALLBACK ───────
+          // The burn is sized in MILLISECONDS but travel is integrated PER
+          // FRAME, so the two only agree at a healthy frame rate. Measured on
+          // this instrumented machine (~13 fps, three WebGL contexts): a burn
+          // armed 3,731 ms for a subject 3,409 u out covered 2,363 u before the
+          // clock ran out and left the reveal at 1,046 u / 13.09 deg — dead
+          // centre of frame, just under the 15 deg bar, purely because the
+          // clock is wall-time and the ship is not. Rather than trust the
+          // clock, keep the burn alive in short beats for as long as the
+          // subject is still AHEAD (`_along > 0`) and still outside the cut's
+          // own neighbourhood — i.e. as long as the arrival genuinely has not
+          // happened yet — and let the geometric cut above end it. The budget
+          // is bounded so a burn that cannot converge still ends: at most
+          // BURN_EXTEND_MAX_MS beyond its armed length, charged to the staged
+          // subject so it cannot be inherited by the next leg. On a machine
+          // that holds 60 fps this never fires — the cut arrives first.
+          _as._burnExtMs = (_as._burnExtMs || 0) + BURN_EXTEND_STEP_MS;
+          gameState.emergencyWarp.timeRemaining = BURN_EXTEND_STEP_MS;
         }
       }
+    }
+
+    // ── SIZE THE BURN AT IGNITION, NOT AT THE KEY PRESS ─────────────────────
+    // triggerOKeyWarp arms the burn from the range it measures when it presses
+    // O, but physics does not light the engine until the camera has finished
+    // its first-person transition — 300-700 ms later — and it reads
+    // boostDuration exactly once, at that moment. Whatever the ship covered in
+    // between is error the arrival never gets back. Measured, this build: a leg
+    // armed for Horizon Nebula Prime at 14,292 u ignited with the subject
+    // 16,750 u away (the demo was still manoeuvring away from it in combat),
+    // so the burn was 2,458 u short, the cut never came into range, the
+    // stopwatch ended the leg, and the reveal landed 5,164 u out — dead centre
+    // of frame but 13.69 deg, under the 15 deg bar it would otherwise have
+    // cleared. Re-arming every frame of the transition window costs nothing
+    // (one distance and one divide) and makes the number physics reads the
+    // range that is actually true when the burn starts.
+    if (typeof gameState !== 'undefined' && gameState.emergencyWarp &&
+        gameState.emergencyWarp.transitioning && !gameState.emergencyWarp.active &&
+        !gameState.emergencyWarp.isJump &&
+        gameState.emergencyWarp._burnArmedAt != null &&
+        gameState._arrivalSubject && gameState._arrivalSubject.obj &&
+        gameState._arrivalSubject.obj.position &&
+        _arrivalSubjectFresh(gameState._arrivalSubject)) {
+      const _asI = gameState._arrivalSubject;
+      _armWarpBurn(camPos().distanceTo(_asI.obj.position), _asI.stand);
+      // The subject's live-window was sized from the duration armed at the key
+      // press; a longer re-arm must not outlive the subject it is aimed at.
+      _asI.liveMs = Math.max(_asI.liveMs || 0, _arrivalSubjectLiveMs());
     }
 
     // HAND THE STOCK BURN LENGTH BACK once the cycle is completely over.
@@ -895,10 +954,17 @@
     // get the game's own 8 s warp, not whatever length the demo's last leg
     // happened to need. triggerOKeyWarp re-arms from the stock value every
     // time, so this is belt-and-braces for the player-control path.
-    if (typeof gameState !== 'undefined' && gameState.emergencyWarp &&
-        gameState.emergencyWarp._baseBoostDuration != null &&
-        !gameState.emergencyWarp.active && !gameState.emergencyWarp.transitioning &&
-        typeof gameState._warpExitT !== 'number') {
+    //
+    // ...BUT NOT WHILE A BURN IS WAITING TO IGNITE. `!active && !transitioning`
+    // is ALSO true for the whole hand-off window between arming a leg and
+    // physics picking the O key up, and that is where every armed length was
+    // dying (see the arm latch in _armWarpBurn for the measurement). Honour the
+    // latch: a leg armed less than ARM_LATCH_MS ago owns boostDuration.
+    const _ewD = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || null;
+    if (_ewD && _ewD._baseBoostDuration != null &&
+        !_ewD.active && !_ewD.transitioning &&
+        typeof gameState._warpExitT !== 'number' &&
+        (_ewD._burnArmedAt == null || Date.now() - _ewD._burnArmedAt > ARM_LATCH_MS)) {
       _disarmWarpBurn();
     }
 
@@ -916,6 +982,19 @@
         gameState.emergencyWarp.active && !gameState.emergencyWarp.isJump &&
         !(ap._evadeUntil && Date.now() < ap._evadeUntil)) {
       keys().x = false;
+    }
+
+    // ARRIVAL BRAKE — see the cut-off above for why. Held for a short window
+    // after the cut fires, once the boost itself is over (so it can never eat
+    // the burn the way the old phase brakes did), and only while the subject
+    // is still ahead and the ship still has cruise speed to shed. Stops the
+    // reveal sliding out of frame during the streak drain.
+    if (typeof gameState !== 'undefined' && ap._arrivalBrakeUntil &&
+        Date.now() < ap._arrivalBrakeUntil &&
+        gameState.emergencyWarp && !gameState.emergencyWarp.active &&
+        !gameState.emergencyWarp.transitioning &&
+        gameState.velocityVector && gameState.velocityVector.length() > 1.5) {
+      keys().x = true;
     }
 
     // NAV SYSTEM REFLECTS THE DEMO'S TARGET: the demo sets
@@ -1307,7 +1386,23 @@
       // timeRemaining <= 0 and hands velocity back) and brake — the global
       // warp-integrity guard suppresses X only while the boost is active,
       // so without the cut the ship sails through the engagement at ~15u/f.
-      if (dist <= 500 && gameState.emergencyWarp && gameState.emergencyWarp.active &&
+      //
+      // ONLY FOR A BURN THAT IS ACTUALLY FLYING AT THIS ENEMY. Unqualified,
+      // this clause killed ANY active non-jump warp the moment ANY hostile
+      // came within 500 u — and combat runs off swarmEnemiesNearPlayer at
+      // 20 Hz, so during a 30,000 u interstellar leg there is almost always
+      // one. Measured, it is what produced the 134 / 228 / 424 / 482 ms burns
+      // that died with 7,700-24,933 ms still on the clock: the destination
+      // leg was executed as a stutter and ended in vacuum. A leg carrying a
+      // live arrival subject somewhere else is not this dogfight's to cut —
+      // its own arrival cut-off owns its ending. (A subject staged within
+      // 1,500 u of the hostile IS this engagement, so the brake still fires.)
+      const _asBI = (typeof gameState !== 'undefined') && gameState._arrivalSubject;
+      const _warpBoundElsewhere = !!(_asBI && _asBI.obj && _asBI.obj.position &&
+          _arrivalSubjectFresh(_asBI) && _asBI.obj !== enemy &&
+          _asBI.obj.position.distanceTo(enemy.position) > 1500);
+      if (dist <= 500 && !_warpBoundElsewhere &&
+          gameState.emergencyWarp && gameState.emergencyWarp.active &&
           !gameState.emergencyWarp.isJump) {
         gameState.emergencyWarp.timeRemaining = 0;
         keys().x = true;
@@ -2952,6 +3047,21 @@
   // armed burn still gets a live cut-off window.
   const ARRIVAL_CUT_GRACE_MS = 750;
 
+  // How the burn is kept alive when its clock expires before its geometry
+  // arrives (see the extension clause in update()). One beat is ~15 frames at
+  // 60 fps, so the extension is granular enough that the cut still decides the
+  // exact end; the ceiling bounds a leg that cannot converge at 10 extra
+  // seconds — inside the 25 s the burn was already allowed to run, so a warp
+  // can never become unbounded.
+  // The step is deliberately LONGER than one starved frame: the demo is
+  // instrumented at ~13 fps here, where physics decrements timeRemaining by a
+  // clamped 100-250 ms per tick, so a 250 ms window could be stepped straight
+  // over and the burn ended before the top-up ever saw it (measured: a leg that
+  // should have extended ran only 1.9 s long and finished 7,646 u out / 9.27
+  // deg). 900 ms cannot be skipped by any frame the sim will accept.
+  const BURN_EXTEND_STEP_MS = 900;
+  const BURN_EXTEND_MAX_MS = 12000;
+
   // Furthest a burn can be armed to reach — the reachability test every
   // staging path is gated on. This replaces `_oWarpBoostDist()` in those
   // tests: what matters is not how far the CURRENT duration would carry the
@@ -2959,6 +3069,24 @@
   function _oWarpMaxBoostDist() {
     const ew = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || {};
     return (ew.boostSpeed || 15) * 60 * (EW_BURN_MS_MAX / 1000);
+  }
+
+  // CAN A BURN BE BUILT THAT ACTUALLY CLOSES THIS? — the reachability test the
+  // staging clauses gate on. Not "is the straight-line distance under the
+  // maximum reach": _armWarpBurn sizes the burn as (range - stand) x
+  // EW_BURN_MARGIN and then CLAMPS at EW_BURN_MS_MAX, so a subject sitting at
+  // the edge of the maximum is armed to a duration that has had its arc
+  // allowance silently clipped off — and the burn flies an arc (measured
+  // lateral offset ~2,000 u on a 20,000 u leg), so it ends short. Measured,
+  // this build: a subject staged at 23,106 u with a straight-line limit of
+  // 23,203 u armed the 25,000 ms ceiling, ran the full stopwatch, and left the
+  // ship 5,099 u away — a 1.97 degree speck, the exact "arrives nowhere"
+  // symptom. Requiring the UNCLAMPED size to fit means every staged subject is
+  // one the burn can reach with its margin intact.
+  function _burnFits(range, stand) {
+    const ew = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || {};
+    const perSec = (ew.boostSpeed || 15) * 60;
+    return ((Math.max(0, range - stand)) / perSec) * 1000 * EW_BURN_MARGIN <= EW_BURN_MS_MAX;
   }
 
   // Size the next burn so it expires at `stand` from a subject at `range`.
@@ -2973,13 +3101,41 @@
     const ms = Math.max(EW_BURN_MS_MIN, Math.min(EW_BURN_MS_MAX,
       ((Math.max(0, range - stand)) / perSec) * 1000 * EW_BURN_MARGIN));
     ew.boostDuration = ms;
+    // ── THE ARM LATCH ────────────────────────────────────────────────────────
+    // Sizing the burn to the arrival is this whole mechanism, and until this
+    // latch existed the size was ERASED 23-30 ms later, BEFORE the burn ever
+    // ignited. Measured, twice verbatim (Olympus leg 8000 -> 25000 -> 8000;
+    // Titan leg 8000 -> 3853 -> 8000): the "hand the stock length back" guard
+    // in update() disarms on `!active && !transitioning`, and physics does not
+    // raise `transitioning` until ITS next tick — so every leg that did not
+    // reach ignition inside a single frame (all of them: triggerOKeyWarp only
+    // presses the O key) was stripped back to the stock 8,000 ms. 11 of 12
+    // instrumented legs ignited with 8,000 ms = ~7,200 u of reach while their
+    // staged subject sat 10,527-24,950 u away, so the burn could not physically
+    // reach the thing it had staged and the geometric cut-off starved.
+    //
+    // The latch records WHEN this leg was armed. The disarm guard now refuses
+    // to run inside ARM_LATCH_MS of it, which covers the whole hand-off window
+    // (key press -> physics tick -> camera transition -> ignition, ~300-700 ms
+    // measured) with margin, while still returning the stock 8 s warp to a
+    // human who takes over. `_disarmWarpBurn` clears it, so the very act of
+    // handing the length back also re-opens the guard.
+    ew._burnArmedAt = Date.now();
     return ms;
   }
+
+  // How long an armed burn is protected from the stock-length hand-back in
+  // update(). Must exceed the worst press-to-ignition latency (setCameraFirstPerson
+  // transition + the setTimeout in game-physics.js, ~700 ms measured) and stay
+  // under the shortest possible full cycle (EW_BURN_MS_MIN 2,000 + 1 s exit
+  // ramp) so a real burn's own completion always clears the latch on time.
+  const ARM_LATCH_MS = 3000;
 
   function _disarmWarpBurn() {
     if (typeof gameState === 'undefined' || !gameState.emergencyWarp) return;
     const ew = gameState.emergencyWarp;
     if (ew._baseBoostDuration != null) ew.boostDuration = ew._baseBoostDuration;
+    ew._burnArmedAt = null;
   }
 
   // How long a staged subject stays authoritative for the framing hold, the
@@ -3044,9 +3200,11 @@
   // guidance's ceiling rate (15 u/frame / 0.07 rad/frame ~= 215 u), rounded up
   // to leave the manoeuvre room rather than exactly none.
   const _ARRIVAL_TURN_RADIUS = 400;
+  // `boostDist` is retained for the callers' sake (and for the comment above);
+  // reachability itself is now decided by _burnFits, which asks the stricter
+  // question — can a burn be SIZED for this without its margin being clamped.
   function _findArrivalSubjectAlongRay(from, dir, boostDist) {
     if (typeof planets === 'undefined' || !from || !dir || !_owarpToTmp) return null;
-    const stopD = _oWarpStopDist();
     let best = null, bestRadius = 0, bestScore = -Infinity;
     for (let i = 0; i < planets.length; i++) {
       const p = planets[i];
@@ -3059,7 +3217,7 @@
       _owarpToTmp.subVectors(p.position, from);
       const range = _owarpToTmp.length();
       if (range <= so.stand * 1.3) continue;
-      if (range > boostDist + so.stand + stopD) continue;
+      if (!_burnFits(range, so.stand)) continue;
       const cosA = _owarpToTmp.dot(dir) / Math.max(1e-6, range);
       if (cosA < _ARRIVAL_CONE_COS) continue;
       // WILL THE BURN ACTUALLY GET INSIDE THIS BODY'S CORRIDOR?
@@ -3844,7 +4002,6 @@
     // containing (measured) 42 bodies and zero framable ones. The question
     // that decides an arrival is "can a burn be BUILT that reaches this?".
     const _boostDist = _oWarpMaxBoostDist();
-    const _stopDist = _oWarpStopDist();
     // Start from the stock duration each time so a leg that stages nothing
     // inherits nothing from the previous leg's arming.
     _disarmWarpBurn();
@@ -3870,7 +4027,19 @@
           // (the warp gate needs facing > 0.97) — adding a heading test here
           // only rejected legs whose destination was genuinely reachable,
           // measured as 14 consecutive legs staging nothing.
-          if (so.framable && range <= _boostDist + so.stand + _stopDist) {
+          // ...but a PLACE WE ARE ALREADY AT is not an arrival. The corridor
+          // search below has always rejected candidates inside 1.3x their own
+          // standoff; this clause did not, and measured it produced a whole
+          // class of non-arrival: parked 929 u from a nebula prime whose
+          // standoff is 2,129 u, the leg staged that prime, armed the 2,000 ms
+          // floor, and the cut fired on the first frames with the subject
+          // BEHIND the camera (ndc y = 0.985, behind: true, 56 deg). Five such
+          // stutter-warps in one sampling run. If the destination is somewhere
+          // we are already standing, fall through to the corridor search — it
+          // may find a real body further down the leg, and if it does not the
+          // leg goes honestly subject-less instead of claiming an arrival it
+          // delivered before the burn started.
+          if (so.framable && range > so.stand * 1.3 && _burnFits(range, so.stand)) {
             // THE BURN IS BUILT TO END HERE. _stageAndArm sets this warp's
             // boostDuration from the range so the stopwatch expires at the
             // standoff instead of somewhere short of it — which is what makes
@@ -5061,6 +5230,59 @@
     // fired — the whole staging/arming/cut path is the shipping one.
     D.unlockWarp = function () { ap.enemiesKilled = Math.max(ap.enemiesKilled, 3); return ap.enemiesKilled; };
     D.warpTo = function (dest) { return triggerOKeyWarp(dest); };
+    // Reach the interstellar legs without grinding out the FIRST-LEG dogfight.
+    // findLocalEnemies only releases the demo to warpToNebulaCluster once the
+    // Sol pocket is empty AND `warpsUsed > 0`; at instrumented frame rates that
+    // is 15+ minutes of pirates before the first measurable warp. These skip
+    // straight to the phase the demo would have reached on its own — the phase
+    // then chooses its own destination, fires its own trigger and flies its own
+    // leg, so what gets measured is the shipping path, only sooner.
+    D.goPhase = function (p) { goPhase(p); return ap.phase; };
+    D.ap = ap;
+    // WHY DID THIS LEG STAGE NOTHING? Runs the staging rules over every body
+    // in front of the ship and reports the first rule each one failed, using
+    // the shipping helpers so the answer is the code's own, not a replica.
+    D.census = function (destPos) {
+      const from = camPos();
+      const dir = destPos ? destPos.clone().sub(from).normalize() : (function () {
+        const f = new THREE.Vector3(); camera.getWorldDirection(f); return f;
+      })();
+      const boostDist = _oWarpMaxBoostDist(), stopD = _oWarpStopDist();
+      const rows = [];
+      for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], ud = p && p.userData;
+        if (!p || !p.position || !ud) continue;
+        if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
+        const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || ud.size || 20;
+        const to = p.position.clone().sub(from);
+        const range = to.length();
+        const cosA = to.dot(dir) / Math.max(1e-6, range);
+        const so = _arrivalStandoff(radius, _arrivalDangerR(p));
+        const off = range * Math.sqrt(Math.max(0, 1 - cosA * cosA)), along = range * cosA;
+        let why = 'PASS';
+        if (!so.framable) why = 'notFramable';
+        else if (range <= so.stand * 1.3) why = 'tooClose';
+        else if (!_burnFits(range, so.stand)) why = 'tooFar';
+        else if (cosA < _ARRIVAL_CONE_COS) why = 'outOfCone';
+        else if (along < off + _ARRIVAL_TURN_RADIUS) why = 'turnDoesNotFit';
+        rows.push({ n: ud.name || ud.type, r: Math.round(radius), range: Math.round(range),
+          deg: +(Math.acos(Math.max(-1, Math.min(1, cosA))) * 180 / Math.PI).toFixed(1),
+          stand: Math.round(so.stand), maxOff: Math.round(so.maxOff), dangerR: Math.round(_arrivalDangerR(p)),
+          framable: so.framable, why: why });
+      }
+      rows.sort((a, b) => a.range - b.range);
+      const tally = {};
+      rows.forEach(r => { tally[r.why] = (tally[r.why] || 0) + 1; });
+      // `reach` is the set the DESTINATION clause of triggerOKeyWarp would
+      // accept — framable and inside a buildable burn — with no heading test,
+      // because that clause has none (the phase aims first).
+      const reach = rows.filter(r => r.framable && r.why !== 'tooClose' && r.why !== 'tooFar')
+                        .sort((a, b) => b.r - a.r).slice(0, 8);
+      return { boostDist: Math.round(boostDist), tally: tally,
+        pass: rows.filter(r => r.why === 'PASS').slice(0, 8),
+        reach: reach,
+        nearest: rows.slice(0, 12) };
+    };
     D.state = function () {
       const ew = gameState.emergencyWarp, as = gameState._arrivalSubject;
       return { phase: ap.phase, kills: ap.enemiesKilled, cuts: ap._arrivalCuts || 0,
@@ -5175,7 +5397,11 @@
                 tun = vv.tunnel != null ? +vv.tunnel.toFixed(4) : null; } catch (e) {}
               L.ramp.push({ dt: Date.now() - t0, env: env, tun: tun,
                 fov: +camera.fov.toFixed(2),
-                sp: +(gameState.velocityVector ? gameState.velocityVector.length() : 0).toFixed(2) });
+                sp: +(gameState.velocityVector ? gameState.velocityVector.length() : 0).toFixed(2),
+                // The acceptance clause is "in the central third at >= 15 deg
+                // WHEN THE STREAKS COMPLETE", so the framing has to be sampled
+                // along the drain, not only at the cut and 3 s later.
+                fr: _as2 ? _frameRead(_as2.obj, _as2.radius) : null });
               if (++k < 12) setTimeout(ramp, 250);
               else {
                 L.settle = _as2 ? _frameRead(_as2.obj, _as2.radius) : null;

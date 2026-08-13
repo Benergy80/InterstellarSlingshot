@@ -6364,6 +6364,18 @@ try {
         const nebulaSkyboxTexture = new THREE.CanvasTexture(_nebCanvas);
         nebulaSkyboxTexture.wrapS = THREE.RepeatWrapping;
         nebulaSkyboxTexture.wrapT = THREE.ClampToEdgeWrapping;
+        // Anisotropy: kept because it is free and correct where the dome is
+        // sampled obliquely, but do NOT expect it to sharpen the backdrop.
+        // MEASURED (8-heading A/B on the live scene, anisotropy 1 vs 16):
+        // identical p99 on 8/8 headings, meanLum identical to 0.01. Anisotropic
+        // filtering only acts under MINIFICATION, and this equirect is
+        // MAGNIFIED — 2048 texels of width across a 195,000u sphere is a few
+        // device pixels per texel, so what softens the cloud edges is
+        // magFilter=LinearFilter interpolating between texels. Sharpening this
+        // backdrop needs a higher-resolution plate, not a sampler flag.
+        if (typeof renderer !== 'undefined' && renderer && renderer.capabilities) {
+            nebulaSkyboxTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+        }
         nebulaSkyboxTexture.needsUpdate = true;
 
         const nebulaSkyboxGeometry = new THREE.SphereGeometry(195000, 48, 32);
@@ -6636,6 +6648,20 @@ try {
         textureLoader2.load(
             hubbleImageURL2,
             function(texture) {
+                // Same story as the nebula dome: free, correct for oblique
+                // sampling, and MEASURED to change nothing here (p99 identical
+                // on 8/8 headings, anisotropy 1 vs 16). The reason the bright
+                // objects in an empty-sky frame read as soft lozenges rather
+                // than points is that this 4096-wide plate is MAGNIFIED to
+                // ~2 device px per texel on a 140,000u dome, and anisotropy
+                // does not apply to magnification. Whoever picks up the
+                // "stars must pop / p99 >= 200" test should aim at that —
+                // real point-sprite stars, or a higher-resolution plate —
+                // not at this flag.
+                if (typeof renderer !== 'undefined' && renderer && renderer.capabilities) {
+                    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+                }
+
                 // fog: false is LOAD-BEARING, not tidiness.
                 //
                 // MeshBasicMaterial defaults to fog: true, and this sphere has
@@ -8031,22 +8057,11 @@ function createClusteredNebulas() {
         particleGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         particleGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
-        const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
-            // Soft round puff instead of a hard axis-aligned square. Without a
-            // map the fragment stage never reads gl_PointCoord and WebGL fills
-            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
-            map: getPointSprite(),
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.65,
-            blending: THREE.AdditiveBlending,
-            sizeAttenuation: true,
-            // Required with the sprite: the quad's transparent corners must not
-            // punch a square hole in the depth buffer for everything behind.
-            depthWrite: false,
-            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
-        });
+        // Was size 2.5 — sub-pixel at every distance these clouds are ever
+        // viewed from. Sized to the particle spacing instead; see
+        // _nebSpriteSize.
+        const nebulaMaterial = _makeNebulaPointsMaterial(
+            _nebSpriteSize(nebulaSize, particleCount), NEB_VOL.opacity);
         
         const nebulaPoints = new THREE.Points(particleGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
@@ -8325,22 +8340,11 @@ function createDistantNebulas() {
         nebulaGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
-        const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
-            // Soft round puff instead of a hard axis-aligned square. Without a
-            // map the fragment stage never reads gl_PointCoord and WebGL fills
-            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
-            map: getPointSprite(),
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.65,
-            blending: THREE.AdditiveBlending,
-            sizeAttenuation: true,
-            // Required with the sprite: the quad's transparent corners must not
-            // punch a square hole in the depth buffer for everything behind.
-            depthWrite: false,
-            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
-        });
+        // Was size 2.5 — sub-pixel at every distance these clouds are ever
+        // viewed from. Sized to the particle spacing instead; see
+        // _nebSpriteSize.
+        const nebulaMaterial = _makeNebulaPointsMaterial(
+            _nebSpriteSize(nebulaSize, particleCount), NEB_VOL.opacity);
 
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
@@ -8518,22 +8522,11 @@ function createExoticCoreNebulas() {
         nebulaGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
         // MATCHED TO GALAXY-FORMATION: Same particle material settings
-        const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
-            // Soft round puff instead of a hard axis-aligned square. Without a
-            // map the fragment stage never reads gl_PointCoord and WebGL fills
-            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
-            map: getPointSprite(),
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.65,
-            blending: THREE.AdditiveBlending,
-            sizeAttenuation: true,
-            // Required with the sprite: the quad's transparent corners must not
-            // punch a square hole in the depth buffer for everything behind.
-            depthWrite: false,
-            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
-        });
+        // Was size 2.5 — sub-pixel at every distance these clouds are ever
+        // viewed from. Sized to the particle spacing instead; see
+        // _nebSpriteSize.
+        const nebulaMaterial = _makeNebulaPointsMaterial(
+            _nebSpriteSize(nebulaSize, particleCount), NEB_VOL.opacity);
 
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
@@ -17309,6 +17302,256 @@ function createPlasmaTendril(starRadius, index) {
     return tendrilMesh;
 }
 
+// =============================================================================
+// NEBULA VOLUME — billow sampling, dust lanes, and the sprite-size budget.
+//
+// WHY THIS EXISTS. Every volumetric nebula in the game was built with
+// PointsMaterial size 2.5 + sizeAttenuation. That size is in WORLD units, so
+// the on-screen footprint is  size * (h / 2tan(fov/2)) / distance — which at
+// the ~1,600u range these clouds are actually viewed from works out to
+//        2.5 * 933 / 1600 = 1.5 device px   (2424x1431 backing, fov 75)
+//        2.5 * 466 / 1600 = 0.7 device px   (1600x900 backing,  fov 88)
+// i.e. about one pixel, or less, per particle at every supported setting.
+// Measured live before the change: hiding all 22 nebula Groups from 1,600u
+// moved frame meanLum by 0.05/255. The namesake asset was rendering nothing,
+// and the painted equirect dome was carrying the entire "nebula" read.
+//
+// Note the knob is NOT in js/nebula-types.js. NEBULA_LOCATIONS.pointSize is
+// referenced by zero lines of code in the repo (grep: no readers outside its
+// own declaration) — it is a documentation table. The live values are the
+// hardcoded literals in the four builders below.
+//
+// TWO THINGS ARE NEEDED, not one. Size alone just makes a grey blob: a
+// spherical gaussian of pale (HSL L≈0.8) particles stacked additively clips
+// every channel to 1.0 and reads as smoke. So the volume is also built as
+// noise-carved BILLOWS in saturated, low-lightness colour, which keeps the
+// hue alive through the additive stack and gives the cloud dark lanes and
+// bright rims instead of one soft airbrush gradient.
+// =============================================================================
+
+/** Live-tunable so the values can be swept in the running game before baking. */
+const NEB_VOL = (typeof window !== 'undefined' && window.__NEB_VOL) || {
+    // Sprite size is DERIVED (see _nebSpriteSize) rather than hardcoded; this
+    // is a trim on that derivation.
+    sizeScale: 1.0,
+    opacity: 0.34,
+    // Fill-rate guard: at very close range sizeAttenuation would hand us
+    // 500px quads (the GL max here is 511), and 5k of those is ~170x
+    // overdraw. Clamped in the vertex shader, with brightness compensated so
+    // the cloud's surface brightness does not jump when the clamp engages.
+    maxPointPx: 110,
+    // Rejection threshold on the density field — the fraction of the volume
+    // carved away as dust lanes.
+    laneCut: 0.42,
+    coreL: 0.54,   // core lightness  (was 0.82 — that is why it went white)
+    rimL: 0.20,    // rim lightness
+    sat: 0.95
+};
+if (typeof window !== 'undefined') window.__NEB_VOL = NEB_VOL;
+
+/**
+ * Synthwave hue wheel. The old code used `Math.random()` for hue, which walks
+ * the whole spectrum including muddy yellow-greens. Walking a fixed palette
+ * keeps the identity and guarantees the 8 clouds differ from each other.
+ */
+const NEB_HUES = [0.92, 0.86, 0.78, 0.72, 0.60, 0.53, 0.50, 0.95];
+
+/**
+ * World-space sprite size for a cloud of `count` particles filling a sphere of
+ * radius `cloudSize`.
+ *
+ * The correct size is not a magic number, it is the MEAN INTER-PARTICLE
+ * SPACING: sprites that span the gap between neighbours overlap into a
+ * continuous medium, sprites smaller than the gap read as separate specks.
+ * For n points in a ball of radius R the spacing is R·(4.19/n)^(1/3).
+ *
+ * That derivation is what makes this robust across the four builders, whose
+ * clouds differ by 2x in radius and 5x in particle count — and it is a useful
+ * check that it independently lands on ~151 for the galaxy-formation clouds,
+ * which is the value a live sweep of the running game picked as the point
+ * where the cloud stops being specks (measured: 150).
+ */
+function _nebSpriteSize(cloudSize, count) {
+    return cloudSize * Math.cbrt(4.19 / Math.max(1, count)) * NEB_VOL.sizeScale;
+}
+
+// --- cheap hash-based 3D value noise (no assets, no deps) --------------------
+function _nebHash3(i, j, k) {
+    let h = Math.imul(i, 92837111) ^ Math.imul(j, 689287499) ^ Math.imul(k, 283923481);
+    h = Math.imul(h ^ (h >>> 15), 2246822519);
+    h = Math.imul(h ^ (h >>> 13), 3266489917);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function _nebNoise3(x, y, z) {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const xf = x - xi, yf = y - yi, zf = z - zi;
+    const u = xf * xf * (3 - 2 * xf), v = yf * yf * (3 - 2 * yf), w = zf * zf * (3 - 2 * zf);
+    const L = (a, b, t) => a + (b - a) * t;
+    const c00 = L(_nebHash3(xi, yi, zi), _nebHash3(xi + 1, yi, zi), u);
+    const c10 = L(_nebHash3(xi, yi + 1, zi), _nebHash3(xi + 1, yi + 1, zi), u);
+    const c01 = L(_nebHash3(xi, yi, zi + 1), _nebHash3(xi + 1, yi, zi + 1), u);
+    const c11 = L(_nebHash3(xi, yi + 1, zi + 1), _nebHash3(xi + 1, yi + 1, zi + 1), u);
+    return L(L(c00, c10, v), L(c01, c11, v), w);
+}
+/** 3-octave fBm in [0,1]. Two octaves would not give lanes a fine edge. */
+function _nebFbm3(x, y, z) {
+    return 0.53 * _nebNoise3(x, y, z)
+         + 0.30 * _nebNoise3(x * 2.13, y * 2.13, z * 2.13)
+         + 0.17 * _nebNoise3(x * 4.37, y * 4.37, z * 4.37);
+}
+
+/**
+ * Lay out 3-7 billow lobes in the silhouette of the nebula's documented
+ * shape. The shape vocabulary (spiral / ring / quasar / …) survives — it now
+ * places BILLOWS instead of placing individual specks, so the cloud reads as
+ * volume with a recognisable overall form.
+ */
+function _nebulaLobes(shape, arms, size) {
+    const lobes = [];
+    const add = (c, r, w) => lobes.push({ c, r, w });
+    const jit = (s) => (Math.random() - 0.5) * s;
+    const n = arms || 2;
+
+    if (shape === 'spiral' || shape === 'ring') {
+        const inner = shape === 'ring' ? 0.62 : 0.34;
+        for (let a = 0; a < n; a++) {
+            for (let k = 0; k < 2; k++) {
+                const t = inner + k * 0.40;
+                const ang = a * (Math.PI * 2 / n) + t * Math.PI * 1.7;
+                add([Math.cos(ang) * size * t + jit(size * 0.1),
+                     jit(size * 0.07),
+                     Math.sin(ang) * size * t + jit(size * 0.1)],
+                    [size * 0.34, size * 0.12, size * 0.34],
+                    1.0 - k * 0.30);
+            }
+        }
+        if (shape !== 'ring') add([0, 0, 0], [size * 0.30, size * 0.22, size * 0.30], 1.4);
+    } else if (shape === 'quasar') {
+        add([0, 0, 0], [size * 0.42, size * 0.30, size * 0.42], 2.0);
+        for (const s of [1, -1]) {
+            add([jit(size * 0.05), s * size * 0.75, jit(size * 0.05)],
+                [size * 0.11, size * 0.55, size * 0.11], 0.55);
+        }
+    } else if (shape === 'lenticular') {
+        add([0, 0, 0], [size * 0.34, size * 0.10, size * 0.34], 1.6);
+        for (let a = 0; a < 4; a++) {
+            const ang = a * Math.PI / 2 + jit(0.6);
+            add([Math.cos(ang) * size * 0.62, jit(size * 0.04), Math.sin(ang) * size * 0.62],
+                [size * 0.40, size * 0.07, size * 0.40], 0.8);
+        }
+    } else if (shape === 'elliptical') {
+        add([0, 0, 0], [size * 0.55, size * 0.30, size * 0.48], 1.8);
+        for (let a = 0; a < 3; a++) {
+            const ang = Math.random() * Math.PI * 2;
+            add([Math.cos(ang) * size * 0.45, jit(size * 0.22), Math.sin(ang) * size * 0.45],
+                [size * 0.34, size * 0.22, size * 0.34], 0.75);
+        }
+    } else { // irregular / ancient — offset asymmetric billows, the classic look
+        const count = 3 + Math.floor(Math.random() * 3);
+        for (let a = 0; a < count; a++) {
+            const ang = Math.random() * Math.PI * 2;
+            const rad = Math.pow(Math.random(), 0.7) * size * 0.62;
+            add([Math.cos(ang) * rad, jit(size * 0.42), Math.sin(ang) * rad],
+                [size * (0.26 + Math.random() * 0.24),
+                 size * (0.22 + Math.random() * 0.22),
+                 size * (0.26 + Math.random() * 0.24)],
+                0.6 + Math.random() * 0.9);
+        }
+    }
+
+    let total = 0;
+    for (const l of lobes) total += l.w;
+    let acc = 0;
+    for (const l of lobes) { acc += l.w / total; l.cdf = acc; }
+    lobes[lobes.length - 1].cdf = 1;
+    return lobes;
+}
+
+/**
+ * Draw one particle from the lobe field, rejecting samples that fall in a
+ * dust lane. Returns the local density in [0,1] so the caller can darken
+ * lane edges and brighten rims. `out` is filled with x,y,z.
+ *
+ * Radius is SHELL-biased (0.45 + 0.55·u^0.75), not uniform-in-sphere: a
+ * uniform ball is exactly the gaussian blob the critic called an airbrush
+ * gradient. Biasing outward puts mass in the billow's skin, which is what
+ * makes a rim read.
+ */
+function _nebSampleBillow(lobes, freq, seed, out) {
+    let density = 0;
+    for (let tries = 0; tries < 4; tries++) {
+        const u = Math.random();
+        let li = 0;
+        while (li < lobes.length - 1 && u > lobes[li].cdf) li++;
+        const lo = lobes[li];
+
+        // random direction, shell-biased radius, anisotropic axes
+        const th = Math.random() * Math.PI * 2;
+        const ph = Math.acos(1 - 2 * Math.random());
+        const rr = 0.45 + 0.55 * Math.pow(Math.random(), 0.75);
+        const x = lo.c[0] + Math.sin(ph) * Math.cos(th) * lo.r[0] * rr;
+        const y = lo.c[1] + Math.cos(ph) * lo.r[1] * rr;
+        const z = lo.c[2] + Math.sin(ph) * Math.sin(th) * lo.r[2] * rr;
+
+        density = _nebFbm3(x * freq + seed, y * freq + seed * 1.7, z * freq + seed * 2.3);
+        // Accept above the lane cut; below it, resample (and on the last try
+        // keep the sample anyway so the loop always terminates with a point).
+        if (density > NEB_VOL.laneCut || tries === 3) {
+            out[0] = x; out[1] = y; out[2] = z;
+            // Clamped at 0: the final try accepts a sample even when it lost
+            // the rejection test, and an unclamped result goes negative there
+            // — which would drive the caller's brightness term below zero and
+            // silently produce black particles instead of the intended
+            // dark-lane floor.
+            return Math.max(0, (density - NEB_VOL.laneCut) / (1 - NEB_VOL.laneCut));
+        }
+    }
+    return 0;
+}
+
+/**
+ * The shared nebula sprite material. Clamps gl_PointSize so a close pass
+ * cannot melt fill rate, and compensates brightness by the clamped area
+ * ratio so surface brightness stays continuous through the clamp.
+ */
+function _makeNebulaPointsMaterial(size, opacity) {
+    const mat = new THREE.PointsMaterial({
+        size: size,
+        // Soft round puff instead of a hard axis-aligned square. Without a
+        // map the fragment stage never reads gl_PointCoord and WebGL fills
+        // the whole gl_PointSize quad flat.
+        map: getPointSprite(),
+        vertexColors: true,
+        transparent: true,
+        opacity: opacity,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true,
+        // Required with the sprite: the quad's transparent corners must not
+        // punch a square hole in the depth buffer for everything behind.
+        depthWrite: false,
+        fog: false // preserve the cloud's own core->rim gradient
+    });
+    mat.onBeforeCompile = (shader) => {
+        shader.uniforms.uMaxPx = { value: NEB_VOL.maxPointPx };
+        shader.vertexShader = 'uniform float uMaxPx;\n' + shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace(
+            '#include <clipping_planes_vertex>',
+            [
+                '#include <clipping_planes_vertex>',
+                'float _want = gl_PointSize;',
+                'gl_PointSize = min( gl_PointSize, uMaxPx );',
+                // Energy-preserving: a clamped sprite covers less area than
+                // perspective asked for, so it is made proportionally
+                // brighter. The cloud neither dims nor blows out as the
+                // clamp engages on a close pass.
+                'if ( _want > uMaxPx ) vColor *= min( 4.0, ( _want * _want ) / ( uMaxPx * uMaxPx ) );'
+            ].join('\n')
+        );
+        mat.userData._shader = shader;
+    };
+    return mat;
+}
+
 function createNebulas() {
     console.log('Creating nebulas with realistic galaxy-like formations...');
     
@@ -17358,156 +17601,52 @@ function createNebulas() {
         const colors = new Float32Array(particleCount * 3);
         
         const nebulaSize = 1200 + Math.random() * 800;
-        const hue = Math.random();
-        const nebulaColor = new THREE.Color().setHSL(hue, 0.7, 0.6);
-        // Two-tone core->rim gradient (see createClusteredNebulas for rationale)
-        const nebulaCoreColor = nebulaColor.clone().offsetHSL(0.04, 0.1, 0.22);
-        const nebulaRimColor = nebulaColor.clone().offsetHSL(-0.07, 0.05, -0.18);
-        
+        // Palette walk, not Math.random(): a random hue lands in muddy
+        // yellow-green as often as in the synthwave band, and two clouds in
+        // the same cluster could come out the same colour.
+        const hue = (NEB_HUES[i % NEB_HUES.length] + (Math.random() - 0.5) * 0.03 + 1) % 1;
+        const nebulaColor = new THREE.Color().setHSL(hue, NEB_VOL.sat, 0.5);
+        // Two-tone core->rim gradient. Lightness is deliberately LOW: these
+        // sprites stack additively, so a pale particle (the old L=0.82 core)
+        // clips every channel to 1.0 after three overlaps and the cloud goes
+        // white. A saturated L=0.54 core lets the dominant channels clip
+        // first, so the stack saturates toward the HUE instead of toward white.
+        const nebulaCoreColor = new THREE.Color().setHSL(hue, NEB_VOL.sat * 0.92, NEB_VOL.coreL);
+        const nebulaRimColor = new THREE.Color().setHSL((hue - 0.07 + 1) % 1, NEB_VOL.sat, NEB_VOL.rimL);
+
+        // Billow field: lobes laid out in this shape's silhouette, carved by
+        // an fBm density mask. Replaces the uniform-in-shape scatter that
+        // produced a smooth gaussian ball with no lanes and no rim.
+        const lobes = _nebulaLobes(nebulaType.shape, nebulaType.arms, nebulaSize);
+        const noiseFreq = 3.2 / nebulaSize;
+        const noiseSeed = Math.random() * 128;
+        const _s = [0, 0, 0];
+
         for (let p = 0; p < particleCount; p++) {
             const i3 = p * 3;
-            let x, y, z;
-            
-            // Use same distribution logic as galaxies
-            if (nebulaType.shape === 'spiral' || nebulaType.shape === 'ring') {
-                // SPIRAL/RING: Arms and center bulge
-                if (Math.random() < 0.4) {
-                    // Center bulge (40% of particles)
-                    const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.3);
-                    const bulgeAngle = Math.random() * Math.PI * 2;
-                    const bulgePhi = (Math.random() - 0.5) * Math.PI;
-                    
-                    x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
-                    z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
-                    y = bulgeRadius * Math.sin(bulgePhi) * 0.8;
-                } else {
-                    // Spiral arms
-                    const arm = Math.floor(p / (particleCount / nebulaType.arms)) % nebulaType.arms;
-                    const armAngle = (p / (particleCount / nebulaType.arms)) * Math.PI * 2;
-                    const armDistance = Math.pow(Math.random(), 1.8) * nebulaSize;
-                    const armWidth = nebulaType.shape === 'ring' ? 0.03 : 0.12;
-                    
-                    // Ring: skip center
-                    if (nebulaType.shape === 'ring' && armDistance < nebulaSize * 0.4) {
-                        p--; // Don't count this particle
-                        continue;
-                    }
-                    
-                    const angle = armAngle + (armDistance / nebulaSize) * Math.PI * 2;
-                    x = Math.cos(angle + arm * (Math.PI * 2 / nebulaType.arms)) * armDistance +
-                        (Math.random() - 0.5) * armWidth * armDistance;
-                    z = Math.sin(angle + arm * (Math.PI * 2 / nebulaType.arms)) * armDistance +
-                        (Math.random() - 0.5) * armWidth * armDistance;
-                    y = (Math.random() - 0.5) * 30; // Flat disk
-                }
-                
-            } else if (nebulaType.shape === 'elliptical') {
-                // ELLIPTICAL: Flattened spheroid (like pancake)
-                const distance = Math.pow(Math.random(), 1.3) * nebulaSize;
-                const theta = Math.random() * Math.PI * 2;
-                const phi = (Math.random() - 0.5) * Math.PI * 0.6;
-                
-                x = distance * Math.sin(phi) * Math.cos(theta);
-                z = distance * Math.sin(phi) * Math.sin(theta);
-                y = distance * Math.cos(phi) * 0.5; // 50% flattening
-                
-            } else if (nebulaType.shape === 'lenticular') {
-                // LENTICULAR: Very flat disk with bright center
-                if (Math.random() < 0.4) {
-                    // Bright center bulge
-                    const bulgeRadius = Math.pow(Math.random(), 3) * (nebulaSize * 0.3);
-                    const bulgeAngle = Math.random() * Math.PI * 2;
-                    x = Math.cos(bulgeAngle) * bulgeRadius;
-                    z = Math.sin(bulgeAngle) * bulgeRadius;
-                    y = (Math.random() - 0.5) * 50;
-                } else {
-                    // Very flat disk
-                    const distance = Math.pow(Math.random(), 1.5) * nebulaSize;
-                    const theta = Math.random() * Math.PI * 2;
-                    x = Math.cos(theta) * distance;
-                    z = Math.sin(theta) * distance;
-                    y = (Math.random() - 0.5) * 20; // Very flat (only 10% height)
-                }
-                
-            } else if (nebulaType.shape === 'irregular') {
-    // IRREGULAR: Asymmetric spiral with 2 uneven arms (galaxy-like)
-    if (Math.random() < 0.3) {
-        // Small center bulge (30% of particles)
-        const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.25);
-        const bulgeAngle = Math.random() * Math.PI * 2;
-        const bulgePhi = (Math.random() - 0.5) * Math.PI;
-        
-        x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
-        z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
-        y = bulgeRadius * Math.sin(bulgePhi) * 0.7;
-    } else {
-        // Asymmetric spiral arms (70% of particles)
-        const arms = 2; // Two main arms
-        const arm = Math.floor(p / (particleCount / arms)) % arms;
-        const armAngle = (p / (particleCount / arms)) * Math.PI * 2;
-        const armDistance = Math.pow(Math.random(), 1.6) * nebulaSize;
-        
-        // Make arms irregular - different widths and tightness
-        const armWidth = arm === 0 ? 0.15 : 0.20; // One arm thicker than the other
-        const spiralTightness = arm === 0 ? 2.5 : 3.0; // Different spiral rates
-        
-        const angle = armAngle + (armDistance / nebulaSize) * Math.PI * spiralTightness;
-        x = Math.cos(angle + arm * Math.PI) * armDistance +
-            (Math.random() - 0.5) * armWidth * armDistance;
-        z = Math.sin(angle + arm * Math.PI) * armDistance +
-            (Math.random() - 0.5) * armWidth * armDistance;
-        y = (Math.random() - 0.5) * 40; // Relatively flat
-    }
-                
-            } else if (nebulaType.shape === 'quasar') {
-                // QUASAR: Central bulge + bright polar jets
-                if (Math.random() < 0.7) {
-                    // Central bulge (70%)
-                    const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.4);
-                    const bulgeAngle = Math.random() * Math.PI * 2;
-                    const bulgePhi = (Math.random() - 0.5) * Math.PI * 0.5;
-                    
-                    x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
-                    z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
-                    y = bulgeRadius * Math.sin(bulgePhi);
-                } else {
-                    // Polar jets (30%)
-                    const jetDirection = Math.random() < 0.5 ? 1 : -1;
-                    const jetDistance = Math.random() * nebulaSize * 1.5;
-                    const jetSpread = nebulaSize * 0.08; // Narrow jet
-                    
-                    x = (Math.random() - 0.5) * jetSpread;
-                    y = jetDirection * jetDistance; // Vertical jets
-                    z = (Math.random() - 0.5) * jetSpread;
-                }
-                
-            } else { // ancient/dwarf
-                // ANCIENT/DWARF: Small irregular cluster
-                const clusterRadius = Math.pow(Math.random(), 1.5) * nebulaSize;
-                const theta = Math.random() * Math.PI * 2;
-                const phi = Math.acos(1 - 2 * Math.random());
-                
-                x = clusterRadius * Math.sin(phi) * Math.cos(theta);
-                y = clusterRadius * Math.cos(phi) * 0.6;
-                z = clusterRadius * Math.sin(phi) * Math.sin(theta);
-            }
-            
+            const density = _nebSampleBillow(lobes, noiseFreq, noiseSeed, _s);
+            const x = _s[0], y = _s[1], z = _s[2];
+
             positions[i3] = x;
             positions[i3 + 1] = y;
             positions[i3 + 2] = z;
 
-            // Color variation: two-tone core->rim gradient (see
-            // createClusteredNebulas for rationale), except quasar jets
-            // which keep their distinct blue-white tint.
+            // Color: two-tone core->rim gradient, then modulated by the local
+            // density. The density term is what turns a smooth gradient into
+            // structure — particles near a lane edge (density -> 0) go dark
+            // and cool, particles in a billow's compressed skin go hot. Same
+            // particle count, same cost, but the cloud gains value contrast,
+            // which is the thing a painted airbrush gradient can never have.
             let colorVar;
             if (nebulaType.shape === 'quasar' && Math.abs(y) > nebulaSize * 0.5) {
                 colorVar = new THREE.Color(0xaaddff);
             } else {
                 const rNorm = Math.min(1, Math.sqrt(x * x + z * z) / nebulaSize);
                 colorVar = nebulaCoreColor.clone().lerp(nebulaRimColor, rNorm);
-                colorVar.offsetHSL((Math.random() - 0.5) * 0.08, 0, (Math.random() - 0.5) * 0.15);
+                colorVar.offsetHSL((Math.random() - 0.5) * 0.06, 0, (Math.random() - 0.5) * 0.10);
+                colorVar.multiplyScalar(0.42 + 1.05 * density);
             }
-            
+
             colors[i3] = colorVar.r;
             colors[i3 + 1] = colorVar.g;
             colors[i3 + 2] = colorVar.b;
@@ -17516,23 +17655,9 @@ function createNebulas() {
         nebulaGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
         nebulaGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
         
-        const nebulaMaterial = new THREE.PointsMaterial({
-            size: 2.5,
-            // Soft round puff instead of a hard axis-aligned square. Without a
-            // map the fragment stage never reads gl_PointCoord and WebGL fills
-            // the whole gl_PointSize quad flat — 5,000 grey blocks per cloud.
-            map: getPointSprite(),
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.65,
-            blending: THREE.AdditiveBlending,
-            sizeAttenuation: true,
-            // Required with the sprite: the quad's transparent corners must not
-            // punch a square hole in the depth buffer for everything behind.
-            depthWrite: false,
-            fog: false // preserve the cloud's own core->rim gradient; scene fog would flatten it
-        });
-        
+        const nebulaMaterial = _makeNebulaPointsMaterial(
+            _nebSpriteSize(nebulaSize, particleCount), NEB_VOL.opacity);
+
         const nebulaPoints = new THREE.Points(nebulaGeometry, nebulaMaterial);
         nebulaPoints.visible = true;
         nebulaPoints.frustumCulled = true;  // PERF: off-screen nebulas skip the additive draw

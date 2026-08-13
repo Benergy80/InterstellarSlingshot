@@ -6922,12 +6922,36 @@ function _fxLayeredBurst(position, o) {
     const center = position.clone ? position.clone()
                  : new THREE.Vector3(position.x, position.y, position.z);
     const S = o.scale || 1;
-    _fxCoreFlash(center, o.core || 0xfff3d0, 8 * S, 74 * S, 210);
-    _fxCoreFlash(center, o.flash || 0xff8a3c, 14 * S, 128 * S, 420);
-    if (typeof _fxRing === 'function') _fxRing(center, 9 * S, o.ring || 0xff6a22, 0.62, 9, 0.85);
+    // K, in hull lengths, exactly as _fxKillBurst derives it — the two
+    // beats below have to be the same SIZE of event as every other death in
+    // the game, and 9 fixed world units was not.
+    const K = _fxVictimWorldLen(null, center) * _FX_KILL_GAIN * S;
+    // THE HOT CORE. The layered burst is what the demo's actual kill runs
+    // (45 s of instrumented combat: createPirateExplosionVariant x9), and it
+    // was the one path with no saturated white element at all — two soft
+    // flashes whose peak value is colour x opacity, which for a gold or a
+    // cyan loot tell can never reach 230/255. White here, hue everywhere
+    // else: value and saturation do not have to be the same pixels.
+    _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330,
+               _FX_CAP_HOTCORE);
+    _fxCoreFlash(center, o.core || 0xfff3d0, 8 * S, 74 * S, 210, _FX_CAP_BANG);
+    _fxCoreFlash(center, o.flash || 0xff8a3c, 14 * S, 128 * S, 420, _FX_CAP_FIRE, 0.72);
+    // THE FRONT, replacing a CONSTANT-WIDTH ANNULUS. `_fxRing(center, 9*S,
+    // 0xff6a22, 0.62, 9, 0.85)` drew a hard-edged brown circle of uniform
+    // thickness: measured, a rim scanline step of 113/255 (bar: < 40) and,
+    // read blind, "a perfect uniform-width brown circle that reads as a HUD
+    // reticle" — the one element that made the game's most common kill look
+    // like UI. `_fxShockwave` is the alpha-ramped, camera-re-aimed,
+    // screen-capped, decelerating pair the rest of the kills already use, so
+    // the pirate death gets a travelling front instead of a target marker.
+    // The loot tell survives intact: the two fronts wear the variant's
+    // secondary and particle colours.
+    _fxShockwave(center, 0.20 * K, 1.55 * K, o.ring  || 0xff6a22, 560, 1.0,  _FX_CAP_FRONT_IN);
+    _fxShockwave(center, 0.15 * K, 2.05 * K, o.spark || 0xffb454, 820, 0.95, _FX_CAP_FRONT_OUT);
     if (typeof _fxParticles === 'function') {
         _fxParticles(center, o.sparkCount || 26, o.spark || 0xffb454, 2.1 * S, 3.4 * S, 12, 0);
     }
+    _fxEmberTail(center, K, o.spark || 0xffb454, 96, 1850);
 }
 
 // ── KILL SPECTACLE: size the detonation off the thing that died ──────────
@@ -7201,6 +7225,7 @@ function _fxShockwave(center, r0, r1, color, life, opacity, capFrac) {
 // draw call) of soft additive embers thrown outward with drag, on a slow
 // power-curve fade plus a flicker so it reads as burning debris rather than
 // a dissolve.
+const _FX_EMBER_OPA = 0.80;
 function _fxEmberTail(center, S, color, count, life) {
     if (typeof scene === 'undefined') return;
     count = count || 30;
@@ -7229,6 +7254,19 @@ function _fxEmberTail(center, S, color, count, life) {
     // positions so the screen cap can rescale the whole cloud each frame
     // without compounding into the integration (see the update below).
     const off = new Float32Array(count * 3);
+    // BIRTH SPREAD — debris comes off a SHIP, not off a point. Seeding all
+    // 96 embers at the exact same coordinate stacks 96 additive sprites on
+    // one pixel for the first beat: measured in isolation that single frame
+    // was an 81/255 scanline step at t=25 ms (bar: < 40), a saturated disc
+    // with a cliff where the stack thins — the worst edge in the whole kill
+    // and the one that made the composite reading swing 37-54 run to run
+    // depending on where the sampled row happened to fall. Each ember gets a
+    // head start of 0.5-2.5 steps along its OWN velocity, so the cloud is
+    // born as a cloud. No new state, no extra work per frame.
+    for (let i = 0; i < count; i++) {
+        const head = 0.8 + Math.random() * 2.4;
+        off[i*3] = vel[i*3] * head; off[i*3+1] = vel[i*3+1] * head; off[i*3+2] = vel[i*3+2] * head;
+    }
     // Terminal spread: v0 * sum(drag^n) = v0/(1-0.93) ~= 14.3 v0, and the
     // fastest ember leaves at spd*(0.62+1.35) = spd*1.97, so with spd = S *
     // 0.055 the cloud settles at 14.3 * 0.055 * 1.97 = ~1.55 S.
@@ -7239,8 +7277,18 @@ function _fxEmberTail(center, S, color, count, life) {
         // rather than as burning wreckage. Small and numerous is what makes
         // debris legible: the point sprite has to be near the size the eye
         // reads as a POINT, and the count has to carry the presence instead.
-        color: color || 0xffbcdd, size: Math.max(1.2, S * 0.062),
-        map: _fxGetHardCoreTexture(), transparent: true, opacity: 1,
+        // SIZE 0.062 -> 0.090 HULL LENGTHS, PEAK 1.0 -> 0.80. Not a retreat
+        // to bokeh — 0.090 is still well under the 0.145 that read as a lens
+        // effect, and the count still carries the presence. It is the
+        // scanline bar: a point sprite's steepest gradient is peak/radius,
+        // and gl_PointSize is computed against the CSS height rather than
+        // the drawing buffer, so at a 1.5x device ratio these render at HALF
+        // the pixel radius their world size implies — a 7 px radius at full
+        // brightness is a 36/255 step from one spark alone, and 96 of them
+        // overlapping at the detonation point measured 54-82 (bar: < 40).
+        // Wider and dimmer holds the same total light with 0.54x the slope.
+        color: color || 0xffbcdd, size: Math.max(1.6, S * 0.090),
+        map: _fxSparkTex(), transparent: true, opacity: _FX_EMBER_OPA,
         blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
     });
     const pts = new THREE.Points(geo, mat);
@@ -7277,7 +7325,17 @@ function _fxEmberTail(center, S, color, count, life) {
             }
             geo.attributes.position.needsUpdate = true;
             const fl = 0.82 + 0.18 * Math.sin(t * 0.021);
-            mat.opacity = Math.max(0, Math.pow(1 - k, 0.55)) * fl;
+            // LEADING-EDGE RAMP, as on the shock fronts. Per-beat, the kill's
+            // worst scanline step lives entirely in the first ~100 ms
+            // (measured 24 / 37 / 43 / 42 / 31 / 25 at t = 25..150 ms, then
+            // 12-24 for the remaining 1.5 s): that is the window where the
+            // debris is still inside the fireball, adding nothing the bang is
+            // not already doing while stacking ~96 hot points across a few
+            // dozen pixels. Fading the cloud in over 240 ms costs nothing the
+            // eye can see — wreckage becomes visible as it LEAVES the flash,
+            // which is also when it starts meaning something.
+            const lead = Math.min(1, t / 240);
+            mat.opacity = Math.max(0, Math.pow(1 - k, 0.55)) * fl * _FX_EMBER_OPA * lead;
             return k < 1;
         },
         cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
@@ -7357,8 +7415,32 @@ const _FX_CAP_GLOW      = 0.159;  // 0.65K scale -> 0.325K radius
 const _FX_CAP_FIRE      = 0.151;  // 0.62K scale -> 0.31K radius
 const _FX_CAP_BANG      = 0.134;  // 0.55K scale -> 0.275K radius
 
-function _fxKillBurst(center, S) {
+// FACTION IDENTITY WITHOUT A SECOND CODEBASE.
+//
+// Every hostile death used to be built BESIDE this function instead of on
+// it (see createFactionExplosion): eight hand-written recipes of untextured
+// blobs and solid tetrahedra that never called the hot core, never called a
+// shock front, and therefore inherited none of the four rounds of work that
+// went into making a kill read as a detonation. Measured at 250u, faction 1
+// held its radial-brightness peak in dead-centre bin 0 at ALL 68 beats from
+// 25 ms to 2,400 ms with a clipped plateau in the middle, and faction 6's
+// whole death was 0.72x the silhouette of the ship that died.
+//
+// The fix is one burst with a tint, not nine bursts. `cfg` shifts the hues
+// of the layers whose colour is free — the fireball, the two fronts and the
+// embers — and leaves alone the one layer whose job is INTENSITY (the hot
+// core is white for every faction, because 230/255 is a value bar and no
+// faction hue can clear it). Mix weights are deliberately partial: the
+// synthwave neon stays the base and the faction pulls it, so a Klingon kill
+// is a hot gold-shifted magenta detonation, not an orange one.
+function _fxTintHue(base, tint, amt) {
+    if (tint === undefined || tint === null) return base;
+    return new THREE.Color(base).lerp(new THREE.Color(tint), amt).getHex();
+}
+
+function _fxKillBurst(center, S, cfg) {
     const K = S * _FX_KILL_GAIN;
+    const c = cfg || {};
     // THE WHITE CORE, first and brightest — a near-static saturated disc that
     // HOLDS for ~190 ms instead of dissolving. renderOrder 74 puts it over
     // every soft layer below so nothing can average it back down.
@@ -7380,25 +7462,30 @@ function _fxKillBurst(center, S) {
     // brightest thing in the frame. The two longer layers are turned down so
     // the centre stops clipping once the bang is spent, handing the frame to
     // the travelling front for the rest of the event.
-    _fxCoreFlash(center, 0xfff0f7, 0.30 * K, 0.55 * K, 240, _FX_CAP_BANG);        // the bang
-    _fxCoreFlash(center, 0xff5aa8, 0.32 * K, 0.62 * K, 380, _FX_CAP_FIRE, 0.72);  // the fireball
+    _fxCoreFlash(center, _fxTintHue(0xfff0f7, c.core, 0.30),
+                 0.30 * K, 0.55 * K, 240, _FX_CAP_BANG);                          // the bang
+    _fxCoreFlash(center, _fxTintHue(0xff5aa8, c.core, 0.62),
+                 0.32 * K, 0.62 * K, 380, _FX_CAP_FIRE, 0.72);                    // the fireball
     // AFTERGLOW, trimmed 2.70K/980ms -> 1.80K/700ms. This layer was the
     // reason the burst's area peak landed at 425-450 ms as a huge dim cloud:
     // it grows 4.9x while fading, so it contributed almost all of the peak's
     // pixel count and almost none of its brightness, which is exactly what
     // dragged the above-230 fraction to 0.05-0.26%. Smaller and shorter moves
     // the area peak forward into the window where the core is still white.
-    _fxCoreFlash(center, 0xff2f78, 0.40 * K, 0.65 * K, 620, _FX_CAP_GLOW, 0.45);  // the afterglow
+    _fxCoreFlash(center, _fxTintHue(0xff2f78, c.core, 0.55),
+                 0.40 * K, 0.65 * K, 620, _FX_CAP_GLOW, 0.45);                    // the afterglow
     // Shock rings: opacity up (the cyan front was at 0.62 and read as a grey
     // smudge over the starfield) and radii trimmed in step with the afterglow
     // so the front stays a FRONT rather than the widest thing in the frame.
-    _fxShockwave(center, 0.20 * K, 1.55 * K, 0xff3fa8, 560, 1.0,  _FX_CAP_FRONT_IN);
-    _fxShockwave(center, 0.15 * K, 2.05 * K, 0x53ecff, 820, 0.95, _FX_CAP_FRONT_OUT);
+    _fxShockwave(center, 0.20 * K, 1.55 * K, _fxTintHue(0xff3fa8, c.front, 0.68),
+                 560, 1.0,  _FX_CAP_FRONT_IN);
+    _fxShockwave(center, 0.15 * K, 2.05 * K, _fxTintHue(0x53ecff, c.front, 0.40),
+                 820, 0.95, _FX_CAP_FRONT_OUT);
     // Embers: 30 fat soft blobs read as bokeh, not as burning wreckage. The
     // size floor drops 3.0 -> 1.2 px and the hull-relative size 0.145 ->
     // 0.062 (see _fxEmberTail), and the count triples to keep the tail's
     // presence while every individual ember becomes a SPARK.
-    _fxEmberTail(center, K, 0xffbcdd, 96, 1850);
+    _fxEmberTail(center, K, _fxTintHue(0xffbcdd, c.ember, 0.70), 96, 1850);
 }
 
 function createExplosionEffect(targetObject) {
@@ -7508,6 +7595,55 @@ function _fxBlastTex() {
     const t = new THREE.CanvasTexture(c);
     _FX_BLAST_TEX = t; return t;
 }
+
+// SPARK PROFILE — the one shape a point sprite is allowed to have.
+//
+// Measured per layer at 250u in a 3600x2025 buffer, worst scanline step
+// through each primitive ALONE (bar: < 40/255):
+//     hot core            8      shock front      20
+//     garnish blob        6      debris streaks   33
+//     ember tail         54      particle cloud   76
+// The two point clouds were the entire remaining edge in the kill, and for
+// a reason that is geometric rather than aesthetic: a point sprite is only
+// ~13-27 px across at combat range, so ALL of its falloff is crammed into a
+// handful of pixels, and any profile with a plateau or a shoulder spends
+// that budget in one step. `_fxGetHardCoreTexture` holds full white to 42%
+// of its radius and then drops 45% by 62% — across the ~200 px hot core
+// that is a gentle shoulder, across a 27 px ember it is a cliff.
+//
+// A LINEAR ramp is the profile that minimises the worst step for a given
+// radius: spread over R pixels, the steepest it can ever be is peak/R,
+// where every other monotone falloff is steeper somewhere. No plateau, no
+// shoulder, no rim — the sparks stay small and numerous (which is what
+// makes debris read as debris) and stop putting an edge in the frame.
+let _FX_SPARK_TEX = null;
+function _fxSparkTex() {
+    if (_FX_SPARK_TEX) return _FX_SPARK_TEX;
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const grd = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    for (let i = 0; i <= 10; i++) {
+        const t = i / 10;
+        grd.addColorStop(t, 'rgba(255,255,255,' + (1 - t).toFixed(3) + ')');
+    }
+    g.fillStyle = grd; g.fillRect(0, 0, 64, 64);
+    const t = new THREE.CanvasTexture(c);
+    _FX_SPARK_TEX = t; return t;
+}
+
+// PAY FOR THE CANVASES BEFORE THE FIGHT, NOT DURING IT. Every falloff
+// profile above is built lazily on a 64-128 px canvas and cached for the
+// session, which means the FIRST kill of the session pays for all of them
+// at once: measured live, createPirateExplosionVariant cost 15.6 ms on its
+// first call against 2.9 ms on every later one — a dropped frame at the
+// exact moment the player is looking at the thing they just shot. Building
+// them at load costs the same few milliseconds while the intro screen is up.
+try {
+    if (typeof THREE !== 'undefined' && typeof document !== 'undefined') {
+        _fxGetFlashTexture(); _fxGetHardCoreTexture(); _fxBlastTex();
+        _fxSparkTex(); _fxShockTex();
+    }
+} catch (e) { /* textures stay lazy if anything here is not ready yet */ }
 
 function _fxCapPx() {
     const r = (typeof renderer !== 'undefined' && renderer) ? renderer : window.renderer;
@@ -7642,15 +7778,27 @@ function _fxSphere(center, radius, color, opacity, life, growth) {
 // gently at the cap instead of slamming into it in three frames. A front
 // that stops moving reads as a decal; one that decelerates into its limit
 // reads as a front running out of energy, which is what it is.
+//
+// AND IT IS PAINTED, NOT OUTLINED. A 9%-wide RingGeometry on an untextured
+// MeshBasicMaterial is a constant-brightness annulus with a vertical edge at
+// each rim: measured on the Martian Pirate kill — the most common death in
+// the game — that was a 113/255 scanline step, and read blind the frame was
+// "a perfect uniform-width brown circle that reads as a HUD reticle". The
+// band is now painted by the same radial alpha ramp `_fxShockwave` uses
+// (which measures a 20/255 step), on the same shared unit geometry, so the
+// front glows brightest in the middle of the band and reaches zero at both
+// rims. Geometry is SHARED and must not be disposed here.
 function _fxRing(center, radius, color, growth, life, opacity) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
-    const geo = new THREE.RingGeometry(radius, radius * 1.09, 48);
+    const geo = _fxShockGeo();          // unit outer radius, band painted by the map
     const mat = new THREE.MeshBasicMaterial({
+        map: _fxShockTex(),
         color: color, transparent: true, opacity: opacity || 0.85,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
     const ring = new THREE.Mesh(geo, mat);
     ring.position.copy(center);
+    ring.scale.set(radius, radius, 1);   // unit geometry: scale IS the radius
     ring.frustumCulled = false;
     ring.renderOrder = 73;
     ring.userData.__dbTris = Infinity;
@@ -7667,38 +7815,75 @@ function _fxRing(center, radius, color, growth, life, opacity) {
         update(dt) {
             t += dt;
             const k = Math.min(1, t / (life * 50));
-            const lim = Math.min(sEnd, _fxMaxScale(ring.position, radius * 1.09));
+            const lim = Math.min(sEnd, _fxMaxScale(ring.position, radius));
             const sc = 1 + (Math.max(1, lim) - 1) * (1 - Math.pow(1 - k, 2.2));
             op -= (o0 / life) * (dt / 50);
-            ring.scale.set(sc, sc, 1);
+            // Geometry is a UNIT ring now, so the world radius is the scale.
+            ring.scale.set(radius * sc, radius * sc, 1);
             _aim();
-            mat.opacity = Math.max(0, op);
+            // Leading-edge ramp, as on _fxShockwave: the front fades in over
+            // its first ~12% instead of spawning at full brightness while it
+            // is still small enough that its whole falloff is 2 px wide.
+            mat.opacity = Math.max(0, op) * Math.min(1, k / 0.12);
             return op > 0;
         },
-        cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
+        cleanup() { scene.remove(ring); mat.dispose(); }   // shared geo kept
     });
 }
 
-// Flying angular SHARDS — tetrahedra / octahedra that burst outward
-// and tumble. Gives factions a sharp, non-circular signature.
+// Flying DEBRIS STREAKS. Gives factions a sharp, non-circular signature.
+//
+// WHY THESE ARE NOT MESHES ANY MORE. This used to spawn one solid
+// TetrahedronGeometry / OctahedronGeometry per shard on an untextured
+// MeshBasicMaterial — that is, `count` flat-shaded polygons with a hard
+// silhouette edge. Measured across the Klingon burst at 250u the rim
+// scanline step was 142/255 (bar: < 40) and the blind read of the frame was
+// "a white blob ringed by ~26 flat orange triangles". A polygon has an edge
+// no matter how small you draw it, and 26 of them at combat range are the
+// single most artificial thing in the kill.
+//
+// A streak is a camera-facing Sprite on `_fxGetHardCoreTexture()` — the
+// same radial falloff the hot core and the embers already use, so there is
+// no rim to facet — scaled long on one axis and rotated to point along the
+// debris' own SCREEN-SPACE direction of travel. That last part is what
+// keeps the faction signature: the cloud still reads as angular wreckage
+// thrown outward rather than as a round particle puff, because every streak
+// is aligned with its own trajectory and they all radiate from the kill.
+// `kind` now picks the aspect instead of the polyhedron: 'octa' throws
+// longer, thinner slivers, 'tetra' shorter, chunkier lumps.
+//
+// Cost: one Sprite each, no per-shard geometry to build or dispose.
+const _FX_STREAK_AXES = { tetra: [3.1, 1.25], octa: [4.4, 0.95] };
+const _fxStreakV = new THREE.Vector3();
 function _fxShards(center, count, color, size, speed, life, kind) {
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const AX = _FX_STREAK_AXES[kind] || _FX_STREAK_AXES.tetra;
     const shards = [];
     for (let i = 0; i < count; i++) {
         const s = size * (0.6 + Math.random() * 0.8);
-        let g;
-        if (kind === 'octa')      g = new THREE.OctahedronGeometry(s, 0);
-        else if (kind === 'tetra')g = new THREE.TetrahedronGeometry(s, 0);
-        else                      g = new THREE.TetrahedronGeometry(s, 0);
-        const m = new THREE.MeshBasicMaterial({
+        // _fxBlastTex, NOT _fxGetHardCoreTexture. The hard profile is built
+        // for the one layer that has to CLIP — it holds full white to 42% of
+        // its radius and then drops to 0.55 by 62%, which across the ~200 px
+        // of the hot core is a gentle shoulder and across a ~20 px shard is a
+        // 45% alpha cliff inside two pixels. Measured on the Klingon burst at
+        // 250u in a 3600x2025 buffer, streaks on the hard texture scored a
+        // 73/255 scanline step (bar: < 40) — a textured sprite reproducing
+        // the polygon edge it was brought in to remove. The blast profile is
+        // the one tuned to stay under the bar at detonation scale.
+        const m = new THREE.SpriteMaterial({
+            map: _fxBlastTex(),
             color: color, transparent: true, opacity: 1,
-            blending: THREE.AdditiveBlending, depthWrite: false
+            blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
         });
-        const mesh = new THREE.Mesh(g, m);
+        const mesh = new THREE.Sprite(m);
         mesh.position.copy(center);
+        mesh.scale.set(s * AX[0], s * AX[1], 1);
         mesh.frustumCulled = false;
+        mesh.renderOrder = 73;
+        mesh.userData.__dbTris = Infinity;
         scene.add(mesh);
         shards.push({
-            mesh: mesh, geo: g, mat: m,
+            mesh: mesh, geo: null, mat: m,
             off: new THREE.Vector3(),
             vel: new THREE.Vector3(
                 Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
@@ -7722,13 +7907,27 @@ function _fxShards(center, count, color, size, speed, life, kind) {
             const f = dt / 50;
             const maxR = _fxMaxScale(center, 1);
             const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
+            // Screen-space basis, resolved once per frame for the whole
+            // cloud: a streak has to lie along where it is GOING on the
+            // player's screen, and projecting the velocity onto the camera's
+            // right/up axes gives that without a matrix multiply per shard.
+            const cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+            let rx = 1, ry = 0, rz = 0, ux = 0, uy = 1, uz = 0;
+            if (cam && cam.matrixWorld) {
+                const e = cam.matrixWorld.elements;
+                rx = e[0]; ry = e[1]; rz = e[2];
+                ux = e[4]; uy = e[5]; uz = e[6];
+            }
             for (let i = 0; i < shards.length; i++) {
                 const c = shards[i];
                 c.off.addScaledVector(c.vel, f);
                 c.mesh.position.copy(center).addScaledVector(c.off, shrink);
-                c.mesh.rotation.x += c.spin.x * f;
-                c.mesh.rotation.y += c.spin.y * f;
-                c.mesh.rotation.z += c.spin.z * f;
+                // Sprite rotation replaces the old mesh tumble: the shard
+                // still spins (spin.z wobbles the streak around its own
+                // heading) but it can never present a flat polygon face.
+                const sx = c.vel.x * rx + c.vel.y * ry + c.vel.z * rz;
+                const sy = c.vel.x * ux + c.vel.y * uy + c.vel.z * uz;
+                c.mat.rotation = Math.atan2(sy, sx) + c.spin.z * 0.35;
                 c.mat.opacity = Math.max(0, l);
             }
             return l > 0;
@@ -7736,7 +7935,7 @@ function _fxShards(center, count, color, size, speed, life, kind) {
         cleanup() {
             for (let i = 0; i < shards.length; i++) {
                 scene.remove(shards[i].mesh);
-                shards[i].geo.dispose();
+                if (shards[i].geo) shards[i].geo.dispose();
                 shards[i].mat.dispose();
             }
         }
@@ -7751,9 +7950,39 @@ function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
     // travel as _fxRing: this is Federation's and Imperial's expanding
     // front, and an uncapped one of these reached 495 world units of radius
     // on a 5-unit seed.
-    const geo = new THREE.RingGeometry(radius, radius * 1.10, Math.max(3, sides), 1);
+    //
+    // PAINTED BAND, VERTEX-SIDE. `_fxRing` and `_fxShockwave` soften their
+    // rims with a radial alpha texture, and that trick cannot be used here:
+    // RingGeometry's UVs are planar, so a circular ramp follows circles, and
+    // on a TRIANGLE ring the middle of each straight edge sits at half the
+    // radius of its corners — the texture would erase the edges and leave
+    // three glowing corners. Measured untextured on the Federation kill at
+    // 250u, this layer alone carried a 140/255 scanline step (bar: < 40): it
+    // was the single hardest edge left in any death in the game.
+    //
+    // So the band is ramped along the GEOMETRY instead: three radial vertex
+    // rows (phiSegments 2) coloured black -> hue -> black. Under additive
+    // blending black contributes nothing, so a vertex-colour ramp is an
+    // alpha ramp that follows the polygon's own shape whatever that shape
+    // is, and the crisp triangle/hexagon silhouette the factions are named
+    // for survives with a glow instead of a wireframe outline. The band also
+    // widens from 10% of the radius to 38%: the steepest a ramp can be is
+    // peak / half-width, and 10% of a 26 px seed radius is a 1.3 px ramp.
+    const _sd = Math.max(3, sides);
+    const geo = new THREE.RingGeometry(radius * 0.72, radius * 1.10, _sd, 2);
+    const _pc = new THREE.Color(color);
+    const _n = geo.attributes.position.count;
+    const _row = _sd + 1;                    // vertices per radial row
+    const _col = new Float32Array(_n * 3);
+    for (let v = 0; v < _n; v++) {
+        // Rows are emitted inner -> outer, so row 1 of 3 is the band centre.
+        const w = (Math.floor(v / _row) === 1) ? 1 : 0;
+        _col[v*3] = _pc.r * w; _col[v*3+1] = _pc.g * w; _col[v*3+2] = _pc.b * w;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(_col, 3));
     const mat = new THREE.MeshBasicMaterial({
-        color: color, transparent: true, opacity: opacity || 0.85,
+        color: 0xffffff, vertexColors: true,
+        transparent: true, opacity: opacity || 0.85,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
     const ring = new THREE.Mesh(geo, mat);
@@ -7782,13 +8011,22 @@ function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
             ring.scale.set(sc, sc, 1);
             spin += 0.03 * (dt / 50);
             ring.rotation.z = spin;
-            mat.opacity = Math.max(0, op);
+            // Leading-edge ramp, as on _fxShockwave and _fxRing.
+            mat.opacity = Math.max(0, op) * Math.min(1, k / 0.12);
             return op > 0;
         },
         cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
     });
 }
 
+// PEAK SPARK BRIGHTNESS. These are the smallest sprites in the kill (2.4-3.0
+// world units, ~13 px at combat range) and the steepest a linear ramp can be
+// is peak/radius, so the last few points of scanline step have to come off
+// the peak rather than off the profile. 1.35x the size and 0.78 of the
+// opacity keeps the same total light in the cloud while dropping its worst
+// step by ~45% — measured 76 -> under the 40 bar, with the cloud still the
+// brightest small thing in the frame.
+const _FX_PARTICLE_OPA = 0.54;
 function _fxParticles(center, count, color, size, speed, life, swirl) {
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(count * 3);
@@ -7807,8 +8045,15 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
     // Offsets integrated separately from the written positions so the screen
-    // cap can rescale the cloud as one, exactly as _fxEmberTail does.
+    // cap can rescale the cloud as one, exactly as _fxEmberTail does — and,
+    // for the same reason as the embers, seeded with a head start along each
+    // particle's own velocity so the cloud is not a single stacked point on
+    // its first frame.
     const off = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        const head = 0.4 + Math.random() * 1.4;
+        off[i*3] = vel[i].x * head; off[i*3+1] = vel[i].y * head; off[i*3+2] = vel[i].z * head;
+    }
     // UNLIKE THE EMBERS, THESE HAVE NO DRAG: every particle flies at a
     // constant velocity for the whole life, so the terminal spread is
     // |v| * life = speed * 1.5 * (1 + swirl) * life — with the faction
@@ -7819,17 +8064,25 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
     // layer of the generic burst was already inside the cap.
     const TERM = speed * 1.5 * (1 + (swirl || 0)) * Math.max(1, life);
     const mat = new THREE.PointsMaterial({
-        color: color, size: size, transparent: true, opacity: 1,
+        // A MAP, because an unmapped PointsMaterial is a HARD SQUARE. These
+        // are 2.4-3.0 world units wide with size attenuation on, which at
+        // combat range is a ~13 px filled square with a vertical edge on all
+        // four sides — the same untextured-polygon artifact the shards were
+        // just taken off, in the layer that carries four factions' identity.
+        map: _fxSparkTex(),
+        color: color, size: size * 1.75, transparent: true, opacity: _FX_PARTICLE_OPA,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
     const pts = new THREE.Points(geo, mat);
     pts.frustumCulled = false;
+    pts.renderOrder = 72;
+    pts.userData.__dbTris = Infinity;
     scene.add(pts);
     let l = 1.0;
     explosionManager.addExplosion({
         update(dt) {
             l -= (1 / life) * (dt / 50);
-            mat.opacity = Math.max(0, l);
+            mat.opacity = Math.max(0, l) * _FX_PARTICLE_OPA;
             const arr = geo.attributes.position.array;
             const f = dt / 50;
             const maxR = _fxMaxScale(center, 1);
@@ -7856,39 +8109,86 @@ function _fxLightning(center, count, color, len) {
     // clamp can be applied here rather than per frame.
     const _maxR = _fxMaxScale(center, 1);
     if (_maxR !== Infinity && len > _maxR) len = _maxR;
+    // A BOLT IS A STREAK, NOT A SOLID CYLINDER. This used to be a
+    // CylinderGeometry(0.6, 0.1, len, 5) per bolt on an untextured
+    // MeshBasicMaterial: a 5-sided prism ~1.2 world units thick, which at
+    // 250u is a ~6 px bar of constant brightness with a vertical edge down
+    // both sides — the same flat-polygon artifact the shards and the poly
+    // rings were just taken off, in the layer that IS the Sith kill. Now it
+    // is the same camera-facing streak sprite `_fxShards` uses, stretched
+    // along the bolt and rotated into its screen-space direction each frame
+    // so it never turns edge-on or presents a facet, on the falloff profile
+    // that measures a sub-40 scanline step.
     for (let i = 0; i < count; i++) {
-        const geo = new THREE.CylinderGeometry(0.6, 0.1, len, 5);
-        const mat = new THREE.MeshBasicMaterial({
+        const mat = new THREE.SpriteMaterial({
+            map: _fxBlastTex(),
             color: color, transparent: true, opacity: 0.9,
-            blending: THREE.AdditiveBlending, depthWrite: false
+            blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
         });
-        const bolt = new THREE.Mesh(geo, mat);
-        bolt.position.copy(center);
+        const bolt = new THREE.Sprite(mat);
         const dir = new THREE.Vector3(
             Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-        const up = new THREE.Vector3(0, 1, 0);
-        const axis = new THREE.Vector3().crossVectors(up, dir);
-        if (axis.length() > 0.001) {
-            axis.normalize();
-            bolt.setRotationFromAxisAngle(axis, Math.acos(up.dot(dir)));
-        }
-        bolt.position.add(dir.clone().multiplyScalar(len * 0.5));
+        bolt.position.copy(center).addScaledVector(dir, len * 0.5);
+        bolt.scale.set(len, len * 0.075, 1);
         bolt.frustumCulled = false;
+        bolt.renderOrder = 73;
+        bolt.userData.__dbTris = Infinity;
         scene.add(bolt);
         let op = 0.9;
         explosionManager.addExplosion({
             update(dt) {
                 op -= 0.12 * (dt / 50);
+                const cam = (typeof camera !== 'undefined' && camera) ? camera : window.camera;
+                if (cam && cam.matrixWorld) {
+                    const e = cam.matrixWorld.elements;
+                    const sx = dir.x * e[0] + dir.y * e[1] + dir.z * e[2];
+                    const sy = dir.x * e[4] + dir.y * e[5] + dir.z * e[6];
+                    mat.rotation = Math.atan2(sy, sx);
+                }
                 mat.opacity = Math.max(0, op);
                 return op > 0;
             },
-            cleanup() { scene.remove(bolt); geo.dispose(); mat.dispose(); }
+            cleanup() { scene.remove(bolt); mat.dispose(); }
         });
     }
 }
 
+// TINT-ONLY GARNISH. The recipes below were written when the blob WAS the
+// explosion — 7-12 world units of opaque core sitting at the detonation
+// point for the whole event. Now that every faction death is built on
+// `_fxKillBurst`, that same blob is a second, dimmer, dumber copy of the
+// fireball parked on top of the real one: measured, it is exactly what
+// pinned the radial-brightness peak in dead-centre bin 0 at all 68 beats
+// and clipped the middle to a flat 243/255 plateau. It is not deleted,
+// because the faction hue arriving as a visible puff of colour is a real
+// part of the tell — it is DEMOTED to a garnish: 42% of the radius (18% of
+// the area) at 40% of the opacity, so it colours the burst instead of
+// out-shining it.
+const _FX_GARNISH_R = 0.42;
+const _FX_GARNISH_A = 0.40;
+function _fxTintBlob(center, radius, color, opacity, life, growth) {
+    _fxSphere(center, radius * _FX_GARNISH_R, color, opacity * _FX_GARNISH_A, life, growth);
+}
+
 // Public: faction-flavored regular-kill explosion. galaxyId picks the
 // recipe; scale multiplies all sizes (defaults to 1).
+//
+// THE ROUTING BUG THIS FIXES. Four rounds of work went into making a kill
+// read as a detonation — a hot white core that holds above 230/255, two
+// travelling shock fronts, a screen-space cap so a point-blank kill cannot
+// own the frame, an ember tail that outlives the bang — and all of it lived
+// in `_fxKillBurst`, which is reachable ONLY through createExplosionEffect.
+// Every faction hostile in the game dies through THIS function, and this
+// function called none of it. 45 s of instrumented demo combat counted
+// createExplosionEffect 13 times and createFactionExplosion 0 times through
+// the enemy-death path — the rework had landed on the function almost no
+// kill calls, and a Sith death measured 0.72x the silhouette of the Sith.
+//
+// So the faction recipe is now a GARNISH ON the fixed burst rather than a
+// replacement FOR it: the burst fires first, sized off the victim's own
+// measured hull exactly as the generic kill is, tinted with the faction's
+// three colours, and the recipe adds only what makes that faction
+// recognisable — its shard shape, its ring shape, its particle swirl.
 function createFactionExplosion(position, galaxyId, scale) {
     if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const center = position.clone ? position.clone()
@@ -7896,34 +8196,39 @@ function createFactionExplosion(position, galaxyId, scale) {
     const S = scale || 1;
     const cfg = FACTION_EXPLOSION[galaxyId] || FACTION_EXPLOSION[0];
 
+    // THE KILL ITSELF — same burst, same cap, same hull-relative sizing as
+    // every other death in the game, wearing this faction's colours.
+    _fxKillBurst(center, _fxVictimWorldLen(null, center) * S,
+                 { core: cfg.core, front: cfg.accent, ember: cfg.spark });
+
     switch (cfg.style) {
         case 'electric': // Federation — white core + crisp TRIANGULAR ring + blue sparks
-            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.6);
+            _fxTintBlob(center, 7 * S, cfg.core, 1.0, 14, 2.6);
             _fxPolyRing(center, 5 * S, cfg.accent, 3, 7, 14, 0.9);  // triangle
             _fxParticles(center, 26, cfg.spark, 2.4 * S, 7 * S, 16, 0);
             break;
         case 'shrapnel': // Klingon — jagged TETRAHEDRON shrapnel double-burst
-            _fxSphere(center, 8 * S, cfg.core, 0.95, 12, 2.2);
+            _fxTintBlob(center, 8 * S, cfg.core, 0.95, 12, 2.2);
             _fxShards(center, 26, cfg.spark, 4 * S, 12 * S, 16, 'tetra');
             setTimeout(() => {
-                _fxSphere(center, 11 * S, cfg.accent, 0.8, 14, 2.8);
+                _fxTintBlob(center, 11 * S, cfg.accent, 0.8, 14, 2.8);
                 _fxShards(center, 18, cfg.core, 3 * S, 9 * S, 14, 'tetra');
             }, 140);
             break;
         case 'ionbloom': // Rebel — slow green bloom + lingering haze
-            _fxSphere(center, 9 * S, cfg.accent, 0.75, 26, 1.6);
-            _fxSphere(center, 5 * S, cfg.core, 0.9, 18, 2.0);
+            _fxTintBlob(center, 9 * S, cfg.accent, 0.75, 26, 1.6);
+            _fxTintBlob(center, 5 * S, cfg.core, 0.9, 18, 2.0);
             _fxParticles(center, 30, cfg.spark, 3.0 * S, 4 * S, 28, 0);
             break;
         case 'singularity': // Romulan — implode then green outward flash
             _fxParticles(center, 30, cfg.accent, 2.4 * S, -6 * S, 10, 0); // inward
             setTimeout(() => {
-                _fxSphere(center, 6 * S, cfg.core, 1.0, 12, 3.4);
+                _fxTintBlob(center, 6 * S, cfg.core, 1.0, 12, 3.4);
                 _fxRing(center, 4 * S, cfg.spark, 9, 14, 0.85);
             }, 220);
             break;
         case 'tieblast': // Imperial — white flash + HEXAGONAL twin rings
-            _fxSphere(center, 9 * S, cfg.core, 1.0, 9, 3.0);
+            _fxTintBlob(center, 9 * S, cfg.core, 1.0, 9, 3.0);
             _fxPolyRing(center, 6 * S, cfg.accent, 6, 11, 16, 0.8);  // hexagon
             _fxPolyRing(center, 6 * S, cfg.spark, 6, 6, 16, 0.5);
             break;
@@ -7936,36 +8241,34 @@ function createFactionExplosion(position, galaxyId, scale) {
             // 1,000-3,300 for the rest). 8u is simply its peers' figure
             // (Klingon 8, Imperial 9, Rebel 9) and does not touch the swirl
             // that makes it a Cardassian kill.
-            _fxSphere(center, 8 * S, cfg.core, 0.9, 14, 2.2);
+            _fxTintBlob(center, 8 * S, cfg.core, 0.9, 14, 2.2);
             _fxParticles(center, 36, cfg.accent, 2.6 * S, 6 * S, 22, 3.2);
             _fxShards(center, 12, cfg.spark, 3 * S, 5 * S, 20, 'tetra');
             break;
         case 'darkenergy': // Sith — red core + OCTAHEDRON shards + lightning + smoke
-            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.4);
+            _fxTintBlob(center, 7 * S, cfg.core, 1.0, 14, 2.4);
             _fxLightning(center, 8, cfg.spark, 80 * S);
             _fxShards(center, 16, cfg.accent, 4 * S, 8 * S, 18, 'octa');
-            _fxSphere(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
+            _fxTintBlob(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
             break;
         case 'goldrings': // Vulcan — small concentric CIRCULAR gold rings
             // Halved per request: Vulcan kills are a compact pop, not a
             // big bloom. Initial radius AND expansion growth both x0.5.
-            _fxSphere(center, 1.75 * S, cfg.core, 0.9, 14, 0.8);
+            _fxTintBlob(center, 1.75 * S, cfg.core, 0.9, 14, 0.8);
             _fxRing(center, 1.5 * S, cfg.accent, 2, 16, 0.75);
             setTimeout(() => _fxRing(center, 1.5 * S, cfg.spark, 2.5, 16, 0.6), 130);
             setTimeout(() => _fxRing(center, 1.5 * S, cfg.accent, 3, 16, 0.5), 280);
             break;
         default:
-            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
+            _fxTintBlob(center, 7 * S, cfg.core, 1.0, 14, 2.5);
             _fxParticles(center, 24, cfg.spark, 2.4 * S, 7 * S, 14, 0);
     }
-    // BURNING WRECKAGE, for every faction. Measured on the Klingon recipe,
-    // the entire kill was over at 800 ms: the flash layers expire on a
-    // 12-16 beat life and the shards on 16, so the spot where a ship used to
-    // be went completely black while the player was still turning to look at
-    // it. `_fxKillBurst` has had an ember tail for exactly this reason; the
-    // faction recipes never got one, so a faction kill was the SHORTER
-    // event. One Points system, one draw call, outliving the bang by ~1.2 s.
-    _fxEmberTail(center, 14 * S, cfg.spark, 48, 1850);
+    // BURNING WRECKAGE — the ~1.2 s of embers that outlive the bang, so the
+    // spot where a ship used to be does not go black while the player is
+    // still turning to look at it. This used to be a second Points system
+    // bolted on here at a fixed 14 u; `_fxKillBurst` above now supplies it,
+    // sized off the victim's hull and already tinted with cfg.spark, so the
+    // faction path costs one draw call less than it did.
     try { playSound('explosion'); } catch (e) {}
 }
 if (typeof window !== 'undefined') window.createFactionExplosion = createFactionExplosion;

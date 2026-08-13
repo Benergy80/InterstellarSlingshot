@@ -162,21 +162,31 @@
   const FILTER_OPEN_HZ  = 20000;        // "no filter" resting position
   const FX_TAU_UP       = 0.10;         // s — fast to grab (ducks bite instantly)
   const FX_TAU_DOWN     = 0.32;         // s — slow to release (blooms breathe)
-  // Envelope follower for the bed's level that a stinger's makeup gain
-  // targets (see STINGER_OVER_BED_DB / currentBedRMS above). This used to be
-  // a single ~350ms MEAN-tracking smoother — which aims every hit at the
-  // bed's AVERAGE level, not its peaks, so a punctuation hit landed
-  // statistically indistinguishable from the bed's own loudest bars (the
-  // 20260811a audit measured a kill hit's peak sitting -0.26 dB UNDER the
-  // bed's own P99). Fast-attack/slow-release instead, same asymmetric shape
-  // as fx.gain's own smoothing below (FX_TAU_UP/FX_TAU_DOWN): grabs UP onto
-  // a transient almost instantly (10ms) so a hit fired right as the bed
-  // swells still measures the swell, and releases DOWN slowly (400ms) so a
-  // momentary lull between phrases doesn't undershoot the target and read
-  // every stinger as louder than intended a moment later. A peak follower,
-  // not a mean.
-  const BED_PEAK_TAU_UP   = 0.010;  // s — fast to grab a transient
-  const BED_PEAK_TAU_DOWN = 0.400;  // s — slow to release between phrases
+  // Reference level for the bed that a stinger's makeup gain targets (see
+  // STINGER_OVER_BED_DB / currentBedRMS above). This used to be a single
+  // ~350ms MEAN-tracking smoother — which aims every hit at the bed's
+  // AVERAGE level, not its peaks, so a punctuation hit landed statistically
+  // indistinguishable from the bed's own loudest bars (the 20260811a audit
+  // measured a kill hit's peak sitting -0.26 dB UNDER the bed's own P99).
+  // That was then "fixed" by swapping in a fast-attack(10ms)/slow-release
+  // (400ms) PEAK follower — but a peak-hold is not an RMS reference: on real
+  // mastered music (percussive, moving 10-20 dB bar to bar) the 400ms release
+  // means the follower spends most of its time sitting on a stale HIGH
+  // reading from the last transient, not the bed's current level. The
+  // 20260811b audit measured this directly against the bed's own
+  // instantaneous RMS: mean bias +4.48 dB, p90 +12.48 dB, max +55.83 dB — and
+  // worse, +6.07 dB in the first 600ms after a hit fires (exactly when the
+  // sidechain duck has just pulled the bed DOWN, so the follower is holding a
+  // pre-duck peak against a post-duck bed). Every stinger's makeup gain was
+  // being computed against a reference that could be 12-55 dB hotter than
+  // what the bed actually measured at fire time, which is why the delivered
+  // level scattered across a 41 dB spread instead of landing in the 4-6 dB
+  // band. Fix: no follower. currentBedRMS() is read fresh — directly off
+  // wa.bedAnalyser, no peak-hold, no lag — every time a stinger's level is
+  // (re)computed (see computeLevel() in playStinger and the per-frame refresh
+  // in updateWarpFx below), so the target always tracks the bed's ACTUAL
+  // concurrent level, matching what a listener (and the acceptance harness,
+  // which compares against the bed's own instantaneous RMS) actually hears.
 
   // ─── 4. Spatialization ────────────────────────────────────────────────────
   const SPATIAL_NEAR = 600;             // full volume inside this radius
@@ -273,12 +283,17 @@
       duckDepth: STINGER_DUCK,  // how deep the CURRENT duck window is — per-
                                  // spec now (kill/warpExit duck shallower than
                                  // the default), so this can't be a constant.
-      bedRmsRunning: -1,        // fast-attack/slow-release PEAK envelope of
-                                 // the bed (-1 = not primed yet — see
-                                 // updateWarpFx / BED_PEAK_TAU_UP/DOWN). What
-                                 // a stinger's makeup gain actually targets N
-                                 // dB over — a peak, not a mean, so the
-                                 // target tracks the bed's loud moments.
+      bedRmsRunning: -1,        // the bed's ACTUAL instantaneous RMS (-1 =
+                                 // not primed yet), refreshed every frame
+                                 // straight off currentBedRMS() — see
+                                 // updateWarpFx. No follower, no peak-hold:
+                                 // this used to be a fast-attack/slow-release
+                                 // peak envelope, which measured +4.5 dB
+                                 // (p90 +12.5, max +55.8) hotter than the
+                                 // bed's true concurrent level (20260811b
+                                 // audit) because a 400ms release just holds
+                                 // the last transient. What a stinger's
+                                 // makeup gain actually targets N dB over.
       lastPushedGain: -1,
       lastPushedLp: -1,
     },
@@ -913,6 +928,73 @@
     return Math.sqrt(sum / wa.bedAnalyserBuf.length);
   }
 
+  // Same idea as currentBedRMS() but on `master` (bed + stingers summed) —
+  // factored out so debugAudioTrace() below doesn't have to duplicate
+  // debugLevel()'s inline analyser read.
+  function currentMasterRMS() {
+    if (!wa.ok || !wa.master || !wa.ctx) return 0;
+    if (!wa.analyser) {
+      try {
+        wa.analyser = wa.ctx.createAnalyser();
+        wa.analyser.fftSize = 1024;
+        wa.master.connect(wa.analyser);   // tap only — not routed to output
+        wa.analyserBuf = new Float32Array(wa.analyser.fftSize);
+      } catch (e) { return 0; }
+    }
+    try {
+      wa.analyser.getFloatTimeDomainData(wa.analyserBuf);
+    } catch (e) { return 0; }
+    let sum = 0;
+    for (let i = 0; i < wa.analyserBuf.length; i++) sum += wa.analyserBuf[i] * wa.analyserBuf[i];
+    return Math.sqrt(sum / wa.analyserBuf.length);
+  }
+
+  // TEST-ONLY. Not called anywhere in normal play — exists purely so an
+  // external harness can get a high-resolution, jitter-free bed-vs-master RMS
+  // trace across a stinger's life for gain-servo verification. Every other
+  // sampling path available to a harness (repeated debugLevel() polls driven
+  // by requestAnimationFrame or setInterval/setTimeout) rides the MAIN
+  // thread's scheduler, which browsers throttle hard the instant a window
+  // isn't the frontmost, focused, actively-compositing tab — exactly the
+  // condition an automated verification browser is usually in. A
+  // ScriptProcessorNode's onaudioprocess, by contrast, is driven by the audio
+  // RENDERING thread, which browsers deliberately do NOT throttle in the
+  // background (that's what stops audio glitching in an unfocused tab), so
+  // this keeps ticking at its real block rate regardless of window focus.
+  // Silently muted (routed through a zero-gain node) so it never affects
+  // what's actually heard.
+  function debugAudioTrace(durationMs) {
+    return new Promise((resolve) => {
+      if (!wa.ok || !wa.ctx || !wa.bus || !wa.master) { resolve([]); return; }
+      currentBedRMS(); currentMasterRMS();   // ensure both analysers exist
+      let node;
+      try {
+        node = wa.ctx.createScriptProcessor(1024, 1, 1);
+      } catch (e) { resolve([]); return; }
+      const sink = wa.ctx.createGain();
+      sink.gain.setValueAtTime(0, wa.ctx.currentTime);   // silent — diagnostic only
+      // Needs a REAL input feeding it, or Chrome starves onaudioprocess of
+      // callbacks (observed: ~4/sec instead of ~43/sec at this bufferSize
+      // with no input connected) — tap `master` in, same "connect but the
+      // downstream path is silenced" pattern as the rest of this file's
+      // analyser taps, so this never audibly affects the mix.
+      wa.master.connect(node);
+      node.connect(sink);
+      sink.connect(wa.ctx.destination);
+      const samples = [];
+      const t0 = wa.ctx.currentTime;
+      node.onaudioprocess = function () {
+        const tMs = (wa.ctx.currentTime - t0) * 1000;
+        samples.push({ t: tMs, bedRms: currentBedRMS(), rms: currentMasterRMS() });
+        if (tMs >= durationMs) {
+          node.onaudioprocess = null;
+          try { wa.master.disconnect(node); node.disconnect(); sink.disconnect(); } catch (e) { /* ignore */ }
+          resolve(samples);
+        }
+      };
+    });
+  }
+
   // One-time OFFLINE measurement of a stinger slice's own raw loudness across
   // exactly the [at, at+dur] window that plays, not the whole file — but as
   // its PEAK envelope, not its mean. A whole-slice MEAN RMS used to be the
@@ -1248,10 +1330,9 @@
     //    before this fix, since chain.gain doesn't exist to carry the level.
     //
     // RE-TRACKED FOR THE HIT'S WHOLE LIFE, not just at fire time. A single
-    // snapshot-and-forget here was the reason the fix in this file's history
-    // (sliding-window PEAK slice measurement + fast-attack/slow-release peak
-    // bed follower — see measureStingerSlice()/BED_PEAK_TAU_UP/DOWN above)
-    // still failed live verification: a bed can move 10-20 dB within a
+    // snapshot-and-forget here was the reason an earlier version of this fix
+    // (sliding-window PEAK slice measurement alone — see measureStingerSlice()
+    // above) still failed live verification: a bed can move 10-20 dB within a
     // single stinger's 0.5-3.1 s life (this is real mastered music, not a
     // tone — crescendos and quiet passages happen on a beat-to-beat
     // timescale well inside that window), so a makeup gain computed once at
@@ -1262,9 +1343,11 @@
     // one true source of the makeup math; it's called once immediately (so
     // the attack still grabs fast) and then again every envelope tick for
     // the rest of the hit's life, each time reading the CURRENT
-    // st.fx.bedRmsRunning — so the delivered level chases the bed's actual
+    // st.fx.bedRmsRunning — which updateWarpFx refreshes to the bed's true
+    // instantaneous RMS every frame (no follower — see the constants-section
+    // comment above) — so the delivered level chases the bed's ACTUAL
     // movement instead of aiming at where the bed happened to be standing
-    // when the trigger was pulled.
+    // when the trigger was pulled, or at a stale peak-hold from before it.
     let legacyPeak = 0;
     const relDb = (spec.gain - 0.75) * 4;   // ≈ -0.8..+1.0 dB — keeps every
                                              // event type inside the AAA
@@ -1615,22 +1698,15 @@
     const kl = 1 - Math.exp(-dt / (fx.lpT < fx.lp ? FX_TAU_UP : FX_TAU_DOWN));
     fx.lp += (fx.lpT - fx.lp) * kl;
 
-    // Track the bed's level as a fast-attack/slow-release PEAK envelope, NOT
-    // a mean — see BED_PEAK_TAU_UP/DOWN / playStinger. Same asymmetric shape
-    // as fx.gain just above: grabs up onto a transient in ~10ms, releases
-    // down over ~400ms, so a stinger's makeup gain targets +4dB over what
-    // the bed is actually peaking at right now, not its 350ms average (which
-    // was statistically indistinguishable from the bed's own loud bars).
-    if (wa.ok) {
-      const instBed = currentBedRMS();
-      if (fx.bedRmsRunning < 0) {
-        fx.bedRmsRunning = instBed;               // prime on first read
-      } else {
-        const tau = instBed > fx.bedRmsRunning ? BED_PEAK_TAU_UP : BED_PEAK_TAU_DOWN;
-        const kb = 1 - Math.exp(-dt / tau);
-        fx.bedRmsRunning += (instBed - fx.bedRmsRunning) * kb;
-      }
-    }
+    // Track the bed's ACTUAL instantaneous RMS — no follower. See the
+    // constants-section comment above (was a fast-attack/slow-release PEAK
+    // envelope; measured +4.5 to +55.8 dB hotter than the bed's true
+    // concurrent level, which is what fed the 41 dB stinger-overshoot spread
+    // in the 20260811b audit). This runs every RAF frame (~16ms), far faster
+    // than the 40ms stinger envelope tick or the 20Hz acceptance sampling,
+    // so a straight instantaneous read is both simpler and strictly more
+    // current than any smoothed value could be.
+    if (wa.ok) fx.bedRmsRunning = currentBedRMS();
 
     applyFx();
   }
@@ -2555,6 +2631,10 @@
     get combat()       { return { active: st.combat.active, track: st.combat.key, rank: st.combat.rank }; },
     get intensity()    { return st.threat.nearest === Infinity ? 0 : Math.max(0, 1 - st.threat.nearest / COMBAT_RELEASE_RADIUS); },
     get mix()          { return { gain: st.fx.gain, lowpass: st.fx.lp, webAudio: wa.ok }; },
+    // TEST-ONLY: see debugAudioTrace() above — audio-thread-driven bed/master
+    // RMS trace, immune to main-thread throttling in an unfocused automation
+    // window. Never called by the game itself.
+    debugAudioTrace:   debugAudioTrace,
     // debugLevel() — RMS of what the score is ACTUALLY putting out right now.
     // Lazily taps an analyser off the adaptive bus (costs nothing until the
     // first call); the honest answer to "is the music audible?".
@@ -2678,7 +2758,8 @@
                                                     // hard-clipping) doesn't
                                                     // need its own analyser tap
         bedRms: currentBedRMS(),                  // instantaneous
-        bedRmsRunning: st.fx.bedRmsRunning,       // smoothed — what a stinger's
+        bedRmsRunning: st.fx.bedRmsRunning,       // last per-frame instantaneous
+                                                   // read — what a stinger's
                                                    // makeup gain actually targets
         db: 20 * Math.log10(rms + 1e-9),
         element: st.currentEl ? st.currentEl.volume : 0,
