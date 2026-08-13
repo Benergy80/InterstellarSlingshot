@@ -6845,7 +6845,12 @@ function _fxGetHardCoreTexture() {
 // point — a flash the eye can catch is a flash that is still there on the
 // next frame, and an exponentially-decaying sprite is never at full value
 // for more than the frame it spawned on.
-function _fxHotCore(center, color, startSize, endSize, life) {
+// `capFrac`: this layer's share of the screen cap, as a fraction of the cap
+// RADIUS. Omitted = 1 (uncapped relative to the cap itself). A Sprite's
+// scale is its FULL size and its visible radius is half that, so the largest
+// legal scale is _fxMaxScale(pos, 0.5 / capFrac) — see _fxMaxScale.
+function _fxHotCore(center, color, startSize, endSize, life, capFrac) {
+    const _cf = (capFrac > 0) ? capFrac : 1;
     const mat = new THREE.SpriteMaterial({
         map: _fxGetHardCoreTexture(), color: color, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
@@ -6861,7 +6866,10 @@ function _fxHotCore(center, color, startSize, endSize, life) {
         update(dt) {
             t += dt;
             const k = Math.min(1, t / life);
-            sp.scale.setScalar(startSize + (endSize - startSize) * k);
+            const want = startSize + (endSize - startSize) * k;
+            // Trajectory compressed, not clipped — see _fxShockwave.
+            const maxS = _fxMaxScale(sp.position, 0.5 / _cf);
+            sp.scale.setScalar(endSize > maxS ? want * (maxS / endSize) : want);
             mat.opacity = (k < 0.72) ? 1 : Math.max(0, (1 - k) / 0.28);
             return k < 1;
         },
@@ -6869,9 +6877,21 @@ function _fxHotCore(center, color, startSize, endSize, life) {
     });
 }
 
-function _fxCoreFlash(center, color, startSize, endSize, life) {
+// `capFrac` as in _fxHotCore: this layer's share of the screen cap radius.
+// `opa` is the layer's PEAK opacity (default 1). It exists because the
+// centre of the kill is a stack of four additive layers, and while every one
+// of them is at full opacity their sum clips to white for as long as the
+// longest of them lives — measured, the radial-brightness peak then sits in
+// bin 0-2 of 16 for 1,500 ms, i.e. the ball out-shines the front for the
+// entire event no matter how the front is drawn. Turning the two LONG core
+// layers down (not off) keeps the detonation flash intense while letting the
+// centre stop clipping once the flash is over, which is when the travelling
+// front is supposed to be the brightest thing on screen.
+function _fxCoreFlash(center, color, startSize, endSize, life, capFrac, opa) {
+    const _cf = (capFrac > 0) ? capFrac : 1;
+    const _op = (opa > 0) ? opa : 1;
     const mat = new THREE.SpriteMaterial({
-        map: _fxGetFlashTexture(), color: color, transparent: true, opacity: 1,
+        map: _fxGetFlashTexture(), color: color, transparent: true, opacity: _op,
         blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
     });
     const sp = new THREE.Sprite(mat);
@@ -6885,8 +6905,11 @@ function _fxCoreFlash(center, color, startSize, endSize, life) {
         update(dt) {
             t += dt;
             const k = Math.min(1, t / life);
-            sp.scale.setScalar(startSize + (endSize - startSize) * Math.sqrt(k));
-            mat.opacity = Math.max(0, 1 - k * k);
+            const want = startSize + (endSize - startSize) * Math.sqrt(k);
+            // Trajectory compressed, not clipped — see _fxShockwave.
+            const maxS = _fxMaxScale(sp.position, 0.5 / _cf);
+            sp.scale.setScalar(endSize > maxS ? want * (maxS / endSize) : want);
+            mat.opacity = _op * Math.max(0, 1 - k * k);
             return k < 1;
         },
         cleanup() { scene.remove(sp); mat.dispose(); }
@@ -7037,16 +7060,81 @@ function _fxVictimWorldLen(target, pos) {
 // disposed in cleanup.
 let _FX_SHOCK_GEO = null;
 function _fxShockGeo() {
-    // 7% of the radius. A fat annulus (the first pass used 20%) sweeps an
-    // enormous additive band as it expands — measured, it alone put the
-    // burst at 100,000 lit px, a screen-filling wash instead of a front.
-    if (!_FX_SHOCK_GEO) _FX_SHOCK_GEO = new THREE.RingGeometry(0.93, 1.0, 64);
+    // THE ANNULUS IS NOW A CARRIER, NOT THE SHAPE. The old geometry WAS the
+    // front: a 7%-wide RingGeometry(0.93, 1.0, 64) at opacity 1.0, which in
+    // the framebuffer is a hard-edged outline — measured, a soap-bubble arc
+    // with the same brightness at its inner and outer rim, which is exactly
+    // what a detonation does not look like. The band is now painted by
+    // _fxShockTex (a radial alpha ramp) so the geometry only has to be wide
+    // enough to CONTAIN the painted band: 0.52 -> 1.0 of the radius, with
+    // the texture zero at both rims so neither one is ever a visible edge.
+    // 192 segments (was 64) because at the cap radius a 64-gon's chord error
+    // is ~3 px and reads as a polygon at exactly the moment the front is
+    // brightest.
+    if (!_FX_SHOCK_GEO) _FX_SHOCK_GEO = new THREE.RingGeometry(0.52, 1.0, 192);
     return _FX_SHOCK_GEO;
 }
 
-function _fxShockwave(center, r0, r1, color, life, opacity) {
+// SOFT PRESSURE FRONT, radial alpha. RingGeometry's UVs are normalised to
+// the OUTER radius over a [0,1] square (uv = (v/outerR + 1)/2), so a radial
+// texture centred at (0.5, 0.5) maps distance-from-centre 0..1 onto
+// 0..outerRadius directly, and the profile below is authored in exactly
+// those units.
+//
+// THE PROFILE IS ASYMMETRIC ON PURPOSE. A shock front is bright at its
+// LEADING edge and trails a wake behind it; a symmetric band is a bubble.
+// Peak sits at 0.86 of the radius with a tight outer shoulder (sigma 0.062,
+// ~5% of the radius) and a long inner wake (sigma 0.20). Because the peak
+// is a FIXED FRACTION of the radius and the mesh is scaled per frame, the
+// brightest radial band physically MOVES OUTWARD every frame — which is the
+// measurement that failed before (peak radial band sat in bin 0, dead
+// centre, at every beat from 25 ms to 2400 ms).
+let _FX_SHOCK_TEX = null;
+function _fxShockTex() {
+    if (_FX_SHOCK_TEX) return _FX_SHOCK_TEX;
+    const N = 256, h = N / 2;
+    const c = document.createElement('canvas'); c.width = N; c.height = N;
+    const g = c.getContext('2d');
+    const img = g.createImageData(N, N);
+    const d = img.data;
+    const PEAK = 0.86, OUT = 0.062, IN = 0.20;
+    const ss = (e0, e1, x) => {
+        const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+        return t * t * (3 - 2 * t);
+    };
+    for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+            const dx = (x + 0.5 - h) / h, dy = (y + 0.5 - h) / h;
+            const rr = Math.sqrt(dx * dx + dy * dy);
+            let a;
+            if (rr > PEAK) { const u = (rr - PEAK) / OUT; a = Math.exp(-u * u); }
+            else           { const u = (PEAK - rr) / IN;  a = Math.exp(-u * u); }
+            // Zero at BOTH rims of the carrier annulus, so the geometry's own
+            // edges can never show up as a step in the scanline.
+            a *= ss(0.50, 0.62, rr) * (1 - ss(0.955, 1.0, rr));
+            const i = (y * N + x) * 4;
+            d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
+            d[i + 3] = Math.round(255 * Math.min(1, Math.max(0, a)));
+        }
+    }
+    g.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    _FX_SHOCK_TEX = t; return t;
+}
+
+// `capFrac` is this front's share of the screen-space cap (_fxCapPx), as a
+// fraction of the cap RADIUS. The outer front gets 1.0 (it is what the 35%
+// rule is actually about); inner layers get less, so that when the cap bites
+// at point-blank range the layers are squeezed toward the cap in PROPORTION
+// and the burst keeps its nesting order instead of collapsing into one disc.
+function _fxShockwave(center, r0, r1, color, life, opacity, capFrac) {
     if (typeof scene === 'undefined') return;
+    const cf = (capFrac > 0) ? capFrac : 1;
     const mat = new THREE.MeshBasicMaterial({
+        // The band is painted by the texture's alpha ramp, not by the mesh
+        // outline. Without this map the annulus is a hard rim at both edges.
+        map: _fxShockTex(),
         color: color, transparent: true, opacity: opacity,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
         depthWrite: false
@@ -7069,10 +7157,38 @@ function _fxShockwave(center, r0, r1, color, life, opacity) {
             const k = Math.min(1, t / life);
             // Fast out of the gate, decelerating — a pressure front, not a
             // linear circle animation.
-            const r = r0 + (r1 - r0) * (1 - Math.pow(1 - k, 2.2));
+            let r = r0 + (r1 - r0) * (1 - Math.pow(1 - k, 2.2));
+            // Screen-space clamp on the RADIUS. _fxMaxScale(pos, w) is the
+            // largest multiplier keeping world radius `w` inside the cap, so
+            // asking it about w = 1/cf yields the largest permitted radius
+            // for this layer's share of the cap.
+            //
+            // COMPRESS THE TRAJECTORY, DON'T CLIP ITS TOP. Clipping (r =
+            // min(r, lim)) is what a naive cap does, and measured at 100-150u
+            // it made the front reach the cap in ~75 ms and then sit there:
+            // the peak radial band pinned at 109 px and stopped moving, which
+            // is a static ring — the exact failure this rebuild is about, just
+            // relocated. Scaling the WHOLE r0..r1 sweep by lim/r1 keeps the
+            // front expanding across its full life at every range; only the
+            // size changes, never the motion.
+            const lim = _fxMaxScale(ring.position, 1 / cf);
+            if (r1 > lim) r *= lim / r1;
             ring.scale.set(r, r, 1);
             _aim();
-            mat.opacity = opacity * Math.pow(1 - k, 1.35);
+            // LEADING-EDGE RAMP. The front fades IN over its first ~12% of
+            // life instead of spawning at full brightness on top of the core.
+            // At spawn the ring radius is 0.15-0.20K — right inside the
+            // fireball — so a front that is already hot there just adds to
+            // the central blob and is the reason the radial peak never left
+            // bin 0. It brightens as it SEPARATES, so the brightest band in
+            // the frame is the one travelling outward.
+            // Decay softened 1.35 -> 1.05: the front has to still be bright
+            // where it IS, which is far from the centre. A steep decay makes
+            // the front dimmest exactly when it is widest, which is the same
+            // "goes big as it goes dull" failure the core layers were rebuilt
+            // to avoid.
+            const lead = Math.min(1, k / 0.12);
+            mat.opacity = opacity * lead * Math.pow(1 - k, 1.05);
             return k < 1;
         },
         cleanup() { scene.remove(ring); mat.dispose(); }   // shared geo kept
@@ -7097,10 +7213,26 @@ function _fxEmberTail(center, S, color, count, life) {
         pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
         let dx = Math.random() - 0.5, dy = Math.random() - 0.5, dz = Math.random() - 0.5;
         const m = Math.sqrt(dx*dx + dy*dy + dz*dz) || 1;
-        const s = spd * (0.30 + Math.random() * 1.35);
+        // SPEED FLOOR 0.30 -> 0.62. Debris that barely moves sits on the
+        // detonation point for the whole event, and because the innermost
+        // radial bin is a tiny disc, a handful of stationary hard-core sparks
+        // there dominate its mean — measured, the radial peak stayed pinned
+        // to bin 0 from 400 ms on with a centre value of 110/255 while the
+        // travelling front read 94, i.e. the "ball" that beat the front late
+        // in the event was the ember cloud, not a bloom. Clearing the middle
+        // is also just what an explosion does.
+        const s = spd * (0.62 + Math.random() * 1.35);
         vel[i*3] = dx/m*s; vel[i*3+1] = dy/m*s; vel[i*3+2] = dz/m*s;
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    // Offsets from the centre are integrated SEPARATELY from the written
+    // positions so the screen cap can rescale the whole cloud each frame
+    // without compounding into the integration (see the update below).
+    const off = new Float32Array(count * 3);
+    // Terminal spread: v0 * sum(drag^n) = v0/(1-0.93) ~= 14.3 v0, and the
+    // fastest ember leaves at spd*(0.62+1.35) = spd*1.97, so with spd = S *
+    // 0.055 the cloud settles at 14.3 * 0.055 * 1.97 = ~1.55 S.
+    const TERM = 1.55 * S;
     const mat = new THREE.PointsMaterial({
         // SPARKS, NOT BOKEH. At 0.145 hull-lengths each ember was a soft
         // blob wider than a nav light, and 30 of them read as a lens effect
@@ -7124,11 +7256,24 @@ function _fxEmberTail(center, S, color, count, life) {
             const f = dt / 50;
             const drag = Math.pow(0.93, f);
             const arr = geo.attributes.position.array;
+            // Same screen cap as every scaled layer, and the same compression
+            // rule: the debris is the one part of the kill that can still
+            // cross the 35% bbox rule at point-blank range once the sprites
+            // and fronts are clamped. The cloud's share of the cap radius is
+            // its design size relative to the outer front, 1.55/2.05 = 0.756.
+            // Scaling every offset by one factor shrinks the cloud without
+            // flattening it onto the cap the way a per-spark clamp would —
+            // that would pile the fast embers into a hard shell.
+            const maxR = _fxMaxScale(center, 1 / 0.756);
+            const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
             for (let i = 0; i < count; i++) {
                 vel[i*3] *= drag; vel[i*3+1] *= drag; vel[i*3+2] *= drag;
-                arr[i*3]   += vel[i*3]   * f;
-                arr[i*3+1] += vel[i*3+1] * f;
-                arr[i*3+2] += vel[i*3+2] * f;
+                off[i*3]   += vel[i*3]   * f;
+                off[i*3+1] += vel[i*3+1] * f;
+                off[i*3+2] += vel[i*3+2] * f;
+                arr[i*3]   = center.x + off[i*3]   * shrink;
+                arr[i*3+1] = center.y + off[i*3+1] * shrink;
+                arr[i*3+2] = center.z + off[i*3+2] * shrink;
             }
             geo.attributes.position.needsUpdate = true;
             const fl = 0.82 + 0.18 * Math.sin(t * 0.021);
@@ -7184,28 +7329,71 @@ const _FX_KILL_GAIN = 0.84;
 // enough" axis) and this one sizes the saturated white part (the "is the
 // kill HOT enough" axis), and round 4 proved those two move independently —
 // every previous round bought area with gain and got no intensity for it.
-const _FX_HOT_CORE_K = 1.38;
+// Trimmed 1.38 -> 0.86 (scale; radius 0.69K -> 0.43K). This layer is the
+// hard-edged saturated disc, and at 1.38K it was measured as a flat CLIPPED
+// PLATEAU of +148..+152 luminance across ~150 px — the single thing making
+// the burst read as a blown-out ball. Its job is to be the hottest thing in
+// the frame, not the widest; the >=230/255 requirement is about INTENSITY
+// and survives the area cut, while the front now owns the outward motion.
+const _FX_HOT_CORE_K = 0.86;
+
+// SCREEN-CAP SHARES. _fxCapPx() is one radius — 35% of viewport HEIGHT as a
+// diameter — and every layer of the kill is now clamped against it. Each
+// constant is that layer's design radius divided by the outer front's
+// (2.05K), so when the cap bites at point-blank range the whole burst is
+// squeezed TOWARD the cap in proportion and keeps its nesting order, instead
+// of every layer piling onto the cap radius and collapsing into one disc.
+//
+// This is the fix for the measured range sweep: without any cap on
+// _fxKillBurst the generic burst hit p98 bbox-height 0.380 of the viewport
+// at 100u and 0.445 at 60u (the 0.35 rule breaks below ~130u), and worse,
+// peak/hull collapsed to 1.73 at 60u — a point-blank kill was SMALLER than
+// the ship that died, because the effect saturated the frame while the hull
+// silhouette kept growing.
+const _FX_CAP_FRONT_OUT = 1.00;   // 2.05K — the layer the 35% rule is about
+const _FX_CAP_FRONT_IN  = 0.756;  // 1.55K
+const _FX_CAP_HOTCORE   = 0.232;  // 0.86K scale -> 0.43K radius (peak 0.475K)
+const _FX_CAP_GLOW      = 0.159;  // 0.65K scale -> 0.325K radius
+const _FX_CAP_FIRE      = 0.151;  // 0.62K scale -> 0.31K radius
+const _FX_CAP_BANG      = 0.134;  // 0.55K scale -> 0.275K radius
 
 function _fxKillBurst(center, S) {
     const K = S * _FX_KILL_GAIN;
     // THE WHITE CORE, first and brightest — a near-static saturated disc that
     // HOLDS for ~190 ms instead of dissolving. renderOrder 74 puts it over
     // every soft layer below so nothing can average it back down.
-    _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330);
-    _fxCoreFlash(center, 0xfff0f7, 0.35 * K, 1.10 * K, 240);   // the bang
-    _fxCoreFlash(center, 0xff5aa8, 0.35 * K, 1.50 * K, 430);   // the fireball
+    _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330,
+               _FX_CAP_HOTCORE);
+    // THE CORE STOPS CHASING THE FRONT. These three end sizes were 1.10K /
+    // 1.50K / 1.80K, which as sprite RADII (a Sprite's scale is its full
+    // size) is 0.55K / 0.75K / 0.90K — running right up under the two shock
+    // radii at 1.55K / 2.05K. With the old hard 7% annulus carrying the only
+    // thin element, that made the ball the widest BRIGHT thing in every
+    // frame: measured, the radial-brightness peak sat in bin 0 (dead centre)
+    // at every beat from 25 ms to 2400 ms, and a death read as a lens flare
+    // rather than a detonation. Ends are now 0.55K / 0.62K / 0.65K of SCALE
+    // — radii 0.275K / 0.31K / 0.325K, a fifth to a sixth of the outer front
+    // — so the fireball is unambiguously the thing INSIDE the expanding
+    // front, and the front is what the eye tracks outward.
+    // THE FLASH IS SHORT AND THE AFTERGLOW IS DIM. The bang keeps full
+    // opacity — that first ~240 ms is the detonation and it should be the
+    // brightest thing in the frame. The two longer layers are turned down so
+    // the centre stops clipping once the bang is spent, handing the frame to
+    // the travelling front for the rest of the event.
+    _fxCoreFlash(center, 0xfff0f7, 0.30 * K, 0.55 * K, 240, _FX_CAP_BANG);        // the bang
+    _fxCoreFlash(center, 0xff5aa8, 0.32 * K, 0.62 * K, 380, _FX_CAP_FIRE, 0.72);  // the fireball
     // AFTERGLOW, trimmed 2.70K/980ms -> 1.80K/700ms. This layer was the
     // reason the burst's area peak landed at 425-450 ms as a huge dim cloud:
     // it grows 4.9x while fading, so it contributed almost all of the peak's
     // pixel count and almost none of its brightness, which is exactly what
     // dragged the above-230 fraction to 0.05-0.26%. Smaller and shorter moves
     // the area peak forward into the window where the core is still white.
-    _fxCoreFlash(center, 0xff2f78, 0.50 * K, 1.80 * K, 700);   // the afterglow
+    _fxCoreFlash(center, 0xff2f78, 0.40 * K, 0.65 * K, 620, _FX_CAP_GLOW, 0.45);  // the afterglow
     // Shock rings: opacity up (the cyan front was at 0.62 and read as a grey
     // smudge over the starfield) and radii trimmed in step with the afterglow
     // so the front stays a FRONT rather than the widest thing in the frame.
-    _fxShockwave(center, 0.20 * K, 1.55 * K, 0xff3fa8, 560, 1.0);
-    _fxShockwave(center, 0.15 * K, 2.05 * K, 0x53ecff, 820, 0.95);
+    _fxShockwave(center, 0.20 * K, 1.55 * K, 0xff3fa8, 560, 1.0,  _FX_CAP_FRONT_IN);
+    _fxShockwave(center, 0.15 * K, 2.05 * K, 0x53ecff, 820, 0.95, _FX_CAP_FRONT_OUT);
     // Embers: 30 fat soft blobs read as bokeh, not as burning wreckage. The
     // size floor drops 3.0 -> 1.2 px and the hull-relative size 0.145 ->
     // 0.062 (see _fxEmberTail), and the count triples to keep the tail's
@@ -7511,6 +7699,7 @@ function _fxShards(center, count, color, size, speed, life, kind) {
         scene.add(mesh);
         shards.push({
             mesh: mesh, geo: g, mat: m,
+            off: new THREE.Vector3(),
             vel: new THREE.Vector3(
                 Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
             ).normalize().multiplyScalar(speed * (0.5 + Math.random())),
@@ -7521,13 +7710,22 @@ function _fxShards(center, count, color, size, speed, life, kind) {
         });
     }
     let l = 1.0;
+    // Drag-free like _fxParticles, so the cloud's terminal radius is
+    // speed * 1.5 * life — for the Klingon recipe (speed 12, life 16) that is
+    // 288 world units, which at 250u is 1,074 px of framebuffer: measured,
+    // shards were the layer carrying p98 bbox-height to 0.99 of the viewport
+    // while every layer of the burst proper sat inside the 0.35 cap.
+    const TERM = speed * 1.5 * Math.max(1, life);
     explosionManager.addExplosion({
         update(dt) {
             l -= (1 / life) * (dt / 50);
             const f = dt / 50;
+            const maxR = _fxMaxScale(center, 1);
+            const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
             for (let i = 0; i < shards.length; i++) {
                 const c = shards[i];
-                c.mesh.position.addScaledVector(c.vel, f);
+                c.off.addScaledVector(c.vel, f);
+                c.mesh.position.copy(center).addScaledVector(c.off, shrink);
                 c.mesh.rotation.x += c.spin.x * f;
                 c.mesh.rotation.y += c.spin.y * f;
                 c.mesh.rotation.z += c.spin.z * f;
@@ -7608,6 +7806,18 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
         vel.push(dir);
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    // Offsets integrated separately from the written positions so the screen
+    // cap can rescale the cloud as one, exactly as _fxEmberTail does.
+    const off = new Float32Array(count * 3);
+    // UNLIKE THE EMBERS, THESE HAVE NO DRAG: every particle flies at a
+    // constant velocity for the whole life, so the terminal spread is
+    // |v| * life = speed * 1.5 * (1 + swirl) * life — with the faction
+    // recipes' own numbers that is tens of hull lengths, and it is what the
+    // shrapnel measurements keep catching. Measured on a staged faction kill
+    // at 250u, lit pixels reached 1,112 px from the detonation and p98
+    // bbox-height hit 0.913 of the viewport, against a 0.35 rule, while every
+    // layer of the generic burst was already inside the cap.
+    const TERM = speed * 1.5 * (1 + (swirl || 0)) * Math.max(1, life);
     const mat = new THREE.PointsMaterial({
         color: color, size: size, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false
@@ -7622,10 +7832,15 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
             mat.opacity = Math.max(0, l);
             const arr = geo.attributes.position.array;
             const f = dt / 50;
+            const maxR = _fxMaxScale(center, 1);
+            const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
             for (let i = 0; i < count; i++) {
-                arr[i*3]   += vel[i].x * f;
-                arr[i*3+1] += vel[i].y * f;
-                arr[i*3+2] += vel[i].z * f;
+                off[i*3]   += vel[i].x * f;
+                off[i*3+1] += vel[i].y * f;
+                off[i*3+2] += vel[i].z * f;
+                arr[i*3]   = center.x + off[i*3]   * shrink;
+                arr[i*3+1] = center.y + off[i*3+1] * shrink;
+                arr[i*3+2] = center.z + off[i*3+2] * shrink;
             }
             geo.attributes.position.needsUpdate = true;
             return l > 0;
@@ -7635,6 +7850,12 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
 }
 
 function _fxLightning(center, count, color, len) {
+    // A bolt runs from the centre out to `len`, so `len` IS its radius on
+    // screen. The Sith recipe asks for 80 units, which at 250u is ~300 px
+    // against a 250 px cap. Bolts are struck once and do not expand, so the
+    // clamp can be applied here rather than per frame.
+    const _maxR = _fxMaxScale(center, 1);
+    if (_maxR !== Infinity && len > _maxR) len = _maxR;
     for (let i = 0; i < count; i++) {
         const geo = new THREE.CylinderGeometry(0.6, 0.1, len, 5);
         const mat = new THREE.MeshBasicMaterial({

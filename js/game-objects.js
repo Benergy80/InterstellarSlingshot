@@ -10349,6 +10349,272 @@ function _installMoonVisibilityGuards() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// GPU-BOUNDEDNESS GATE — the resolution ladder stops paying a bill it can't pay
+// ═══════════════════════════════════════════════════════════════════════════
+// THE SYMPTOM. The build ships pinned at the BOTTOM rung of the adaptive
+// resolution ladder — pixelRatio 0.70, a 1120x630 backing store upscaled into a
+// 1600x900 canvas — and stays there for the whole session. Every star point,
+// every nebula edge and every hull line in the frame is a resampled 70% image.
+// That is the single largest thing standing between this game's sky and a sharp
+// one, and nothing in the beauty layer can fix it, because it is not a paint
+// value: it is a controller decision.
+//
+// WHY THE CONTROLLER MAKES IT. adjustResolution() in game-core.js steps down
+// whenever `perf.p95Ms > SLOW_MS` — TOTAL frame time — with no test of whether
+// the backing store has anything to do with that frame time. It is an open loop:
+// it spends a lever without ever checking that the lever is connected.
+//
+// IT IS NOT CONNECTED. Measured live (BUILD 20260811a, demo mode, 1600x900,
+// devicePixelRatio 1, ANGLE Metal / Apple M1 Pro, isolated browser, sim
+// running), sweeping pixelRatio across a 25x change in pixel count:
+//
+//     320x180   30.0 fps      1120x630  31.8 fps
+//     560x315   30.1 fps      1600x900  29.2 fps      1120x630  30.2 fps
+//
+// A 2.6 fps spread with no trend — twenty-five times the pixels for nothing.
+// Freeze the sim and the same sweep reads 55.6 / 59.2 / 58.8 / 49.0 / 59.9: the
+// pixels only start to cost anything once the main-thread work is taken away.
+// A GPU timer query (EXT_disjoint_timer_query_webgl2) says the same thing
+// directly — GPU time is 3.4 ms/frame at 0.70 and 6.6–12.0 ms at 1.00, inside a
+// 31–35 ms frame. The GPU sits idle for two thirds of every frame while the
+// ladder shreds the image to buy GPU time nobody is waiting on.
+//
+// THE REMAINDER TEST IS NOT THE FIX EITHER. The obvious repair — require
+// `(p95Ms - p95ScriptMs) > SLOW_MS` before stepping down — was tested and does
+// not identify the case: it reads 84–109 ms here, because the 95th percentile of
+// one distribution minus the 95th percentile of another is not the 95th
+// percentile of the difference, and because the remainder is dominated by
+// non-render main-thread time and rAF wait, neither of which is fill. It would
+// have left the ladder pinned exactly where it is.
+//
+// THE FIX. Give the controller the frame time its own lever actually moves. A
+// backing store can only ever add or remove GPU time, so GPU time is the number
+// it gets to judge — and there is a real, cheap, invisible instrument for it.
+// Two states, both closed loops:
+//
+//   * THE GPU IS THE CRITICAL PATH (it occupies at least half the MEDIAN frame
+//     — no amount of CPU work removed could hide it). Hand the ladder the
+//     GPU p95 and its existing thresholds do exactly the right thing: step down
+//     until the GPU fits the budget, and every step lowers the number it just
+//     read. This is the fill-bound machine the ladder was written for, and its
+//     behaviour there is unchanged.
+//
+//   * SOMETHING ELSE IS THE CRITICAL PATH (this build: ~8 ms of script and
+//     ~20 ms of non-render main-thread work against a 3.4 ms GPU). Shrinking the
+//     backing store cannot move the frame — measured above — so the ladder is
+//     told the pixels are free and climbs back to full resolution, where the
+//     piece is sharp. If climbing ever makes the GPU the critical path, the
+//     first branch catches it on the next pass and steps back down.
+//
+// Nothing is duplicated from game-core: the ladder, the 3 s/10 s hold windows,
+// the 15 s cooldown, the manual lock and the logging all still live there and
+// still make the decision. This substitutes ONE input, for the duration of one
+// synchronous call, and puts the real meter back in a `finally`.
+//
+// WHERE THE PERF WORK SHOULD GO INSTEAD, since this closes the door on the
+// pixel lever: the frame is neither fill-bound nor draw-call bound. GPU 3.4 ms,
+// script 8 ms — and a 31–35 ms frame. ~20 ms per frame is main-thread work that
+// happens OUTSIDE animate()'s instrumented span, on a scene graph that reaches
+// ~11,900 meshes / 6,400 geometries within three minutes of demo uptime and
+// keeps growing. That, not pixels, is what a fps rebuild has to attack.
+// THE CRITICAL-PATH TEST IS MEDIAN-ON-MEDIAN, AND THAT IS NOT A DETAIL. The
+// first build of this gate compared GPU p95 against FRAME p95 and ping-ponged
+// the ladder across three rungs in 80 s under a real GPU load: frame p95 swings
+// 100→247 ms on CPU spikes the GPU has nothing to do with, so the comparison
+// flipped every pass and the presented value jumped between 68 ms and 0. Medians
+// are stable and the two populations separate cleanly. Measured, 9x canvas
+// (4800x2700) forcing a genuinely fill-bound frame, vs the same session at
+// 1600x900 — gpuMedian against frameMedian, one sample per 9 s:
+//     fill-bound   39/59  45/67  32/58  35/58  51/75  42/67  39/61  47/71  60/83
+//     script-bound 11/33   9/33   7/34   9/33   9/34  10/37   9/31   9/34   6/25
+// Every fill-bound sample is over half; every script-bound one is under a third.
+// No overlap, so the 0.5 line has room on both sides — and GPU_LEAVE_SHARE keeps
+// a frame that is sitting on it from hunting between two rungs forever.
+const GPU_MIN_SAMPLES = 45;         // ~1.5 s of frames before the number is trusted
+const GPU_CRITICAL_SHARE = 0.5;     // GPU >= half the median frame: it IS the path
+const GPU_LEAVE_SHARE = 0.4;        // ...and must fall below this to stop being it
+const GPU_RING = 120;               // match the perf meter's window
+const GPU_MAX_INFLIGHT = 16;        // results stopped arriving — drop, never accumulate
+
+const _gpuT = {
+    ext: null, gl: null,
+    installed: false,       // render wrap attempted (success or a documented no-op)
+    gateOn: false,          // adjustResolution successfully redirected
+    active: null,           // the one open TIME_ELAPSED query (GL allows exactly one)
+    armed: false,           // one timed render per frame, set by _gpuTick()
+    pool: [], pending: [],
+    ring: new Float32Array(GPU_RING), n: 0, i: 0,
+    renders: 0, rpf: 1,     // renderer.render calls per frame (anaglyph does two)
+    med: 0, p95: 0, ok: false,
+    critical: false, share: 0, presented: -1, gated: 0, disjointDrops: 0,
+};
+const _gpuSort = new Float32Array(GPU_RING);
+if (typeof window !== 'undefined') window.__gpuTimer = _gpuT;
+
+// Wraps renderer.render so each frame's GL command stream is bracketed by a
+// TIME_ELAPSED query. Idempotent, and a documented no-op wherever the
+// instrument does not exist (WebGL1, Safari, most mobile) — there the gate never
+// arms and the ladder keeps its shipped behaviour exactly.
+function _gpuTimerInstall() {
+    const g = _gpuT;
+    if (g.installed) return;
+    if (typeof renderer === 'undefined' || !renderer || typeof renderer.getContext !== 'function') return;
+    g.installed = true;     // one attempt only; renderer exists from here on
+    let gl = null;
+    try { gl = renderer.getContext(); } catch (e) { return; }
+    if (!gl || typeof gl.createQuery !== 'function') return;         // WebGL1
+    const ext = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    if (!ext) return;
+    const base = renderer.render;
+    if (typeof base !== 'function' || base.__gpuTimed) return;
+    g.gl = gl; g.ext = ext;
+    const timed = function () {
+        const q = _gpuBegin();
+        try { return base.apply(this, arguments); }
+        finally { _gpuEnd(q); }
+    };
+    timed.__gpuTimed = true;
+    renderer.render = timed;
+}
+
+function _gpuBegin() {
+    const g = _gpuT;
+    if (!g.ext || g.active || !g.armed) return null;
+    g.armed = false;
+    const q = g.pool.pop() || g.gl.createQuery();
+    if (!q) return null;
+    try { g.gl.beginQuery(g.ext.TIME_ELAPSED_EXT, q); } catch (e) { return null; }
+    g.active = q;
+    return q;
+}
+
+function _gpuEnd(q) {
+    const g = _gpuT;
+    g.renders++;
+    if (!q || g.active !== q) return;
+    try { g.gl.endQuery(g.ext.TIME_ELAPSED_EXT); } catch (e) { g.active = null; return; }
+    g.active = null;
+    g.pending.push(q);
+    _gpuDrain();
+}
+
+// Results land a frame or two later. GPU_DISJOINT_EXT is a latch that clears on
+// read: if the GPU was interrupted (power state change, another context) every
+// result in flight is meaningless, so the whole batch is dropped rather than
+// letting one fabricated 0.02 ms frame tell the ladder the pixels are free.
+function _gpuDrain() {
+    const g = _gpuT, gl = g.gl;
+    let disjoint = false;
+    try { disjoint = !!gl.getParameter(g.ext.GPU_DISJOINT_EXT); } catch (e) { /* keep going */ }
+    if (disjoint) g.disjointDrops++;
+    for (let k = g.pending.length - 1; k >= 0; k--) {
+        const q = g.pending[k];
+        let done = false;
+        try { done = gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE); } catch (e) { done = true; }
+        if (!done) continue;
+        if (!disjoint) {
+            let ms = -1;
+            try { ms = gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6; } catch (e) { ms = -1; }
+            // Anaglyph renders both eyes per frame; only one is timed, so scale
+            // by the render count the last frame actually submitted.
+            if (ms >= 0 && ms < 2000) {
+                g.ring[g.i] = ms * g.rpf;
+                g.i = (g.i + 1) % GPU_RING;
+                if (g.n < GPU_RING) g.n++;
+            }
+        }
+        g.pending.splice(k, 1);
+        if (g.pool.length < 8) g.pool.push(q); else gl.deleteQuery(q);
+    }
+    while (g.pending.length > GPU_MAX_INFLIGHT) {
+        const q = g.pending.shift();
+        try { gl.deleteQuery(q); } catch (e) { /* context gone */ }
+    }
+}
+
+// Once per frame, from the culling pass: arm the next render for timing and
+// publish how many renders the previous frame submitted.
+function _gpuTick() {
+    const g = _gpuT;
+    if (!g.ext) return;
+    g.rpf = g.renders > 0 ? g.renders : 1;
+    g.renders = 0;
+    g.armed = true;
+}
+
+function _gpuStats() {
+    const g = _gpuT;
+    if (!g.ext || g.n < GPU_MIN_SAMPLES) { g.ok = false; return false; }
+    const a = _gpuSort.subarray(0, g.n);
+    a.set(g.ring.subarray(0, g.n));
+    a.sort();                                   // Float32Array sorts numerically
+    g.med = a[g.n >> 1];
+    g.p95 = a[Math.min(g.n - 1, Math.floor(g.n * 0.95))];
+    g.ok = true;
+    return true;
+}
+
+// Redirect adjustResolution the same way _wrapMoonStomper redirects
+// updatePlanetOrbits: both are top-level declarations in classic scripts, so the
+// global property IS the binding animate()'s bare call resolves. Retries until
+// game-core has loaded; `window.__gpuGateOff = true` bypasses it for A/B.
+const _gpuShim = { fps: 0, medianMs: 0, p95Ms: 0, scriptMs: 0, p95ScriptMs: 0, samples: 0 };
+function _installGpuBoundGate() {
+    const g = _gpuT;
+    if (g.gateOn || typeof window === 'undefined') return;
+    const base = window.adjustResolution;
+    if (typeof base !== 'function') return;     // game-core not loaded yet
+    if (base.__gpuGate) { g.gateOn = true; return; }
+    const gated = function () {
+        const real = window.__perf;
+        // Pass straight through until the instrument has a trustworthy number,
+        // when the player has pinned the ladder by hand, or when switched off.
+        if (!real || window.__gpuGateOff || typeof window.__resolutionLock === 'number' || !_gpuStats()) {
+            return base.apply(this, arguments);
+        }
+        const share = real.medianMs > 0 ? g.med / real.medianMs : 0;
+        g.critical = g.critical ? (share >= GPU_LEAVE_SHARE) : (share >= GPU_CRITICAL_SHARE);
+        // Critical: hand over the GPU p95 and let the ladder's own SLOW_MS /
+        // hold / cooldown machinery walk it down until the GPU fits. Not
+        // critical: the backing store is costing this frame nothing anyone is
+        // waiting on, so it is worth nothing — climb back to a sharp image.
+        g.presented = g.critical ? g.p95 : 0;
+        g.share = +share.toFixed(3);
+        g.gated++;
+        _gpuShim.fps = real.fps;
+        _gpuShim.medianMs = real.medianMs;
+        _gpuShim.scriptMs = real.scriptMs;
+        _gpuShim.p95ScriptMs = real.p95ScriptMs;
+        _gpuShim.samples = real.samples;
+        _gpuShim.p95Ms = g.presented;
+        window.__perf = _gpuShim;
+        try { return base.apply(this, arguments); }
+        finally { window.__perf = real; }
+    };
+    gated.__gpuGate = true;
+    window.adjustResolution = gated;
+    g.gateOn = true;
+}
+
+if (typeof window !== 'undefined') {
+    window.gpuGateDebug = function () {
+        const g = _gpuT;
+        return {
+            instrument: g.ext ? 'EXT_disjoint_timer_query_webgl2' : 'unavailable — gate inactive',
+            gateInstalled: g.gateOn, samples: g.n, rendersPerFrame: g.rpf,
+            gpuMedianMs: +g.med.toFixed(2), gpuP95Ms: +g.p95.toFixed(2),
+            frameMedianMs: window.__perf ? +window.__perf.medianMs.toFixed(2) : null,
+            frameP95Ms: window.__perf ? +window.__perf.p95Ms.toFixed(2) : null,
+            gpuShareOfMedianFrame: g.share, gpuIsCriticalPath: g.critical,
+            presentedP95Ms: +g.presented.toFixed(2),
+            decisionsGated: g.gated, disjointDrops: g.disjointDrops,
+            pixelRatio: (typeof renderer !== 'undefined' && renderer) ? renderer.getPixelRatio() : null,
+            step: window.__resolution ? window.__resolution.step : null,
+        };
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LIGHT BUDGET — the bill the pixel controllers were paying for
 // ═══════════════════════════════════════════════════════════════════════════
 // Every procedural star ships its own PointLight (outer-systems.js:326/378/435/
@@ -10623,6 +10889,12 @@ function updateDistanceCulling() {
     // is ~6x/sec at 60fps, far faster than anything pops into meaningful view —
     // EXCEPT when the camera teleports, which no amount of drift budget covers.
     _cullFrameCount++;
+    // Per-frame, ahead of the throttle: arm this frame's GPU timer and (until it
+    // takes) redirect the resolution ladder. Both are idempotent early-outs —
+    // see the GPU-BOUNDEDNESS GATE note above for why the ladder needs them.
+    _gpuTimerInstall();
+    _gpuTick();
+    _installGpuBoundGate();
     const jdx = camera.position.x - _cullPrevCam.x,
           jdy = camera.position.y - _cullPrevCam.y,
           jdz = camera.position.z - _cullPrevCam.z;

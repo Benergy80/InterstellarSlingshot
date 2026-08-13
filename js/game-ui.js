@@ -2375,7 +2375,15 @@ const mapDotPool = {
         // Mirrors the CSS defaults so the cache and the element agree.
         el._s = { size: '', bg: '', shadow: '', tf: '', vis: 'hidden',
                   color: '', title: '', distress: false, glyph: false,
-                  z: '', aggregate: false, opacity: '', outline: '', stalk: '' };
+                  z: '', aggregate: false, opacity: '', outline: '', stalk: '',
+                  // chevron: non-empty while this pooled node is wearing the
+                  // off-scale-hostile hollow-chevron shape (see
+                  // _syncChevronMode) — lets a recycled node that USED to be
+                  // a chevron reliably shed its border/border-radius before
+                  // being reused as a normal circular blip.
+                  // elev: which off-scale elevation caret class ('',
+                  // 'map-dot-elev-up', 'map-dot-elev-down') is on this node.
+                  chevron: '', elev: '' };
         // Permanent elevation "drop-line" child — ONE per dot, created once
         // and only ever restyled (height/position/colour), never
         // added/removed. Ally arrows don't get one: they render as a
@@ -2617,9 +2625,32 @@ function _mapStalkRgba(hex, alpha) {
 // contact's true flat-plane position. Returns dy so the caller can fold it
 // into the dot's own translate(). Fully compare-and-set: an unmoved blip
 // (same dy + colour) writes nothing.
-function _applyMapDotStalk(dot, s, relY, dotColor) {
+//
+// `dyMin`/`dyMax` (px, optional) hard-bound the returned offset. Two
+// callers rely on this:
+//   - rim-clamped contacts pass 0/0, so the elevation stalk can never
+//     re-push an already-exact rim/bearing position off the disc (see
+//     _stalkDyRange and the "second gap" writeup at the call sites below —
+//     round-1 of this fix decoupled the RADIAL cull from the draw scale,
+//     but left the stalk free to shove the result back out again).
+//   - every OTHER contact passes the geometric window left around its own
+//     (px, py) — see _stalkDyRange — so a contact sitting close to
+//     RADAR_RIM_RADIUS with a large elevation can't get walked past the
+//     rim by the stalk either — the offset just clips at whatever room is
+//     actually left, rather than teleporting the dot past the disc edge or
+//     off the end of the pooled node's own clip container. The window is
+//     NOT symmetric around 0 (only around the contact's OWN pre-stalk
+//     offset from the disc centre) — a point sitting near the rim already
+//     has most of its "budget" spent just getting there, and clamping to
+//     a plain ±cap ignores that, which is exactly the geometry bug this
+//     comment used to describe before it was caught in verification (a
+//     dot at px=139.5 with dx=32.5 from centre was still measured 5.77px
+//     outside the rim with a naive symmetric cap).
+function _applyMapDotStalk(dot, s, relY, dotColor, dyMin, dyMax) {
     const dyRaw = (relY || 0) * mapDotPool.h * 0.30;
-    const dy = Math.round(dyRaw * 10) / 10;
+    let dy = Math.round(dyRaw * 10) / 10;
+    if (dyMin !== undefined && dy < dyMin) dy = Math.round(dyMin * 10) / 10;
+    if (dyMax !== undefined && dy > dyMax) dy = Math.round(dyMax * 10) / 10;
     const stalk = dot.firstElementChild;
     if (stalk) {
         const stalkKey = dy + '|' + dotColor;
@@ -2635,6 +2666,123 @@ function _applyMapDotStalk(dot, s, relY, dotColor) {
         }
     }
     return dy;
+}
+
+// The [min, max] window of allowed FINAL vertical stalk offset (px) that
+// keeps the dot's TOTAL radial distance from the disc centre inside
+// RADAR_RIM_RADIUS, given its (px, py) BEFORE the stalk is applied.
+// Geometric: the disc is a circle in the 0-100 map-coord space,
+// RADAR_RIM_RADIUS is its radius there, and px/py convert that space to
+// on-screen pixels via mapDotPool.w/h (the round-map div is forced square
+// by CSS, so treating both axes with the same px-per-unit scale is exact,
+// not an approximation). Only the Y offset ever moves post-clamp
+// (_applyMapDotStalk only ever touches vertical position), so this solves
+// for sqrt(dx² + (py0 - cy - dy)²) ≤ rimPx with dx = px - cx fixed —
+// i.e. it shortens the stalk instead of moving the dot sideways, which
+// would reintroduce bearing error the rim clamp was written to eliminate.
+//
+// The window is centred on the point's OWN pre-stalk vertical offset from
+// centre (py0 - cy), not on zero: a point already sitting most of the way
+// to the rim has most of its radial budget spent just getting there, so
+// the room left for the stalk to move it FURTHER is asymmetric around
+// wherever it already is, not around the disc's centre line. Callers
+// pass px UNCHANGED by the stalk (the rim clamp already fixed it), so
+// dx² ≤ rimPx² always holds for every candidate this is called on,
+// which guarantees budget ≥ 0 here.
+function _stalkDyRange(px, py) {
+    const rimPx = RADAR_RIM_RADIUS / 100 * mapDotPool.w;
+    const cx = mapDotPool.w / 2, cy = mapDotPool.h / 2;
+    const dx = px - cx;
+    const budget = rimPx * rimPx - dx * dx;
+    const spread = budget > 0 ? Math.sqrt(budget) : 0;
+    const dy0 = py - cy;
+    return { min: dy0 - spread, max: dy0 + spread };
+}
+
+// Off-scale contacts encode elevation as a caret instead of the stalk's
+// radial displacement (which is exactly the bug: a rim-clamped contact's
+// bearing/position is only exact if nothing moves it again afterward). The
+// caret is a CSS ::after pseudo-element anchored to the dot's OWN box
+// (position:absolute relative to the already-positioned .galactic-target-
+// dot), so toggling it never touches the dot's transform/position — bearing
+// stays exact regardless of how far above/below the contact actually sits.
+// `dot.style.color` supplies `currentColor` for the caret's border so it
+// always matches this contact's own dotColor without a second cached hex.
+const MAP_ELEV_CARET_DEADZONE = 0.04;
+function _syncRimElevCaret(dot, s, dotColor, relY, active) {
+    let cls = '';
+    if (active) {
+        if (relY > MAP_ELEV_CARET_DEADZONE) cls = 'map-dot-elev-up';
+        else if (relY < -MAP_ELEV_CARET_DEADZONE) cls = 'map-dot-elev-down';
+    }
+    if (s.elev !== cls) {
+        if (s.elev) dot.classList.remove(s.elev);
+        if (cls) dot.classList.add(cls);
+        s.elev = cls;
+    }
+    if (cls && s.color !== dotColor) { dot.style.color = dotColor; s.color = dotColor; }
+}
+
+// Sheds the hollow-chevron border/border-radius a pooled node picked up
+// last time it stood for an off-scale hostile, BEFORE this frame's normal
+// circular styling runs — otherwise a node recycled from a chevron blip
+// into an ordinary contact keeps a stray square corner forever (the normal
+// styling path only ever touches width/height/background/box-shadow/
+// outline, never border or border-radius, since a plain blip needs
+// neither).
+function _syncChevronMode(dot, s, wantChevron) {
+    if (s.chevron && !wantChevron) {
+        dot.style.borderTop = '';
+        dot.style.borderRight = '';
+        dot.style.borderBottom = '';
+        dot.style.borderLeft = '';
+        dot.style.borderRadius = '';
+        dot.style.filter = '';
+        s.chevron = '';
+    }
+}
+
+// Renders `dot` as a hollow chevron (border-corner trick: only the right +
+// bottom borders are set, then the whole box is rotated) pointing along the
+// TRUE outward bearing from the disc centre through (px, py) — which is
+// already the exact rim-clamped point, so the chevron always points where
+// the contact actually is, not where it would be if drawn at full range.
+// Full chroma (border colour = dotColor, no dimming) is the point of this
+// shape: it exists so an off-scale HOSTILE never reads quieter than
+// background scenery scatter (opacity 0.45) the way the flat "off-scale =
+// dim 3px dot" demotion made it. Returns the rotation (deg) so the caller
+// can fold it into the dot's own translate()-based transform string.
+function _applyChevronDot(dot, s, px, py, dotColor, sizePx) {
+    const cx = mapDotPool.w / 2, cy = mapDotPool.h / 2;
+    // Base border-corner shape (right+bottom borders only) points SE (45°
+    // in atan2(dy,dx) screen terms, y-down); rotating by (target - 45)
+    // aligns its point with the contact's true outward direction.
+    const deg = Math.round((Math.atan2(py - cy, px - cx) * 180 / Math.PI - 45) * 10) / 10;
+    const key = dotColor + '|' + sizePx;
+    if (s.chevron !== key) {
+        const wh = sizePx + 'px';
+        dot.style.width = wh; dot.style.height = wh;
+        dot.style.backgroundColor = 'transparent';
+        dot.style.borderRadius = '0';
+        dot.style.borderTop = 'none';
+        dot.style.borderLeft = 'none';
+        dot.style.borderRight = '2.5px solid ' + dotColor;
+        dot.style.borderBottom = '2.5px solid ' + dotColor;
+        dot.style.boxShadow = 'none';
+        // box-shadow glows the element's full RECTANGULAR box regardless
+        // of which borders are actually set, which painted this shape as
+        // a filled diamond blob instead of a hollow chevron (caught in
+        // live-game verification — screenshot showed solid red diamonds,
+        // not open chevrons). filter:drop-shadow follows the rendered
+        // alpha shape instead, so only the two visible border lines glow
+        // and the hollow centre stays hollow.
+        const glow = 'drop-shadow(0 0 2px ' + dotColor + ') drop-shadow(0 0 4px ' + dotColor + ')';
+        dot.style.filter = glow;
+        dot.style.outline = 'none';
+        s.chevron = key;
+        s.size = wh; s.bg = 'transparent'; s.shadow = 'none'; s.outline = 'none';
+    }
+    return deg;
 }
 
 // Shared #mapDepthBar / #mapDepthTick creation, used by BOTH map views so
@@ -2913,15 +3061,19 @@ function renderIndividualMapDot(c, raised) {
         dotSize = c.dotPriority >= 110 ? '9px' : '7px';
         outline = '1px solid rgba(255,255,255,0.9)';
     }
-    // Rim-clamped: this contact's true position is beyond the current
-    // (auto-contracted) draw scale — it's plotted at the rim, bearing-true,
-    // instead of at its real range. Standard RWR convention for an
-    // off-scale contact is small/dim/edge, so demote it back down
-    // regardless of what its type/priority tier gave it above — UNLESS
+    // Off-scale HOSTILE (dotPriority >= 90, rim-clamped, not the active
+    // lock): rendered as a full-chroma hollow chevron below instead of
+    // demoted — see _applyChevronDot. A rim-clamped hostile is still the
+    // one contact the radar exists to show; the flat dim-3px demotion made
+    // it read QUIETER than background scenery scatter (opacity 0.45),
+    // which is backwards for the highest-priority tier on the display.
+    const isOffScaleHostile = c.rimClamped && !c.mustIndividual && c.dotPriority >= 90;
+    // Every OTHER rim-clamped contact keeps the original small/dim/edge
+    // demotion — standard RWR convention for an off-scale contact — UNLESS
     // it's the must-individual contact (current target / active lock),
     // which the player can't afford to lose track of no matter where on
     // the disc it lands.
-    if (c.rimClamped && !c.mustIndividual) {
+    if (c.rimClamped && !c.mustIndividual && !isOffScaleHostile) {
         dotSize = '3px';
         shadow = 'none';
         opacity = '0.4';
@@ -2940,22 +3092,44 @@ function renderIndividualMapDot(c, raised) {
         shadow = (shadow === 'none') ? '0 0 6px #00fff9' : shadow + ', 0 0 8px #00fff9';
     }
 
-    if (s.size !== dotSize) { dot.style.width = dotSize; dot.style.height = dotSize; s.size = dotSize; }
-    if (s.bg !== c.dotColor) { dot.style.backgroundColor = c.dotColor; s.bg = c.dotColor; }
-    if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+    _syncChevronMode(dot, s, isOffScaleHostile);
+    let chevronDeg = 0;
+    if (isOffScaleHostile) {
+        chevronDeg = _applyChevronDot(dot, s, c.px, c.py, c.dotColor, parseFloat(dotSize) || 7);
+    } else {
+        if (s.size !== dotSize) { dot.style.width = dotSize; dot.style.height = dotSize; s.size = dotSize; }
+        if (s.bg !== c.dotColor) { dot.style.backgroundColor = c.dotColor; s.bg = c.dotColor; }
+        if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+        if (s.outline !== outline) { dot.style.outline = outline; s.outline = outline; }
+    }
     if (s.opacity !== opacity) { dot.style.opacity = opacity; s.opacity = opacity; }
-    if (s.outline !== outline) { dot.style.outline = outline; s.outline = outline; }
     if (s.distress !== c.distress) {
         if (c.distress) dot.classList.add('distress-map-dot');
         else dot.classList.remove('distress-map-dot');
         s.distress = c.distress;
     }
     if (s.aggregate) { dot.classList.remove('aggregate-map-dot'); s.aggregate = false; }
+    // Off-scale elevation cue: a caret on the dot's own box, never a radial
+    // displacement (see _syncRimElevCaret) — independent of the chevron
+    // shape above, so an off-scale hostile still shows above/below too.
+    _syncRimElevCaret(dot, s, c.dotColor, c.relY, c.rimClamped);
     // Elevation cue: shift the dot itself by dy and grow its stalk to
     // bridge back to the true flat-plane point (see _applyMapDotStalk).
-    const dy = _applyMapDotStalk(dot, s, c.relY, c.dotColor);
+    // Rim-clamped contacts pass a 0/0 window — their (px, py) IS the exact
+    // bearing-true rim point the clamp above computed, and the stalk must
+    // not move it again (that was the bug: a stalk offset applied AFTER
+    // the rim clamp could push a "rim-clamped" blip radius past the rim it
+    // was supposedly clamped to, and even off the edge of the disc's own
+    // clipped container). Everything else gets the geometric window left
+    // around ITS OWN (px, py) before the radial distance would cross the
+    // rim (see _stalkDyRange), so a contact sitting close to the rim
+    // can't get walked past it by its stalk either.
+    const _dyRange = c.rimClamped ? null : _stalkDyRange(c.px, c.py);
+    const dy = _applyMapDotStalk(dot, s, c.relY, c.dotColor,
+        c.rimClamped ? 0 : _dyRange.min, c.rimClamped ? 0 : _dyRange.max);
     const py2 = Math.round((c.py - dy) * 10) / 10;
-    const tf = 'translate(' + c.px + 'px,' + py2 + 'px) translate(-50%,-50%)';
+    const tf = 'translate(' + c.px + 'px,' + py2 + 'px) translate(-50%,-50%)' +
+        (isOffScaleHostile ? ' rotate(' + chevronDeg + 'deg)' : '');
     if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
     if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
     // Raised dots (current target / active lock) sit above a same-cell
@@ -3050,44 +3224,66 @@ function renderAggregateMapDot(cellKey, group) {
         outline = outlineWidth + 'px solid rgba(255,255,255,0.9)';
     }
 
+    // Off-scale HOSTILE cluster: same full-chroma hollow-chevron treatment
+    // as a lone off-scale hostile (see renderIndividualMapDot) instead of
+    // the generic demotion — a wolfpack that's collapsed off the edge of
+    // the draw scale is still the thing the radar exists to show. Clusters
+    // never include a mustIndividual member (those bypass bucketing into
+    // the VIP list), so there's no "stays salient" exception to check here.
+    const isOffScaleHostile = allRim && isHostile;
     // Rim-clamped: every member of this cell is plotted at the disc rim,
     // beyond the current draw scale — same off-scale demotion a lone
-    // rim-clamped contact gets in renderIndividualMapDot. A cluster never
-    // includes a mustIndividual member (those bypass bucketing into the
-    // VIP list), so there's no "stays salient" exception to preserve here.
-    if (allRim) {
+    // rim-clamped contact gets in renderIndividualMapDot.
+    if (allRim && !isOffScaleHostile) {
         size = '3px';
         shadow = 'none';
         opacity = '0.4';
         outline = '';
     }
 
-    if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
-    if (s.bg !== dominant.dotColor) { dot.style.backgroundColor = dominant.dotColor; s.bg = dominant.dotColor; }
-    if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+    _syncChevronMode(dot, s, isOffScaleHostile);
+    let chevronDeg = 0;
+    if (isOffScaleHostile) {
+        chevronDeg = _applyChevronDot(dot, s, px, py, dominant.dotColor,
+            dominant.dotPriority >= 110 ? 9 : 7);
+    } else {
+        if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
+        if (s.bg !== dominant.dotColor) { dot.style.backgroundColor = dominant.dotColor; s.bg = dominant.dotColor; }
+        if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
+        // Scenery clears outline back to '' so the faint constant "many
+        // contacts" ring from .aggregate-map-dot's CSS shows through
+        // instead; anything salient sets its own scaled inline outline
+        // above, which wins over that CSS rule (outline-offset still
+        // comes from the class).
+        if (s.outline !== outline) { dot.style.outline = outline; s.outline = outline; }
+    }
     // This element may be a recycled node that was, last refresh, a
     // dimmed scenery individual (opacity 0.45) or an outlined hostile
     // (1px white outline) — the salience tier in renderIndividualMapDot.
     // Reset opacity explicitly so a fused-cell aggregate doesn't inherit
     // dimming from whatever this node used to represent.
     if (s.opacity !== opacity) { dot.style.opacity = opacity; s.opacity = opacity; }
-    // Scenery clears outline back to '' so the faint constant "many
-    // contacts" ring from .aggregate-map-dot's CSS shows through instead;
-    // anything salient sets its own scaled inline outline above, which
-    // wins over that CSS rule (outline-offset still comes from the class).
-    if (s.outline !== outline) { dot.style.outline = outline; s.outline = outline; }
     if (s.distress !== anyDistress) {
         if (anyDistress) dot.classList.add('distress-map-dot');
         else dot.classList.remove('distress-map-dot');
         s.distress = anyDistress;
     }
     if (!s.aggregate) { dot.classList.add('aggregate-map-dot'); s.aggregate = true; }
+    // Off-scale elevation cue: caret, not radial displacement — mirrors
+    // renderIndividualMapDot (see _syncRimElevCaret).
+    _syncRimElevCaret(dot, s, dominant.dotColor, meanRelY, allRim);
     // Elevation cue uses the GROUP's mean relY — same stalk treatment as a
     // lone contact, so a crowded cell still tells you roughly how high/low
-    // its members sit as a whole.
-    const dy = _applyMapDotStalk(dot, s, meanRelY, dominant.dotColor);
+    // its members sit as a whole. Same rim-safety window as the individual
+    // path: allRim clamps to 0/0 (exact rim point, never re-pushed off the
+    // disc by the stalk), everything else gets the geometric window left
+    // around ITS OWN centroid before the radius would cross the rim.
+    const _aggDyRange = allRim ? null : _stalkDyRange(px, py);
+    const dy = _applyMapDotStalk(dot, s, meanRelY, dominant.dotColor,
+        allRim ? 0 : _aggDyRange.min, allRim ? 0 : _aggDyRange.max);
     const py2 = Math.round((py - dy) * 10) / 10;
-    const tf = 'translate(' + px + 'px,' + py2 + 'px) translate(-50%,-50%)';
+    const tf = 'translate(' + px + 'px,' + py2 + 'px) translate(-50%,-50%)' +
+        (isOffScaleHostile ? ' rotate(' + chevronDeg + 'deg)' : '');
     if (s.tf !== tf) { dot.style.transform = tf; s.tf = tf; }
     if (s.vis !== 'visible') { dot.style.visibility = 'visible'; s.vis = 'visible'; }
     if (s.z !== '') { dot.style.zIndex = ''; s.z = ''; }

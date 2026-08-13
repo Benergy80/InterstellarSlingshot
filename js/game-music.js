@@ -162,13 +162,21 @@
   const FILTER_OPEN_HZ  = 20000;        // "no filter" resting position
   const FX_TAU_UP       = 0.10;         // s — fast to grab (ducks bite instantly)
   const FX_TAU_DOWN     = 0.32;         // s — slow to release (blooms breathe)
-  // Smoothing for the bed's RUNNING RMS that a stinger's makeup gain targets
-  // (see STINGER_OVER_BED_DB / currentBedRMS above). A raw instantaneous
-  // analyser read is spiky — a drum hit or a lull between phrases in the bed
-  // would send a hit's makeup gain chasing noise instead of the mix's actual
-  // level. ~350ms settles that out while still tracking a real level change
-  // (a track switch, a duck) within roughly one beat.
-  const BED_RMS_TAU = 0.35;
+  // Envelope follower for the bed's level that a stinger's makeup gain
+  // targets (see STINGER_OVER_BED_DB / currentBedRMS above). This used to be
+  // a single ~350ms MEAN-tracking smoother — which aims every hit at the
+  // bed's AVERAGE level, not its peaks, so a punctuation hit landed
+  // statistically indistinguishable from the bed's own loudest bars (the
+  // 20260811a audit measured a kill hit's peak sitting -0.26 dB UNDER the
+  // bed's own P99). Fast-attack/slow-release instead, same asymmetric shape
+  // as fx.gain's own smoothing below (FX_TAU_UP/FX_TAU_DOWN): grabs UP onto
+  // a transient almost instantly (10ms) so a hit fired right as the bed
+  // swells still measures the swell, and releases DOWN slowly (400ms) so a
+  // momentary lull between phrases doesn't undershoot the target and read
+  // every stinger as louder than intended a moment later. A peak follower,
+  // not a mean.
+  const BED_PEAK_TAU_UP   = 0.010;  // s — fast to grab a transient
+  const BED_PEAK_TAU_DOWN = 0.400;  // s — slow to release between phrases
 
   // ─── 4. Spatialization ────────────────────────────────────────────────────
   const SPATIAL_NEAR = 600;             // full volume inside this radius
@@ -265,9 +273,12 @@
       duckDepth: STINGER_DUCK,  // how deep the CURRENT duck window is — per-
                                  // spec now (kill/warpExit duck shallower than
                                  // the default), so this can't be a constant.
-      bedRmsRunning: -1,        // smoothed bed RMS (-1 = not primed yet — see
-                                 // updateWarpFx). What a stinger's makeup
-                                 // gain actually targets N dB over.
+      bedRmsRunning: -1,        // fast-attack/slow-release PEAK envelope of
+                                 // the bed (-1 = not primed yet — see
+                                 // updateWarpFx / BED_PEAK_TAU_UP/DOWN). What
+                                 // a stinger's makeup gain actually targets N
+                                 // dB over — a peak, not a mean, so the
+                                 // target tracks the bed's loud moments.
       lastPushedGain: -1,
       lastPushedLp: -1,
     },
@@ -902,8 +913,20 @@
     return Math.sqrt(sum / wa.bedAnalyserBuf.length);
   }
 
-  // One-time OFFLINE measurement of a stinger slice's own raw loudness (the
-  // RMS of exactly the [at, at+dur] window that plays, not the whole file).
+  // One-time OFFLINE measurement of a stinger slice's own raw loudness across
+  // exactly the [at, at+dur] window that plays, not the whole file — but as
+  // its PEAK envelope, not its mean. A whole-slice MEAN RMS used to be the
+  // divisor here, which is wrong: what a listener (and the analyser) hears is
+  // the slice's peak, and the mean-to-peak gap (crest factor) differs per
+  // slice — 4.7 dB for missionComplete, 11.7 dB for discovery, measured — so
+  // normalizing to the mean let every hit overshoot by its OWN slice's crest
+  // factor, an amount that scrambled the authored gain hierarchy between
+  // event types instead of preserving it. Sliding-window max RMS instead:
+  // 1024 samples, hop 256 (matches the analyser's own fftSize, so this is
+  // measuring peaks at the same time-resolution debugLevel() reads live) —
+  // the max over that window walked across [at, at+dur] is the slice's own
+  // peak, and dividing THAT out of the makeup gain (see playStinger) lands a
+  // hit's peak on target instead of its average.
   // This is what a makeup gain has to divide out: two slices at the same
   // `spec.gain` can differ by several dB in raw content, which is the "~5 dB
   // more" the 20260810c critique measured on top of the slider-fraction bug.
@@ -911,6 +934,9 @@
   // fetch/decode is in flight, a number once measured, null if it failed (in
   // which case playStinger() falls back to the legacy el.volume-only path
   // for that key rather than dividing by an unknown).
+  const SLICE_PEAK_WINDOW = 1024;   // samples — matches analyser fftSize
+  const SLICE_PEAK_HOP    = 256;    // samples between window starts
+
   function measureStingerSlice(key) {
     if (st.stingerSliceRMS[key] !== undefined) return;   // already going
     const spec = STINGERS[key];
@@ -924,12 +950,33 @@
         const sr = audioBuf.sampleRate;
         const startSample = Math.max(0, Math.floor(spec.at * sr));
         const endSample = Math.min(audioBuf.length, Math.floor((spec.at + spec.dur) * sr));
-        let sumSq = 0, n = 0;
-        for (let c = 0; c < audioBuf.numberOfChannels; c++) {
-          const data = audioBuf.getChannelData(c);
-          for (let i = startSample; i < endSample; i++) { sumSq += data[i] * data[i]; n++; }
+        const nCh = audioBuf.numberOfChannels;
+        const chans = [];
+        for (let c = 0; c < nCh; c++) chans.push(audioBuf.getChannelData(c));
+
+        let maxRms = 0;
+        const win = SLICE_PEAK_WINDOW, hop = SLICE_PEAK_HOP;
+        for (let w = startSample; w + win <= endSample; w += hop) {
+          let sumSq = 0;
+          for (let c = 0; c < nCh; c++) {
+            const data = chans[c];
+            for (let i = w; i < w + win; i++) sumSq += data[i] * data[i];
+          }
+          const rms = Math.sqrt(sumSq / (win * nCh));
+          if (rms > maxRms) maxRms = rms;
         }
-        st.stingerSliceRMS[key] = (n > 0) ? Math.sqrt(sumSq / n) : null;
+        // Slice shorter than one whole window — every real stinger's `dur`
+        // is well over 1024 samples, but guard the pathological case with a
+        // single whole-slice window rather than measuring nothing.
+        if (maxRms === 0 && endSample > startSample) {
+          let sumSq = 0, n = 0;
+          for (let c = 0; c < nCh; c++) {
+            const data = chans[c];
+            for (let i = startSample; i < endSample; i++) { sumSq += data[i] * data[i]; n++; }
+          }
+          maxRms = (n > 0) ? Math.sqrt(sumSq / n) : 0;
+        }
+        st.stingerSliceRMS[key] = (maxRms > 0) ? maxRms : null;
       })
       .catch(() => { st.stingerSliceRMS[key] = null; });
   }
@@ -1536,13 +1583,19 @@
     const kl = 1 - Math.exp(-dt / (fx.lpT < fx.lp ? FX_TAU_UP : FX_TAU_DOWN));
     fx.lp += (fx.lpT - fx.lp) * kl;
 
-    // Track the bed's RUNNING RMS (smoothed) — see BED_RMS_TAU / playStinger.
+    // Track the bed's level as a fast-attack/slow-release PEAK envelope, NOT
+    // a mean — see BED_PEAK_TAU_UP/DOWN / playStinger. Same asymmetric shape
+    // as fx.gain just above: grabs up onto a transient in ~10ms, releases
+    // down over ~400ms, so a stinger's makeup gain targets +4dB over what
+    // the bed is actually peaking at right now, not its 350ms average (which
+    // was statistically indistinguishable from the bed's own loud bars).
     if (wa.ok) {
       const instBed = currentBedRMS();
       if (fx.bedRmsRunning < 0) {
         fx.bedRmsRunning = instBed;               // prime on first read
       } else {
-        const kb = 1 - Math.exp(-dt / BED_RMS_TAU);
+        const tau = instBed > fx.bedRmsRunning ? BED_PEAK_TAU_UP : BED_PEAK_TAU_DOWN;
+        const kb = 1 - Math.exp(-dt / tau);
         fx.bedRmsRunning += (instBed - fx.bedRmsRunning) * kb;
       }
     }

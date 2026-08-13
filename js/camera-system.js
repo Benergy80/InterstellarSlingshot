@@ -451,7 +451,15 @@ function updateCameraView(camera) {
         if (_exitT !== null && camera.isPerspectiveCamera &&
             gameState._arrivalSubject && gameState._arrivalSubject.obj &&
             gameState._arrivalSubject.obj.position &&
-            Date.now() - (gameState._arrivalSubject.stagedAt || 0) < 19000) {
+            // Live-window is carried ON the staged subject now (autopilot.js
+            // sizes it from the burn that was armed for it) rather than being
+            // a flat 19,000 ms here. A burn built to reach a destination
+            // 20,000 u out runs ~23 s, so the flat window expired mid-boost
+            // and this assist — plus the autopilot's own framing hold and the
+            // arrival cut-off, which shared the same literal — all quietly
+            // switched off before the arrival they exist to deliver.
+            Date.now() - (gameState._arrivalSubject.stagedAt || 0) <
+                (gameState._arrivalSubject.liveMs || 19000)) {
             const _as = gameState._arrivalSubject.obj;
             if (!cameraState._arrivalDir) cameraState._arrivalDir = new THREE.Vector3();
             if (!cameraState._arrivalFwd) cameraState._arrivalFwd = new THREE.Vector3();
