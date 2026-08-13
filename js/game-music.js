@@ -1246,12 +1246,31 @@
     //  - No Web Audio (file://, context never came up): fall back to the
     //    legacy el.volume-only peak — still capped at 1.0, unchanged from
     //    before this fix, since chain.gain doesn't exist to carry the level.
+    //
+    // RE-TRACKED FOR THE HIT'S WHOLE LIFE, not just at fire time. A single
+    // snapshot-and-forget here was the reason the fix in this file's history
+    // (sliding-window PEAK slice measurement + fast-attack/slow-release peak
+    // bed follower — see measureStingerSlice()/BED_PEAK_TAU_UP/DOWN above)
+    // still failed live verification: a bed can move 10-20 dB within a
+    // single stinger's 0.5-3.1 s life (this is real mastered music, not a
+    // tone — crescendos and quiet passages happen on a beat-to-beat
+    // timescale well inside that window), so a makeup gain computed once at
+    // t=0 and never revisited drifts wildly out of the target band by the
+    // time the hit is actually heard — measured live: -12.6 dB to +18.8 dB
+    // swings on the SAME key across independent fires, undershooting under
+    // the bed as often as overshooting over it. computeLevel() below is the
+    // one true source of the makeup math; it's called once immediately (so
+    // the attack still grabs fast) and then again every envelope tick for
+    // the rest of the hit's life, each time reading the CURRENT
+    // st.fx.bedRmsRunning — so the delivered level chases the bed's actual
+    // movement instead of aiming at where the bed happened to be standing
+    // when the trigger was pulled.
     let legacyPeak = 0;
-    if (chain) {
-      const relDb = (spec.gain - 0.75) * 4;   // ≈ -0.8..+1.0 dB — keeps every
-                                               // event type inside the AAA
-                                               // 0..+6 dB punctuation band
-      const targetOverBed = Math.pow(10, (STINGER_OVER_BED_DB + relDb) / 20);
+    const relDb = (spec.gain - 0.75) * 4;   // ≈ -0.8..+1.0 dB — keeps every
+                                             // event type inside the AAA
+                                             // 0..+6 dB punctuation band
+    const targetOverBed = Math.pow(10, (STINGER_OVER_BED_DB + relDb) / 20);
+    function computeLevel() {
       const sliceRMS = st.stingerSliceRMS[key];
       const bedRms = st.fx.bedRmsRunning >= 0 ? st.fx.bedRmsRunning : currentBedRMS();
       let makeup;
@@ -1270,12 +1289,16 @@
         makeup = targetRMS / STINGER_ASSUMED_RAW_RMS;
       }
       const level = Math.max(STINGER_MAKEUP_MIN, Math.min(STINGER_MAKEUP_MAX, makeup)) * sg * gm;
-      try { chain.gain.gain.setTargetAtTime(level, wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
       st.stingerLastServo[key] = {
         bedRms: +bedRms.toFixed(5),
         sliceRMS: (typeof sliceRMS === 'number') ? +sliceRMS.toFixed(5) : sliceRMS,
         makeup: +makeup.toFixed(4), level: +level.toFixed(4),
       };
+      return level;
+    }
+    if (chain) {
+      const level0 = computeLevel();
+      try { chain.gain.gain.setTargetAtTime(level0, wa.ctx.currentTime, 0.01); } catch (e) { /* ignore */ }
     } else {
       legacyPeak = Math.max(0, Math.min(1, st.volume * STINGER_LEVEL * spec.gain * sg * gm));
     }
@@ -1309,11 +1332,20 @@
       else if (t > totalMs - relMs) shape = Math.max(0, (totalMs - t) / relMs);
       else shape = 1;
       // Vanish instantly on mute. With a chain, el.volume carries only the
-      // shape — the absolute level already lives on chain.gain.gain (set
-      // once, above) and is not touched here. Without a chain (legacy
+      // shape — the absolute level lives on chain.gain.gain, RE-COMPUTED
+      // every tick (see computeLevel() above) so it keeps chasing the bed's
+      // actual movement for the hit's whole life instead of coasting on
+      // whatever the bed was doing at t=0. Without a chain (legacy
       // fallback), el.volume has to carry both, as before this fix.
       if (st.muted || !st.enabled) el.volume = 0;
-      else if (chain) el.volume = Math.max(0, Math.min(1, shape));
+      else if (chain) {
+        el.volume = Math.max(0, Math.min(1, shape));
+        // 80ms time constant: fast enough to follow a real phrase-to-phrase
+        // swing within a couple of ticks, slow enough (vs. the 10ms initial
+        // grab) that this per-tick re-aim doesn't itself become an audible
+        // 25Hz zipper riding on top of the bed's own smoothing.
+        try { chain.gain.gain.setTargetAtTime(computeLevel(), wa.ctx.currentTime, 0.08); } catch (e) { /* ignore */ }
+      }
       else el.volume = Math.max(0, Math.min(1, legacyPeak * shape));
       if (t >= totalMs) stopStinger(key);
     }, STEP);

@@ -10440,6 +10440,7 @@ const _gpuT = {
     ext: null, gl: null,
     installed: false,       // render wrap attempted (success or a documented no-op)
     gateOn: false,          // adjustResolution successfully redirected
+    qGateOn: false,         // adjustPerformance successfully redirected
     active: null,           // the one open TIME_ELAPSED query (GL allows exactly one)
     armed: false,           // one timed render per frame, set by _gpuTick()
     pool: [], pending: [],
@@ -10447,6 +10448,7 @@ const _gpuT = {
     renders: 0, rpf: 1,     // renderer.render calls per frame (anaglyph does two)
     med: 0, p95: 0, ok: false,
     critical: false, share: 0, presented: -1, gated: 0, disjointDrops: 0,
+    qPresented: -1, qGated: 0,
 };
 const _gpuSort = new Float32Array(GPU_RING);
 if (typeof window !== 'undefined') window.__gpuTimer = _gpuT;
@@ -10554,14 +10556,99 @@ function _gpuStats() {
     return true;
 }
 
-// Redirect adjustResolution the same way _wrapMoonStomper redirects
-// updatePlanetOrbits: both are top-level declarations in classic scripts, so the
-// global property IS the binding animate()'s bare call resolves. Retries until
-// game-core has loaded; `window.__gpuGateOff = true` bypasses it for A/B.
+// THE CRITICAL-PATH DECISION, read by both gates below. Returns null — meaning
+// "the instrument has nothing trustworthy to say, run the shipped behaviour" —
+// until the timer has GPU_MIN_SAMPLES of real query results. Idempotent within
+// a frame: the hysteresis is a threshold comparison on the same two medians, so
+// calling it once per controller per frame lands on the same answer both times.
+function _gpuCriticalPath() {
+    const g = _gpuT;
+    const real = (typeof window !== 'undefined') ? window.__perf : null;
+    if (!real || !_gpuStats()) return null;
+    const share = real.medianMs > 0 ? g.med / real.medianMs : 0;
+    g.critical = g.critical ? (share >= GPU_LEAVE_SHARE) : (share >= GPU_CRITICAL_SHARE);
+    g.share = +share.toFixed(3);
+    return g.critical;
+}
+
+// Redirect adjustResolution/adjustPerformance the same way _wrapMoonStomper
+// redirects updatePlanetOrbits: all three are top-level declarations in classic
+// scripts, so the global property IS the binding animate()'s bare call resolves.
+// Retries until game-core has loaded; `window.__gpuGateOff = true` bypasses BOTH
+// for A/B.
+//
+// ───────────────────────────────────────────────────────────────────────────
+// WHY THE SECOND CONTROLLER IS HERE TOO. The resolution ladder was only half of
+// the open loop. adjustPerformance() (game-core.js:1142) steps the QUALITY tier
+// down on `perf.medianMs > 20` — TOTAL frame time, the same untested signal —
+// and its four levers are the same currency the backing store was:
+//
+//   ptScale    0.7   additive point size: fragments/point ~ ptScale²    (fill)
+//   drawScale  0.6   fraction of each nebula point cloud drawn          (fill)
+//   cullScale  0.6   multiplies EVERY angular threshold in this file's
+//                    culling pass by 1/0.6 — the sub-pixel floor moves
+//                    ~0.6px → ~1.0px and the IMPOSTOR BOUNDARY 4.0px →
+//                    6.7px screen diameter                       (draw calls)
+//   drawCall
+//   Budget     400   vs 900 at 'normal'                          (draw calls)
+//
+// Measured live on this build (20260812a, demo mode entered through the real
+// in-page button, 1600x900, devicePixelRatio 1, ANGLE Metal / Apple M1 Pro,
+// EXT_disjoint_timer_query_webgl2, one sample per 8s block):
+//
+//     uptime 41s    GPU median 3.68ms of a 16.7ms frame   (22%)
+//     uptime 208s   GPU median 6.95ms of a 33.3ms frame   (21%)  tier 'minimal'
+//     uptime 400s   GPU median 3.25ms of a 24.7ms frame   (13%)  tier 'minimal'
+//
+// The tier had walked to the bottom rung by 208s and stayed there, while the
+// GPU sat idle for four fifths of every frame. What that bought: 45,708 of the
+// world's 114,247 nebula points not drawn (114,247 → 68,539 — forty per cent of
+// every nebula in the game deleted), 757 decorative materials suppressed by the
+// 400-call budget, and the impostor boundary pushed out to 6.7px so bodies that
+// resolve as discs are demoted to dots. What it cost the frame: nothing anyone
+// was waiting on.
+//
+// AND THE LEVERS DO NOT PAY. One demo session, one switch, sampled every 5s —
+// `window.__gpuGateOff` flipped at s=60 and back at s=200, camera left to the
+// autopilot, nothing else touched:
+//
+//     s     gate  pixelRatio  tier        median frame
+//     0-57  ON        1.00    normal          33.3 ms
+//     63    OFF       1.00    normal          33.4 ms
+//     68    OFF       0.85    normal          41.4 ms
+//     78    OFF       0.85    optimized       50.8 ms
+//     83    OFF       0.70    optimized       58.2 ms
+//     88    OFF       0.70    minimal         58.2 ms
+//     144   OFF       0.70    minimal         33.3 ms
+//     204   ON        0.70    minimal         33.3 ms
+//     235   ON        1.00    optimized       33.3 ms
+//     285   ON        1.00    normal          33.3 ms
+//
+// Twenty-five seconds to spend every lever both controllers own, and the frame
+// at the bottom of both ladders is the same 33.3 ms as the frame at the top of
+// both. The transient rise on the way down is the tier change itself, not a
+// steady state. GPU median never left 3.0-3.8 ms in any row.
+//
+// Same instrument, same two states, same one-input substitution as the ladder
+// above — the tier ladder, its 2/6 streak hysteresis, its 10s settle and its
+// logging all still live in game-core and still make the decision:
+//
+//   * GPU IS the critical path → hand it the GPU MEDIAN (matching the tier's
+//     own median-driven thresholds) and let it walk down until the GPU fits.
+//   * something else is → the tier's levers cannot move this frame, so it is
+//     told the frame is fast and climbs back to 'normal', where the nebulas are
+//     whole and the impostor band sits where it was calibrated.
+// ───────────────────────────────────────────────────────────────────────────
 const _gpuShim = { fps: 0, medianMs: 0, p95Ms: 0, scriptMs: 0, p95ScriptMs: 0, samples: 0 };
+const _gpuQShim = { fps: 0, medianMs: 0, p95Ms: 0, scriptMs: 0, p95ScriptMs: 0, samples: 0 };
 function _installGpuBoundGate() {
     const g = _gpuT;
-    if (g.gateOn || typeof window === 'undefined') return;
+    if (typeof window === 'undefined') return;
+    if (!g.gateOn) _gateResolution(g);
+    if (!g.qGateOn) _gateQuality(g);
+}
+
+function _gateResolution(g) {
     const base = window.adjustResolution;
     if (typeof base !== 'function') return;     // game-core not loaded yet
     if (base.__gpuGate) { g.gateOn = true; return; }
@@ -10569,17 +10656,16 @@ function _installGpuBoundGate() {
         const real = window.__perf;
         // Pass straight through until the instrument has a trustworthy number,
         // when the player has pinned the ladder by hand, or when switched off.
-        if (!real || window.__gpuGateOff || typeof window.__resolutionLock === 'number' || !_gpuStats()) {
+        if (!real || window.__gpuGateOff || typeof window.__resolutionLock === 'number') {
             return base.apply(this, arguments);
         }
-        const share = real.medianMs > 0 ? g.med / real.medianMs : 0;
-        g.critical = g.critical ? (share >= GPU_LEAVE_SHARE) : (share >= GPU_CRITICAL_SHARE);
+        const crit = _gpuCriticalPath();
+        if (crit === null) return base.apply(this, arguments);
         // Critical: hand over the GPU p95 and let the ladder's own SLOW_MS /
         // hold / cooldown machinery walk it down until the GPU fits. Not
         // critical: the backing store is costing this frame nothing anyone is
         // waiting on, so it is worth nothing — climb back to a sharp image.
-        g.presented = g.critical ? g.p95 : 0;
-        g.share = +share.toFixed(3);
+        g.presented = crit ? g.p95 : 0;
         g.gated++;
         _gpuShim.fps = real.fps;
         _gpuShim.medianMs = real.medianMs;
@@ -10596,20 +10682,59 @@ function _installGpuBoundGate() {
     g.gateOn = true;
 }
 
+function _gateQuality(g) {
+    const base = window.adjustPerformance;
+    if (typeof base !== 'function') return;     // game-core not loaded yet
+    if (base.__gpuGate) { g.qGateOn = true; return; }
+    const gated = function () {
+        const real = window.__perf;
+        // Same three pass-throughs as the ladder: no meter, switched off for
+        // A/B, or the player has pinned a tier by hand (__qualityLock is the
+        // documented manual pin — a gate that overrode it would be a second
+        // controller fighting the operator, which is the bug, not the fix).
+        if (!real || window.__gpuGateOff || window.__qualityLock) {
+            return base.apply(this, arguments);
+        }
+        const crit = _gpuCriticalPath();
+        if (crit === null) return base.apply(this, arguments);
+        // The tier judges on the MEDIAN (game-core.js:1166), so it is handed a
+        // median: the GPU's own when the GPU is the path, and a frame that
+        // costs nothing when it is not.
+        g.qPresented = crit ? g.med : 0;
+        g.qGated++;
+        _gpuQShim.fps = real.fps;
+        _gpuQShim.p95Ms = real.p95Ms;
+        _gpuQShim.scriptMs = real.scriptMs;
+        _gpuQShim.p95ScriptMs = real.p95ScriptMs;
+        _gpuQShim.samples = real.samples;
+        _gpuQShim.medianMs = g.qPresented;
+        window.__perf = _gpuQShim;
+        try { return base.apply(this, arguments); }
+        finally { window.__perf = real; }
+    };
+    gated.__gpuGate = true;
+    window.adjustPerformance = gated;
+    g.qGateOn = true;
+}
+
 if (typeof window !== 'undefined') {
     window.gpuGateDebug = function () {
         const g = _gpuT;
         return {
             instrument: g.ext ? 'EXT_disjoint_timer_query_webgl2' : 'unavailable — gate inactive',
-            gateInstalled: g.gateOn, samples: g.n, rendersPerFrame: g.rpf,
+            gateInstalled: g.gateOn, qualityGateInstalled: g.qGateOn,
+            samples: g.n, rendersPerFrame: g.rpf,
             gpuMedianMs: +g.med.toFixed(2), gpuP95Ms: +g.p95.toFixed(2),
             frameMedianMs: window.__perf ? +window.__perf.medianMs.toFixed(2) : null,
             frameP95Ms: window.__perf ? +window.__perf.p95Ms.toFixed(2) : null,
             gpuShareOfMedianFrame: g.share, gpuIsCriticalPath: g.critical,
             presentedP95Ms: +g.presented.toFixed(2),
-            decisionsGated: g.gated, disjointDrops: g.disjointDrops,
+            presentedMedianMs: +g.qPresented.toFixed(2),
+            decisionsGated: g.gated, qualityDecisionsGated: g.qGated,
+            disjointDrops: g.disjointDrops,
             pixelRatio: (typeof renderer !== 'undefined' && renderer) ? renderer.getPixelRatio() : null,
             step: window.__resolution ? window.__resolution.step : null,
+            tier: window.__quality ? window.__quality.TIERS[window.__quality.tier].name : null,
         };
     };
 }

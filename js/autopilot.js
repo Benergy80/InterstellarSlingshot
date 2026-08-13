@@ -811,8 +811,57 @@
         const _off = Math.sqrt(_offSq);
         const _maxOff = _as.maxOff || (_stand * 0.45);
         const _framed = _along > 0 && _along <= _stand + _stop && _off <= _maxOff;
-        const _outOfRunway = _along <= _stop;
-        if (_framed || _outOfRunway) {
+        // ── THE FAIL-SAFE MUST NOT FIRE BEFORE THE BURN HAS TURNED ──────────
+        // `_along <= _stop` alone reads "the subject is abeam or behind us, we
+        // are out of runway, end the burn NOW". That is the right call at the
+        // END of a burn and catastrophically wrong at the START of one, and it
+        // could not tell the two apart: `_along` is measured on the VELOCITY
+        // axis, and at ignition the velocity is still the PRE-WARP velocity —
+        // whatever heading combat or a previous coast left the ship on. The
+        // nose is on the destination (the phase's warp gate needs facing >
+        // 0.97, and the framing hold keeps it there), but the momentum is not,
+        // so a leg that ignites while drifting away from its own destination
+        // reads `_along` NEGATIVE on frame 1 and kills itself instantly.
+        //
+        // MEASURED, this build, the demo's only destination-bearing leg:
+        // armed 20,918 ms for Olympus Nebula Prime at 18,926 u — terminated
+        // after 28 ms (ONE active frame) by this clause with along = -13,283,
+        // off = 13,482. Staging worked, arming worked, the cut executed and
+        // logged; it executed on the first frame and threw the whole burn
+        // away. Every round since the arming fix has been measuring the
+        // wreckage of that one frame: the settle read 19,325 u / 3.68 deg, and
+        // the "warp doesn't arrive" symptom is that the warp never RAN.
+        //
+        // Two conditions make the fail-safe mean what it says:
+        //   * RANGE — "out of runway" is only meaningful in the terminal
+        //     neighbourhood. If the subject is 18,926 u away, a negative
+        //     `_along` means "guidance has not turned us yet", not "we flew
+        //     past it". Believe the clause only once the ship is actually
+        //     within the standoff plus its stopping distance.
+        //   * TIME — give guidance the measured time it needs to null the
+        //     entry heading before any geometric test on the velocity axis is
+        //     trusted at all. The convergence trace in this file's own notes
+        //     (lateral 4,816 u at ignition -> 732 u at +250 ms -> 77 u at
+        //     +540 ms) settles inside ~600 ms; 750 ms is that with margin, and
+        //     costs at most 750 ms x 15 u/frame x 60 = 675 u of travel — well
+        //     inside the 2,000 ms floor `_armWarpBurn` clamps short legs to.
+        // Elapsed comes free from the clock physics already runs: it sets
+        // `timeRemaining = boostDuration` at ignition and counts it down, and
+        // nothing re-arms `boostDuration` mid-burn.
+        const _range = _arriveToTmp.length();
+        const _elapsed = (gameState.emergencyWarp.boostDuration || 0) -
+                         (gameState.emergencyWarp.timeRemaining || 0);
+        const _converged = _elapsed >= ARRIVAL_CUT_GRACE_MS;
+        // The neighbourhood the fail-safe is allowed to speak about. It has to
+        // cover a WIDE pass, not just a head-on one: a burn that goes abeam
+        // 3,000 u off-axis has genuinely blown its arrival and must still end,
+        // so the radius is the standoff plus the full lateral budget (the
+        // widest miss the subject was ever claimable at) plus the ramp's own
+        // stopping ground. Anything beyond that is not an overshoot, it is a
+        // burn that has not arrived yet.
+        const _nearRadius = _stand + _stop + _maxOff;
+        const _outOfRunway = _along <= _stop && _range <= _nearRadius;
+        if (_converged && (_framed || _outOfRunway)) {
           gameState.emergencyWarp.timeRemaining = 0;
           // LOG PROOF that this path executed — one line per burn (latched on
           // the staged subject so a multi-frame cut can't spam the console),
@@ -824,6 +873,9 @@
               along: Math.round(_along), off: Math.round(_off),
               stand: Math.round(_stand), stop: Math.round(_stop),
               arriveDist: Math.round(_as.arriveDist),
+              // Proof the burn actually FLEW before the cut claimed it: how
+              // far the subject was and how long the burn had been running.
+              range: Math.round(_range), elapsed: Math.round(_elapsed),
               subject: (_as.obj.userData && (_as.obj.userData.name || _as.obj.userData.type)) || 'body'
             };
             ap._arrivalCuts = (ap._arrivalCuts || 0) + 1;
@@ -2890,6 +2942,15 @@
   const EW_BURN_MS_MIN = 2000;
   const EW_BURN_MS_MAX = 25000;
   const EW_BURN_MARGIN = 1.12;
+
+  // How long after ignition the arrival cut-off keeps its hands off the burn.
+  // The cut decomposes on the VELOCITY axis, and for the first few hundred ms
+  // the velocity is still the pre-warp heading — see the fail-safe in update()
+  // for the measurement that made this necessary (a 20,918 ms burn terminated
+  // on frame 1). Guidance nulls the entry heading inside ~600 ms; this is that
+  // with margin, and always less than EW_BURN_MS_MIN so even the shortest
+  // armed burn still gets a live cut-off window.
+  const ARRIVAL_CUT_GRACE_MS = 750;
 
   // Furthest a burn can be armed to reach — the reachability test every
   // staging path is gated on. This replaces `_oWarpBoostDist()` in those
