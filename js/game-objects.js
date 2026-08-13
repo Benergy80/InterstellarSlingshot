@@ -709,28 +709,133 @@ function generateSphericalGalaxyPositions() {
     return galaxySphericalPositions;
 }
 
-// Generate 3D spherical positions for nebula clusters
+// Generate 3D positions for the named nebula clusters (createNebulas, the
+// volumetric fBm builder — this is its only caller).
+//
+// WHERE THE CLUSTERS SIT IS THE WHOLE BALLGAME. This used to be a shell of
+// radius 20,000-45,000 around the WORLD ORIGIN (Sgr A*), justified in a
+// comment as a performance measure. Two things were wrong with it:
+//
+//  1. The player does not live at the world origin. The local system sits at
+//     localSystemOffset (|8000,0,4800| = 9,331 from the core), and a 75s
+//     sample of the demo autopilot put the camera 1,743-3,448u from that
+//     anchor for the entire run. A shell around the origin therefore put the
+//     NEAREST volumetric cloud 22,669u away — measured contribution to the
+//     hero frame 0.047/255, i.e. the best-looking code in this file was
+//     rendering into nothing and the sky was 100% painted equirect.
+//  2. The performance argument is dead. Every nebulaPoints is
+//     frustumCulled=true, NEB_VOL.maxPointPx clamps the sprite quad at 110px
+//     so the fill rate cannot run away up close, and particle counts did not
+//     change here — only where the same points are drawn.
+//
+// So the anchor is now the LOCAL SYSTEM and the radii are a DEPTH LADDER
+// rather than one shell: near / mid / far / far. Cluster 0 lands inside the
+// flight envelope where its cloud reads as a volume you could fly into;
+// the outer clusters keep the far field layered so there is still parallax
+// depth behind it.
 function generateSphericalNebulaPositions(clusterCount = 3) {
     const nebulaClusterPositions = [];
-    const minRadius = 20000; // Pushed further from twin cores for performance
-    const maxRadius = 45000;
-    
+
+    // Anchor on the local system, not the galactic core. Falls back to the
+    // literal (same value createSolarSystem publishes) if nebulas are built
+    // first — the two are kept in sync throughout this file.
+    const _sol = (typeof window !== 'undefined' && window.localSystemOffset)
+        ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+
+    // [min, max] distance from the local system, per cluster index.
+    //
+    // 5,000-6,600 for the near one, and that number is not a taste call — it
+    // falls out of a measured curve. Aim the demo camera at a cluster-0 cloud
+    // and read its contribution to frame mean luminance off the GPU (hide the
+    // clouds, re-render, diff) and you get, for a 3,525u-radius cloud:
+    //
+    //     centre 6,000u away -> 9.4/255      centre 2,000u away -> 33.3/255
+    //     centre 3,500u away -> 19.7/255     centre   900u away -> 75.8/255
+    //
+    // i.e. contribution goes as (R/d)^2, because a nebula's screen presence is
+    // just its solid angle times a surface brightness that does not change
+    // with distance. To clear 12/255 a cloud of radius R must sit within about
+    // 1.4·R. At 7,000-9,500 (the previous guess) a 4,000u cloud measured
+    // 0.3-2.9/255 from the demo path — in range on paper, invisible in fact.
+    //
+    // The bottom of the band is set by the other end of that curve: inside
+    // ~1,000u the cloud is a screen-filling magenta wash that eats the
+    // dogfight (75.8/255, and the ship reads as a silhouette).
+    //
+    // 4,200-5,600 is where a live 6-sample run of the demo landed after one
+    // pass at 5,000-6,600 measured 11-16/255 on the headings that had the
+    // cloud in frame: right at the acceptance line with nothing to spare, and
+    // a hero frame that still read as mostly empty. Pulling the band in by
+    // ~20% is a 1.5x on contribution (it goes as 1/d^2) and puts the near
+    // cloud at 4,500-6,000u from the camera for most of the run.
+    const bands = [[4200, 5600], [13000, 18000], [24000, 32000], [34000, 45000]];
+
+    // Golden-angle azimuth + stratified elevation instead of two raw
+    // Math.random()s: four independent random directions bunch often enough
+    // to leave whole hemispheres empty, and with only four clusters that is
+    // the difference between a sky with nebulas in it and one without.
+    const GOLDEN = Math.PI * (3 - Math.sqrt(5));
+
     for (let i = 0; i < clusterCount; i++) {
-        const radius = minRadius + Math.random() * (maxRadius - minRadius);
-        const theta = Math.random() * Math.PI * 2;
-        const phi = Math.acos(1 - 2 * Math.random());
-        
-        const x = radius * Math.sin(phi) * Math.cos(theta);
-        const y = radius * Math.cos(phi);
-        const z = radius * Math.sin(phi) * Math.sin(theta);
-        
+        const band = bands[Math.min(i, bands.length - 1)];
+        const radius = band[0] + Math.random() * (band[1] - band[0]);
+
+        const theta = i * GOLDEN + (Math.random() - 0.5) * 0.6;
+
+        // cos(phi) stratified over [-1,1] so the clusters spread in elevation
+        // too. The near cluster is deliberately pushed OFF THE ECLIPTIC: the
+        // planets orbit in the y=0 plane, so an off-plane complex looms over
+        // the system instead of sitting in the middle of the planetary disc,
+        // and the composition gains a vertical.
+        //
+        // |cos phi| in [0.35, 0.75] — 20-49deg off the plane, pulled in from
+        // the old [0.55, 0.80] (33-53deg). A 60s trace of the demo's own
+        // camera puts its forward vector between -75 and +74deg of elevation
+        // with the bulk of the time inside +-40, so the higher band was
+        // parking the near complex where the autopilot mostly is not looking.
+        let cosPhi = 1 - (i + 0.5) * 2 / Math.max(1, clusterCount)
+            + (Math.random() - 0.5) * 0.25;
+        if (i === 0) {
+            cosPhi = (Math.random() < 0.5 ? -1 : 1) * (0.35 + Math.random() * 0.40);
+        }
+        cosPhi = Math.max(-0.98, Math.min(0.98, cosPhi));
+        const phi = Math.acos(cosPhi);
+
+        const x = _sol.x + radius * Math.sin(phi) * Math.cos(theta);
+        const y = _sol.y + radius * Math.cos(phi);
+        const z = _sol.z + radius * Math.sin(phi) * Math.sin(theta);
+
         nebulaClusterPositions.push({
             center: new THREE.Vector3(x, y, z),
             radius: radius,
-            spread: 2000 + Math.random() * 2000 // How spread out nebulas are within cluster
+            // Proportional, not absolute: the old flat 2,000-4,000 spread is
+            // a rounding error at 45,000u and would have thrown the near
+            // cluster's second cloud onto the inner planets at 7,000u.
+            //
+            // The near cluster is not a ball, it is an ARC. Measured on the
+            // live demo with a 0.45 spread: its three clouds each subtend
+            // 40-48deg of angular radius but their centres sat within ~25deg
+            // of each other, so they stacked into a single lobe and the demo
+            // camera had them meaningfully in frame on 1 heading in 6 — the
+            // sky read as "there is a nebula over there" rather than "we are
+            // at the edge of one".
+            //
+            // At 0.9 the three centres separate by 50-90deg, which with their
+            // own 40-48deg radii is a continuous complex across a third of the
+            // sky. That is what the local system being ON the rim of a nebula
+            // looks like, and it is why the near cloud is now in frame on most
+            // headings instead of one in six.
+            spread: radius * (i === 0 ? 0.9 : 0.26),
+            anchor: new THREE.Vector3(_sol.x, _sol.y, _sol.z),
+            // Hard floor on how close a near cloud's CENTRE may land to the
+            // local system: the wash measured at <=1,000u is not a look, it is
+            // a whiteout. 4,000 + the 3,500u camera roam is a 500u worst case,
+            // which is deep inside the volume — that case is what
+            // updateVolumetricNebulaProximity() exists to survive.
+            minAnchorDistance: i === 0 ? 4000 : 0
         });
     }
-    
+
     return nebulaClusterPositions;
 }
 
@@ -6384,21 +6489,25 @@ try {
         // opacity, which is why the void survives even at the high base
         // opacity below.
         //
-        // 0.94 (was 0.30). With the old smear that number was a fog budget —
-        // every extra count of opacity went straight into the wash, so it had
-        // to stay small and the sky could never be luminous. Now that better
-        // than half the sphere is a hard zero, opacity buys BRIGHTNESS WHERE
-        // THERE IS CLOUD and buys nothing at all where there isn't, so it can
-        // run near 1.0: a 255 core texel lands at ~224 on screen (hot cloud,
-        // real highlights) while an empty heading still resolves to the
-        // scene.background void. Same number as updateNebulaSkyboxOpacity()'s
-        // minOp so frame one already sits on the distance ramp.
+        // 0.32 (was 0.94). This dome is a PAINTING — one 2048x1024 equirect,
+        // the same one from every position in the galaxy, with no parallax and
+        // no depth. At 0.94 it measured 48.3/255 of a 67.8/255 hero frame:
+        // 71% of the picture was matte painting, which is exactly why nothing
+        // else on screen — the volumetric clouds least of all — could be seen
+        // to matter. It is a BACKDROP, so it is priced like one. Live readback
+        // on the demo's hero frame: 0.38 -> 22.5/255 solo, 0.32 -> ~19/255,
+        // and it still carries colour into the headings the real clouds do not
+        // cover. What it no longer does is set the exposure of the whole game.
+        //
+        // (The additive blend is what makes a low number safe: a texel of 0
+        // contributes nothing at any opacity, so dimming the dome costs
+        // structure, not void.)
         const nebulaSkyboxMaterial = new THREE.MeshBasicMaterial({
             map: nebulaSkyboxTexture,
             side: THREE.BackSide,
             fog: false,
             transparent: true,
-            opacity: 0.94,
+            opacity: 0.32,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             toneMapped: false
@@ -6411,7 +6520,7 @@ try {
         window.nebulaSkybox = nebulaSkybox;
         window.nebulaSkyboxTexture = nebulaSkyboxTexture;
         // Design opacity the distance fade below modulates around.
-        nebulaSkybox.userData._nebBaseOpacity = 0.94;
+        nebulaSkybox.userData._nebBaseOpacity = 0.32;
         console.log(`🎨 Nebula backdrop baked in ${(((typeof performance !== 'undefined') ? performance.now() : 0) - _nebT0).toFixed(0)}ms`);
 
         // scene.background is the true floor of the frame now that the
@@ -6422,13 +6531,27 @@ try {
         // Measured over a 16-heading sweep, that put 66-69% of the average
         // frame under 8/255 and pinned mean luminance at ~8.5 — the game was
         // being staged against a black card, so nothing else on screen had
-        // anything to sit against. 0x0a0a1a is still unmistakably deep space
-        // (4% luminance, nowhere near a washed-out grey) but it is a violet-
-        // blue void rather than a dead monitor, and it gives the neon of the
-        // synthwave palette a ground to read against instead of a hole.
+        // anything to sit against.
+        //
+        // It stays at 0x0a0a1a (4% luminance, 11.2/255), and that is a
+        // measurement, not an omission. The obvious move when the sky dome
+        // came down from 0.94 to 0.32 was to take the floor down with it, so
+        // all three candidates were read off the GPU on six live demo frames,
+        // counting the fraction of the frame below 8/255:
+        //
+        //     0x0a0a1a  ->  0.1-0.3% dead        mean 26.7-61.7
+        //     0x07071a  ->  0.1-0.3% dead        mean 24.0-59.2   (but 6-28%
+        //                                        of the frame under 10/255)
+        //     0x02020a  ->  25.6-53.8% dead      mean 18.4-54.1
+        //
+        // 0x02020a is the black card again: half the frame at or below one
+        // code value. The dome was the wash, not the floor — dimming the dome
+        // is what gave the volumetric clouds the frame back, and taking the
+        // floor down as well would only re-open the hole the floor was raised
+        // to close. A violet-blue void, not a dead monitor.
         scene.background = new THREE.Color(0x0a0a1a);
 
-        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.94)`);
+        console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.32)`);
     } catch (nebulaSkyboxError) {
         console.error('❌ Error creating nebula skybox backdrop:', nebulaSkyboxError);
     }
@@ -15332,11 +15455,33 @@ function createEnhancedPlanetClustersInNebulas() {
             const clusterAngle = Math.random() * Math.PI * 2;
             const clusterElevation = (Math.random() - 0.5) * Math.PI * 0.3;
             
-            const clusterX = nebulaPos.x + clusterDistance * Math.cos(clusterAngle) * Math.cos(clusterElevation);
-            const clusterY = nebulaPos.y + clusterDistance * Math.sin(clusterElevation);
-            const clusterZ = nebulaPos.z + clusterDistance * Math.sin(clusterAngle) * Math.cos(clusterElevation);
-            
-            const clusterCenter = new THREE.Vector3(clusterX, clusterY, clusterZ);
+            const clusterCenter = new THREE.Vector3(
+                nebulaPos.x + clusterDistance * Math.cos(clusterAngle) * Math.cos(clusterElevation),
+                nebulaPos.y + clusterDistance * Math.sin(clusterElevation),
+                nebulaPos.z + clusterDistance * Math.sin(clusterAngle) * Math.cos(clusterElevation)
+            );
+
+            // KEEP-OUT AROUND HOME. These alien star systems are seeded at
+            // 0.2-0.8 of the cloud's radius from its centre, and the near
+            // cluster's clouds are now 4,000-9,000u from the local system with
+            // radii up to 5,600 — so an unlucky draw can drop a foreign sun
+            // and its planets straight into Sol's inner system. Push any
+            // cluster that lands inside 3,400u back out along its own radial
+            // (which preserves the heading it was seeded on). 3,400 is just
+            // outside Jupiter's 3,328u orbit — the whole inner system plus the
+            // gas giant the demo actually flies between stays foreign-sun free.
+            const _solA = (typeof window !== 'undefined' && window.localSystemOffset)
+                ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
+            const _dxA = clusterCenter.x - _solA.x, _dyA = clusterCenter.y - _solA.y, _dzA = clusterCenter.z - _solA.z;
+            const _dA = Math.sqrt(_dxA * _dxA + _dyA * _dyA + _dzA * _dzA);
+            if (_dA > 1e-3 && _dA < 3400) {
+                const _kA = 3400 / _dA;
+                clusterCenter.set(_solA.x + _dxA * _kA, _solA.y + _dyA * _kA, _solA.z + _dzA * _kA);
+            }
+
+            // Read the (possibly pushed) centre back out — the orbiting
+            // planets below are placed off these, so they must follow the star.
+            const clusterX = clusterCenter.x, clusterY = clusterCenter.y, clusterZ = clusterCenter.z;
             
             // Create central star — 4× visual bump (60–140 vs the
             // earlier 15–35) so it dominates the cluster like a sun.
@@ -17577,8 +17722,15 @@ function createNebulas() {
     nebulaTypes.forEach((nebulaType, i) => {
         const nebulaGroup = new THREE.Group();
         
-        // Assign to cluster
-        const clusterIndex = i % nebulaClusterPositions.length;
+        // Assign to cluster. The round-robin (i % 4) that used to live here
+        // gave every cluster two clouds, which is the wrong shape now that the
+        // clusters are a depth ladder rather than one shell: a live 6-sample
+        // run of the demo found the near cloud in frame on 1 heading in 6, so
+        // the sky read as "there is a nebula over there somewhere" instead of
+        // "we are at the edge of a nebula". Three clouds in the near cluster,
+        // spread over ~2,300u at 4,200-5,600u out, cover a ~120deg arc of sky
+        // between them; the remaining five keep the outer three layers.
+        const clusterIndex = (i < 3) ? 0 : (1 + ((i - 3) % (nebulaClusterPositions.length - 1)));
         const cluster = nebulaClusterPositions[clusterIndex];
         
         // Position within cluster using 3D spherical distribution
@@ -17586,25 +17738,70 @@ function createNebulas() {
         const localPhi = Math.random() * Math.PI * 2;
         const localTheta = Math.acos(1 - 2 * Math.random());
         const localDistance = Math.random() * spread;
-        
-        const nebulaX = cluster.center.x + localDistance * Math.sin(localTheta) * Math.cos(localPhi);
-        const nebulaY = cluster.center.y + localDistance * Math.cos(localTheta);
-        const nebulaZ = cluster.center.z + localDistance * Math.sin(localTheta) * Math.sin(localPhi);
-        
-        // Create particles with realistic galaxy-like distribution.
-        // Mobile gets ~40% to keep additive fill-rate manageable.
+
+        const _local = new THREE.Vector3(
+            cluster.center.x + localDistance * Math.sin(localTheta) * Math.cos(localPhi),
+            cluster.center.y + localDistance * Math.cos(localTheta),
+            cluster.center.z + localDistance * Math.sin(localTheta) * Math.sin(localPhi)
+        );
+        // Keep-out around the local system. The in-cluster scatter is
+        // isotropic, so without this the near cluster's second cloud can land
+        // on the wrong side of its own centre and end up parked on the inner
+        // planets. Push it back out along the radial, which preserves the
+        // heading the cluster was placed on.
+        if (cluster.minAnchorDistance > 0 && cluster.anchor) {
+            const _r = _local.clone().sub(cluster.anchor);
+            const _d = _r.length();
+            if (_d > 1e-3 && _d < cluster.minAnchorDistance) {
+                _local.copy(cluster.anchor).addScaledVector(_r.divideScalar(_d), cluster.minAnchorDistance);
+            }
+        }
+        const nebulaX = _local.x, nebulaY = _local.y, nebulaZ = _local.z;
+
+        // The near cluster is the one the player actually flies past, so it is
+        // the only one whose GRAIN is ever resolved: at 5,000u a 4,500u cloud
+        // fills the frame and its sprites are 25-40px each, so 5k of them read
+        // as countable blobs. Doubling the count halves the inter-particle
+        // spacing^3 — _nebSpriteSize follows it down automatically (spacing
+        // goes as n^-1/3), so the cloud does not get brighter by much (+26%
+        // ink), it gets FINER. The far clusters keep the cheap count; they are
+        // never closer than 13,000u, where the grain is sub-pixel anyway.
+        const _nearCluster = (clusterIndex === 0);
         const particleCount = _isMobileRenderTier()
-            ? (1600 + Math.floor(Math.random() * 800))
-            : (4000 + Math.floor(Math.random() * 2000));
+            ? (1600 + Math.floor(Math.random() * 800)) * (_nearCluster ? 2 : 1)
+            : (4000 + Math.floor(Math.random() * 2000)) * (_nearCluster ? 2 : 1);
         const nebulaGeometry = new THREE.BufferGeometry();
         const positions = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
-        
-        const nebulaSize = 1200 + Math.random() * 800;
+
+        // 2,600-4,400 (was 1,200-2,000). A nebula's job on screen is ANGULAR
+        // SIZE, and a 1,600u-radius puff at 6,000u subtends 30deg — a smudge,
+        // not a place. Surface brightness is distance-invariant here (sprite
+        // world size scales with the cloud, so the same ink covers the same
+        // solid angle), which means frame contribution goes as (R/d)^2 and
+        // radius is the cheapest lever there is: no extra particles, no extra
+        // opacity, just more sky covered.
+        //
+        // The near cluster gets 4,600-5,600 so that at its 4,200-5,600u band
+        // it holds R/d ~= 1 — the cloud fills the frame's short axis and reads
+        // as something you are flying alongside — instead of the 0.45 that
+        // leaves it a decoration on one edge of the frame.
+        const nebulaSize = _nearCluster
+            ? (4600 + Math.random() * 1000)
+            : (2600 + Math.random() * 1800);
         // Palette walk, not Math.random(): a random hue lands in muddy
         // yellow-green as often as in the synthwave band, and two clouds in
         // the same cluster could come out the same colour.
-        const hue = (NEB_HUES[i % NEB_HUES.length] + (Math.random() - 0.5) * 0.03 + 1) % 1;
+        //
+        // The near trio walks the palette with a STRIDE of 3 (0.92 magenta ->
+        // 0.72 violet -> 0.50 cyan) instead of taking three adjacent entries.
+        // Adjacent entries differ by 0.06 in hue, which at these sizes is
+        // three overlapping clouds of the same magenta filling half the sky —
+        // and the painted dome behind them is magenta too. The stride spans
+        // the synthwave triad instead, so the complex has a warm side and a
+        // cool side and the eye can read depth between the lobes.
+        const _hueIdx = _nearCluster ? (i * 3) % NEB_HUES.length : i % NEB_HUES.length;
+        const hue = (NEB_HUES[_hueIdx] + (Math.random() - 0.5) * 0.03 + 1) % 1;
         const nebulaColor = new THREE.Color().setHSL(hue, NEB_VOL.sat, 0.5);
         // Two-tone core->rim gradient. Lightness is deliberately LOW: these
         // sprites stack additively, so a pale particle (the old L=0.82 core)
@@ -18807,18 +19004,22 @@ function updateCMBOpacity() {
 // player spawns ~9.3k units out, and an origin-anchored ramp would open the
 // game already half-lit.
 //
-//   • Open void near Sol → 0.94: the authored bake, full strength.
-//   • Deep travel / galactic core → 1.00: the sky opens up and the dust
-//     lanes and baked cores bloom, so distance READS as spectacle.
-//   • Boss battle → 0.40 (NOT ~0), see below.
+//   • Home system → 0.32: the near volumetric cluster owns this sky, and the
+//     painting's job is to fill the headings it does not cover.
+//   • Deep travel / galactic core → 0.55: out here there are no volumetric
+//     clouds within 20,000u, so the painting takes the sky back and distance
+//     READS as spectacle.
+//   • Boss battle → 0.19 (NOT ~0), see below.
 //
 // Two things changed here.
 //
-// (a) LEVEL. 0.30/0.55 belonged to the old smeared bake, where opacity was a
-//     fog budget. The rewritten bake is better than half hard zeros, so
-//     opacity now buys brightness only where there is actually cloud. Anything
-//     under ~0.8 just dims the filaments and the hot cores back into mid-grey
-//     without darkening the void at all — the void is already zero.
+// (a) LEVEL. The 0.94/1.00 pair was round-2 compensation: the volumetric
+//     clouds were all 22,000u+ away contributing 0.13/255, so the only way to
+//     get light into the frame was to turn the painting up until it WAS the
+//     frame (48.3 of 67.8 mean lum — 71%). Now that cluster 0 sits 4,200-5,600
+//     from the anchor and measures 12-30/255 on its own, the painting can go
+//     back to being a backdrop. Ramping to 0.55 rather than 1.00 far from home
+//     keeps the same "the sky opens up as you travel" gesture at the new level.
 //
 // (b) THE BOSS BRANCH. This is the gameplay predicate that was switching the
 //     sky off inside the running demo, and it is not a paint value: it is
@@ -18830,7 +19031,8 @@ function updateCMBOpacity() {
 //     could measure fine at a frozen vantage and still look like nothing in
 //     the demo. The blood-red dome does need to own the sky during a set
 //     piece, but it owns it by being loud, not by everything else being
-//     deleted: 0.40 keeps the nebula readable behind the storm.
+//     deleted: 0.19 (the same fraction of the new base that 0.40 was of
+//     the old) keeps the nebula readable behind the storm.
 // =============================================================================
 function updateNebulaSkyboxOpacity() {
     const sky = (typeof window !== 'undefined') ? window.nebulaSkybox : null;
@@ -18846,8 +19048,8 @@ function updateNebulaSkyboxOpacity() {
 
     const fadeStart = 1500;
     const fadeEnd = 70000;
-    const minOp = 0.94;
-    const maxOp = 1.00;
+    const minOp = 0.32;
+    const maxOp = 0.55;
 
     let targetOpacity;
     if (distanceFromStart < fadeStart) {
@@ -18861,13 +19063,89 @@ function updateNebulaSkyboxOpacity() {
 
     // Dim for the set piece, never delete it (see (b) above).
     if (typeof isBossBattleActive === 'function' && isBossBattleActive()) {
-        targetOpacity = 0.40;
+        targetOpacity = 0.19;
     }
 
     const cur = sky.material.opacity;
     sky.material.opacity = cur + (targetOpacity - cur) * 0.02;
 }
 if (typeof window !== 'undefined') window.updateNebulaSkyboxOpacity = updateNebulaSkyboxOpacity;
+
+// =============================================================================
+// VOLUMETRIC NEBULA NEAR-FIELD FADE
+//
+// The near cluster now sits 5,000-6,600u from the local system with clouds
+// 4,000-5,200u in radius, which is the whole point — from the flight envelope
+// it subtends 60-90deg and reads as a place rather than a smudge. The cost of
+// putting it there is that the demo's roam (up to ~3,500u from the anchor) can
+// occasionally close to ~1,300u of a cloud CENTRE, and the measured frame at
+// that range is not a nebula, it is a magenta whiteout: 75.8/255 of added
+// luminance, dogfight silhouettes and all.
+//
+// Physically this is the artefact, not the fix. These sprites are a stand-in
+// for an integral through a volume, and that integral is only correct while
+// the whole volume is in front of the camera. Once you are inside the medium,
+// half the column is behind you and the near half is a few hundred units of
+// thin gas — so the correct answer is LESS light, not the same stack of
+// sprites crushed into the near plane at 4x clamp compensation.
+//
+// So: full strength everywhere OUTSIDE the cloud (d >= R), easing to 0.45x at
+// the centre. It is a two-line ramp per cloud over ~22 clouds, run from the
+// existing per-frame backdrop pass, and it is what lets the cluster live in
+// flight range at all.
+//
+// The threshold is exactly 1.0 radii and not a hair more: a first pass at 1.35
+// was measurably dimming the cloud at the ordinary cruise distance (0.30 of an
+// authored 0.34 at d = 1.2R), i.e. it was quietly taxing the very frames this
+// whole piece exists to fill. Outside the volume you see the whole column and
+// you get all of it.
+// =============================================================================
+const _NEB_NEAR_FADE_START = 1.0;   // in cloud radii — untouched outside the volume
+const _NEB_NEAR_FADE_FLOOR = 0.45;  // never darker than this, even dead centre
+function updateVolumetricNebulaProximity() {
+    if (typeof nebulaClouds === 'undefined' || !nebulaClouds || !nebulaClouds.length) return;
+    if (typeof camera === 'undefined' || !camera || !camera.position) return;
+
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const g = nebulaClouds[i];
+        if (!g || !g.userData || !g.children || !g.children.length) continue;
+        // HANDS OFF the range-faded families. updateNebulaVisibility() owns
+        // material.opacity for isDistant / isExoticCore clouds and walks it
+        // over ~3-4 seconds; a second writer would latch a mid-fade value as
+        // its "base" and then drag the fade back every frame. Those clouds are
+        // 25,000u+ away in any case, so this ramp would read k = 1 for them.
+        if (g.userData.isDistant || g.userData.isExoticCore) continue;
+        const pts = g.children[0];
+        if (!pts || !pts.material) continue;
+
+        // Latch the authored opacity the first time we touch this cloud, so
+        // the ramp is always relative to the design value rather than to
+        // whatever last frame left behind.
+        if (pts.userData._nebBaseOpacity === undefined) {
+            pts.userData._nebBaseOpacity = pts.material.opacity;
+        }
+        const base = pts.userData._nebBaseOpacity;
+        const R = g.userData.size || 1;
+
+        const dx = camera.position.x - g.position.x;
+        const dy = camera.position.y - g.position.y;
+        const dz = camera.position.z - g.position.z;
+        const dR = Math.sqrt(dx * dx + dy * dy + dz * dz) / R;
+
+        let k = 1;
+        if (dR < _NEB_NEAR_FADE_START) {
+            const t = Math.max(0, dR / _NEB_NEAR_FADE_START);  // 0 at centre, 1 at the edge
+            k = _NEB_NEAR_FADE_FLOOR + (1 - _NEB_NEAR_FADE_FLOOR) * (t * t);
+        }
+
+        const target = base * k;
+        const cur = pts.material.opacity;
+        // Damped: a hard cut would pop the whole cloud on a fast pass.
+        pts.material.opacity = (Math.abs(target - cur) < 0.002)
+            ? target : cur + (target - cur) * 0.08;
+    }
+}
+if (typeof window !== 'undefined') window.updateVolumetricNebulaProximity = updateVolumetricNebulaProximity;
 
 // =============================================================================
 // HUBBLE SKYBOX 2 OPACITY CONTROL - FADES IN AS PLAYER TRAVELS DEEPER
@@ -18879,6 +19157,7 @@ function updateHubbleSkybox2Opacity() {
     // dome's own distance fade belongs. Runs BEFORE the early-outs below so
     // it still ticks if the Hubble texture never loaded.
     updateNebulaSkyboxOpacity();
+    updateVolumetricNebulaProximity();
 
     if (!window.hubbleSkybox2 || !window.hubbleSkybox2.material) {
         return;

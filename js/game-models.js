@@ -1015,6 +1015,44 @@ function _hullPanelCellSize(geometry) {
 // constructs `camera` (see index.html's script order), so neither the
 // first hull material built nor top-level parse time can assume the
 // camera already exists — this polls for it and installs itself once.
+// THIS RIG IS INERT, AND THAT IS (FOR NOW) LOAD-BEARING. Two separate
+// measured facts, both verified live on a clean load with a paused world and
+// same-frame GPU readback — read them before "fixing" anything here:
+//
+//  1. The boolean below latches on the FIRST camera this file ever sees, and
+//     that is not the camera the game is played through. index.html runs the
+//     intro at page load, which builds an intro `camera`; the install loop
+//     fires on the next animation frame and parents the rig to THAT object.
+//     game-core.js's startGame() then does `camera = new PerspectiveCamera()`
+//     + `scene.add(camera)`, and the old camera is dropped with the whole rig
+//     still on it. Measured: scene.traverse() finds ZERO DirectionalLights for
+//     the entire session.
+//  2. Re-homing the rig onto the live camera does NOT switch it on, because
+//     camera-parented punctual lights contribute nothing in this scene at all.
+//     Measured on the live game camera: a DirectionalLight added as a camera
+//     child renders bit-identically at intensity 0 and at intensity 50, and so
+//     does game-core's own camera-parented shipLight PointLight at 3 vs 60.
+//     The same light parented to the SCENE does register. So the game's
+//     hostile hulls are lit by AmbientLight(0x333333,0.06) +
+//     AmbientLight(0x404040,0.02) and nothing else.
+//
+// The consequence that matters: every hull in this file is tuned against a rig
+// that has never rendered, and the small cold emissive floor below (0.09x base,
+// see _HULL_EMISSIVE_FLOOR) reads as WELL-FORMED specifically because nothing
+// else is flooding the hull. Making this rig work regresses exactly the form
+// metrics it was supposed to support. Measured at 300u, yaw 30, bare hull,
+// rig replicated scene-parented at its shipped intensities so it actually
+// lights (luminance std / p90-p10 contrast, rig off -> rig on):
+//     Federation  53.1 -> 40.9   contrast  93.2 -> 101.3   mean  48.5 -> 153.8
+//     Klingon     53.0 -> 33.0   contrast 119.3 ->  83.8   mean  54.9 -> 184.4
+//     Sith        64.5 -> 51.7   contrast 174.1 -> 129.3   mean  88.2 -> 161.3
+//     Cardassian  71.6 -> 37.7   contrast 167.0 ->  97.1   mean  59.7 -> 181.2
+//     Imperial    71.5 -> 41.8   contrast 182.7 -> 114.9   mean  55.0 -> 164.1
+// Four broad directional sources flood a hull to mean ~160-185 and flatten it
+// the same way the old 0.62 self-lit emissive floor did. Turning this rig on is
+// therefore a retune of every hull constant in this file, not a bug fix — do it
+// deliberately, with the floor/coreDarken/panel numbers re-derived, or not at
+// all.
 let _hullKeyLightInstalled = false;
 function _ensureHullKeyLight() {
     if (_hullKeyLightInstalled) return;
@@ -1074,10 +1112,47 @@ if (typeof window !== 'undefined' && typeof requestAnimationFrame === 'function'
 // VALUE — which means the hull tone and the emissive floor both have to be
 // pushed a long way toward white and the FACTION identity has to be carried
 // by the rim and the engine glow instead of by a dark saturated body.
+// That argument still stands, and it is the ALBEDO (hullHeat, below) that
+// carries it — the albedo is a LIT term, so heating it buys value that still
+// varies with the surface normal.
+//
+// WHERE THE VALUE MAY NOT COME FROM: THE EMISSIVE FLOOR.
+// Emissive is added after every lighting term and is identical on every
+// facet of the ship, so a large floor does not "give the hull presence" —
+// it spends the hull's value range on a constant, which pins every surface
+// to nearly the same number no matter which way it faces. That is exactly
+// what the player hull was doing one round ago (floor ~0.48x base, measured
+// bare-hull luminance std 34.0/255) and dropping it to 0.09x base in the
+// hull's own cool accent — with the KEY/FILL/RIM rig left to do the work —
+// took the same hull to std 70.0. The hostile roster shipped the same
+// mistake at a larger scale: a floor of emissiveIntensity 0.62 on a
+// heated-toward-white tint of the faction colour, i.e. a hull roughly 62%
+// self-lit in its own hue, which cannot hold a form cue and cannot hold its
+// own underneath eight additive FX nodes.
+//
+// The floor is therefore now DARK and COOL rather than a lighter tint of the
+// base colour:
+//   emissiveFloor — the floor as a fraction of the base colour (0.09, the
+//                   value proven on the player hull). This is the whole
+//                   floor: emissiveIntensity is a 1.0 multiplier on top,
+//                   left at unity so the per-frame hooks that RIDE it
+//                   (game-core's pulse, _setEnemyTelegraph's 1x->1.9x ramp,
+//                   the range-deficit lift in game-controls) keep the same
+//                   relative headroom they were tuned with.
+//   emissiveCool  — how far that floor is pushed off the faction hue toward
+//                   cold starlight. A floor is what an unlit facet returns,
+//                   and an unlit facet in this game is looking at a cold
+//                   sky, not at its own paint — a floor in the base hue
+//                   reads as self-illumination and re-tints every shadow
+//                   the key light draws.
+// Faction identity does not live here any more: it lives in the albedo, in
+// the fresnel rim (idle/boost colours are the saturated base) and in the
+// panel accents, all of which are lit or view-dependent terms.
 //   hullHeat     — how far the albedo is heated toward the hot-point
-//   emissiveHeat — how far the always-on emissive floor is heated
-//   emissiveIntensity — kept LOW (0.5-0.7) so the attack telegraph, which
-//                       multiplies it 1x->3.4x, still has somewhere to go
+//   emissiveHeat — GONE, and deliberately not accepted as a no-op alias: the
+//                  floor is not heated toward white at any strength any more,
+//                  so a call site that still passes one should read as the
+//                  dead option it is rather than silently doing nothing.
 function createFactionHullMaterial(colorHex, opts) {
     opts = opts || {};
     _ensureHullKeyLight();
@@ -1111,8 +1186,16 @@ function createFactionHullMaterial(colorHex, opts) {
     // (measured: ufo 73.8%, sith 63.2%). 0.35 keeps the body legible
     // against the starfield without doing all the work alone.
     const hullTone = hot(opts.hullHeat !== undefined ? opts.hullHeat : 0.35);
-    // Always-on emissive floor — the term that survives at any range.
-    const emisTone = hot(opts.emissiveHeat !== undefined ? opts.emissiveHeat : 0.38);
+    // Always-on emissive floor — the term that survives at any range, and the
+    // one term that survives it IDENTICALLY on every facet, which is why it is
+    // now small and cold rather than a bright tint of the faction hue (see the
+    // "WHERE THE VALUE MAY NOT COME FROM" note above). COLD_SKY is the game's
+    // own night-sky blue: an unlit facet on a ship in this galaxy is facing a
+    // cold sky, so that is what it should return.
+    const COLD_SKY = new THREE.Color(0x3350ff);
+    const emisCool = opts.emissiveCool !== undefined ? opts.emissiveCool : 0.55;
+    const emisFloor = opts.emissiveFloor !== undefined ? opts.emissiveFloor : 0.09;
+    const emisTone = base.clone().lerp(COLD_SKY, emisCool).multiplyScalar(emisFloor);
     // Rim + boost shimmer stay SATURATED: that's where faction identity lives
     // now that the body is high-value.
     const rimTone = base.clone().lerp(WHITE, 0.12);
@@ -1121,12 +1204,15 @@ function createFactionHullMaterial(colorHex, opts) {
     const material = new THREE.MeshStandardMaterial({
         color: hullTone,
         emissive: emisTone,
-        // Was 0.70 (a permanent, uniform emissive floor doing most of the
-        // work). Dropped to 0.28 now that _ensureHullKeyLight gives every
-        // hull a real, direction-dependent lit response — the floor only
-        // needs to keep the ship visible in genuinely empty space, not
-        // carry the whole presence read and wash out every form cue.
-        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 0.28,
+        // UNITY, and it stays unity. The floor's SIZE is `emissiveFloor`
+        // above (baked into the emissive colour); this multiplier is left at
+        // 1.0 because it is not a tuning dial any more — it is the hook three
+        // separate per-frame systems ride (game-core's hull pulse, the
+        // 1x->1.9x attack telegraph in game-controls, and the range-deficit
+        // brightness lift that pays for the capped hull-screen floor), each
+        // of which multiplies whatever it finds here. Keeping it at 1.0 keeps
+        // all three at the relative headroom they were measured against.
+        emissiveIntensity: opts.emissiveIntensity !== undefined ? opts.emissiveIntensity : 1.0,
         roughness: opts.roughness !== undefined ? opts.roughness : 0.42,
         metalness: opts.metalness !== undefined ? opts.metalness : 0.35,
         // FrontSide: DoubleSide drew every interior face of these untextured
@@ -1213,6 +1299,13 @@ function createFactionHullMaterial(colorHex, opts) {
         formNoseSign: opts.formNoseSign !== undefined ? opts.formNoseSign : -1.0,
         formNoseDark: opts.formNoseDark !== undefined ? opts.formNoseDark : 0.55
     });
+
+    // LIVE A/B HOOK — same argument as uRimPanelFine being a uniform rather
+    // than a compile-time branch. Which hostile a measurement pass happens to
+    // grab varies between page loads, so the only honest way to compare two
+    // floors is to rebuild the SAME hull at both in the SAME frame. That needs
+    // the two things this call consumed and then threw away.
+    material.userData._hullMatSpec = { base: base.getHex(), opts: opts };
 
     return material;
 }
@@ -1389,9 +1482,45 @@ function _attachEngineGlow(model, colorHex, box, sizeScale, radiusFactor, radius
 // clears it with room to spare for every denser fighter silhouette too,
 // so there is no reason to keep two tiers — one shared constant, applied
 // everywhere createEnemyMeshWithModel builds a hull material.
+//
+// WHAT THAT ARGUMENT MISSED, and why the numbers below are a tenth of what
+// they were. Every reading quoted above is a MEDIAN LUMINANCE — "is this hull
+// brighter than empty space" — and a flat self-lit plate is the cheapest
+// possible way to win that test. It is also the most expensive possible way,
+// because emissive is added after every lighting term and is identical on
+// every facet: the roster bought its median with the one term that carries no
+// form. Measured on this build, bare hull, world paused, subject isolated,
+// stats over fully-covered mask pixels only: at emissiveIntensity 0.62 the
+// UFO's per-pixel luminance std topped out at 53.9 across eight yaws (bar 60)
+// while its MEAN sat at 132-183 — a bright, flat plate. Every faction showed
+// the same shape, and at 900u where the floor is proportionally the largest
+// share of the read, std collapsed to 12.8-25.6 on half the roster.
+//
+// So the floor stops being the answer to "can you see it" and goes back to
+// being the answer to "is it black in genuinely unlit space". Same shape and
+// the same 0.09x-base value proven on the player hull one round ago (which
+// took that hull from std 34.0 to 70.0), and the same second half of that
+// fix: with the floor no longer spending the value range, coreDarken can
+// widen the facing/grazing split far enough for the rim to read as a rim.
+// The key/fill/rim rig (_ensureHullKeyLight) and the panel/greeble/spec
+// injections were already live on every one of these hulls — they were just
+// being drowned by a constant.
 const _HULL_EMISSIVE_FLOOR = {
-    emissiveIntensity: 0.62,
-    emissiveHeat: 0.64,
+    // 1.0 — the floor's size is emissiveFloor now, not this. See the note on
+    // emissiveIntensity in createFactionHullMaterial.
+    emissiveIntensity: 1.0,
+    emissiveFloor: 0.09,
+    emissiveCool: 0.55,
+    // Was the shared 0.22 default. The player hull runs 0.62 and measures
+    // std 70; hostiles are read at 200-900u rather than 10-30u, so they take
+    // slightly less of it — enough to open the core/rim split, not so much
+    // that a nose-on contact at 900u loses its facing panels entirely.
+    coreDarken: 0.52,
+    // UNCHANGED. This is where the faction hue lives now, so it is the last
+    // thing that should move: the rim's idle/boost colours are the saturated
+    // base colour, and _setEnemyTelegraph swings boostT from here to 1.0 as
+    // the attack winds up. Dropping it would cost both the faction read and
+    // the telegraph's hue swing.
     rimIntensity: 0.85
 };
 
@@ -1427,64 +1556,33 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 child.visible = true;
                 child.frustumCulled = false;
 
-                // HIGH-VALUE, RIM-LIT, TOP-LIT hull. See the "VALUE, NOT HUE"
-                // note on createFactionHullMaterial: the old dark-albedo +
-                // saturated-emissive keying (#8c1c1c body, emissiveIntensity
-                // 1.4) measured DIMMER than the background starfield at
-                // weapons range, and at close range its flat 1.4 emissive on
-                // a DoubleSide untextured mesh clipped to a white crumpled
-                // wad with no readable facing. The body is now bright and
-                // desaturated, faction identity moved to the rim and the
-                // engine flares, and the emissive floor is LOW (0.62) so the
-                // 1x->3.4x attack telegraph has real headroom above it.
-                // Region 8 (Vulcan Patrol/Boss8) still measured DARKER than
-                // empty space on the shared floor above, even with an
-                // earlier small bump (0.34/0.48/0.74): same-frame readback
-                // on a staged ship at 900u, pooled across 8 yaw angles at
-                // 45-degree steps, put pooled median hull luminance at 21.9
-                // (p90 23.9) with the hull reading "completely flat" — no
-                // angle-to-angle lighting variation at all. Root cause is
-                // NOT the material curve itself (the earlier bump already
-                // measured 80-101 median per-angle in isolation) but this
-                // hull's unusually SPARSE, low-fill silhouette (saucer +
-                // narrow neck + thin nacelles, per the Vulcan/TOS design):
-                // at this hull's native on-screen footprint the ship's own
-                // bounding box is only ~40-60% actually covered by hull
-                // pixels, so anti-aliased edge/partial-coverage pixels (a
-                // blend of hull colour and the near-black backdrop) are a
-                // much larger SHARE of the sampled pixels than on a denser
-                // fighter silhouette, and those partial pixels drag a
-                // pooled median down hard. A flat material tweak can't fix
-                // a geometry-driven sampling problem — the fix is to make
-                // every hull pixel (including the ones a partial-coverage
-                // edge sample blends toward) carry enough emissive floor on
-                // its own that even a blended pixel reads bright. First
-                // pass (0.52/0.58/0.82) cleared the bar at the game's
-                // brighter boot-screen lighting (worst angle 111) but
-                // same-frame readback near Sagittarius A* — where the
-                // ambient/key-light contribution this hull also leans on
-                // is measurably weaker — put the worst angle back down to
-                // 98.36, under the 100/255 line again. Pushed one more
-                // notch (0.62/0.64/0.85) so the EMISSIVE FLOOR ALONE (the
-                // one term that doesn't depend on ambient/key-light
-                // strength) clears the bar even in that dimmer system.
-                // Verified live at both locations: worst-of-8-angles
-                // median 115 near Sagittarius A*, 190+ at the brighter
-                // boot screen, 0% of pixels under the 20/255 dark cutoff
-                // at every angle in both locations.
-                child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    // Was 0.84/0.70 — see the emissiveIntensity default
-                    // note on createFactionHullMaterial. Shared floor
-                    // (see _HULL_EMISSIVE_FLOOR above) applied to every
-                    // faction now, not just Vulcan/UFO.
-                    emissiveIntensity: _HULL_EMISSIVE_FLOOR.emissiveIntensity,
-                    emissiveHeat: _HULL_EMISSIVE_FLOOR.emissiveHeat,
-                    rimIntensity: _HULL_EMISSIVE_FLOOR.rimIntensity,
+                // LIT, RIM-LIT, TOP-LIT hull — NOT a self-lit one. The body
+                // is a high-value heated albedo and the faction identity
+                // lives in the rim and the engine plume; the always-on
+                // emissive term is a small cold floor (see
+                // _HULL_EMISSIVE_FLOOR above) whose whole job is "not black
+                // in genuinely unlit space", nothing more. Everything the
+                // player reads as SURFACE — the key/fill/rim response, the
+                // panel plates, the greeble speckle, the nose/spine form
+                // ramp — is direction-dependent, and each of those terms is
+                // only visible in proportion to how little of the value
+                // range the constant floor has already spent.
+                //
+                // The whole roster takes ONE spec. There is no per-class
+                // tier here any more and there should not be one: the
+                // failure the old per-class Vulcan margin was chasing (a
+                // sparse saucer-and-nacelles silhouette pooling low because
+                // anti-aliased partial-coverage pixels are a large share of
+                // its footprint) is a SAMPLING artefact of how it was
+                // measured, not something the player sees, and paying for it
+                // with a brighter constant flattened every dense hull in the
+                // game to buy a better median on one sparse one.
+                child.material = createFactionHullMaterial(material.color || 0xff0000, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
                     panelCellSize: _hullPanelCellSize(child.geometry),
                     // Nose direction in MESH-LOCAL space: the nose-flipped
                     // regions are authored +Z-forward, everything else -Z.
                     formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
-                });
+                }));
 
                 child.castShadow = false;
                 child.receiveShadow = false;
@@ -1601,18 +1699,15 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // on createFactionHullMaterial). The additive duplicate shell that
         // used to sit on top of this is gone for the same reason it is gone
         // on the GLB path — it flattened the silhouette it was meant to sell.
-        // Keep the fallback's Vulcan margin matched to the GLB path above
-        // (0.62/0.64/0.85) so a not-yet-loaded Enemy8.glb doesn't hand the
-        // player a dark placeholder that then visibly brightens once the
-        // real model swaps in.
-        const baseMaterial = createFactionHullMaterial(material.color || 0xff0000, {
-            emissiveIntensity: _HULL_EMISSIVE_FLOOR.emissiveIntensity,
-            emissiveHeat: _HULL_EMISSIVE_FLOOR.emissiveHeat,
-            rimIntensity: _HULL_EMISSIVE_FLOOR.rimIntensity,
+        // Takes the identical spec to the GLB path above, from the same one
+        // object, so a not-yet-loaded Enemy8.glb doesn't hand the player a
+        // placeholder that visibly changes brightness once the real model
+        // swaps in.
+        const baseMaterial = createFactionHullMaterial(material.color || 0xff0000, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
             roughness: 0.5,
             panelCellSize: _hullPanelCellSize(fallbackGeometry),
             formNoseSign: -1.0
-        });
+        }));
 
         const baseMesh = new THREE.Mesh(fallbackGeometry, baseMaterial);
         return baseMesh;
@@ -1650,24 +1745,21 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 // fighter), so the set-piece encounter was the hardest thing
                 // in the scene to see. It now sits above the fighters, which
                 // is the read a boss is supposed to have.
-                // Same high-value re-key as the fighters (see "VALUE, NOT
-                // HUE") but kept one notch hotter on every axis so a boss
-                // still out-reads the fighters it flies with now that they
-                // are bright too.
-                child.material = createFactionHullMaterial(material.color || 0xff0000, {
-                    // hullHeat/emissiveIntensity scaled down in the same
-                    // proportion as the shared defaults (0.55->0.35,
-                    // 0.70->0.28) so a boss keeps its one-notch-hotter
-                    // margin over the fighters it flies with.
+                // Same keying as the fighters (see "VALUE, NOT HUE" and the
+                // floor note on _HULL_EMISSIVE_FLOOR), with the boss's
+                // one-notch margin taken where it can still be SEEN: a
+                // hotter ALBEDO and a stronger rim, both of which are lit /
+                // view-dependent terms, rather than a bigger constant floor.
+                // A boss that out-read its escorts by carrying more emissive
+                // was out-reading them by being flatter than they are.
+                child.material = createFactionHullMaterial(material.color || 0xff0000, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
                     hullHeat: 0.40,
-                    emissiveHeat: 0.46,
-                    emissiveIntensity: 0.32,
                     roughness: 0.4,
                     rimIntensity: 0.7,
                     rimBaseStrength: 1.1,
                     panelCellSize: _hullPanelCellSize(child.geometry),
                     formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
-                });
+                }));
 
                 child.castShadow = false;
                 child.receiveShadow = false;
@@ -1817,6 +1909,12 @@ const PLAYER_HULL_PANEL_CELL = 0.015;
 // playerShipMesh), a move that would otherwise strand it outside any
 // camera-child light's effect if that effect depended on position. It does
 // not: THREE.DirectionalLight has no distance falloff.
+// INERT for both reasons documented on _ensureHullKeyLight above (latches onto
+// the intro camera startGame() discards, AND camera-parented lights do not
+// light anything in this scene). Same warning applies: the player hull's floor
+// was cut from ~0.48x base to 0.09x base in favour of a KEY/FILL/RIM response
+// that has never been in the rendered scene graph, so switching this on is a
+// retune of the player hull, not a bug fix.
 let _playerHullLightRigInstalled = false;
 function _ensurePlayerHullLightRig() {
     if (_playerHullLightRigInstalled) return;
@@ -2361,36 +2459,21 @@ function _applyUFOHullPresenceFloor(ufo) {
             child.geometry.computeVertexNormals();
         }
         const oldMap = mat.map || null;
-        // TUNING HISTORY (kept short — see the options-object comment
-        // right below for the current, correct rationale): an early pass
-        // at 0.30/0.64 cleared the median-luminance gate at the game's
-        // brighter boot-screen lighting but fell under it near Sagittarius
-        // A* (weaker ambient/key-light there). Pushing emissiveIntensity/
-        // emissiveHeat to 0.52/0.58 cleared the gate everywhere, but by
-        // relying almost entirely on the direction-INDEPENDENT emissive
-        // floor — measured worst-of-8-yaw p5->p95 spread of only 25.7
-        // luminance levels (median 239.6), i.e. a flat near-white plate
-        // with the faction's mint hue cooked out. Superseded below.
-        const newMat = createFactionHullMaterial(UFO_HULL_COLOR, {
-            // 0.52/0.58 (previous pass) cleared the luminance-floor gate but
-            // did it with a direction-INDEPENDENT additive term strong
-            // enough to swamp every direction-DEPENDENT one: measured
-            // worst-of-8-yaw p5->p95 spread of only 25.7 luminance levels
-            // (median 239.6, p95 247.3) — a near-white flat plate, not a
-            // lit hull, and hot enough to cook out the faction's mint hue
-            // (UFO_HULL_COLOR) along with it. Klingon (86.7 spread) and
-            // Cardassian (95.1 spread) clear the SAME luminance-floor gate
-            // at roster-default emissiveIntensity/emissiveHeat (0.30/0.40)
-            // by recovering brightness from direction-dependent terms
-            // instead: coreDarken pushes the camera-facing/grazing split
-            // wider so the rim actually reads as a rim, and a taller
-            // formFloor/formTop ramp (belly vs. spine) does the rest. Same
-            // operating point applied here rather than re-derived, since
-            // it's proven on two other hull classes under this exact
-            // lighting.
-            emissiveIntensity: 0.30,
-            emissiveHeat: 0.40,
-            coreDarken: 0.40,
+        // TUNING HISTORY (kept short): every earlier pass here was a search
+        // over how much FLOOR this hull needed — 0.30/0.64, then 0.52/0.58 —
+        // and each one bought its median luminance with the same
+        // direction-INDEPENDENT term, ending at a worst-of-8-yaw p5->p95
+        // spread of 25.7 levels around a median of 239.6: a flat near-white
+        // plate with the mint hue cooked out of it. The floor is no longer a
+        // dial to search over (see _HULL_EMISSIVE_FLOOR), so this call now
+        // takes the roster's one spec and keeps only what is genuinely
+        // SPECIFIC to this hull.
+        const newMat = createFactionHullMaterial(UFO_HULL_COLOR, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
+            // Saucer-specific form ramp: a flying disc has an enormous
+            // belly-to-spine value range and almost no side, so its top-lit
+            // ramp is much taller than a fighter's (0.66/1.72 default) —
+            // this is the term that makes a saucer read as curved rather
+            // than as a coloured ellipse.
             formFloor: 0.45,
             formTop: 2.10,
             rimIntensity: 0.78,
@@ -2398,7 +2481,7 @@ function _applyUFOHullPresenceFloor(ufo) {
             metalness: 0.35,
             panelCellSize: _hullPanelCellSize(child.geometry),
             hullForm: true
-        });
+        }));
         if (oldMap) newMat.map = oldMap;
         child.material = newMat;
     });

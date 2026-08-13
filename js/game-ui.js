@@ -3338,21 +3338,28 @@ function renderAllyMarker(c) {
 // STEPS between states instead of continuously breathing as the nearest
 // hostile's distance fluctuates frame to frame.
 const RADAR_RANGE_LADDER = [500, 750, 1000, 1500, 3000];
-// Was 2500ms — exactly HALF the "no more than once per 5s" acceptance
-// threshold, which is why a fight sitting near a rung boundary could
-// legally commit two rung changes inside a single 5s window (dwell only
-// blocks a SECOND change from landing sooner than this after the last
-// one; two changes 2.5s apart both individually satisfy a 2500ms dwell).
-// Raised to 5000 so the dwell timer alone enforces the acceptance bar.
-const RADAR_RANGE_DWELL_MS = 5000;
-// Round-3 fix: dwell only rate-limits how OFTEN the range can change — it
-// never required the new rung to actually be the right answer for more
-// than an instant, so a `want` value that brushed a hysteresis boundary
-// for a single bad sample could still commit once enough time had passed
-// since the last change. Require the candidate rung to be the snapped
-// answer CONTINUOUSLY for this long before it's allowed to commit; a
-// `want` that reverts before then never switches anything.
-const RADAR_RANGE_PERSIST_MS = 1000;
+// Round-4 fix: a single DWELL/PERSIST pair treated "danger closing" and
+// "danger gone" symmetrically, so the same timers that need to be fast
+// for a closing threat (snap the range in before the fight is over) also
+// applied to the range relaxing back out once the threat cleared — the
+// range spent as much time re-widening as it did narrowing, so a fight
+// that flared and cooled repeatedly rescaled the whole picture every time.
+// Split into a fast CONTRACT pair (threat closing — snap in quickly) and
+// a slow EXPAND pair (threat gone — no rush, nothing is happening at the
+// wider range yet). Direction is decided per-commit in _currentRadarRange
+// by comparing the candidate rung to the current one.
+// Round-3 fix (persist): dwell only rate-limits how OFTEN the range can
+// change — it never required the new rung to actually be the right
+// answer for more than an instant, so a `want` value that brushed a
+// hysteresis boundary for a single bad sample could still commit once
+// enough time had passed since the last change. Require the candidate
+// rung to be the snapped answer CONTINUOUSLY for this long before it's
+// allowed to commit; a `want` that reverts before then never switches
+// anything.
+const RADAR_RANGE_PERSIST_CONTRACT_MS = 1000;
+const RADAR_RANGE_DWELL_CONTRACT_MS = 1500;
+const RADAR_RANGE_PERSIST_EXPAND_MS = 6000;
+const RADAR_RANGE_DWELL_EXPAND_MS = 15000;
 // A committed rung change animates the DRAW SCALE over this fixed duration
 // (see _currentRadarRange) instead of jumping straight to it.
 const RADAR_RANGE_LERP_MS = 300;
@@ -3437,10 +3444,16 @@ function _snapRadarRange(want, currentRung) {
 // actually changed (the dwell gate — a MINIMUM TIME BETWEEN CHANGES).
 // `pending`/`pendingSince` track a CANDIDATE rung that hasn't earned the
 // switch yet: it only commits once it has been the snapped answer
-// CONTINUOUSLY for RADAR_RANGE_PERSIST_MS *and* the dwell since the last
-// real change has also elapsed — a closing hostile still snaps the range
-// in reasonably fast, but a one-frame blip across a hysteresis boundary
-// can no longer commit just because the dwell clock happened to be clear.
+// CONTINUOUSLY for the direction's PERSIST time *and* the dwell since the
+// last real change has also elapsed — a closing hostile still snaps the
+// range in reasonably fast (CONTRACT timers), but a one-frame blip across
+// a hysteresis boundary can no longer commit just because the dwell clock
+// happened to be clear, and the range relaxing back out once a threat
+// clears takes its time (EXPAND timers) instead of racing back to 3000u.
+// A commit also only ever steps the COMMITTED rung one notch on the
+// ladder toward the snapped target, never straight to it — so even a
+// `want` that jumps several rungs in one frame (e.g. the nearest hostile
+// dying) re-scales the picture one rung at a time instead of leaping.
 // `shown`/`lerpFrom`/`lerpStart` animate the RENDERED scale from wherever
 // it currently sits to the committed value over a fixed
 // RADAR_RANGE_LERP_MS, so a rung change slides the scale (and every blip
@@ -3454,7 +3467,13 @@ function _currentRadarRange(nowMs) {
         lerpFrom: 3000, lerpStart: -Infinity
     };
     const _near = nearestHostileDistance();
-    const _want = _near < 900 ? Math.max(500, Math.min(1200, _near * 2.2)) : 3000;
+    // Continuous ramp — no cliff at 900u. Round-2 fix used a branch that
+    // teleported `want` from 500 straight to 3000 the instant the nearest
+    // bandit died or drifted past 900u; every rung between those two got
+    // skipped in one frame, dragging the committed range through a 6x leap
+    // (see the single-rung stepping below, which now refuses to leap
+    // regardless of how far `want` jumps).
+    const _want = Math.max(500, Math.min(3000, _near * 2.2));
     const snapped = _snapRadarRange(_want, st.value);
 
     if (snapped !== st.value) {
@@ -3464,11 +3483,23 @@ function _currentRadarRange(nowMs) {
             st.pending = snapped;
             st.pendingSince = nowMs;
         }
-        if ((nowMs - st.pendingSince) >= RADAR_RANGE_PERSIST_MS &&
-            (nowMs - st.lastChangeAt) >= RADAR_RANGE_DWELL_MS) {
+        // Contracting (candidate rung is TIGHTER than committed — a threat
+        // is closing) uses the fast timers so danger snaps in quickly.
+        // Expanding (candidate rung is WIDER — the threat cleared) uses
+        // the slow timers since nothing needs the wider view urgently.
+        const _contracting = RADAR_RANGE_LADDER.indexOf(snapped) < RADAR_RANGE_LADDER.indexOf(st.value);
+        const _persistMs = _contracting ? RADAR_RANGE_PERSIST_CONTRACT_MS : RADAR_RANGE_PERSIST_EXPAND_MS;
+        const _dwellMs = _contracting ? RADAR_RANGE_DWELL_CONTRACT_MS : RADAR_RANGE_DWELL_EXPAND_MS;
+        if ((nowMs - st.pendingSince) >= _persistMs &&
+            (nowMs - st.lastChangeAt) >= _dwellMs) {
+            // Single-rung step toward the snapped target — never jump
+            // straight to it, even if `want` cleared several rungs at
+            // once. Each commit moves the picture by at most one notch.
+            const i = RADAR_RANGE_LADDER.indexOf(st.value);
+            const targetIdx = RADAR_RANGE_LADDER.indexOf(snapped);
             st.lerpFrom = st.shown;
             st.lerpStart = nowMs;
-            st.value = snapped;
+            st.value = RADAR_RANGE_LADDER[i + Math.sign(targetIdx - i)];
             st.lastChangeAt = nowMs;
             st.pending = null;
         }

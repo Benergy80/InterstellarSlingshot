@@ -67,7 +67,16 @@
     // "🎯 WARP ARRIVAL CUT" console line is built from, in machine-readable
     // form so instrumentation doesn't have to scrape the console.
     get lastArrivalCut() { return ap._lastArrivalCut || null; },
-    get arrivalCuts() { return ap._arrivalCuts || 0; }
+    get arrivalCuts() { return ap._arrivalCuts || 0; },
+    // The other two members of the arrival triad, exposed on the same terms.
+    // Together these three answer the only questions that matter about a warp
+    // leg: which terminator ended the burn (cut vs. extension — they tile the
+    // along-track axis, so on a leg with a subject one of them always did),
+    // and did the ship actually END PARKED afterwards.
+    get lastArrivalExt() { return ap._lastArrivalExt || null; },
+    get arrivalExts() { return ap._arrivalExts || 0; },
+    get lastArrivalPark() { return ap._lastArrivalPark || null; },
+    get arrivalParks() { return ap._arrivalParks || 0; }
   };
 
   // Per-frame enemy buffs + swarm — previously only applied while demo
@@ -392,6 +401,11 @@
   // allocates.
   const _arriveFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const _arriveToTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  // Scratch for the arrival park's station-keeping (see "ARRIVAL PARK" in
+  // update()): the component of the residual drift ACROSS the line of sight,
+  // and the ship's own right vector used to pick which strafe grows it.
+  const _parkTanTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _parkRightTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 
   // ─── Main update (called every frame from animate()) ──────────────────────
   function update() {
@@ -861,7 +875,76 @@
         // burn that has not arrived yet.
         const _nearRadius = _stand + _stop + _maxOff;
         const _outOfRunway = _along <= _stop && _range <= _nearRadius;
-        if (_converged && (_framed || _outOfRunway)) {
+        // ── AND THE WIDE FLY-PAST, WHICH TILES THE LAST OF THE GAP ──────────
+        // `_framed` and `_outOfRunway` between them still left a hole, because
+        // both of them ALSO test the lateral axis (`_off <= _maxOff`,
+        // `_range <= _nearRadius`) while the extension below tests only the
+        // along-track one. A burn that misses WIDE therefore satisfies none of
+        // the three and falls back to the stopwatch again.
+        //
+        // MEASURED, this build, 21,000 u leg to Titan Nebula Prime (stand
+        // 2,129, stop ~900, maxOff 3,560): the burn never converged — the
+        // perpendicular miss GREW from 7,464 u to 12,555 u while the range
+        // closed to 13,703 u — and at the clock's expiry it read along
+        // = -12,843, off = 5,528, range = 13,982. Along was deep inside the
+        // cut's window (so the extension could not fire) but off was 1,968 u
+        // outside the framing budget and the range 7,393 u outside the
+        // fail-safe's neighbourhood (so neither cut clause could either). The
+        // stopwatch ended it, the ship coasted on, and the destination
+        // finished BEHIND the camera at 5.0 deg.
+        //
+        // The honest complement of the extension is simply "the subject is no
+        // longer far enough ahead to be worth flying at" — `_along <= _stand +
+        // _stop` — with no lateral term at all, so the two predicates tile the
+        // whole plane and one of them always owns the frame. What that costs
+        // is a burn that is merely still TURNING (velocity has not swung onto
+        // the nose yet, so `_along` reads small or negative) being mistaken
+        // for a blown one — the exact frame-1 catastrophe the `_converged`
+        // grace exists to prevent. So this clause, and only this clause, waits
+        // out a full turn budget rather than the convergence grace: guidance
+        // is capped at 0.07 rad/frame (game-physics.js), i.e. a 180 deg swing
+        // takes ~45 frames — 750 ms at 60 fps, ~1.2 s on the 36 fps rig this
+        // was measured on. 2,500 ms is that with better than 2x margin, and it
+        // is still 8x shorter than the burns it rescues.
+        //
+        // ...and it must not count a COORDINATE JUMP as flying. The world
+        // rebases around the ship (worldOriginOffset / __worldShiftHandlers)
+        // and culls distant systems, so a subject's position can move by tens
+        // of thousands of units between two frames without anything having
+        // flown anywhere. Measured, Olympus Nebula Prime: range 7,542 u on one
+        // sample and 51,389 u on the next, 267 ms later, with the ship at 13
+        // u/frame — 44,000 u of "travel" in a quarter second. On that frame
+        // `_along` reads -34,493 and the wide-miss clause would end a burn
+        // that was, in the frame it was flying in, 7,542 u from a clean
+        // arrival. So: if the range moves further than the ship could possibly
+        // have carried it, that is a rebase, and the turn budget starts again
+        // from there rather than the burn being judged on it.
+        const _nowMs = Date.now();
+        if (!_as._turnT0) _as._turnT0 = _nowMs;
+        if (_as._cutPrevR != null && _as._cutPrevT) {
+          const _dtS = Math.max(0.001, (_nowMs - _as._cutPrevT) / 1000);
+          const _couldFly = _speed * 60 * _dtS + 500;
+          if (Math.abs(_range - _as._cutPrevR) > _couldFly * 3) _as._turnT0 = _nowMs;
+        }
+        _as._cutPrevR = _range; _as._cutPrevT = _nowMs;
+        const _turned = _elapsed >= ARRIVAL_TURN_BUDGET_MS &&
+                        (_nowMs - _as._turnT0) >= ARRIVAL_TURN_BUDGET_MS;
+        // ...and it must never PRE-EMPT a good arrival. Inside the cut's
+        // along-track window with the miss still inside the lateral budget is
+        // the definition of framed, not blown — `_framed` owns that frame. So
+        // this clause claims only what is genuinely unrecoverable: the miss is
+        // already wider than the budget the subject was ever claimable at, or
+        // the subject is behind us on the velocity axis. Together with
+        // `_framed` that is every point of `_along <= _stand + _stop`, which
+        // is exactly the complement of the extension's gate — the three tile
+        // the plane with no gap and no overlap that matters.
+        const _blown = _turned && _along <= _stand + _stop &&
+                       (_off > _maxOff || _along <= 0);
+        // This leg has genuinely FLOWN a burn (as opposed to being a subject
+        // staged for a burn that has not ignited yet). The arrival park below
+        // gates on this so it can never brake into an armed-but-unlit warp.
+        _as._flown = true;
+        if (_converged && (_framed || _outOfRunway || _blown)) {
           gameState.emergencyWarp.timeRemaining = 0;
           // LOG PROOF that this path executed — one line per burn (latched on
           // the staged subject so a multi-frame cut can't spam the console),
@@ -869,7 +952,7 @@
           if (!_as._cutLogged) {
             _as._cutLogged = true;
             ap._lastArrivalCut = {
-              at: Date.now(), reason: _framed ? 'framed' : 'outOfRunway',
+              at: Date.now(), reason: _framed ? 'framed' : (_outOfRunway ? 'outOfRunway' : 'blown'),
               along: Math.round(_along), off: Math.round(_off),
               stand: Math.round(_stand), stop: Math.round(_stop),
               arriveDist: Math.round(_as.arriveDist),
@@ -879,15 +962,14 @@
               subject: (_as.obj.userData && (_as.obj.userData.name || _as.obj.userData.type)) || 'body'
             };
             ap._arrivalCuts = (ap._arrivalCuts || 0) + 1;
-            // ARRIVE AND STAY. The cut ends the burn at the standoff, but the
-            // exit ramp still hands the ship ~240 u/s of cruise and nothing in
-            // a combat or discovery leg brakes it (only coastToNebulaCluster
-            // does, and only for its own legs). Measured: a Saturn arrival read
-            // 15.3 deg at 269 ms and then slid 715 -> 817 -> 924 -> 1,460 u,
-            // finishing at 5.48 deg — the reveal was delivered and then thrown
-            // away over the next two seconds. Brake through the drain so the
-            // arrival the cut just bought is still there when the player looks.
-            ap._arrivalBrakeUntil = Date.now() + 2600;
+            // ARRIVE AND STAY is NOT this block's job any more. It used to be:
+            // `ap._arrivalBrakeUntil = Date.now() + 2600` was assigned right
+            // here, and that put the ONLY brake in the file inside the cut's
+            // one-shot — so a leg whose cut never fired (measured: leg 7, Void
+            // Nebula Prime) arrived with nothing braking it at all and flew
+            // into its own destination. The brake now lives OUTSIDE this block,
+            // as a closed loop that every destination-bearing leg gets whether
+            // or not the cut fired. See "ARRIVAL PARK" in update().
             console.log('🎯 WARP ARRIVAL CUT (' + ap._lastArrivalCut.reason + ') → ' +
               ap._lastArrivalCut.subject + '  along=' + ap._lastArrivalCut.along +
               'u off=' + ap._lastArrivalCut.off + 'u (stand=' + ap._lastArrivalCut.stand +
@@ -895,8 +977,8 @@
           }
         } else if (_converged &&
                    gameState.emergencyWarp.timeRemaining <= BURN_EXTEND_STEP_MS &&
-                   _along > 0 && _range > _nearRadius &&
-                   (_as._burnExtMs || 0) < BURN_EXTEND_MAX_MS) {
+                   _along > _stand + _stop &&
+                   (_as._burnExtMs || 0) < _burnExtendBudget()) {
           // ── ARRIVAL IS THE TERMINATOR; THE STOPWATCH IS THE FALLBACK ───────
           // The burn is sized in MILLISECONDS but travel is integrated PER
           // FRAME, so the two only agree at a healthy frame rate. Measured on
@@ -906,15 +988,78 @@
           // centre of frame, just under the 15 deg bar, purely because the
           // clock is wall-time and the ship is not. Rather than trust the
           // clock, keep the burn alive in short beats for as long as the
-          // subject is still AHEAD (`_along > 0`) and still outside the cut's
-          // own neighbourhood — i.e. as long as the arrival genuinely has not
-          // happened yet — and let the geometric cut above end it. The budget
-          // is bounded so a burn that cannot converge still ends: at most
-          // BURN_EXTEND_MAX_MS beyond its armed length, charged to the staged
-          // subject so it cannot be inherited by the next leg. On a machine
-          // that holds 60 fps this never fires — the cut arrives first.
-          _as._burnExtMs = (_as._burnExtMs || 0) + BURN_EXTEND_STEP_MS;
+          // arrival genuinely has not happened yet, and let the geometric cut
+          // above end it. The budget is bounded so a burn that cannot converge
+          // still ends: at most BURN_EXTEND_MAX_MS beyond its armed length,
+          // charged to the staged subject so it cannot be inherited by the next
+          // leg. On a machine that holds 60 fps this never fires — the cut
+          // arrives first.
+          //
+          // ── THE DEAD BAND, AND WHY THE GATE IS NOW THE CUT'S COMPLEMENT ────
+          // This clause used to be gated on `_along > 0 && _range >
+          // _nearRadius`, and the cut above is gated on `_along <= _stand +
+          // _stop`. Those two are NOT complements, and the space between them
+          // is a hole exactly `_maxOff` wide that neither predicate can act in.
+          // Measured live for Void Nebula Prime: stand = 2,129, stop = 480,
+          // maxOff = 3,560 — so the cut needed along <= 2,609 while the
+          // extension needed range > 6,169. Leg 7 ran its clock out at
+          // along = 3,426 / range = 3,575: 817 u past the cut's window and
+          // 2,594 u short of the extension's, i.e. dead inside a 3,560 u band
+          // where the stopwatch wins by default. That is the leg that arrived
+          // at 19.86 deg dead centre and then flew into the planet.
+          //
+          // Gating on `_along > _stand + _stop` makes the two predicates TILE
+          // the along-track axis with no gap: either the subject is inside the
+          // cut's window (the cut owns the frame) or it is beyond it (the
+          // extension owns the frame). `_range` never enters it, so the
+          // lateral budget can no longer open a hole in the along-track test.
+          // ── CHARGE WHAT WAS ACTUALLY GRANTED, NOT A FLAT BEAT PER FRAME ────
+          // The clause holds for as long as the clock sits under one beat, so
+          // it runs EVERY FRAME while it is open — it tops `timeRemaining` back
+          // up to 900 ms each time, which after the first frame is a top-up of
+          // only the ~28 ms the frame just consumed. Billing a flat 900 ms for
+          // each of those overcharged the budget by the frame rate: measured at
+          // 36 fps the 12,000 ms ceiling was spent in 14 frames, so the
+          // "extension" bought the burn 0.4 s, not 12 s. Both legs that hit the
+          // ceiling in a 12-leg sample read extMs 12,600 with a burn only
+          // 416 ms longer than the duration it was armed for, and both ended
+          // 11,634 u and 7,944 u short of their subject at 3.2 and 6.2 deg.
+          // Charging the top-up itself makes the budget mean the wall-clock
+          // seconds it says.
+          const _topUp = Math.max(0, BURN_EXTEND_STEP_MS -
+            Math.max(0, gameState.emergencyWarp.timeRemaining || 0));
+          _as._burnExtMs = (_as._burnExtMs || 0) + _topUp;
           gameState.emergencyWarp.timeRemaining = BURN_EXTEND_STEP_MS;
+          // A SUBJECT MUST OUTLIVE ITS OWN BURN. `liveMs` is sized at staging
+          // from the duration the burn was ARMED for (max(19 s, burn + 8 s)) —
+          // which was airtight while the clock was the only terminator, and
+          // stopped being true the moment the extension could add real seconds
+          // to a leg. Measured with the accounting above fixed: a 10,266 ms
+          // leg extended to 19,195 ms of burn, i.e. the subject went stale 200
+          // ms BEFORE its own boost ended, so the cut could no longer fire on
+          // it and the arrival park (which needs a fresh subject to start)
+          // never ran a frame — the ship left the burn at 14.5 u/frame and
+          // cruised on. Every millisecond granted to the burn is granted to
+          // the subject too, so the two windows can never come apart again.
+          _as.liveMs = (_as.liveMs || 19000) + _topUp;
+          if (!_as._extLogged) {
+            _as._extLogged = true;
+            ap._arrivalExts = (ap._arrivalExts || 0) + 1;
+            ap._lastArrivalExt = {
+              at: Date.now(), along: Math.round(_along), range: Math.round(_range),
+              stand: Math.round(_stand), stop: Math.round(_stop),
+              maxOff: Math.round(_maxOff), nearRadius: Math.round(_nearRadius),
+              // The old gate's verdict on this same frame. `true` here is proof
+              // this frame fell in the dead band the old code could not act in.
+              wasDeadBand: !(_range > _nearRadius),
+              subject: (_as.obj.userData && (_as.obj.userData.name || _as.obj.userData.type)) || 'body'
+            };
+            console.log('⏱️ WARP BURN EXTENDED → ' + ap._lastArrivalExt.subject +
+              '  along=' + ap._lastArrivalExt.along + 'u range=' + ap._lastArrivalExt.range +
+              'u (cut window <=' + (ap._lastArrivalExt.stand + ap._lastArrivalExt.stop) +
+              ', old gate needed range>' + ap._lastArrivalExt.nearRadius +
+              (ap._lastArrivalExt.wasDeadBand ? ' → OLD DEAD BAND' : '') + ')');
+          }
         }
       }
     }
@@ -984,17 +1129,287 @@
       keys().x = false;
     }
 
-    // ARRIVAL BRAKE — see the cut-off above for why. Held for a short window
-    // after the cut fires, once the boost itself is over (so it can never eat
-    // the burn the way the old phase brakes did), and only while the subject
-    // is still ahead and the ship still has cruise speed to shed. Stops the
-    // reveal sliding out of frame during the streak drain.
-    if (typeof gameState !== 'undefined' && ap._arrivalBrakeUntil &&
-        Date.now() < ap._arrivalBrakeUntil &&
-        gameState.emergencyWarp && !gameState.emergencyWarp.active &&
-        !gameState.emergencyWarp.transitioning &&
-        gameState.velocityVector && gameState.velocityVector.length() > 1.5) {
-      keys().x = true;
+    // ── ARRIVAL PARK — THE WARP ENDS PARKED ─────────────────────────────────
+    // WHAT THE PLAYER SAW BEFORE THIS: the streaks trimmed, the destination
+    // sat dead centre... and then it kept growing, and growing, and then it
+    // was behind the camera or it killed you. Measured, leg 7, Void Nebula
+    // Prime: a perfect exit — 19.86 deg, dead centre, d = 3,446 — followed by
+    // 3446 → 2946 → 2245 → 1527 → 1060 → 849 → 646 and "MISSION FAILED — Ship
+    // destroyed by collision". The warp trimmed the STREAKS but never the
+    // SHIP.
+    //
+    // The old brake could not have prevented it, for two independent reasons:
+    //   * IT ONLY EXISTED INSIDE THE CUT. `ap._arrivalBrakeUntil = Date.now()
+    //     + 2600` was assigned inside the cut's `if (!_as._cutLogged)`
+    //     one-shot, so a leg whose cut never fired — which, before the dead
+    //     band above was closed, was most long legs — got no brake at all.
+    //   * IT WAS OPEN LOOP. 2,600 ms of X is ~156 frames at 0.99/frame, which
+    //     sheds 21% of cruise. Legs that DID get it were still doing
+    //     3.9 u/frame thirteen seconds later. A timer cannot null a speed it
+    //     never measures.
+    //
+    // This is the closed loop. It runs OUTSIDE the cut, on the plain fact that
+    // a burn just ended with a fresh destination in front of the ship, and it
+    // reads range and speed every frame. Two stages:
+    //   FLARE — while the ship is still carrying cruise, hold the brake. The
+    //     release condition is measured, not timed: it lets go when physics
+    //     itself will not let the ship go slower.
+    //   STATION-KEEP — the ship cannot actually stop (see the floor note
+    //     below), so the last thing the park does is take the drift OFF the
+    //     bearing to the destination: reverse thrust to null the approach, a
+    //     matching strafe so the engine's mandatory 0.4 u/frame is spent
+    //     sliding ACROSS the arrival instead of into it. The standoff then
+    //     holds to within a few units per second and the destination sits
+    //     still in frame — which is what "parked" has to mean in a ship with a
+    //     velocity floor.
+    //
+    // Four details that are load-bearing:
+    //   * THRUST IS CUT TOO. This block runs after the phase dispatch, and the
+    //     phase that resumes mid-drain (flyToward, the combat re-acquire, the
+    //     cruise fallback) sets keys().w — braking with one hand while the
+    //     phase thrusts with the other is how the reveal used to slide out of
+    //     frame even on the legs that did brake.
+    //   * THE FLARE BORROWS THE GAME'S OWN POST-JUMP BRAKE. X alone is
+    //     0.99/frame: 3.8 s to bring 4 u/frame down to the engine's floor,
+    //     which does not fit inside the arrival beat. `emergencyWarp
+    //     .autoBraking` is physics' own "a jump ends parked" deceleration
+    //     (0.985/frame, game-physics.js) and stacks with X for ~0.975/frame —
+    //     1.5 s to the floor, and it self-clears the moment it gets there. It
+    //     is the same brake a Jump already uses; this just asks for it after a
+    //     warp arrival too, which is precisely the Star-Citizen-drop feel the
+    //     piece is after.
+    //   * IT CANNOT NULL THE SPEED, ONLY THE CLOSING RATE. `minVelocity` is
+    //     0.4 u/frame (game-core.js) and physics re-normalises velocity up to
+    //     it every step — DIRECTION-PRESERVING, which is the whole reason the
+    //     station-keep needs a strafe and not just a reverse thrust: reverse
+    //     thrust alone shrinks the radial component and the floor immediately
+    //     scales the same direction back up to 0.4, so the closing rate never
+    //     moves. Grow the across-track component at the same time and the
+    //     floor is spent on a direction that does not eat the standoff.
+    //   * THE NOSE IS HELD THROUGH THE PARK. The framing hold at the top of
+    //     update() and the camera assist in camera-system.js both switch off
+    //     when `gameState._warpExitT` goes null, i.e. the moment the ramp
+    //     finishes — which is exactly when the park starts. Without a hold of
+    //     its own the destination would drift off-centre during the settle,
+    //     and the reverse thrust (which acts along the NOSE) would stop being
+    //     anti-radial.
+    const _pkEw = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || null;
+    const _pk = (typeof gameState !== 'undefined' && gameState._arrivalSubject) || null;
+    //   * THE PARK OUTLIVES THE STAGING CLOCK, AND THE SLINGSHOT GLIDE.
+    //     Two guards used to switch it off in the middle of its own beat:
+    //
+    //     — `_arrivalSubjectFresh` bounds how long a STAGED subject may bias
+    //       aim (max(19 s, burn + 8 s) from staging). That window is sized for
+    //       the burn, so on a long leg it expires while the park is still
+    //       settling: measured 24 of 57 post-arrival samples fresh on a
+    //       23.5 s leg, i.e. the park lost authority ~6 s in, the phase
+    //       resumed, and the destination was thrust back out of frame
+    //       (10,962 u -> 12,898 u, ending behind the camera). Freshness gates
+    //       whether the park may START; once started, the park's OWN clock
+    //       (PARK_MAX_MS / PARK_SETTLE_MS) is what ends it.
+    //
+    //     — `slingshot.active` reads true for 25.6 s from CAPTURE, and a warp
+    //       arrival at a big body is exactly what trips a capture: the
+    //       framable radius that makes a body worth arriving at is the same
+    //       radius that gives it a gravity well. Measured across one sample of
+    //       7 destination legs, 3 arrived inside a live glide, and on every
+    //       one of them the park never ran a single frame — the ship coasted
+    //       in at 0.78, 0.54 and 0.78 u/frame of closing with the destination
+    //       framed at 19-29 deg, walking the standoff down (2,404 -> 1,753 u
+    //       over 15 s) with nothing braking it. That is the piece's own
+    //       failure, arriving by a different door. The thing that genuinely
+    //       owns the ship is the 1.6 s WHIP ARC (`gameState.slingshotWhip`),
+    //       which drives position on a rail and ignores keys; the glide after
+    //       it is ordinary flight with a different velocity cap, and braking
+    //       works normally through it (game-physics.js applies X and thrust
+    //       unconditionally). So stand down for the arc, not for the glide.
+    const _pkWhip = !!(typeof gameState !== 'undefined' && gameState.slingshotWhip);
+    if (_pk && _pk.obj && _pk.obj.position && _pk._flown &&
+        (_pk._parkT0 || _arrivalSubjectFresh(_pk)) && _pkEw &&
+        !_pkEw.active && !_pkEw.transitioning && !_pkEw.isJump && !_pkWhip &&
+        gameState.velocityVector && _arriveToTmp) {
+      if (!_pk._parkT0) {
+        _pk._parkT0 = Date.now();
+        _pk._parkFrom = Math.round(camPos().distanceTo(_pk.obj.position));
+      }
+      const _pkSpd = gameState.velocityVector.length();
+      _arriveToTmp.subVectors(_pk.obj.position, camPos());
+      const _pkRange = _arriveToTmp.length();
+      const _pkStand = _pk.stand || (_pk.arriveDist * 1.25);
+      // Closing rate on the bearing to the subject: >0 means the standoff is
+      // still shrinking. This, not |v|, is what decides whether the arrival
+      // holds.
+      //
+      // MEASURE THE RANGE, NOT ONLY OUR HALF OF IT. Projecting the ship's own
+      // velocity onto the bearing answers "am I flying at it", which is the
+      // right question only for a subject that stands still. Nebula primes do;
+      // ordinary system planets are on orbits, and one of them (Tarn Tera
+      // Sprawl IV) was measured receding at ~250 u/s while this projection
+      // read +0.9 u/frame of CLOSING — the park was thrusting to stop an
+      // approach that was not happening while the standoff ran away from
+      // 10,316 u to 11,918 u. What the arrival actually needs held is the
+      // RANGE, so difference the range itself and fall back to the projection
+      // only on the first frame, when there is no previous sample yet.
+      const _pkNow = Date.now();
+      const _pkProj = _pkRange > 1e-3 ?
+        gameState.velocityVector.dot(_arriveToTmp) / _pkRange : 0;
+      let _pkClose = _pkProj;
+      if (_pk._pkPrevT && _pkNow > _pk._pkPrevT) {
+        // Range rate per 60 fps frame, sign-flipped so ">0 means closing" is
+        // still what it says. Lightly smoothed — a raw one-frame difference at
+        // 4-10 u/frame of orbital motion is noisy enough to chatter the
+        // station-keep between reverse thrust and forward thrust.
+        const _frames = Math.max(0.25, (_pkNow - _pk._pkPrevT) / (1000 / 60));
+        const _rate = (_pk._pkPrevRange - _pkRange) / _frames;
+        _pkClose = _pk._pkCloseS == null ? _rate : (_pk._pkCloseS * 0.6 + _rate * 0.4);
+      }
+      _pk._pkCloseS = _pkClose;
+      _pk._pkPrevRange = _pkRange;
+      _pk._pkPrevT = _pkNow;
+      const _pkMargin = _pkRange - _pkStand;
+      // THE TEST, and why it is a state and not a clock. `_pkStopped` is the
+      // literal definition of arrived-and-staying: the ship is off cruise AND
+      // the range is neither shrinking nor growing faster than the bar. Both
+      // halves are measured this frame, so a leg cannot "finish braking" while
+      // still doing 3.9 u/frame the way the 2,600 ms timer let it.
+      //
+      // It is stricter than the obvious release rule ("let go once one more
+      // second of travel fits in the ground left to the standoff",
+      // `speed * 60 <= range - stand`). That rule permits the ship to keep
+      // CRUISING at 4 u/frame until it is one second out — a 5 s run-in on a
+      // leg that ends 1,446 u wide of its standoff, i.e. the arrival is still
+      // moving long after the beat the player is watching. At the floor this
+      // test's own release point puts `speed * 60` at 24 u, which fits inside
+      // any real standoff margin, so it never lets go EARLIER than that rule
+      // would — it just refuses to let go at cruise speed.
+      //
+      // Stopping WHERE THE BURN LEFT US, rather than coasting the rest of the
+      // way in to `stand`, is provably well framed: `maxOff` is derived (see
+      // _arrivalStandoff) as sqrt(maxRange² - stand²), so any range the framed
+      // cut can fire at, sqrt(along² + off²), is at most `maxRange` — the
+      // distance at which the subject still subtends 17 deg. Flaring on the
+      // spot cannot drop a framed arrival under the 15 deg bar.
+      //
+      // THE SIGN OF THE ERROR PICKS THE INPUT; THE SPEED ONLY PICKS HOW HARD.
+      // The first cut of this ran the stages off |v| alone — brake while fast,
+      // station-keep once slow — and that is wrong in both directions once the
+      // subject can move. Measured both ways:
+      //   * Kadetera-720 III, a system planet on its orbit, receded at ~550
+      //     u/s while the ship read 1.11 u/frame. |v| said "still fast, keep
+      //     braking", which is the one input that makes falling behind worse:
+      //     the standoff opened 4,117 -> 6,886 u in five seconds.
+      //   * Gating the flare on the ship's RADIAL speed instead fixed that and
+      //     broke the opposite case: a blown burn coasting away at 26 u/frame
+      //     has a negative radial term, so it fell through to the station-keep
+      //     and got FORWARD THRUST at 26 u/frame (measured: Chronos, ended
+      //     6,176 u out, 11.1 deg, behind the camera).
+      // So: the RANGE RATE decides which way to push, and speed only decides
+      // whether pushing is safe at all — above cruise nothing but the brake
+      // makes sense, because no station-keeping input is meaningful while the
+      // ship is still travelling.
+      const _pkCruising = _pkSpd > PARK_CRUISE_MAX;
+      const _pkFast = _pkCruising || _pkProj > PARK_FLARE_SPEED;
+      const _pkStopped = Math.abs(_pkClose) <= PARK_CLOSE_MAX && !_pkCruising;
+      const _pkAge = Date.now() - _pk._parkT0;
+      if (_pkAge < PARK_MAX_MS && (!_pkStopped ||
+          (_pk._parkedAt && Date.now() - _pk._parkedAt < PARK_SETTLE_MS))) {
+        // The park owns the stick for this frame. Whatever the phase asked for
+        // is overruled — it is running its cruise logic on a ship that is in
+        // the middle of an arrival beat.
+        const _k = keys();
+        _k.w = false; _k.s = false; _k.a = false; _k.d = false;
+        // Hold the destination on the nose: the framing hold and the camera
+        // assist have both just expired with the ramp, and the reverse thrust
+        // below acts along the nose.
+        if (window.orientTowardsTarget) window.orientTowardsTarget(_pk.obj);
+        if (_pkFast) {
+          // STAGE 1 — FLARE. Brake, plus physics' own post-jump deceleration
+          // while anything is still closing, which is what brings this inside
+          // the arrival beat instead of ~4 s after it. This also catches the
+          // blown-arrival case (`cut:blown` above): the ship is coasting away
+          // at travel speed, and the first thing it needs is to stop, whatever
+          // the geometry ends up being.
+          _k.x = true;
+          if (_pkClose > PARK_CLOSE_MAX) _pkEw.autoBraking = true;
+        } else {
+          // STAGE 2 — STATION-KEEP. Below the flare threshold the ship is at
+          // the engine's floor and only its DIRECTION is still negotiable.
+          _pkEw.autoBraking = false;
+          // THE DEAD BAND IS NOT SYMMETRIC ONCE WE ARE AT THE STANDOFF. A
+          // residual of +0.3 u/frame is 18 u/s of INWARD drift, which is
+          // invisible across the arrival beat and lethal if the ship is left
+          // sitting there: measured, a leg that parked correctly at 2,275 u
+          // (stand 2,129, closing 0.27) was still drifting in when the harness
+          // left it idle, and five minutes later read "MISSION FAILED — Ship
+          // destroyed by collision with Distant Nebula Epsilon Prime". Outward
+          // drift has no such consequence — it only ever loses framing, slowly
+          // — so inside the standoff the inward half of the band closes to
+          // zero and any approach at all gets answered.
+          const _pkCloseBar = (_pkRange <= _pkStand * 1.05) ? 0 : PARK_CLOSE_MAX;
+          if (_pkClose > _pkCloseBar) {
+            _k.s = true;   // reverse thrust: take the approach out of the drift
+          } else if (_pkClose < -PARK_CLOSE_MAX) {
+            // The standoff is OPENING — either the park over-corrected, or the
+            // subject is a planet on its orbit walking away from us (measured
+            // up to ~550 u/s). Same input either way: chase, so the standoff
+            // the burn bought is the one the player keeps looking at.
+            _k.w = true;
+          } else {
+            _k.x = true;   // in the deadband: bleed anything that builds up
+          }
+          // ...and put the floor somewhere harmless. The across-track part of
+          // the drift is what the min-velocity clamp should be spending itself
+          // on; grow it in whichever direction the burn already had, so the
+          // residual reads as a slow lateral slide past the arrival rather
+          // than a fight.
+          // Only while we are the ones closing: when the standoff is opening
+          // the floor is already pointed somewhere useful (at the subject),
+          // and spending it sideways would just widen the gap we are chasing.
+          if (_pkClose > PARK_CLOSE_MAX && _parkTanTmp && _parkRightTmp &&
+              typeof camera !== 'undefined') {
+            // Our OWN across-track velocity, so this uses the projection of
+            // the ship's velocity (`_pkProj`), not the range rate above — the
+            // subject's orbital motion is not something the min-velocity floor
+            // can be spent on.
+            _parkTanTmp.copy(gameState.velocityVector)
+              .addScaledVector(_arriveToTmp, -_pkProj / Math.max(1e-6, _pkRange));
+            if (_parkTanTmp.length() < PARK_TANGENTIAL_MIN) {
+              _parkRightTmp.set(1, 0, 0).applyQuaternion(camera.quaternion);
+              if (_parkTanTmp.dot(_parkRightTmp) >= 0) _k.d = true; else _k.a = true;
+            }
+          }
+        }
+      }
+      if (_pkStopped && !_pk._parkedAt) {
+        _pk._parkedAt = Date.now();
+        _pkEw.autoBraking = false;
+        ap._arrivalParks = (ap._arrivalParks || 0) + 1;
+        ap._lastArrivalPark = {
+          at: _pk._parkedAt,
+          // Which terminator actually ended this leg's burn — the proof that
+          // the cut/extension pair tiles the space with no dead band.
+          path: _pk._cutLogged ? ('cut:' + ((ap._lastArrivalCut && ap._lastArrivalCut.reason) || '?')) :
+                (_pk._burnExtMs ? 'extended' : 'stopwatch'),
+          extMs: _pk._burnExtMs || 0,
+          ms: _pkAge,
+          fromRange: _pk._parkFrom, range: Math.round(_pkRange),
+          stand: Math.round(_pkStand), margin: Math.round(_pkMargin),
+          speed: Math.round(_pkSpd * 100) / 100,
+          closing: Math.round(_pkClose * 100) / 100,
+          subject: (_pk.obj.userData && (_pk.obj.userData.name || _pk.obj.userData.type)) || 'body'
+        };
+        console.log('🛑 WARP ARRIVAL PARKED → ' + ap._lastArrivalPark.subject +
+          '  d=' + ap._lastArrivalPark.range + 'u (stand=' + ap._lastArrivalPark.stand +
+          ') closing=' + ap._lastArrivalPark.closing + ' u/f speed=' +
+          ap._lastArrivalPark.speed + ' u/f in ' + ap._lastArrivalPark.ms +
+          'ms via ' + ap._lastArrivalPark.path);
+      }
+    } else if (_pkEw && _pkEw.autoBraking && !_pkEw.isJump && !_pkEw.active) {
+      // The park borrowed physics' jump brake; hand it straight back the
+      // instant the park is no longer the thing driving (no subject staged, a
+      // new burn armed, a slingshot WHIP ARC took the ship). A real Jump owns
+      // this flag on its own and is excluded by `!isJump`.
+      _pkEw.autoBraking = false;
     }
 
     // NAV SYSTEM REFLECTS THE DEMO'S TARGET: the demo sets
@@ -3047,6 +3462,15 @@
   // armed burn still gets a live cut-off window.
   const ARRIVAL_CUT_GRACE_MS = 750;
 
+  // ...and how long the WIDE-MISS clause of the same fail-safe waits (see
+  // `_blown` in update()). That clause has no lateral term at all, so it is
+  // the one predicate that cannot tell "this burn missed" from "this burn has
+  // not finished turning yet" by geometry alone — it has to wait out the turn.
+  // Guidance is capped at 0.07 rad/frame, so a 180 deg swing takes ~45 frames:
+  // 750 ms at 60 fps, ~1.2 s at the 36 fps this was measured at. 2,500 ms is
+  // that with better than 2x margin.
+  const ARRIVAL_TURN_BUDGET_MS = 2500;
+
   // How the burn is kept alive when its clock expires before its geometry
   // arrives (see the extension clause in update()). One beat is ~15 frames at
   // 60 fps, so the extension is granular enough that the cut still decides the
@@ -3060,7 +3484,77 @@
   // should have extended ran only 1.9 s long and finished 7,646 u out / 9.27
   // deg). 900 ms cannot be skipped by any frame the sim will accept.
   const BURN_EXTEND_STEP_MS = 900;
+  // FLAT 12,000 ms WAS NOT A BUDGET, IT WAS A COIN FLIP. The shortfall this
+  // rescues is PROPORTIONAL — a burn armed in wall-clock milliseconds under-
+  // flies by roughly (60/fps - 1) of its own length — so a fixed ceiling
+  // covers a short leg twice over and a long one not at all. Measured on this
+  // 36 fps rig: an 11,016 ms leg needed 900 ms of top-up and arrived (Chronos
+  // Nebula Prime, cut framed at 29.9 deg); a 15,345 ms leg and a 10,000 ms leg
+  // both burned the whole 12,600 ms ceiling and still ended 11,634 u and
+  // 7,944 u short, at 3.2 and 6.2 deg. Scale it with the burn instead, keeping
+  // the old value as the floor for short legs, and cap the total so a warp
+  // still cannot become unbounded: worst case is 25 s armed + 25 s extension.
   const BURN_EXTEND_MAX_MS = 12000;
+  function _burnExtendBudget() {
+    const ew = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || {};
+    return Math.min(EW_BURN_MS_MAX,
+      Math.max(BURN_EXTEND_MAX_MS, (ew.boostDuration || 0) * 1.0));
+  }
+
+  // ── THE ARRIVAL PARK'S OWN NUMBERS ────────────────────────────────────────
+  // See the park block in update() for the measurement that made it a closed
+  // loop instead of a 2,600 ms timer.
+  //
+  // PARK_CLOSE_MAX is a CLOSING RATE along the line of sight, not a speed:
+  // what decides whether the destination the burn just framed stays framed is
+  // how fast the range is still shrinking, and that is the component of
+  // velocity on the bearing to the subject. It is deliberately just under the
+  // engine's own floor: `gameState.minVelocity` is 0.4 u/frame (game-core.js)
+  // and physics re-normalises velocity back up to it every step unless a warp
+  // or a slingshot is live, so 0.4 u/frame of drift is the slowest this ship
+  // is allowed to be. The park therefore cannot null the SPEED — it nulls the
+  // part of it that is pointed at the destination, which is the part that
+  // actually eats the standoff.
+  const PARK_CLOSE_MAX = 0.3;
+  // Speed above which the ship is still "carrying cruise" and the flare (brake
+  // + physics' post-jump deceleration) owns the frame. Set well clear of the
+  // 0.4 floor AND of PARK_TANGENTIAL_MIN below, so the flare can never fight
+  // the across-track drift the station-keep is deliberately building.
+  const PARK_FLARE_SPEED = 0.9;
+  // ...and the speed above which NO station-keeping input is meaningful, so
+  // the brake is the only thing the park may press. `gameState.maxVelocity` is
+  // 4 u/frame, so this sits just under ordinary cruise: the park can never
+  // hand the phase back a ship still travelling, and it still leaves ~7x the
+  // 0.4 u/frame floor of room for the chase below to match a body on an orbit.
+  const PARK_CRUISE_MAX = 3.0;
+  // How much ACROSS-track drift the station-keep aims for. The floor forces
+  // 0.4 u/frame of motion in whatever direction velocity points, so the only
+  // way to hold the closing rate under PARK_CLOSE_MAX is to point it across
+  // the line of sight: with the radial part at 0.3 and this much across it,
+  // the floored drift resolves to ~0.23 u/frame of closing — under the bar
+  // with margin, and it costs 0.42 u/frame (25 u/s) of lateral slide, which
+  // over a 5 s hold is 4 degrees of arc and about 5 u of range change at a
+  // 2,100 u standoff.
+  const PARK_TANGENTIAL_MIN = 0.42;
+  // How long the park keeps station AFTER it has stopped the ship, so the
+  // phase that resumes (flyToward, the combat re-acquire, the cruise fallback)
+  // cannot immediately thrust the arrival back out of frame. This is the beat
+  // the player is looking at: the destination held still, at the standoff the
+  // burn bought.
+  // 5,000 ms was measured too short by exactly the beat it was meant to hold:
+  // the park latches "stopped" ~1.5 s after the burn ends, so a 5 s settle
+  // expired 5.4 s after the streaks finished — and the moment it did, the
+  // phase took the stick back and swung the nose. Measured on Hyperion Nebula
+  // Prime: the STANDOFF stayed rock solid (2,226 -> 2,221 u, 0.8 % over the
+  // whole window) and the destination still ended up behind the camera at
+  // +8.0 s, because parking the ship and holding the shot are two different
+  // jobs and only the first one was still running. Hold for the whole beat the
+  // arrival is being looked at — the settle read plus the five seconds the
+  // standoff has to survive — and still finish inside PARK_MAX_MS.
+  const PARK_SETTLE_MS = 9000;
+  // Hard ceiling on the whole park so a pathological leg (subject on a fast
+  // orbit, ship wedged in a gravity well) always hands control back.
+  const PARK_MAX_MS = 12000;
 
   // Furthest a burn can be armed to reach — the reachability test every
   // staging path is gated on. This replaces `_oWarpBoostDist()` in those

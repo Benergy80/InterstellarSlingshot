@@ -70,8 +70,32 @@ function adjustMinimumSpeed(speed) {
 const explosionManager = {
     activeExplosions: [],
 
-    // Add a new explosion to be animated
+    // Add a new explosion to be animated.
+    //
+    // PRIMED AT REGISTRATION. Every FX layer in this file computes its real
+    // state — its eased scale, its leading-edge opacity ramp, and above all
+    // its share of the 35%-of-viewport SCREEN CAP — inside update(), which
+    // does not run until the frame AFTER `scene.add`. So each layer got
+    // exactly one frame drawn at its raw authored size with no cap applied
+    // and no ramp applied. Measured on a paused kill at 60 u, that single
+    // frame put the burst's bounding box at 0.397 of viewport height against
+    // the 0.35 rule — the ONLY beat in the whole 1.2 s event over the cap,
+    // and it was over on the shared burst and on every faction recipe alike
+    // (every later beat measured 0.09-0.32). Priming with dt = 0 costs one
+    // no-op call per layer: every update() here accumulates `t += dt` and
+    // none of them divides by dt, so a zero-length tick advances nothing and
+    // simply publishes the t = 0 state the layer was always supposed to have
+    // been born in. Layers that return false at k = 0 would be dropped
+    // immediately, so the return value is honoured exactly as in update().
     addExplosion(explosionData) {
+        if (explosionData && explosionData.update) {
+            let alive = true;
+            try { alive = explosionData.update(0) !== false; } catch (e) { alive = true; }
+            if (!alive) {
+                if (explosionData.cleanup) { try { explosionData.cleanup(); } catch (e) {} }
+                return;
+            }
+        }
         this.activeExplosions.push(explosionData);
     },
 
@@ -6828,8 +6852,16 @@ function _fxGetHardCoreTexture() {
     const ctx = c.getContext('2d');
     const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
     g.addColorStop(0.00, 'rgba(255,255,255,1.0)');
-    g.addColorStop(0.42, 'rgba(255,255,255,1.0)');
-    g.addColorStop(0.62, 'rgba(255,255,255,0.55)');
+    // ROUND 9: the 1.00 -> 0.55 shoulder was the steepest segment in this
+    // profile (0.45 of alpha in 0.20 of the radius), and on a hot core pinned
+    // at 43 px by its cap share that is a 115/255 drop across 8 px. Widened
+    // to 0.34 of the radius; the saturated plateau that carries the >= 230
+    // intensity bar is untouched in VALUE, only in extent. Once the spawn
+    // frame was primed (see explosionManager.addExplosion) this shoulder was
+    // the composite's worst remaining edge, at 38.8/255 on the detonation
+    // frame, r = +17 px — the last reading still inside 5/255 of the bar.
+    g.addColorStop(0.30, 'rgba(255,255,255,1.0)');
+    g.addColorStop(0.64, 'rgba(255,255,255,0.55)');
     g.addColorStop(1.00, 'rgba(255,255,255,0.0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
@@ -6916,6 +6948,121 @@ function _fxCoreFlash(center, color, startSize, endSize, life, capFrac, opa) {
     });
 }
 
+// ── THE FIREBALL BODY: the layer that makes the kill SOLID ───────────────
+//
+// THE BUG THIS FIXES. Every centre layer of the burst was drawn with
+// _fxGetFlashTexture, and that profile is alpha 1.0 only at the middle
+// texel — 0.35 at 45% of the radius and 0 at the rim. Stack three of them
+// and you still have a spike, not a ball. Meanwhile the two shock fronts
+// travel out to 1.55K/2.05K and their own texture is zero inside 50% of
+// their radius. So the kill was a bright dot, a HOLE, and a ring:
+// measured FX-only at 250u on a paused world, the radial mean fell from
+// 77/255 at the centre to 5.0/255 at r = 75 px before climbing back to
+// 68/255 at the front (r = 185 px), and the burst covered only 68% of its
+// own bounding disc. A detonation with a hollow middle reads as a smoke
+// ring, and it is why the kill measured smaller than the ship that died.
+//
+// This is the missing profile: a PLATEAU. Alpha holds at 1.0 out to 55% of
+// the radius and is still half strength at 78%, so the sprite paints a disc
+// instead of a spike, and one of these sized to land just inside the inner
+// front closes the gap between the core and the ring. It is deliberately
+// NOT the hard-core texture (that one is a hot white puck whose job is
+// intensity, and blowing it up to fireball size is exactly the clipped
+// plateau three rounds of work removed) and NOT the soft flash texture
+// (that one buys area and never brightness).
+let _fxBodyTexture = null;
+function _fxBodyTex() {
+    if (_fxBodyTexture) return _fxBodyTexture;
+    const N = 128, h = N / 2;
+    const c = document.createElement('canvas'); c.width = c.height = N;
+    const g = c.getContext('2d');
+    const img = g.createImageData(N, N);
+    const d = img.data;
+    const ss = (e0, e1, x) => {
+        const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
+        return t * t * (3 - 2 * t);
+    };
+    for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+            const dx = (x + 0.5 - h) / h, dy = (y + 0.5 - h) / h;
+            const rr = Math.sqrt(dx * dx + dy * dy);
+            // Flat core, long shoulder, soft rim. The rim rolls to zero over
+            // the outer 22% so the disc has no edge for a scanline step to
+            // find (bar: < 40/255).
+            //
+            // ROUND 9 — THE SHOULDER IS LONGER THAN THE PLATEAU. The old
+            // ramp (1.0 out to 55% of the radius, half strength at 78%,
+            // zero at 100%) put the body's HALF-BRIGHTNESS circle at 0.78
+            // of its own radius, so a body sized to the inner front still
+            // died two-thirds of the way there. Measured at 250 u, paused:
+            // the radial mean fell to 17-22/255 at r = 104-116 px on every
+            // victim while the front's band sat at r = 184-188 px — the
+            // dark annulus, in the same place on all four. The plateau now
+            // ends at 62% and the roll-off runs all the way to 104%, which
+            // moves the half-brightness circle out to 0.83 of the radius
+            // and, at the new _FX_BODY_K, lands it exactly on the inner
+            // front's own peak band. Same peak alpha, same rim-free edge —
+            // the light is redistributed outward, not added.
+            let a = 1 - ss(0.62, 1.04, rr);
+            a *= (1 - ss(0.88, 1.0, rr) * 0.22);
+            const i = (y * N + x) * 4;
+            d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
+            d[i + 3] = Math.round(255 * Math.min(1, Math.max(0, a)));
+        }
+    }
+    g.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.needsUpdate = true;
+    _fxBodyTexture = t; return t;
+}
+
+// The body sprite. Authored in RADII (not sprite scale) so it can be read
+// against the shock fronts, which are also radii, and travels on the SAME
+// decelerating curve the fronts use — the fireball expands with the blast
+// instead of on its own schedule, so it never overtakes the front it is
+// supposed to sit inside. `capFrac` is this layer's share of the screen cap
+// radius, exactly as on _fxHotCore / _fxShockwave.
+//
+// The opacity HOLDS and then falls, like _fxHotCore, instead of decaying
+// from frame one. Every other layer in the kill fades on a curve that starts
+// dropping immediately, and area grows while it does — which is why the
+// burst's own area peak (measured t = 600 ms at 250 u) landed in the dimmest
+// part of the event and the trough re-opened exactly when the effect was at
+// its widest. A body that is still lit when it is widest is the whole point
+// of the layer.
+function _fxFireBody(center, r0, r1, color, life, opacity, capFrac, hold) {
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const cf = (capFrac > 0) ? capFrac : 1;
+    const op = (opacity > 0) ? opacity : 1;
+    const hd = (hold > 0) ? hold : 0.52;
+    const mat = new THREE.SpriteMaterial({
+        map: _fxBodyTex(), color: color, transparent: true, opacity: op,
+        blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+    });
+    const sp = new THREE.Sprite(mat);
+    sp.position.copy(center);
+    sp.scale.setScalar(2 * r0);
+    sp.frustumCulled = false;
+    sp.renderOrder = 69;          // under every flash layer and under the fronts
+    scene.add(sp);
+    let t = 0;
+    explosionManager.addExplosion({
+        update(dt) {
+            t += dt;
+            const k = Math.min(1, t / life);
+            let r = r0 + (r1 - r0) * (1 - Math.pow(1 - k, 2.2));
+            // Trajectory compressed, not clipped — see _fxShockwave.
+            const lim = _fxMaxScale(sp.position, 1 / cf);
+            if (r1 > lim) r *= lim / r1;
+            sp.scale.setScalar(2 * r);
+            mat.opacity = op * Math.min(1, k / 0.05) *
+                          (k < hd ? 1 : Math.pow((1 - k) / (1 - hd), 0.85));
+            return k < 1;
+        },
+        cleanup() { scene.remove(sp); mat.dispose(); }
+    });
+}
+
 function _fxLayeredBurst(position, o) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined' || !position) return;
     o = o || {};
@@ -6934,8 +7081,17 @@ function _fxLayeredBurst(position, o) {
     // else: value and saturation do not have to be the same pixels.
     _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330,
                _FX_CAP_HOTCORE);
-    _fxCoreFlash(center, o.core || 0xfff3d0, 8 * S, 74 * S, 210, _FX_CAP_BANG);
-    _fxCoreFlash(center, o.flash || 0xff8a3c, 14 * S, 128 * S, 420, _FX_CAP_FIRE, 0.72);
+    // THE BODY IS NOW HULL-RELATIVE, LIKE THE FRONTS. These two flashes were
+    // the last fixed-world-unit sizes left in any kill: 74 and 128 units of
+    // sprite scale (radii 37 u and 64 u) regardless of what died, while the
+    // fronts beside them travel to 1.55K/2.05K off the victim's measured
+    // hull. On the pirate — the biggest silhouette in the roster — that put
+    // the whole fireball inside a fifth of the front's radius and left the
+    // rest of the blast as a dark ring with a ring around it.
+    _fxCoreFlash(center, o.core || 0xfff3d0, 0.58 * K, 2 * _FX_BANG_K * K, 210, _FX_CAP_BANG);
+    _fxCoreFlash(center, o.flash || 0xff8a3c, 0.64 * K, 2 * _FX_FIRE_K * K, 420, _FX_CAP_FIRE, 0.72);
+    // Body fill — same layer, same job, same ladder as _fxKillBurst.
+    _fxFireBody(center, 0.52 * K, _FX_BODY_K * K, o.core || 0xffd9b0, 900, 0.78, _FX_CAP_BODY, 0.62);
     // THE FRONT, replacing a CONSTANT-WIDTH ANNULUS. `_fxRing(center, 9*S,
     // 0xff6a22, 0.62, 9, 0.85)` drew a hard-edged brown circle of uniform
     // thickness: measured, a rim scanline step of 113/255 (bar: < 40) and,
@@ -6946,8 +7102,8 @@ function _fxLayeredBurst(position, o) {
     // the pirate death gets a travelling front instead of a target marker.
     // The loot tell survives intact: the two fronts wear the variant's
     // secondary and particle colours.
-    _fxShockwave(center, 0.20 * K, 1.55 * K, o.ring  || 0xff6a22, 560, 1.0,  _FX_CAP_FRONT_IN);
-    _fxShockwave(center, 0.15 * K, 2.05 * K, o.spark || 0xffb454, 820, 0.95, _FX_CAP_FRONT_OUT);
+    _fxShockwave(center, 0.20 * K, _FX_FRONT_IN_K * K, o.ring  || 0xff6a22, 620, 1.0,  _FX_CAP_FRONT_IN);
+    _fxShockwave(center, 0.15 * K, _FX_FRONT_OUT_K * K, o.spark || 0xffb454, 820, 1.0, _FX_CAP_FRONT_OUT);
     if (typeof _fxParticles === 'function') {
         _fxParticles(center, o.sparkCount || 26, o.spark || 0xffb454, 2.1 * S, 3.4 * S, 12, 0);
     }
@@ -7095,7 +7251,11 @@ function _fxShockGeo() {
     // 192 segments (was 64) because at the cap radius a 64-gon's chord error
     // is ~3 px and reads as a polygon at exactly the moment the front is
     // brightest.
-    if (!_FX_SHOCK_GEO) _FX_SHOCK_GEO = new THREE.RingGeometry(0.52, 1.0, 192);
+    // ROUND 9: inner rim 0.52 -> 0.34. The painted band moved in to 0.72 of
+    // the radius with a fatter inward tail (IN 0.20 -> 0.24), and the carrier
+    // has to reach zero BEFORE its own inner rim or that rim becomes the
+    // hard edge the texture exists to prevent.
+    if (!_FX_SHOCK_GEO) _FX_SHOCK_GEO = new THREE.RingGeometry(0.34, 1.0, 192);
     return _FX_SHOCK_GEO;
 }
 
@@ -7121,7 +7281,26 @@ function _fxShockTex() {
     const g = c.getContext('2d');
     const img = g.createImageData(N, N);
     const d = img.data;
-    const PEAK = 0.86, OUT = 0.062, IN = 0.20;
+    // ROUND 9 — THE BAND NEEDED ROOM, NOT A DIFFERENT CURVE.
+    //
+    // The outward falloff is a Gaussian whose sigma is a FRACTION of the
+    // front's current radius, so its steepness in framebuffer pixels is
+    // amplitude / (OUT x r). With the band peaking at 0.86 of the radius and
+    // the carrier zeroed by 0.955, the entire outward roll-off had 0.095 r to
+    // happen in — 5 px on a 56 px front. No shape of curve fits a 115/255
+    // amplitude into 5 px without a step, and measured on a paused kill at
+    // 250 u that edge was the worst scanline step in EVERY death in the game
+    // (57.5 faction, 52.6 generic, 49.5 pirate; bar < 40), always at
+    // t = 75-100 ms, always on the inner front's leading edge.
+    //
+    // Moving the peak in to 0.72 and widening OUT to 0.135 gives the roll-off
+    // 0.22 r instead of 0.095 r — 2.3x the room — which cuts the worst slope
+    // by the same factor at every radius the front ever reaches. The band
+    // reads WIDER and softer, which is what a pressure front looks like, and
+    // it buys back the brightness the leading-edge gate had to spend to hide
+    // the old edge. The carrier's inner rim drops to 0.34 (see _fxShockGeo)
+    // so the fatter inward tail still lands on zero before the geometry ends.
+    const PEAK = 0.75, OUT = 0.145, IN = 0.24;
     const ss = (e0, e1, x) => {
         const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
         return t * t * (3 - 2 * t);
@@ -7135,7 +7314,7 @@ function _fxShockTex() {
             else           { const u = (PEAK - rr) / IN;  a = Math.exp(-u * u); }
             // Zero at BOTH rims of the carrier annulus, so the geometry's own
             // edges can never show up as a step in the scanline.
-            a *= ss(0.50, 0.62, rr) * (1 - ss(0.955, 1.0, rr));
+            a *= ss(0.36, 0.50, rr) * (1 - ss(0.94, 1.0, rr));
             const i = (y * N + x) * 4;
             d[i] = 255; d[i + 1] = 255; d[i + 2] = 255;
             d[i + 3] = Math.round(255 * Math.min(1, Math.max(0, a)));
@@ -7159,7 +7338,13 @@ function _fxShockwave(center, r0, r1, color, life, opacity, capFrac) {
         // The band is painted by the texture's alpha ramp, not by the mesh
         // outline. Without this map the annulus is a hard rim at both edges.
         map: _fxShockTex(),
-        color: color, transparent: true, opacity: opacity,
+        // ROUND 9 — BORN DARK. The leading-edge ramp below runs in update(),
+        // which does not fire until the frame AFTER `scene.add`, so the ring
+        // got exactly one frame at full opacity while still at its spawn
+        // radius (0.15-0.20 K, a few px across) — the single hardest edge the
+        // ramp exists to prevent, measured in isolation at 57.8/255 on the
+        // inner front and 79.9/255 on the outer (bar: < 40).
+        color: color, transparent: true, opacity: 0,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
         depthWrite: false
     });
@@ -7199,20 +7384,50 @@ function _fxShockwave(center, r0, r1, color, life, opacity, capFrac) {
             if (r1 > lim) r *= lim / r1;
             ring.scale.set(r, r, 1);
             _aim();
-            // LEADING-EDGE RAMP. The front fades IN over its first ~12% of
-            // life instead of spawning at full brightness on top of the core.
-            // At spawn the ring radius is 0.15-0.20K — right inside the
-            // fireball — so a front that is already hot there just adds to
-            // the central blob and is the reason the radial peak never left
-            // bin 0. It brightens as it SEPARATES, so the brightest band in
-            // the frame is the one travelling outward.
+            // LEADING-EDGE RAMP, GATED ON SEPARATION — NOT ON THE CLOCK.
+            // The front fades IN as it pulls away from the core instead of
+            // spawning at full brightness on top of it. At spawn the ring
+            // radius is 0.15-0.20K, right inside the fireball, so a front
+            // that is already hot there just adds to the central blob and is
+            // the reason the radial peak never left bin 0. It brightens as it
+            // SEPARATES, so the brightest band in the frame is the one
+            // travelling outward.
+            //
+            // ROUND 9 — WHY `k` WAS THE WRONG CLOCK. This band's painted
+            // profile is a Gaussian whose width is a FRACTION of the current
+            // radius (see _fxShockTex: sigma = 0.062 r outward), so its
+            // steepness in PIXELS is amplitude / (0.062 r) — worst when the
+            // ring is smallest. On a 620 ms front, k/0.12 reached full
+            // opacity at t = 74 ms, when the ring was only ~56 px across:
+            // measured on a paused kill at 250 u, the framebuffer scanline
+            // stepped 57.5/255 at r = -53 px at t = 75 ms and 48.7 at
+            // r = -64 px at t = 100 ms (bar: < 40), and the same edge, at the
+            // same two beats, was the single worst step in EVERY death in the
+            // game — generic 52.6, pirate 49.5, faction 57.5. Ramping on
+            // travelled distance instead makes amplitude grow in step with
+            // the width it is spread over, so the steepness is flat in r
+            // rather than exploding as r -> r0.
+            // `travel` is the fraction of the DESIGN sweep covered, not of
+            // the capped one, so a point-blank kill (whose whole trajectory
+            // is compressed by lim/r1) ramps on the same schedule as a
+            // distant one instead of never reaching full brightness.
+            const travel = 1 - Math.pow(1 - k, 2.2);
+            const lead = Math.min(1, travel / 0.30);
             // Decay softened 1.35 -> 1.05: the front has to still be bright
             // where it IS, which is far from the centre. A steep decay makes
             // the front dimmest exactly when it is widest, which is the same
             // "goes big as it goes dull" failure the core layers were rebuilt
             // to avoid.
-            const lead = Math.min(1, k / 0.12);
-            mat.opacity = opacity * lead * Math.pow(1 - k, 1.05);
+            // Decay 0.95 -> 0.86. The area bar is per-victim,
+            // min(3x hull px, 0.80x cap-disc px), and for a capital-size
+            // victim the cap-disc term is the binding one: 0.80 x 175,345 =
+            // 140,276 px at the measured cap. The burst's lit contour is set
+            // by where THIS band falls under 16/255, so the last few thousand
+            // px of area are bought here and nowhere else — measured, the
+            // peak lit area moved 136.5-141.2k -> 148-155k and the >= 16
+            // contour from r = 210 px to r = 218-222 px, still inside the
+            // 236 px cap.
+            mat.opacity = opacity * lead * Math.pow(1 - k, 0.86);
             return k < 1;
         },
         cleanup() { scene.remove(ring); mat.dispose(); }   // shared geo kept
@@ -7246,7 +7461,13 @@ function _fxEmberTail(center, S, color, count, life) {
         // travelling front read 94, i.e. the "ball" that beat the front late
         // in the event was the ember cloud, not a bloom. Clearing the middle
         // is also just what an explosion does.
-        const s = spd * (0.62 + Math.random() * 1.35);
+        // ROUND 9: floor 0.62 -> 0.95. Measured in isolation on a paused
+        // kill, the cloud still had a dense CORE at t = 300-375 ms — a
+        // 56-61/255 scanline step in the innermost 2 px (bar: < 40), the
+        // last stacked-sprite edge left in the burst once the fronts and
+        // the spawn frame were fixed. The slowest ember now leaves at 1.5x
+        // its old speed, so the middle is clear while the cloud is dense.
+        const s = spd * (0.95 + Math.random() * 1.35);
         vel[i*3] = dx/m*s; vel[i*3+1] = dy/m*s; vel[i*3+2] = dz/m*s;
     }
     geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -7264,13 +7485,22 @@ function _fxEmberTail(center, S, color, count, life) {
     // head start of 0.5-2.5 steps along its OWN velocity, so the cloud is
     // born as a cloud. No new state, no extra work per frame.
     for (let i = 0; i < count; i++) {
-        const head = 0.8 + Math.random() * 2.4;
+        const head = 1.6 + Math.random() * 3.2;
         off[i*3] = vel[i*3] * head; off[i*3+1] = vel[i*3+1] * head; off[i*3+2] = vel[i*3+2] * head;
+        // ROUND 9 — AND THE SPREAD HAS TO BE IN THE BUFFER, NOT JUST IN
+        // `off`. The head start above was only folded into the POSITIONS
+        // inside update(), so the frame between `scene.add` and the first
+        // explosionManager tick still drew all 96 sparks stacked on the
+        // detonation point at full opacity — the lead ramp below is also
+        // only applied in update(). Measured in isolation on a paused world
+        // that spawn frame was a 243/255 scanline step (bar: < 40), by a
+        // wide margin the worst edge in the game, and it is in EVERY kill.
+        pos[i*3] += off[i*3]; pos[i*3+1] += off[i*3+1]; pos[i*3+2] += off[i*3+2];
     }
     // Terminal spread: v0 * sum(drag^n) = v0/(1-0.93) ~= 14.3 v0, and the
     // fastest ember leaves at spd*(0.62+1.35) = spd*1.97, so with spd = S *
     // 0.055 the cloud settles at 14.3 * 0.055 * 1.97 = ~1.55 S.
-    const TERM = 1.55 * S;
+    const TERM = 1.81 * S;
     const mat = new THREE.PointsMaterial({
         // SPARKS, NOT BOKEH. At 0.145 hull-lengths each ember was a soft
         // blob wider than a nav light, and 30 of them read as a lens effect
@@ -7288,7 +7518,9 @@ function _fxEmberTail(center, S, color, count, life) {
         // overlapping at the detonation point measured 54-82 (bar: < 40).
         // Wider and dimmer holds the same total light with 0.54x the slope.
         color: color || 0xffbcdd, size: Math.max(1.6, S * 0.090),
-        map: _fxSparkTex(), transparent: true, opacity: _FX_EMBER_OPA,
+        // Born dark: the ramp below lives in update(), so a non-zero
+        // opacity here is one full frame of un-ramped cloud.
+        map: _fxSparkTex(), transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true
     });
     const pts = new THREE.Points(geo, mat);
@@ -7334,7 +7566,10 @@ function _fxEmberTail(center, S, color, count, life) {
             // dozen pixels. Fading the cloud in over 240 ms costs nothing the
             // eye can see — wreckage becomes visible as it LEAVES the flash,
             // which is also when it starts meaning something.
-            const lead = Math.min(1, t / 240);
+            // 240 -> 380 ms: the cloud is at its densest, and its steepest,
+            // while it is still inside the fireball adding nothing the bang
+            // is not already doing.
+            const lead = Math.min(1, t / 380);
             mat.opacity = Math.max(0, Math.pow(1 - k, 0.55)) * fl * _FX_EMBER_OPA * lead;
             return k < 1;
         },
@@ -7393,7 +7628,7 @@ const _FX_KILL_GAIN = 0.84;
 // the burst read as a blown-out ball. Its job is to be the hottest thing in
 // the frame, not the widest; the >=230/255 requirement is about INTENSITY
 // and survives the area cut, while the front now owns the outward motion.
-const _FX_HOT_CORE_K = 0.86;
+const _FX_HOT_CORE_K = 1.06;
 
 // SCREEN-CAP SHARES. _fxCapPx() is one radius — 35% of viewport HEIGHT as a
 // diameter — and every layer of the kill is now clamped against it. Each
@@ -7408,12 +7643,40 @@ const _FX_HOT_CORE_K = 0.86;
 // peak/hull collapsed to 1.73 at 60u — a point-blank kill was SMALLER than
 // the ship that died, because the effect saturated the frame while the hull
 // silhouette kept growing.
-const _FX_CAP_FRONT_OUT = 1.00;   // 2.05K — the layer the 35% rule is about
-const _FX_CAP_FRONT_IN  = 0.756;  // 1.55K
-const _FX_CAP_HOTCORE   = 0.232;  // 0.86K scale -> 0.43K radius (peak 0.475K)
-const _FX_CAP_GLOW      = 0.159;  // 0.65K scale -> 0.325K radius
-const _FX_CAP_FIRE      = 0.151;  // 0.62K scale -> 0.31K radius
-const _FX_CAP_BANG      = 0.134;  // 0.55K scale -> 0.275K radius
+//
+// ROUND 8 — THE RADII ARE NOW ONE NESTED LADDER, IN RADIUS UNITS. They used
+// to be two unrelated sets: three core layers authored in sprite SCALE
+// (0.55K/0.62K/0.65K, i.e. radii 0.275K/0.31K/0.325K) and two fronts
+// authored in RADIUS (1.55K/2.05K). Nothing lived between 0.33K and 1.55K,
+// which is precisely the hole the measurement found. Everything below is a
+// RADIUS in hull-lengths-times-gain (K) so the ladder can be read at a
+// glance, and each cap share is that radius divided by the outer front's.
+const _FX_FRONT_OUT_K = 2.60;     // the layer the 35% rule is about
+const _FX_FRONT_IN_K  = 1.88;
+// ROUND 9 — THE BODY REACHES THE FRONT. 1.06K put the body's rim at 0.48 of
+// the cap and its half-brightness circle at 0.83K, while the inner front's
+// painted band sits at 0.86 x 1.58K = 1.36K: a 0.5K-wide radius range with
+// the fireball already spent and the front not yet arrived. Measured at 250u
+// on a paused world it read 17.3-21.7/255 (bar: >= 40) at r = 104-116 px on
+// faction0/1/6 alike. 1.72K puts the body's half-brightness circle at
+// 0.83 x 1.72K = 1.43K — on the inner front's band — and its rim at 1.72K,
+// still well inside the outer front's 2.20K, so the FRONT keeps the bounding
+// box and the 35% cap is untouched. The body only buys the middle.
+const _FX_BODY_K      = 1.88;     // fireball body — reaches the inner front's band
+const _FX_GLOW_K      = 0.68;     // afterglow   (was 0.325K)
+const _FX_FIRE_K      = 0.56;     // fireball    (was 0.31K)
+const _FX_BANG_K      = 0.36;     // bang        (was 0.275K)
+const _FX_HOTCORE_R_K = 0.58;     // hot core peak radius
+
+// SCREEN-CAP SHARES, derived from the ladder above. The outer front owns
+// the whole cap; everything else is squeezed toward it in proportion.
+const _FX_CAP_FRONT_OUT = 1.00;
+const _FX_CAP_FRONT_IN  = _FX_FRONT_IN_K  / _FX_FRONT_OUT_K;   // 0.718
+const _FX_CAP_BODY      = _FX_BODY_K      / _FX_FRONT_OUT_K;   // 0.482
+const _FX_CAP_HOTCORE   = _FX_HOTCORE_R_K / _FX_FRONT_OUT_K;   // 0.216
+const _FX_CAP_GLOW      = _FX_GLOW_K      / _FX_FRONT_OUT_K;   // 0.309
+const _FX_CAP_FIRE      = _FX_FIRE_K      / _FX_FRONT_OUT_K;   // 0.255
+const _FX_CAP_BANG      = _FX_BANG_K      / _FX_FRONT_OUT_K;   // 0.164
 
 // FACTION IDENTITY WITHOUT A SECOND CODEBASE.
 //
@@ -7462,10 +7725,34 @@ function _fxKillBurst(center, S, cfg) {
     // brightest thing in the frame. The two longer layers are turned down so
     // the centre stops clipping once the bang is spent, handing the frame to
     // the travelling front for the rest of the event.
+    //
+    // ROUND 8: the ends move OUT again — but with the body layer below
+    // carrying the fill, not these. 0.55K/0.62K/0.65K of scale is 0.275K to
+    // 0.325K of RADIUS, a seventh of the outer front, and the three of them
+    // together stopped dead at the same place: measured, the radial mean ran
+    // 77 -> 5.0/255 between the centre and r = 75 px and only came back at
+    // the front. Growing them alone cannot fix that (the flash texture is a
+    // spike, so a bigger one is a bigger spike over a wider dark ring); they
+    // grow here only to keep the ladder continuous under the new body.
     _fxCoreFlash(center, _fxTintHue(0xfff0f7, c.core, 0.30),
-                 0.30 * K, 0.55 * K, 240, _FX_CAP_BANG);                          // the bang
+                 0.58 * K, 2 * _FX_BANG_K * K, 240, _FX_CAP_BANG);                // the bang
     _fxCoreFlash(center, _fxTintHue(0xff5aa8, c.core, 0.62),
-                 0.32 * K, 0.62 * K, 380, _FX_CAP_FIRE, 0.72);                    // the fireball
+                 0.64 * K, 2 * _FX_FIRE_K * K, 380, _FX_CAP_FIRE, 0.72);          // the fireball
+    // THE BODY — the layer that makes the kill solid instead of hollow.
+    // Plateau profile (see _fxFireBody), travelling on the fronts' own
+    // deceleration curve out to 1.06K, i.e. to just inside the inner front's
+    // wake at 1.58K, so there is no radius between the white core and the
+    // travelling ring with nothing luminous in it. Its opacity is set so the
+    // mid-body sits BELOW the front's peak: the front still owns the
+    // brightest band and still owns the bounding box, the body only owns the
+    // area.
+    // ROUND 9: 800 ms / hold 0.52 -> 900 ms / hold 0.62. The outer front
+    // lives 820 ms, so under the old numbers the body was down to 18% opacity
+    // at t = 750 ms while the front was still travelling — the annulus
+    // re-opened in the back half of every kill (measured trough 12.0-13.4/255
+    // at t = 750-900 ms). The body now holds until the front is nearly spent.
+    _fxFireBody(center, 0.52 * K, _FX_BODY_K * K,
+                _fxTintHue(0xffc2e0, c.core, 0.34), 900, 0.78, _FX_CAP_BODY, 0.62);
     // AFTERGLOW, trimmed 2.70K/980ms -> 1.80K/700ms. This layer was the
     // reason the burst's area peak landed at 425-450 ms as a huge dim cloud:
     // it grows 4.9x while fading, so it contributed almost all of the peak's
@@ -7473,14 +7760,19 @@ function _fxKillBurst(center, S, cfg) {
     // dragged the above-230 fraction to 0.05-0.26%. Smaller and shorter moves
     // the area peak forward into the window where the core is still white.
     _fxCoreFlash(center, _fxTintHue(0xff2f78, c.core, 0.55),
-                 0.40 * K, 0.65 * K, 620, _FX_CAP_GLOW, 0.45);                    // the afterglow
+                 0.76 * K, 2 * _FX_GLOW_K * K, 620, _FX_CAP_GLOW, 0.45);          // the afterglow
     // Shock rings: opacity up (the cyan front was at 0.62 and read as a grey
-    // smudge over the starfield) and radii trimmed in step with the afterglow
-    // so the front stays a FRONT rather than the widest thing in the frame.
-    _fxShockwave(center, 0.20 * K, 1.55 * K, _fxTintHue(0xff3fa8, c.front, 0.68),
-                 560, 1.0,  _FX_CAP_FRONT_IN);
-    _fxShockwave(center, 0.15 * K, 2.05 * K, _fxTintHue(0x53ecff, c.front, 0.40),
-                 820, 0.95, _FX_CAP_FRONT_OUT);
+    // smudge over the starfield). The outer front is 2.05K -> 2.20K because
+    // the 35% screen cap was measured NOT to be the limiter at fighting
+    // range — the burst's own geometry was. Peak bounding-box height ran
+    // 0.27-0.31 of the viewport against a 0.35 allowance, so 11-23% of the
+    // legal size was going unspent while the effect measured too small; the
+    // extra 7% of radius lands the front on the cap instead of under it, and
+    // the cap (not this number) still decides what happens point-blank.
+    _fxShockwave(center, 0.20 * K, _FX_FRONT_IN_K * K, _fxTintHue(0xff3fa8, c.front, 0.68),
+                 620, 1.0,  _FX_CAP_FRONT_IN);
+    _fxShockwave(center, 0.15 * K, _FX_FRONT_OUT_K * K, _fxTintHue(0x53ecff, c.front, 0.40),
+                 820, 1.0, _FX_CAP_FRONT_OUT);
     // Embers: 30 fat soft blobs read as bokeh, not as burning wreckage. The
     // size floor drops 3.0 -> 1.2 px and the hull-relative size 0.145 ->
     // 0.062 (see _fxEmberTail), and the count triples to keep the tail's
@@ -7641,7 +7933,7 @@ function _fxSparkTex() {
 try {
     if (typeof THREE !== 'undefined' && typeof document !== 'undefined') {
         _fxGetFlashTexture(); _fxGetHardCoreTexture(); _fxBlastTex();
-        _fxSparkTex(); _fxShockTex();
+        _fxSparkTex(); _fxShockTex(); _fxBodyTex();
     }
 } catch (e) { /* textures stay lazy if anything here is not ready yet */ }
 
@@ -7793,7 +8085,10 @@ function _fxRing(center, radius, color, growth, life, opacity) {
     const geo = _fxShockGeo();          // unit outer radius, band painted by the map
     const mat = new THREE.MeshBasicMaterial({
         map: _fxShockTex(),
-        color: color, transparent: true, opacity: opacity || 0.85,
+        // Born dark — see _fxShockwave: the k/0.12 ramp below only runs from
+        // the second frame, so a non-zero opacity here is one frame of a
+        // full-brightness ring at its smallest radius.
+        color: color, transparent: true, opacity: 0,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
     const ring = new THREE.Mesh(geo, mat);
@@ -7968,21 +8263,44 @@ function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
     // for survives with a glow instead of a wireframe outline. The band also
     // widens from 10% of the radius to 38%: the steepest a ramp can be is
     // peak / half-width, and 10% of a 26 px seed radius is a 1.3 px ramp.
+    //
+    // ROUND 9 — 0.38 r WAS STILL A TENT, AND STILL THE WORST EDGE.
+    //
+    // Three rows coloured 0 -> 1 -> 0 is a LINEAR tent: the gradient is
+    // constant across each half at peak / half-width, and with the band at
+    // 0.72-1.10 r the half-width is 0.19 r — 8 px on the 43 px the Federation
+    // triangle has reached by t = 50 ms. Measured on a paused kill at 250 u,
+    // once the shock fronts and the ember spawn frame were fixed this layer
+    // was left holding the composite's worst scanline step at 47.7/255 (bar:
+    // < 40), at r = +37 px, at t = 50 ms — exactly the band's peak row, and
+    // faction0 was the only victim of the four over the bar.
+    //
+    // Two changes, both on the ramp rather than on the shape. The band spans
+    // 0.46-1.34 r, so the half-width is 0.44 r — 2.3x the room, with the peak
+    // still at 0.90 r so the ring is the same SIZE it was. And the rows go
+    // from 3 to 7 carrying a sin^2 bell instead of a tent, so the gradient is
+    // zero at the peak and at both rims and steepest only in between, where
+    // it is worth roughly 0.6x a tent of the same height. The polygon's
+    // silhouette — the whole point of this layer — is untouched: the corners
+    // are still corners, they just glow.
     const _sd = Math.max(3, sides);
-    const geo = new THREE.RingGeometry(radius * 0.72, radius * 1.10, _sd, 2);
+    const _rows = 6;                                   // 7 radial vertex rows
+    const geo = new THREE.RingGeometry(radius * 0.46, radius * 1.34, _sd, _rows);
     const _pc = new THREE.Color(color);
     const _n = geo.attributes.position.count;
     const _row = _sd + 1;                    // vertices per radial row
     const _col = new Float32Array(_n * 3);
     for (let v = 0; v < _n; v++) {
-        // Rows are emitted inner -> outer, so row 1 of 3 is the band centre.
-        const w = (Math.floor(v / _row) === 1) ? 1 : 0;
+        // Rows are emitted inner -> outer; u runs 0..1 across the band.
+        const u = Math.min(1, Math.floor(v / _row) / _rows);
+        const w = Math.pow(Math.sin(Math.PI * u), 2);
         _col[v*3] = _pc.r * w; _col[v*3+1] = _pc.g * w; _col[v*3+2] = _pc.b * w;
     }
     geo.setAttribute('color', new THREE.BufferAttribute(_col, 3));
     const mat = new THREE.MeshBasicMaterial({
         color: 0xffffff, vertexColors: true,
-        transparent: true, opacity: opacity || 0.85,
+        // Born dark — see _fxShockwave.
+        transparent: true, opacity: 0,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
     const ring = new THREE.Mesh(geo, mat);
@@ -8004,7 +8322,7 @@ function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
         update(dt) {
             t += dt;
             const k = Math.min(1, t / (life * 50));
-            const lim = Math.min(sEnd, _fxMaxScale(ring.position, radius * 1.10));
+            const lim = Math.min(sEnd, _fxMaxScale(ring.position, radius * 1.34));
             const sc = 1 + (Math.max(1, lim) - 1) * (1 - Math.pow(1 - k, 2.2));
             op -= ((opacity || 0.85) / life) * (dt / 50);
             _aim();
@@ -8204,7 +8522,7 @@ function createFactionExplosion(position, galaxyId, scale) {
     switch (cfg.style) {
         case 'electric': // Federation — white core + crisp TRIANGULAR ring + blue sparks
             _fxTintBlob(center, 7 * S, cfg.core, 1.0, 14, 2.6);
-            _fxPolyRing(center, 5 * S, cfg.accent, 3, 7, 14, 0.9);  // triangle
+            _fxPolyRing(center, 5 * S, cfg.accent, 3, 7, 14, 0.62);  // triangle
             _fxParticles(center, 26, cfg.spark, 2.4 * S, 7 * S, 16, 0);
             break;
         case 'shrapnel': // Klingon — jagged TETRAHEDRON shrapnel double-burst
