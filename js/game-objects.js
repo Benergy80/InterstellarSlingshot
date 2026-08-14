@@ -8807,6 +8807,22 @@ function createExoticCoreNebulas() {
 // and findNearestTwinNebulaCenter() skips the escort entirely — a landmark
 // you are told to fly to must not be one that follows you.
 // =============================================================================
+// THE HOLD BAND — read together with _NEB_NEAR_FADE_START. These three
+// numbers say where the escort keeps a cloud; that constant says where the
+// near-field ramp starts throwing its ink away. If the ramp starts inside the
+// band, the escort spends its whole budget dragging clouds to exactly the
+// distance where the ramp discards them, which is what the pair used to do
+// (ramp at 0.90 vs a band of 0.32-1.10: every held cloud discounted, a
+// measured median 0.14 of an authored 0.34). The ramp now starts at 0.45,
+// below the band, so 0.45-1.10 renders at full authored strength.
+//
+// PLACE stays at 0.70 and was measured, not assumed. Pushing it out to 0.85
+// (the obvious move once the ramp is out of the way) costs ink for nothing: a
+// single cloud's measured contribution peaks at 0.55-0.75 radii and is down
+// ~40% by 0.85 (see the table above _NEB_NEAR_FADE_START), and a live 100-
+// probe run at 0.85 shifted the held median from 0.73-0.80 to 0.83 radii and
+// dropped the layer's median contribution from ~32/255 to 26.6/255. There is
+// no longer anything to buy out there — 0.70 is already clear of the ramp.
 const _NEB_ESCORT_SNAP_DR  = 1.10;  // re-place once a cloud drifts past this many radii
 const _NEB_ESCORT_NEAR_DR  = 0.32;  // ...or once the ship has flown down INTO it
 const _NEB_ESCORT_PLACE_DR = 0.70;  // ...and drop it back at this many radii
@@ -19543,30 +19559,52 @@ if (typeof window !== 'undefined') window.updateNebulaSkyboxOpacity = updateNebu
 // radii the same layer added 95-97/255 and the frame hit 127-129. That is not
 // a nebula, it is the magenta whiteout, and it eats the dogfight.
 //
-// So the ramp is now `k = (d/R)^2`, clamped to [0.10, 1]:
+// So the ramp is `k = (d/R)^2` below the threshold, clamped to [0.10, 1].
 //
-//     k / (d/R)^2  =  1  =  constant, for every d/R below 1
+// WHERE THE THRESHOLD GOES is the whole argument, and the premise that put it
+// at 0.90 — "a cloud's contribution goes as k/(d/R)^2, so k = (d/R)^2 makes
+// the screen contribution flat" — is measurably false. It is the right law for
+// a point source in open space; it is the wrong law for a 5,000u ball of
+// sprites you fly into, because the frustum stops containing the cloud long
+// before you reach its centre. Measured, one escort cloud alone (Atlantis,
+// R = 5,440), world paused, k pinned to 1, same-frame readback of frame mean
+// with the cloud shown vs hidden, at four angles between its centre and
+// forward (contribution in /255):
 //
-// i.e. the layer's SCREEN CONTRIBUTION IS FLAT once you are inside one
-// radius, instead of exploding as you close. Physically that is the honest
-// answer for the same reason the old ramp gave the honest answer at the
-// centre: these sprites stand in for an integral through a column of gas, and
-// once you are inside the medium the column stops getting longer as you move.
-// Compositionally it is better too — closing in now spreads the same ink over
-// more sky (a veil that wraps the frame) rather than concentrating it into a
-// hot magenta blob, and it makes the escort's hold distance a free parameter
-// for COVERAGE instead of a brightness knob that has to be re-tuned.
+//     d/R      0.15  0.25  0.35  0.45  0.55  0.65  0.75  0.85  0.95  1.10
+//     centred   0.3   0.9   1.5   8.6  20.0  24.4  24.5  20.9  16.8  14.2
+//     25deg     0.4   0.9  15.6  33.4  44.1  44.5  39.8  32.9  26.7  17.0
+//     50deg     0.0  17.0  39.7  58.1  68.9  68.8  52.2  35.5  25.1  15.9
+//     70deg    12.6  33.8  60.8  75.5  81.8  58.1  36.5  22.2  14.9   8.9
 //
-// The one setpoint that remains is the threshold itself, because the flat
-// level is 1/START^2 — it is the layer's surface-brightness knob and the only
-// one. 0.90 is where a live 26-probe demo run lands the volumetric layer at a
-// median 20/255 against a >=12 requirement, with the frame at a median ~55
-// inside its 45-75 band and the painted dome behind it at ~15. Raising it
-// dims the layer as 1/START^2; lowering it brightens the same way. Nothing
-// else in this piece needs a brightness tuning any more, which is the point
-// of making k/(d/R)^2 constant.
+// The curve PEAKS at 0.55-0.75 radii and falls away on both sides. It does not
+// explode as you close — it collapses, because past ~0.5 radii the cloud is
+// wider than the frame and every further metre pushes more of it out of shot.
+// So there is nothing to hold flat between 0.45 and 1.1: the ramp there was
+// pure loss, and it was landing on exactly the clouds the escort works hardest
+// to keep near. Measured live over 55 same-frame A/B probes of the demo (each
+// frame rendered twice, once per ramp, nothing else changed): at START 0.90
+// the volumetric layer added a median 8.4/255 and p99 sat at 167; at START
+// 0.45 the same frames read a median 14.4/255 (1.71x) and p99 229, with 95%
+// of frames clearing the 200 star-pop bar instead of 0%, dead-black unchanged
+// at 0.09%, and clipped pixels still only 0.17% median / 0.64% worst.
+//
+// 0.45 is where the whiteout actually starts, and that is the only job left
+// for this ramp. Sweeping the camera in to a cloud centre with the whole near
+// complex live, the frame mean crosses out of the 45-75 band between 0.45 and
+// 0.35 radii and reaches 108-130/255 by 0.25 — the magenta whiteout. Below
+// 0.45 the ramp bites hard (k = 0.60 at 0.35, 0.31 at 0.25, floor by 0.14),
+// which is what keeps that case survivable; the escort's own recycle at 0.32
+// radii means the ship should rarely be down there at all.
+//
+// Raising the threshold does not dim the layer uniformly — it dims only the
+// band between the new threshold and the old one, which is precisely the band
+// the escort holds the clouds in. That is why this number and
+// _NEB_ESCORT_PLACE_DR / _NEB_ESCORT_NEAR_DR have to be read together: the
+// ramp must start BELOW the escort's hold band or the two cancel out.
 // =============================================================================
-const _NEB_NEAR_FADE_START = 0.90;  // in cloud radii — untouched outside this
+const _NEB_NEAR_FADE_START = 0.45;  // in cloud radii — untouched outside this
+                                    // (below the escort hold band; see above)
 const _NEB_NEAR_FADE_FLOOR = 0.10;  // never darker than this, even dead centre
 function updateVolumetricNebulaProximity() {
     if (typeof nebulaClouds === 'undefined' || !nebulaClouds || !nebulaClouds.length) return;

@@ -364,6 +364,17 @@
     // opened; see the 20260813 gap audit). Populated by measureStingerSlice(),
     // never populated = fall back to the <audio>-element path below.
     stingerBuf: {},
+    // { key: seconds } — where inside the file the ONSET actually is, as
+    // opposed to `spec.at` (the top of the whole slice window measured
+    // offline). For a slice that is cut right on its transient (kill) these
+    // are the same instant; for a slice cut a beat early so its attack has
+    // room to breathe (warpExit, discovery) the transient can sit 0.6-0.7s
+    // INTO the slice, behind a fade-in with no attack of its own — see the
+    // measureStingerSlice() comment above the onset-window walk. Populated
+    // there, alongside stingerSliceRMS; playStinger() starts playback from
+    // THIS offset instead of spec.at so the hit actually lands on the beat
+    // instead of firing at the top of a fade nobody hears as a hit.
+    stingerOnsetAt: {},
     // { key: AudioBufferSourceNode } — the currently-sounding one-shot buffer
     // source for that key, if the buffer path fired it. stopStinger() halts
     // and disconnects it; a fresh node is created per fire (one-shot nodes
@@ -1134,6 +1145,30 @@
   // This is what a makeup gain has to divide out: two slices at the same
   // `spec.gain` can differ by several dB in raw content, which is the "~5 dB
   // more" the 20260810c critique measured on top of the slider-fraction bug.
+  //
+  // The 300ms-sustained-MAX fix above still has one hole (20260813b gap
+  // audit): "the slice's loudest 300ms window" is not always where the hit
+  // ARRIVES. Three of these slices (warpExit, discovery, weakly bossSpawn)
+  // are cut on a fade-in with no transient at the cut point at all — the
+  // first 300ms measures 17.7-27.5 dB below the eventual max, and that max
+  // sits 0.6-0.7s deep into the slice. Dividing by the global max is still
+  // the right SIZE of makeup gain, but playing the slice from `spec.at` and
+  // aiming that makeup at the LATE max means the loud, on-target part is the
+  // swell tail — the moment of arrival itself plays ~17dB under target and
+  // the "hit" shows up 600-700ms late. Live: warpExit measured -11.6dB in
+  // the first 450ms and only caught up (+5.4dB) 450-1200ms after the fact.
+  // kill is the control that shows the mechanism: its slice starts ON the
+  // transient (first-300ms == max, 0.0dB), and it lands +7.4dB on-beat.
+  // Fix: also record the ONSET window during the walk below — the first
+  // window that gets within ONSET_WITHIN_DB of the eventual max, i.e. the
+  // point the slice first becomes "the loud part" rather than a lead-in to
+  // it. For a slice already cut on its transient (kill) this is window 0,
+  // same as before. For a fade-in (warpExit, discovery) this walks forward
+  // to just before the swell peaks, which is what actually starts sounding
+  // like a hit. playStinger() then starts playback from THAT position
+  // (st.stingerOnsetAt[key], not spec.at) and the servo divides by THAT
+  // window's own RMS (not the global max) — so the makeup gain is now sized
+  // for, and aimed at, the same instant that's actually playing first.
   // Fire-and-forget, cached in st.stingerSliceRMS[key]: 'pending' while the
   // fetch/decode is in flight, a number once measured, null if it failed (in
   // which case playStinger() falls back to the legacy el.volume-only path
@@ -1149,6 +1184,13 @@
                                           // 4 windows/sec, plenty to find the
                                           // loudest sustained passage without
                                           // costing much compute
+  // A window counts as "the onset" once it's within this many dB of the
+  // slice's own eventual max — see the fade-in fix note above. Close enough
+  // to catch a real transient's rise (kill lands on window 0, 0dB down),
+  // loose enough that a slow swell's onset doesn't collapse back onto its
+  // single loudest instant (which would just re-create the bug this fixes).
+  const ONSET_WITHIN_DB = 3;
+  const ONSET_TOLERANCE = Math.pow(10, -ONSET_WITHIN_DB / 20);
 
   function measureStingerSlice(key) {
     if (st.stingerSliceRMS[key] !== undefined) return;   // already going
@@ -1175,6 +1217,11 @@
         let maxRms = 0;
         const win = Math.max(1, Math.round(sr * SLICE_SUSTAIN_WINDOW_S));
         const hop = Math.max(1, Math.round(sr * SLICE_SUSTAIN_HOP_S));
+        // Every window's own {start sample, rms} — kept (not just the
+        // running max) so the onset pass below can walk them in order once
+        // the eventual max is known. Cheap: at 4 windows/sec even the
+        // longest slice (liberation, 3.10s) is ~12 entries.
+        const windows = [];
         for (let w = startSample; w + win <= endSample; w += hop) {
           let sumSq = 0;
           for (let c = 0; c < nCh; c++) {
@@ -1182,12 +1229,16 @@
             for (let i = w; i < w + win; i++) sumSq += data[i] * data[i];
           }
           const rms = Math.sqrt(sumSq / (win * nCh));
+          windows.push({ w: w, rms: rms });
           if (rms > maxRms) maxRms = rms;
         }
+        let onsetSample = startSample;
+        let onsetRms = maxRms;
         // Slice shorter than one whole 300ms window — every real stinger's
         // `dur` is >= 0.50s (kill, the shortest) so this shouldn't trigger
         // in practice, but guard the pathological case with a single
-        // whole-slice window rather than measuring nothing.
+        // whole-slice window rather than measuring nothing. Onset collapses
+        // to the slice start here — there's no room to walk forward in.
         if (maxRms === 0 && endSample > startSample) {
           let sumSq = 0, n = 0;
           for (let c = 0; c < nCh; c++) {
@@ -1195,15 +1246,52 @@
             for (let i = startSample; i < endSample; i++) { sumSq += data[i] * data[i]; n++; }
           }
           maxRms = (n > 0) ? Math.sqrt(sumSq / n) : 0;
+          onsetSample = startSample;
+          onsetRms = maxRms;
+        } else if (windows.length > 0) {
+          // Onset = the FIRST window that's already within ONSET_WITHIN_DB
+          // of the eventual max — see the fade-in fix note above
+          // measureStingerSlice(). For kill (transient at the cut) that's
+          // windows[0] itself. For a fade-in (warpExit, discovery) this
+          // walks forward past the quiet lead-in to just before the swell
+          // peaks — the point that first actually sounds like the hit.
+          const threshold = maxRms * ONSET_TOLERANCE;
+          for (let i = 0; i < windows.length; i++) {
+            if (windows[i].rms >= threshold) {
+              onsetSample = windows[i].w;
+              onsetRms = windows[i].rms;
+              break;
+            }
+          }
         }
-        st.stingerSliceRMS[key] = (maxRms > 0) ? maxRms : null;
+        // Servo divisor is the ONSET window's own RMS, not the global max —
+        // the makeup gain now targets the same instant that plays first
+        // (see st.stingerOnsetAt below), not a swell tail that hasn't
+        // arrived yet when the hit is supposed to land.
+        st.stingerSliceRMS[key] = (onsetRms > 0) ? onsetRms : null;
+        st.stingerOnsetAt[key] = spec.at + (onsetSample - startSample) / sr;
       })
-      .catch(() => { st.stingerSliceRMS[key] = null; });
+      .catch(() => { st.stingerSliceRMS[key] = null; st.stingerOnsetAt[key] = null; });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // ADAPTIVE MIX — stingers
   // ═══════════════════════════════════════════════════════════════════════════
+  // Best known seek/start target for this key's slice: the measured ONSET
+  // (st.stingerOnsetAt[key], from measureStingerSlice's fade-in fix — see
+  // the comment above that function) once it has landed, spec.at otherwise
+  // (before that measurement lands, or if it failed). Shared by every place
+  // that seeks or checks buffering on the <audio>-element fallback path, so
+  // the arm-check, the warm-park, and the actual fire-time seek all target
+  // the SAME instant instead of the arm-check clearing a point upstream of
+  // where fire time actually seeks to.
+  function stingerFireAt(key) {
+    const spec = STINGERS[key];
+    if (!spec) return 0;
+    const onset = st.stingerOnsetAt[key];
+    return (typeof onset === 'number') ? onset : spec.at;
+  }
+
   function stingerEl(key) {
     const spec = STINGERS[key];
     if (!spec) return null;
@@ -1220,7 +1308,7 @@
     // playhead to 0 and fires loadedmetadata again — we have to re-park.
     a.addEventListener('loadedmetadata', () => {
       if (!a.paused) return;                    // never yank a hit mid-flight
-      try { a.currentTime = spec.at; } catch (e) { /* ignore */ }
+      try { a.currentTime = stingerFireAt(key); } catch (e) { /* ignore */ }
     });
     // The moment this hit actually has data, drain anything waiting on it.
     // This is what makes a cold-start discovery land instead of vanishing.
@@ -1249,7 +1337,7 @@
     const spec = STINGERS[key];
     if (!el || !spec || st.stingerBroken[key]) return false;
     if (el.readyState < 3) return false;
-    return bufferedAt(el, spec.at);
+    return bufferedAt(el, stingerFireAt(key));
   }
 
   // Ask a hit to buffer.  Cheap and idempotent — safe to call on a timer.
@@ -1263,7 +1351,8 @@
       if (el.readyState >= 1) {
         // Parking the playhead ON the transient is what nudges the media
         // engine into fetching that region; harmless if already there.
-        if (Math.abs(el.currentTime - spec.at) > 0.02) el.currentTime = spec.at;
+        const fireAt = stingerFireAt(key);
+        if (Math.abs(el.currentTime - fireAt) > 0.02) el.currentTime = fireAt;
         // Escalation for stragglers only: a hit that is still short of
         // HAVE_FUTURE_DATA after a few polite nudges is allowed to fetch
         // ahead.  We never do this for the whole bank up front — 6 × ~5 MB
@@ -1339,7 +1428,7 @@
     if (el) {
       el.pause();
       el.volume = 0;
-      if (spec) { try { el.currentTime = spec.at; } catch (e) { /* ignore */ } }
+      if (spec) { try { el.currentTime = stingerFireAt(key); } catch (e) { /* ignore */ } }
     }
   }
 
@@ -1416,6 +1505,18 @@
     if (!st.enabled || st.muted) return false;
     if (st.stingerBroken[key]) return false;
 
+    // Where playback actually starts. measureStingerSlice() has (by the time
+    // this fires, for any key that's ever been asked for) already walked the
+    // slice and found the ONSET window — the point the transient itself
+    // begins, which for a slice cut on a fade-in (warpExit, discovery) can
+    // sit 0.6-0.7s AFTER spec.at. Starting from spec.at there plays a silent
+    // lead-in the servo (aimed at the onset's own RMS — see
+    // measureStingerSlice) then over-amplifies, and the actual hit doesn't
+    // arrive until the fade-in has already been running for most of a
+    // second. Falls back to spec.at itself when the onset hasn't been
+    // measured yet (not a number) — same as before this fix.
+    const onsetAt = (typeof st.stingerOnsetAt[key] === 'number') ? st.stingerOnsetAt[key] : spec.at;
+
     const now = Date.now();
     // Per-type cooldown is measured in whole seconds — far longer than any
     // hold window — so this really is "not this one", not "not yet".
@@ -1432,7 +1533,7 @@
     //   BUFFER (primary) — measureStingerSlice() already fetches+decodes the
     //   whole file for its RMS pass; st.stingerBuf[key] is that same decode,
     //   kept instead of thrown away. Firing from it via an
-    //   AudioBufferSourceNode.start(t, spec.at, spec.dur) is sample-accurate
+    //   AudioBufferSourceNode.start(t, onsetAt, spec.dur) is sample-accurate
     //   on the Web Audio clock — no seek, so no async gap between "the
     //   envelope opens" and "the transient actually arrives". The 20260813
     //   gap audit measured 6 of 7 slices still reporting currentTime===0 at
@@ -1598,7 +1699,7 @@
     stopStinger(key);
     if (bufSrc) {
       st.stingerBufSrc[key] = bufSrc;
-      try { bufSrc.start(wa.ctx.currentTime, spec.at, spec.dur); } catch (e) { /* ignore */ }
+      try { bufSrc.start(wa.ctx.currentTime, onsetAt, spec.dur); } catch (e) { /* ignore */ }
       // Release whatever this fire's nodes are holding once the source
       // itself has genuinely finished — stopStinger() already tears them
       // down on the envelope's own clock, this is just the backstop for a
@@ -1612,7 +1713,7 @@
         }
       };
     } else if (el) {
-      try { el.currentTime = spec.at; } catch (e) { /* ignore */ }
+      try { el.currentTime = onsetAt; } catch (e) { /* ignore */ }
       el.volume = 0;
       const p = el.play();
       if (p && p.catch) p.catch(() => {});
@@ -2921,21 +3022,34 @@
         // 'element' for a key that's really firing sample-accurately off
         // its buffer, which is exactly backwards for what this exists to
         // show a harness.
+        // onsetAt/specAt: TEST-ONLY window into the fade-in fix (see the
+        // comment above measureStingerSlice()) — a harness can diff these
+        // directly instead of inferring the onset shift from playback
+        // timing. onsetAt is what actually gets used as the play offset;
+        // specAt is the raw authored cut point it may have walked forward
+        // from.
+        const onsetAtDbg = st.stingerOnsetAt[k];
+        const onsetDbg = (typeof onsetAtDbg === 'number') ? +onsetAtDbg.toFixed(3) : onsetAtDbg;
         if (buf && typeof buf === 'object') {
           // Buffer path (the normal case post-fix): fires sample-accurately
           // off the cached decode; `playing` reflects the live one-shot
           // AudioBufferSourceNode, if any. An <audio> element may ALSO
           // exist (warmed as a fallback that's simply unused) — irrelevant
           // to what actually sounds.
-          sting[k] = { route: 'buffer', armed: true, playing: !!st.stingerBufSrc[k], servo: servo };
+          sting[k] = { route: 'buffer', armed: true, playing: !!st.stingerBufSrc[k], servo: servo,
+            onsetAt: onsetDbg, specAt: STINGERS[k].at };
         } else if (el) {
           sting[k] = { route: 'element', ready: el.readyState, t: +el.currentTime.toFixed(2), vol: +el.volume.toFixed(3),
             playing: !el.paused,
             // armed = the transient itself is buffered, which is the only
             // thing that decides whether the hit fires on time on this path.
-            armed: bufferedAt(el, STINGERS[k].at), pre: el.preload,
+            // Checked at the SAME offset playStinger() will actually seek
+            // to (stingerFireAt) — checking spec.at here while fire time
+            // seeks to the onset would report "armed" for a point upstream
+            // of where playback really starts.
+            armed: bufferedAt(el, stingerFireAt(k)), pre: el.preload,
             tries: st._warmTries[k] || 0,
-            servo: servo };
+            servo: servo, onsetAt: onsetDbg, specAt: STINGERS[k].at };
         } else {
           sting[k] = (buf === 'pending') ? 'decoding' : 'cold';
         }

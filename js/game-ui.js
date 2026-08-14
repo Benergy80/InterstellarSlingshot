@@ -2544,9 +2544,13 @@ let _universeDecorLive = false;      // nebula dots / path lines are attached
 // contact in flight, re-keying stationary clumps for no reason.
 const MAP_CLUSTER_CELL_PX = 5;
 // Minimum time a tier's chosen bucketing pitch (cellPx, possibly widened
-// by _bucketWithBudget's 1.7x escalation loop) must hold before it's
-// allowed to change again — see _bucketWithBudget. Kills pitch-flap churn
-// where a borderline item count widens one refresh and narrows the next.
+// by _bucketWithBudget's 1.7x escalation loop) must hold before a
+// RE-TIGHTEN pass (trying a finer pitch again) is even attempted — see
+// _bucketWithBudget. The pitch itself now WIDENS on demand every refresh
+// (as soon as the latched pitch no longer fits), not on this timer; this
+// constant only throttles how often we bother checking whether a field
+// that's shrunk back down could use a finer pitch again, so that check
+// can't itself become a source of churn.
 const MAP_PITCH_LATCH_MS = 1000;
 // Hard ceiling on DOM nodes the WHOLE radar refresh may claim — VIPs,
 // hostiles, objectives, allies AND scenery all draw from this ONE pool now,
@@ -2889,16 +2893,26 @@ function _bucketWithBudget(items, cellPxStart, target, individualMax, keyPrefix)
         return g2;
     };
 
-    // Latch the chosen pitch per tier (keyPrefix) for >=1s. Recomputing
-    // cellPx fresh every refresh means a borderline frame (item count or
-    // spread wobbling right at the fit/overflow line) can widen this frame
-    // and narrow back the next, re-keying EVERY cell in the tier purely
-    // because the pitch changed — nothing in the world actually moved.
-    // That accounted for the other slice of aggregate churn (worst single
-    // refreshes: whole aggregate set replaced). Holding the pitch steady
-    // is safe even if it's briefly stale for a growing cluster: the
-    // overflow fold below still guarantees the node cap regardless of how
-    // many cells the stale pitch produces.
+    // Latch the chosen pitch per tier (keyPrefix), FIT-driven rather than
+    // timer-driven. Recomputing cellPx fresh on a flat timer means a field
+    // that's merely growing (procedural streaming adding scenery as the
+    // ship flies, nothing actually unstable) still gets a brand-new —
+    // almost always slightly coarser — cellPx every time the timer expires,
+    // and because cellWorld is derived from cellPx, THAT changes every
+    // single cell's key (floor(wx/cellWorld)), replacing the entire
+    // aggregate set on a ~1 Hz cadence for no reason (measured live: 84-96%
+    // churn bursts spaced ~1.1-1.3s apart — the timer's own cadence).
+    //
+    // Round-2 gap (measured, distinct from the tie-break fix below): keep
+    // the SAME pitch for as long as it still fits the CURRENT items —
+    // checking fit costs one extra _bucketAt() pass, far cheaper than the
+    // wholesale rekey a pitch CHANGE forces on the whole tier — and only
+    // pay for a fresh widen-from-scratch pass when it genuinely no longer
+    // fits (population grew past what it can hold). A pitch that's gone
+    // stale in the OTHER direction (field shrank, a finer pitch might fit
+    // now and show more individual detail) gets at most one re-tighten
+    // attempt per MAP_PITCH_LATCH_MS — bounded so that check can't itself
+    // become a source of churn.
     if (!_bucketWithBudget._pitchState) _bucketWithBudget._pitchState = new Map();
     const _pitchMap = _bucketWithBudget._pitchState;
     const _nowMs = Date.now();
@@ -2907,20 +2921,37 @@ function _bucketWithBudget(items, cellPxStart, target, individualMax, keyPrefix)
     let cellPx;
     let groups;
     let total = 0;
-    if (_latched && (_nowMs - _latched.at) < MAP_PITCH_LATCH_MS) {
+    if (_latched) {
         cellPx = _latched.cellPx;
         groups = _bucketAt(cellPx);
         groups.forEach(g => { total += cost(g); });
-    } else {
-        cellPx = cellPxStart;
+    }
+
+    const _needsWiden = !_latched || total > target;
+    const _dueForRetighten = _latched && !_needsWiden &&
+        (_nowMs - _latched.at) >= MAP_PITCH_LATCH_MS && total < target * 0.6;
+    if (_needsWiden || _dueForRetighten) {
+        let _cPx = cellPxStart;
+        let _grp, _tot = 0;
         for (let attempt = 0; attempt < 4; attempt++) {
-            groups = _bucketAt(cellPx);
-            total = 0;
-            groups.forEach(g => { total += cost(g); });
-            if (total <= target || attempt === 3) break;
-            cellPx *= 1.7;
+            _grp = _bucketAt(_cPx);
+            _tot = 0;
+            _grp.forEach(g => { _tot += cost(g); });
+            if (_tot <= target || attempt === 3) break;
+            _cPx *= 1.7;
         }
-        _pitchMap.set(keyPrefix, { cellPx, at: _nowMs });
+        // A re-tighten pass that lands back on the SAME pitch (the common
+        // case — the field wasn't actually oversized relative to what it
+        // needs) must not touch `groups`/`total`/the latch timestamp, or
+        // it pays the rekey cost of a "change" that isn't one.
+        if (_needsWiden || _cPx !== cellPx) {
+            cellPx = _cPx;
+            groups = _grp;
+            total = _tot;
+            _pitchMap.set(keyPrefix, { cellPx, at: _nowMs });
+        } else {
+            _pitchMap.set(keyPrefix, { cellPx, at: _nowMs });
+        }
     }
 
     if (total <= target) {
@@ -2943,7 +2974,22 @@ function _bucketWithBudget(items, cellPxStart, target, individualMax, keyPrefix)
         for (let i = 0; i < a.group.length; i++) if (a.group[i].dotPriority > pa) pa = a.group[i].dotPriority;
         for (let i = 0; i < b.group.length; i++) if (b.group[i].dotPriority > pb) pb = b.group[i].dotPriority;
         if (pb !== pa) return pb - pa;
-        return b.group.length - a.group.length;
+        if (b.group.length !== a.group.length) return b.group.length - a.group.length;
+        // Deterministic tiebreak (measured churn root cause): scenery
+        // routinely produces dozens of cells tied on BOTH priority and
+        // size (e.g. 26 singleton dotPriority-60 cells in one live
+        // snapshot), and the cut regularly lands mid-tie. Without this,
+        // ties fell through to Array#sort's stability guarantee, which
+        // just preserves `ranked`'s incoming order — Map insertion order,
+        // i.e. candidate collection order — and that order reshuffles
+        // every refresh as the world moves, so a DIFFERENT ~10 of the 26
+        // identical cells won the cut each frame even though nothing
+        // about the scene had changed. Sorting the tie by cellKey (which
+        // encodes world-space cell identity, not scan order) makes the
+        // winning set depend only on which cells exist, so it stays
+        // fixed frame-to-frame — this is what actually kills the
+        // aggregate-blip churn the tie was silently causing.
+        return a.cellKey < b.cellKey ? -1 : (a.cellKey > b.cellKey ? 1 : 0);
     });
 
     const entries = [];
@@ -2996,7 +3042,17 @@ function renderClusteredMapDots(candidates, allyCandidates) {
     for (let i = 0; i < candidates.length; i++) {
         const c = candidates[i];
         if (c.mustIndividual || c.dotPriority >= 90) mustTier.push(c);
-        else if (c.dotPriority > 60) tactical.push(c);
+        // Round-2 gap (critic-caught): civilian_ship is assigned
+        // dotPriority exactly 60 (see the type table below), so a strict
+        // `> 60` sent it into the scenery tier — competing for scenery's
+        // tiny leftover budget against hundreds of asteroids/planets
+        // instead of the tactical tier its salience actually belongs in.
+        // `>= 60` moves it into tactical while renderIndividualMapDot /
+        // renderAggregateMapDot's OWN `dotPriority <= 60` check (a
+        // separate, deliberately-unchanged threshold) still renders it
+        // dim/desaturated — this only fixes which budget it draws from,
+        // not how loud it looks.
+        else if (c.dotPriority >= 60) tactical.push(c);
         else scenery.push(c);
     }
 
@@ -3115,10 +3171,17 @@ function renderIndividualMapDot(c, raised) {
         : '0 0 4px ' + c.dotColor;
     let opacity = '1';
     let outline = 'none';
+    // Fill colour, separate from c.dotColor: scenery overrides this to a
+    // single muted grey (see SCENERY_DOT_FILL) instead of its own vivid
+    // per-type hue at reduced opacity — the desaturation critics measured
+    // as missing (bright #00ff88 civilian traffic was the loudest thing
+    // on the disc even at opacity 0.45).
+    let dotColor = c.dotColor;
     if (c.dotPriority <= 60) {
         dotSize = '3px';
         shadow = 'none';
         opacity = '0.45';
+        dotColor = SCENERY_DOT_FILL;
     } else if (c.dotPriority >= 90) {
         dotSize = c.dotPriority >= 110 ? '9px' : '7px';
         outline = '1px solid rgba(255,255,255,0.9)';
@@ -3160,7 +3223,7 @@ function renderIndividualMapDot(c, raised) {
         chevronDeg = _applyChevronDot(dot, s, c.px, c.py, c.dotColor, parseFloat(dotSize) || 7);
     } else {
         if (s.size !== dotSize) { dot.style.width = dotSize; dot.style.height = dotSize; s.size = dotSize; }
-        if (s.bg !== c.dotColor) { dot.style.backgroundColor = c.dotColor; s.bg = c.dotColor; }
+        if (s.bg !== dotColor) { dot.style.backgroundColor = dotColor; s.bg = dotColor; }
         if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
         if (s.outline !== outline) { dot.style.outline = outline; s.outline = outline; }
     }
@@ -3182,7 +3245,7 @@ function renderIndividualMapDot(c, raised) {
     // the rim (see _applyMapDotStalk's round-2 writeup). Now that the
     // stalk never moves the dot, ALL contacts need the caret to still
     // read their elevation — so this fires unconditionally.
-    _syncRimElevCaret(dot, s, c.dotColor, c.relY, true);
+    _syncRimElevCaret(dot, s, dotColor, c.relY, true);
     // Elevation cue: grow the stalk into a drop-line hanging off the dot's
     // OWN exact (px, py) — see _applyMapDotStalk. The dot's position is
     // never touched here any more (the function always returns 0); `dy`
@@ -3192,7 +3255,7 @@ function renderIndividualMapDot(c, raised) {
     // pass 0/0, suppressing the stalk entirely — their elevation reads
     // from the caret alone.
     const _dyRange = c.rimClamped ? null : _stalkDyRange(c.px, c.py);
-    _applyMapDotStalk(dot, s, c.relY, c.dotColor,
+    _applyMapDotStalk(dot, s, c.relY, dotColor,
         c.rimClamped ? 0 : _dyRange.min, c.rimClamped ? 0 : _dyRange.max);
     const tf = 'translate(' + c.px + 'px,' + c.py + 'px) translate(-50%,-50%)' +
         (isOffScaleHostile ? ' rotate(' + chevronDeg + 'deg)' : '');
@@ -3257,6 +3320,11 @@ function renderAggregateMapDot(cellKey, group) {
     const isScenery = dominant.dotPriority <= 60;
     const isHostile = dominant.dotPriority >= 90;
     let size, shadow, opacity, outline;
+    // Fill colour, separate from dominant.dotColor: scenery overrides this
+    // to a single muted grey (SCENERY_DOT_FILL) instead of the dominant
+    // member's own vivid hue at reduced opacity — see the same rationale
+    // in renderIndividualMapDot.
+    let dominantColor = dominant.dotColor;
 
     if (isScenery) {
         // Scenery aggregates stay quiet regardless of n — a huge debris
@@ -3265,6 +3333,7 @@ function renderAggregateMapDot(cellKey, group) {
         shadow = 'none';
         opacity = '0.45';
         outline = '';
+        dominantColor = SCENERY_DOT_FILL;
     } else {
         const baseSize = isHostile ? (dominant.dotPriority >= 110 ? 9 : 7) : (parseFloat(dominant.dotSize) || 4);
         // Hostiles get the most growth headroom (they outrank objectives),
@@ -3314,7 +3383,7 @@ function renderAggregateMapDot(cellKey, group) {
             dominant.dotPriority >= 110 ? 9 : 7);
     } else {
         if (s.size !== size) { dot.style.width = size; dot.style.height = size; s.size = size; }
-        if (s.bg !== dominant.dotColor) { dot.style.backgroundColor = dominant.dotColor; s.bg = dominant.dotColor; }
+        if (s.bg !== dominantColor) { dot.style.backgroundColor = dominantColor; s.bg = dominantColor; }
         if (s.shadow !== shadow) { dot.style.boxShadow = shadow; s.shadow = shadow; }
         // Scenery clears outline back to '' so the faint constant "many
         // contacts" ring from .aggregate-map-dot's CSS shows through
@@ -3339,7 +3408,7 @@ function renderAggregateMapDot(cellKey, group) {
     // renderIndividualMapDot (see _syncRimElevCaret and its round-2
     // writeup there). Fires for every cell now, not just rim-clamped
     // ones, since the stalk below no longer moves the dot at any range.
-    _syncRimElevCaret(dot, s, dominant.dotColor, meanRelY, true);
+    _syncRimElevCaret(dot, s, dominantColor, meanRelY, true);
     // Elevation cue uses the GROUP's mean relY to grow a drop-line off the
     // centroid's OWN exact (px, py) — see _applyMapDotStalk. Same
     // stalk-length window as the individual path: allRim clamps to 0/0
@@ -3347,7 +3416,7 @@ function renderAggregateMapDot(cellKey, group) {
     // gets the geometric window left around ITS OWN centroid before the
     // drop-line would visually cross the rim.
     const _aggDyRange = allRim ? null : _stalkDyRange(px, py);
-    _applyMapDotStalk(dot, s, meanRelY, dominant.dotColor,
+    _applyMapDotStalk(dot, s, meanRelY, dominantColor,
         allRim ? 0 : _aggDyRange.min, allRim ? 0 : _aggDyRange.max);
     const tf = 'translate(' + px + 'px,' + py + 'px) translate(-50%,-50%)' +
         (isOffScaleHostile ? ' rotate(' + chevronDeg + 'deg)' : '');
@@ -3442,6 +3511,14 @@ const RADAR_SCAN_RADIUS = RADAR_RANGE_LADDER[RADAR_RANGE_LADDER.length - 1];
 // edge in every direction, including the diagonal, instead of visually
 // clipping against the border.
 const RADAR_RIM_RADIUS = 44;
+// Round-2 gap (critic-caught): scenery used to render at its own vivid
+// per-type dotColor, just at reduced opacity (0.45) — on screen that still
+// reads as the loudest, most saturated thing on the disc (37/45 rendered
+// blips in one measured live frame were bright #00ff88 civilian traffic),
+// which is backwards for a combat radar where red hostiles should carry
+// the highest contrast. Scenery-tier dots/aggregates (dotPriority <= 60)
+// now fill with this single muted slate grey instead of their own hue.
+const SCENERY_DOT_FILL = '#6b7688';
 
 function nearestHostileDistance() {
     if (typeof camera === 'undefined' || typeof enemies === 'undefined') return Infinity;
@@ -3939,40 +4016,13 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             let screenX = 50 + relativeX * 50; // Scale to fit map
             let screenZ = 50 + relativeZ * 50;
 
-            // ── Rim clamp (decouple draw scale from visibility) ──────────
-            // `obj` already survived the RADAR_SCAN_RADIUS cull above — it
-            // is a real, in-range contact — so a position that falls
-            // outside the disc at the current (possibly auto-contracted)
-            // draw scale must NOT be dropped here too; that was the bug
-            // (the same radarRange number was both the zoom and the
-            // visibility cull, so contracting for a close fight deleted
-            // every farther contact instead of compressing it onto the
-            // disc). #galaxyMap is a circle, so clamp the RADIAL distance
-            // from centre to the rim while leaving the ANGLE untouched —
-            // that keeps the contact's bearing exact (0° error) and reads
-            // as a standard aviation-RWR "off-scale" edge blip.
-            const _dx = screenX - 50, _dz = screenZ - 50;
-            const _rad = Math.sqrt(_dx * _dx + _dz * _dz);
-            let rimClamped = false;
-            if (_rad > RADAR_RIM_RADIUS) {
-                const _sc = RADAR_RIM_RADIUS / _rad;
-                screenX = 50 + _dx * _sc;
-                screenZ = 50 + _dz * _sc;
-                rimClamped = true;
-            }
-
-            // Only show if within map bounds (the rim clamp above already
-            // guarantees this once RADAR_RIM_RADIUS <= 45, but a contact
-            // that lands inside the disc at the CURRENT draw scale without
-            // clamping still needs this — unchanged from before).
-            if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
-                // 0-100 map coords → pixels inside the radar disc, snapped to
-                // 0.1px. Position is ONE transform (no left/top layout pass),
-                // and a blip that hasn't visibly moved writes nothing at all.
-                const px = Math.round(screenX * mapDotPool.w / 10) / 10;
-                const py = Math.round(screenZ * mapDotPool.h / 10) / 10;
-
-                // Color based on type
+            // Color based on type. Classified here, BEFORE the rim
+            // clamp/compression below, because that step now needs to know
+            // a contact's dotPriority to decide whether an off-scale
+            // contact still earns an edge ring or gets dropped outright
+            // (see the round-2 gap: low-value scenery pinned to the rim was
+            // outnumbering and outshining the real contacts in the middle
+            // of the disc).
 let dotColor = '#4488ff'; // Default blue for planets
 let dotSize = '4px';
 // Radar-cell aggregation (below): when a crowded cell collapses to one
@@ -3980,6 +4030,7 @@ let dotSize = '4px';
 // outrank neutral traffic outranks scenery, so a firefight buried inside
 // a debris field still reads red, not beige.
 let dotPriority = 20;
+let _allyAng = 0;
 
 if (obj.type === 'ally') {
     // Allies render as arrow markers, not dots — but rendering is deferred
@@ -3993,13 +4044,13 @@ if (obj.type === 'ally') {
     // +Z-forward player model) — same screen convention as the player
     // marker: angle = atan2(fwd.x, -fwd.z). Untransformed, the glyph
     // always pointed "north" regardless of heading (read as backwards).
-    let _allyAng = 0;
     if (obj.ship && obj.ship.quaternion && _allyMarkerFwd) {
         _allyMarkerFwd.set(0, 0, 1).applyQuaternion(obj.ship.quaternion);
         _allyAng = Math.round(Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z) * 100) / 100;
     }
-    _allyCandidates.push({ key: _key, px, py, angle: _allyAng, dotColor, name: obj.name, distance: obj.distance, rimClamped });
-    return; // skip normal dot styling below
+    // The actual push to _allyCandidates + return happens further below,
+    // once px/py exist (position now depends on the rim clamp/compression
+    // that runs after this block).
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';
@@ -4073,6 +4124,70 @@ if (obj.type === 'ally') {
     dotSize = '5px';
     dotPriority = 95;
 }
+
+            // ── Rim clamp / off-scale compression (decouple draw scale
+            // from visibility) ────────────────────────────────────────────
+            // `obj` already survived the RADAR_SCAN_RADIUS cull above — it
+            // is a real, in-range contact — so a position that falls
+            // outside the disc at the current (possibly auto-contracted)
+            // draw scale must NOT be dropped here too; that was the bug
+            // (the same radarRange number was both the zoom and the
+            // visibility cull, so contracting for a close fight deleted
+            // every farther contact instead of compressing it onto the
+            // disc). #galaxyMap is a circle, so this works in the RADIAL
+            // distance from centre while leaving the ANGLE untouched —
+            // that keeps the contact's bearing exact (0° error) and reads
+            // as a standard aviation-RWR "off-scale" edge blip.
+            const _dx = screenX - 50, _dz = screenZ - 50;
+            const _rad = Math.sqrt(_dx * _dx + _dz * _dz);
+            let rimClamped = false;
+            if (_rad > RADAR_RIM_RADIUS) {
+                // Round-2 gap (critic-caught): a flat clamp pins EVERY
+                // off-scale contact to the identical rim radius, so the
+                // interior of the disc — where the actual dogfight lives —
+                // sits empty while the rim carries zero range information
+                // (measured: 82.2% of rendered blips hard-clamped to the
+                // rim, median blip radius = 0.95 of rim). Low-value scenery
+                // (dotPriority <= 20: asteroids, and anything left on the
+                // unclassified default) is the worst offender — there can
+                // be hundreds of them — so once one goes off-scale it's
+                // dropped outright instead of ringing the rim; it was never
+                // combat-relevant. Allies are never dropped (a wingman must
+                // always stay trackable).
+                if (dotPriority <= 20 && obj.type !== 'ally') {
+                    return;
+                }
+                // Everything else that's off-scale still encodes its
+                // relative range instead of collapsing onto one
+                // indistinguishable ring: log-compress the outer band so a
+                // contact just past the rim lands close to RADAR_RIM_RADIUS
+                // while one much farther out settles toward the compressed
+                // floor (0.80 * RADAR_RIM_RADIUS), asymptotically — never
+                // fully reaching it, but saturating close to it by ~3x rim
+                // distance so extreme outliers don't collapse the scale.
+                const _outerT = Math.min(1, Math.log(_rad / RADAR_RIM_RADIUS) / Math.log(3));
+                const _sc = (RADAR_RIM_RADIUS * (1 - 0.20 * _outerT)) / _rad;
+                screenX = 50 + _dx * _sc;
+                screenZ = 50 + _dz * _sc;
+                rimClamped = true;
+            }
+
+            // Only show if within map bounds (the rim clamp/compression
+            // above already guarantees this — it only ever pulls a point
+            // INWARD, capped at RADAR_RIM_RADIUS <= 45 — but a contact that
+            // lands inside the disc at the CURRENT draw scale without
+            // clamping still needs this — unchanged from before).
+            if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
+                // 0-100 map coords → pixels inside the radar disc, snapped to
+                // 0.1px. Position is ONE transform (no left/top layout pass),
+                // and a blip that hasn't visibly moved writes nothing at all.
+                const px = Math.round(screenX * mapDotPool.w / 10) / 10;
+                const py = Math.round(screenZ * mapDotPool.h / 10) / 10;
+
+                if (obj.type === 'ally') {
+                    _allyCandidates.push({ key: _key, px, py, angle: _allyAng, dotColor, name: obj.name, distance: obj.distance, rimClamped });
+                    return; // skip normal dot styling below
+                }
 
                 // Pulse civilians under attack so the distress signal reads
                 // distinctly from regular civilian traffic on the map.

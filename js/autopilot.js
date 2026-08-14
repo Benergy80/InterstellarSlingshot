@@ -419,8 +419,18 @@
     // would block Tab (shields) during player takeover.  We reset this
     // every single frame so the player always has keyboard input.
     if (typeof gameState !== 'undefined') gameState.paused = false;
-    // Paused by player — still tick HUD but never drive the ship
-    if (ap.paused) { tickHUD(); return; }
+    // Paused by player — still tick HUD but never drive the ship.
+    // ...but DO hand the stock warp back first. The demo writes both
+    // boostDuration and boostSpeed per leg (see _armWarpBurn), and the
+    // hand-back that undoes that lives further down update() — behind this
+    // early return. A player who takes over with T mid-leg would otherwise
+    // inherit that leg's numbers (up to 100 u/frame) on their own next O.
+    if (ap.paused) {
+      const _ewP = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || null;
+      if (_ewP && !_ewP.active && !_ewP.transitioning) _disarmWarpBurn();
+      tickHUD();
+      return;
+    }
     if (typeof gameState === 'undefined' || !gameState.gameStarted) return;
     if (gameState.gameOver) { gameState.gameOver = false; return; }
     // Player death sequence started — freeze the demo immediately so it
@@ -1350,7 +1360,75 @@
       // ship is still travelling.
       const _pkCruising = _pkSpd > PARK_CRUISE_MAX;
       const _pkFast = _pkCruising || _pkProj > PARK_FLARE_SPEED;
-      const _pkStopped = Math.abs(_pkClose) <= PARK_CLOSE_MAX && !_pkCruising;
+      // ── "PARKED" IS A PLACE, NOT ONLY A SPEED ────────────────────────────
+      // The range-rate test alone says "nothing is changing", which is also
+      // true of a ship stalled in deep space with its destination a speck
+      // behind it. Measured, previous round: the one leg that ever reached
+      // this latch logged `PARKED → Titan Nebula d=36,291u (stand=16,527)` —
+      // 19,764 u outside its own standoff, subject BEHIND the camera, ship
+      // still moving 2.96 u/frame. Nothing about that is an arrival, and
+      // latching it ended the park (the settle hold starts here) at the exact
+      // moment the park was the only thing that could still recover the leg.
+      //
+      // So the latch additionally asks the two questions the acceptance test
+      // asks: am I actually AT the standoff the burn bought (2.5x is generous
+      // — a framed cut fires inside stand+stop and the ramp eats most of the
+      // rest), and is the destination in FRONT of me. When either is false the
+      // park keeps the stick and keeps working — the station-keep below
+      // chases an opening range — until PARK_MAX_MS hands the leg back. The
+      // difference the player sees: a leg that ends short no longer freezes
+      // and calls itself arrived, it closes the gap.
+      const _pkAtStandoff = _pkRange <= _pkStand * 2.5;
+      let _pkAhead = true;
+      if (typeof camera !== 'undefined' && _arriveFwdTmp) {
+        camera.getWorldDirection(_arriveFwdTmp);
+        _pkAhead = _arriveToTmp.dot(_arriveFwdTmp) > 0;
+      }
+      const _pkStopped = Math.abs(_pkClose) <= PARK_CLOSE_MAX && !_pkCruising &&
+                         _pkAtStandoff && _pkAhead;
+      // ── THE STANDOFF IS A FLOOR, NOT A ONE-SHOT ──────────────────────────
+      // PARK_MAX_MS bounds how long the arrival BEAT may hold the stick. It
+      // was also, accidentally, the only thing keeping the ship off the body:
+      // when it expired the phases took over and every one of them thrusts
+      // toward something on the far side of the arrival, so the ship resumed
+      // eating the standoff it had just bought — at 1.16-3.4 u/frame, all the
+      // way to the surface. Three "MISSION FAILED — PLANETARY IMPACT" in two
+      // instrumented sessions, each with the body the demo had itself chosen
+      // as the destination: Tartarus, Chronos and Void Nebula Prime, dying
+      // 12-40 s AFTER a textbook 30-degree parked arrival.
+      //
+      // The beat is over; the geometry is not. Re-arm the park whenever the
+      // ship has drifted back inside the standoff and is still closing. This
+      // is not a longer beat — the framing hold and settle have already been
+      // served — it is the station-keep re-asserting the one number the whole
+      // arrival is built on. It ends as soon as the closing rate is nulled,
+      // and it cannot deadlock the demo: `_parkOwnsBeat` defers the next leg
+      // rather than cancelling it, and a ship that is not closing never
+      // triggers this at all.
+      //
+      // WELL INSIDE, NOT MERELY AT. Re-arming on any drift under the standoff
+      // made the demo live at its own boundary: measured, the ship held
+      // 2,027-2,128 u off Tartarus Nebula Prime (stand 2,129) for FOUR MINUTES,
+      // re-arming 16 times and deferring 16 legs, because sitting exactly on
+      // the line means every ±0.3 u/frame wobble trips the guard. 0.9x is
+      // still ~3x the body's own radius and comfortably outside anything the
+      // measured deaths came near (they were at 1,500 u and closing), while
+      // leaving the demo a whole standoff-tenth of ordinary drift to live in.
+      if (Date.now() - _pk._parkT0 >= PARK_MAX_MS &&
+          _pkRange < _pkStand * 0.9 && _pkClose > PARK_CLOSE_MAX) {
+        _pk._parkT0 = Date.now();
+        _pk._parkedAt = null;
+        _pk._parkFrom = Math.round(_pkRange);
+        // ...and it is a SAFETY HOLD, not the arrival beat: `_parkOwnsBeat`
+        // ignores it, so the demo's next leg is never deferred by the guard
+        // that is only there to stop the ship falling into the body.
+        _pk._keepOut = true;
+        ap._arrivalReparks = (ap._arrivalReparks || 0) + 1;
+        console.log('🅿️ ARRIVAL KEEP-OUT re-armed → ' +
+          ((_pk.obj.userData && _pk.obj.userData.name) || 'body') + ' d=' +
+          Math.round(_pkRange) + 'u (stand=' + Math.round(_pkStand) +
+          ') closing=' + _pkClose.toFixed(2) + ' u/f');
+      }
       const _pkAge = Date.now() - _pk._parkT0;
       if (_pkAge < PARK_MAX_MS && (!_pkStopped ||
           (_pk._parkedAt && Date.now() - _pk._parkedAt < PARK_SETTLE_MS))) {
@@ -1358,7 +1436,9 @@
         // is overruled — it is running its cruise logic on a ship that is in
         // the middle of an arrival beat.
         const _k = keys();
-        _k.w = false; _k.s = false; _k.a = false; _k.d = false;
+        // ...including BOOST. The travel phases hold B on a long straight, and
+        // B is a thrust multiplier, not a separate key the brake can outrun.
+        _k.w = false; _k.s = false; _k.a = false; _k.d = false; _k.b = false;
         // ...INCLUDING THE ONE INPUT THAT IS NOT A KEY HELD DOWN. The combat
         // and approach jumps (four sites) set `keys.wDoubleTap` plus
         // `gameState._pendingJumpMs` as a one-shot latch that physics consumes
@@ -1369,7 +1449,27 @@
         // Hold the destination on the nose: the framing hold and the camera
         // assist have both just expired with the ramp, and the reverse thrust
         // below acts along the nose.
-        if (window.orientTowardsTarget) window.orientTowardsTarget(_pk.obj);
+        //
+        // AT THE AUTO-NAV RATE, FOR THE SAME REASON THE FRAMING HOLD USES IT.
+        // The phase underneath is calling orientTowardsTarget every frame too,
+        // at the same 0.016 rad/frame demo cap, aimed at ITS destination (the
+        // next nebula, tens of thousands of units away in another direction).
+        // Two equal exponential pulls settle at a weighted midpoint, so the
+        // nose never actually reaches the subject — and every input this block
+        // has except the brake acts along the NOSE. That is why the park could
+        // press reverse for fifteen straight seconds and hold a dead-constant
+        // 0.88-0.93 u/frame of closing: measured, Hyperion Nebula Prime, range
+        // walked 1,501 -> 617 u and "PLANETARY IMPACT" while the park was
+        // running the whole way down. Borrowing the player auto-nav's 0.045
+        // rad/frame (via the same ap.paused toggle the framing hold documents
+        // above) makes the arrival the decisive authority on the nose, which
+        // is what makes reverse thrust anti-radial rather than diagonal.
+        if (window.orientTowardsTarget) {
+          const _pkPrevPaused = ap.paused;
+          ap.paused = true;
+          window.orientTowardsTarget(_pk.obj);
+          ap.paused = _pkPrevPaused;
+        }
         if (_pkFast) {
           // STAGE 1 — FLARE. Brake, plus physics' own post-jump deceleration
           // while anything is still closing, which is what brings this inside
@@ -1445,26 +1545,32 @@
       if (_pkStopped && !_pk._parkedAt) {
         _pk._parkedAt = Date.now();
         _pkEw.autoBraking = false;
-        ap._arrivalParks = (ap._arrivalParks || 0) + 1;
-        ap._lastArrivalPark = {
-          at: _pk._parkedAt,
-          // Which terminator actually ended this leg's burn — the proof that
-          // the cut/extension pair tiles the space with no dead band.
-          path: _pk._cutLogged ? ('cut:' + ((ap._lastArrivalCut && ap._lastArrivalCut.reason) || '?')) :
-                (_pk._burnExtMs ? 'extended' : 'stopwatch'),
-          extMs: _pk._burnExtMs || 0,
-          ms: _pkAge,
-          fromRange: _pk._parkFrom, range: Math.round(_pkRange),
-          stand: Math.round(_pkStand), margin: Math.round(_pkMargin),
-          speed: Math.round(_pkSpd * 100) / 100,
-          closing: Math.round(_pkClose * 100) / 100,
-          subject: (_pk.obj.userData && (_pk.obj.userData.name || _pk.obj.userData.type)) || 'body'
-        };
-        console.log('🛑 WARP ARRIVAL PARKED → ' + ap._lastArrivalPark.subject +
-          '  d=' + ap._lastArrivalPark.range + 'u (stand=' + ap._lastArrivalPark.stand +
-          ') closing=' + ap._lastArrivalPark.closing + ' u/f speed=' +
-          ap._lastArrivalPark.speed + ' u/f in ' + ap._lastArrivalPark.ms +
-          'ms via ' + ap._lastArrivalPark.path);
+        // A keep-out re-latching is not a new arrival — count and announce
+        // only the real ones, or the telemetry reads 33 "arrivals" for one leg.
+        if (_pk._keepOut) {
+          ap._keepOutHolds = (ap._keepOutHolds || 0) + 1;
+        } else {
+          ap._arrivalParks = (ap._arrivalParks || 0) + 1;
+          ap._lastArrivalPark = {
+            at: _pk._parkedAt,
+            // Which terminator actually ended this leg's burn — the proof that
+            // the cut/extension pair tiles the space with no dead band.
+            path: _pk._cutLogged ? ('cut:' + ((ap._lastArrivalCut && ap._lastArrivalCut.reason) || '?')) :
+                  (_pk._burnExtMs ? 'extended' : 'stopwatch'),
+            extMs: _pk._burnExtMs || 0,
+            ms: _pkAge,
+            fromRange: _pk._parkFrom, range: Math.round(_pkRange),
+            stand: Math.round(_pkStand), margin: Math.round(_pkMargin),
+            speed: Math.round(_pkSpd * 100) / 100,
+            closing: Math.round(_pkClose * 100) / 100,
+            subject: (_pk.obj.userData && (_pk.obj.userData.name || _pk.obj.userData.type)) || 'body'
+          };
+          console.log('🛑 WARP ARRIVAL PARKED → ' + ap._lastArrivalPark.subject +
+            '  d=' + ap._lastArrivalPark.range + 'u (stand=' + ap._lastArrivalPark.stand +
+            ') closing=' + ap._lastArrivalPark.closing + ' u/f speed=' +
+            ap._lastArrivalPark.speed + ' u/f in ' + ap._lastArrivalPark.ms +
+            'ms via ' + ap._lastArrivalPark.path);
+        }
       }
     } else if (_pkEw && _pkEw.autoBraking && !_pkEw.isJump && !_pkEw.active) {
       // The park borrowed physics' jump brake; hand it straight back the
@@ -1472,6 +1578,20 @@
       // new burn armed, a slingshot WHIP ARC took the ship). A real Jump owns
       // this flag on its own and is excluded by `!isJump`.
       _pkEw.autoBraking = false;
+    }
+
+    // ── AND THE SAME RULE FOR THE JUMP KEY ──────────────────────────────────
+    // `keys.wDoubleTap` is a one-shot latch physics consumes on its own tick,
+    // set directly at five sites (combat pursuit, boss approach, post-warp
+    // evasion, navigateTo, the re-aim jump) — none of which consults the
+    // arrival. triggerOKeyWarp has asked `_departureBlocked` before firing
+    // since round 4; this makes the jump answer to it too, at the one place
+    // every site funnels through. Cheap: the latch is re-set by whichever
+    // caller wanted it as soon as the heading is clear.
+    const _dj = keys();
+    if (_dj.wDoubleTap && _departureBlocked()) {
+      _dj.wDoubleTap = false;
+      ap._jumpsBlockedByArrival = (ap._jumpsBlockedByArrival || 0) + 1;
     }
 
     // NAV SYSTEM REFLECTS THE DEMO'S TARGET: the demo sets
@@ -2291,9 +2411,29 @@
 
     // Lock in the destination on first entry — prefer a twin (clustered)
     // pair; fall back to nearest nebula if no twin cluster exists.
+    // A DESTINATION WE HAVE ALREADY REACHED IS NOT THIS LEG'S DESTINATION.
+    // `ap.currentNebula` survives between phases, and the coast phase
+    // deliberately re-routes it to any nebula that turns out closer mid-flight
+    // — so by the time the demo is back here asking for a warp, the "target"
+    // is routinely the cloud the ship is now parked inside. Measured: the leg
+    // that broke this round fired at Prometheus Nebula 1,759 u away. Drop it
+    // and pick a real leg (the fallbacks below still allow a short one when
+    // there is genuinely nothing further out).
+    if (ap.currentNebula && ap.currentNebula.position &&
+        camPos().distanceTo(ap.currentNebula.position) < TRAVEL_LEG_MIN_DIST) {
+      ap.currentNebula = null;
+      ap.orbitTarget = null;
+    }
     if (!ap.currentNebula) {
-      const twin = nearestTwinNebula();
-      ap.currentNebula = twin || nearestNebula();
+      // A REAL LEG FIRST (see TRAVEL_LEG_MIN_DIST): prefer the nearest twin
+      // cluster / nebula that is actually somewhere else, and only fall back
+      // to the plain nearest when the ship has nowhere further to go — in
+      // which case the leg will be short, the warp will (correctly) refuse to
+      // ignite with nothing to arrive at, and the phase's own 8 s fallback
+      // hands it to a cruise.
+      ap.currentNebula = nearestTwinNebula(TRAVEL_LEG_MIN_DIST) ||
+                         nearestNebula(TRAVEL_LEG_MIN_DIST) ||
+                         nearestTwinNebula() || nearestNebula();
       if (!ap.currentNebula) { setStatus('No nebula in range — waiting'); return; }
     }
 
@@ -2490,26 +2630,50 @@
       setStatus(_dstDist !== null
         ? 'Warp transit → ' + _dstName + ' · ' + _dstDist + ' u'
         : 'Warp transit → ' + _dstName);
-      cycleScanTarget();
-      if (ap.currentNebula) {
-        // Don't pass by nebulas: if another nebula is meaningfully nearer
-        // mid-warp, switch target so we coast into the closer one instead.
-        // (Suppressed while returning to a nebula of origin for a second
-        // discovery path — that trip has a specific destination.)
-        const nearer = ap._originReturnActive ? null : nearestNebula();
-        if (nearer && nearer !== ap.currentNebula) {
-          const dCur  = camPos().distanceTo(ap.currentNebula.position);
-          const dAlt  = camPos().distanceTo(nearer.position);
-          if (dAlt < dCur * 0.75) {
-            ap.currentNebula = nearer;
-            ap.orbitTarget = null;
-            setStatus('Re-routing to closer nebula: ' + (nearer.userData.name || 'nebula'));
+      {
+        // ── A LIT BURN IS COMMITTED ────────────────────────────────────────
+        // Everything below steers: it re-routes the destination to any nebula
+        // that turns out closer, and it holds the nose on that destination
+        // every frame. Both are right for a coast and catastrophic during a
+        // burn, because warp guidance (game-physics.js) rotates VELOCITY onto
+        // the nose — so a re-route mid-boost does not merely change the plan,
+        // it bends the burn away from the arrival it was armed for.
+        //
+        // MEASURED, this build, three legs in a row: burn armed 13.8 s for a
+        // subject 76,741 u ahead (11.2 deg off the bow), the phase's own
+        // destination re-routed to a nebula 1,759 u away, the nose swung onto
+        // that, and velocity followed it — subject 11 deg -> 47 -> 91 -> 138
+        // deg in 2.5 s, range never dropped below 73,600 u, and the cut ended
+        // the leg on its `blown` clause after 2.7 s of a 13 s burn.
+        //
+        // So while a fresh arrival subject is being flown, the burn owns the
+        // nose (the framing hold at the top of update() is already pointing it
+        // at the subject, three times faster than this call could) and the
+        // destination is frozen. The re-route resumes the moment the boost
+        // ends, which is the beat it was written for.
+        if (!_burnCommitted()) {
+          cycleScanTarget();
+          if (ap.currentNebula) {
+            // Don't pass by nebulas: if another nebula is meaningfully nearer
+            // mid-warp, switch target so we coast into the closer one instead.
+            // (Suppressed while returning to a nebula of origin for a second
+            // discovery path — that trip has a specific destination.)
+            const nearer = ap._originReturnActive ? null : nearestNebula();
+            if (nearer && nearer !== ap.currentNebula) {
+              const dCur  = camPos().distanceTo(ap.currentNebula.position);
+              const dAlt  = camPos().distanceTo(nearer.position);
+              if (dAlt < dCur * 0.75) {
+                ap.currentNebula = nearer;
+                ap.orbitTarget = null;
+                setStatus('Re-routing to closer nebula: ' + (nearer.userData.name || 'nebula'));
+              }
+            }
+            // Don't fight the gravity whip's on-rails camera while it's
+            // carrying the ship around the body.
+            if (window.orientTowardsTarget && !(gameState.slingshotWhip)) {
+              window.orientTowardsTarget({ position: ap.currentNebula.position });
+            }
           }
-        }
-        // Don't fight the gravity whip's on-rails camera while it's
-        // carrying the ship around the body.
-        if (window.orientTowardsTarget && !(gameState.slingshotWhip)) {
-          window.orientTowardsTarget({ position: ap.currentNebula.position });
         }
       }
       return;
@@ -2531,6 +2695,36 @@
 
     if (!ap.currentNebula) {
       goPhase('warpToNebulaCluster');
+      return;
+    }
+
+    // ── THE BURN ALREADY ARRIVED: STOP COASTING AT THE THING WE ARE AT ───────
+    // This phase measures its progress against the nebula CLOUD CENTRE, and
+    // the body the warp parked at sits between the ship and that centre — so
+    // once the park's clock runs out, the "keep thrusters active while
+    // coasting" rule below points the ship at the centre and drives it
+    // straight through its own destination.
+    //
+    // MEASURED, this build, twice in one session: parked clean at 2,286 u off
+    // Tartarus Nebula Prime (30.4 deg, dead centre, closing 0.35 u/f), park
+    // ceiling expired 12 s later, this phase thrust at 3.4 u/frame and walked
+    // the range 2,018 -> 1,422 -> 871 -> 646 u — "PLANETARY IMPACT — Ship
+    // destroyed by collision with Tartarus Nebula Prime". Same ending 8
+    // minutes later with Chronos Nebula Prime.
+    //
+    // The arrival IS the arrival: when the leg's staged body is a body of this
+    // nebula and the ship is standing at its standoff, the coast is over. Hand
+    // to orbitNebulaPlanet, which already sizes its lap from that same standoff
+    // (see the ORBIT_RADIUS derivation there) and therefore laps around the
+    // body instead of into it.
+    const _cAs = gameState._arrivalSubject;
+    if (_cAs && _cAs.obj && _cAs.obj.position && _cAs._flown &&
+        _cAs.obj.position.distanceTo(ap.currentNebula.position) < 8000 &&
+        camPos().distanceTo(_cAs.obj.position) < (_cAs.stand || 0) * 1.6) {
+      ap.brakingAfterWarp = false;
+      ap._prevNebDist = undefined;
+      setStatus('Arrived — ' + ((_cAs.obj.userData && _cAs.obj.userData.name) || 'destination'));
+      goPhase('orbitNebulaPlanet');
       return;
     }
 
@@ -2703,7 +2897,6 @@
     const nebCenter = ap.orbitTarget ? ap.orbitTarget.position : (ap.currentNebula ? ap.currentNebula.position : null);
     if (!nebCenter) { goPhase('warpToNebulaCluster'); return; }
 
-    const dist = camPos().distanceTo(nebCenter);
     const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
 
     // Approach the nebula, then orbit at a radius that CLEARS WHAT IS AT THE
@@ -2742,17 +2935,36 @@
         const _oCand = _findArrivalSubject(nebCenter, 3000);
         if (_oCand && _oCand.obj) { _oObj = _oCand.obj; _oRad = _oCand.radius; }
       }
+      ap._orbitBody = _oObj || null;
       if (_oObj) {
         const _oSo = _arrivalStandoff(_oRad, _arrivalDangerR(_oObj));
-        // Measured from the CENTRE, so carry the body's own offset from it —
-        // a lap sized to clear the body has to clear it from where it sits.
-        ap._orbitRadius = Math.max(500,
-          Math.round(_oSo.stand + _oObj.position.distanceTo(nebCenter)));
+        // ── LAP THE BODY, NOT THE CLOUD ────────────────────────────────────
+        // Sizing the radius from the centre and then adding the body's offset
+        // only clears the body on the one bearing where the offset points AT
+        // the ship. The lap sweeps a circle about the CENTRE while the hazard
+        // sits somewhere off it (and off the lap's plane — the dummy holds
+        // nebCenter.y), so on the far side of the sweep that same radius walks
+        // the ship straight in. Measured, this build, with the previous
+        // radius rule live: parked clean at 2,408 u off Void Nebula Prime,
+        // then lapped 1,765 -> 1,362 -> 995 -> 660 u at a steady 1.16 u/frame,
+        // the body swelling 38.7 deg -> 86.4 deg in frame, until "PLANETARY
+        // IMPACT — Ship destroyed by collision with Void Nebula Prime".
+        //
+        // The circle has to be centred on the thing it is meant to clear. Lap
+        // the ARRIVAL BODY at its own standoff (+15 % of margin) — which is
+        // also the better shot: the demo circles the world it just arrived at,
+        // held at the distance the burn framed it from, instead of circling an
+        // empty point in the gas with the world drifting through the lap.
+        ap._orbitRadius = Math.max(500, Math.round(_oSo.stand * 1.15));
       }
     }
     const ORBIT_RADIUS = ap._orbitRadius || 500;
-    if (dist > ORBIT_RADIUS + 200) {
-      setStatus('Approaching nebula center — ' + (dist | 0) + ' u');
+    // The lap is about the arrival body when there is one, and about the cloud
+    // centre only when there is nothing at it to clear.
+    const lapCenter = (ap._orbitBody && ap._orbitBody.position) ? ap._orbitBody.position : nebCenter;
+    const lapDist = camPos().distanceTo(lapCenter);
+    if (lapDist > ORBIT_RADIUS + 200) {
+      setStatus('Approaching nebula center — ' + (lapDist | 0) + ' u');
       flyToward(ap.orbitTarget, 1.6);
     } else {
       // Orbit: aim at a slowly-rotating offset point ORBIT_RADIUS from the
@@ -2761,14 +2973,22 @@
       ap._orbitAngle += 0.012; // ~0.7 rad/s at 60fps — slow, photogenic
       if (!ap._lapDummy) ap._lapDummy = { position: new THREE.Vector3(), userData: { name: 'Nebula Orbit' } };
       ap._lapDummy.position.set(
-        nebCenter.x + Math.cos(ap._orbitAngle) * ORBIT_RADIUS,
-        nebCenter.y,
-        nebCenter.z + Math.sin(ap._orbitAngle) * ORBIT_RADIUS
+        lapCenter.x + Math.cos(ap._orbitAngle) * ORBIT_RADIUS,
+        lapCenter.y,
+        lapCenter.z + Math.sin(ap._orbitAngle) * ORBIT_RADIUS
       );
-      setStatus('Orbiting nebula center — scanning for discovery path');
+      setStatus(ap._orbitBody
+        ? ('Holding station — ' + ((ap._orbitBody.userData && ap._orbitBody.userData.name) || 'arrival') +
+           ' (' + (lapDist | 0) + ' u)')
+        : 'Orbiting nebula center — scanning for discovery path');
       if (window.orientTowardsTarget) window.orientTowardsTarget(ap._lapDummy);
-      // Gentle thrust to maintain lap speed; brake if we're sprinting
-      if (speed > 1.6) keys().x = true;
+      // Gentle thrust to maintain lap speed; brake if we're sprinting...
+      // ...and NEVER thrust while the lap is already inside its own radius:
+      // the lap point is a moving target, so W aimed at it while the ship sits
+      // inside the circle still has an inward component, which is the slow
+      // 1.16 u/frame walk that killed two runs. Brake instead and let the
+      // engine's floor carry the ship back out across the circle.
+      if (speed > 1.6 || lapDist < ORBIT_RADIUS * 0.92) keys().x = true;
       else keys().w = true;
     }
 
@@ -3498,9 +3718,37 @@
   // :2534 already read as "not this frame, try the next one". The leg is not
   // cancelled, only deferred by at most PARK_MAX_MS, and the ship spends that
   // deferral parked at a destination instead of stutter-hopping through it.
+  // ─── THE BURN INTERLOCK ────────────────────────────────────────────────────
+  // IS A WARP BURN CURRENTLY FLYING TO A STAGED ARRIVAL? The park interlock
+  // below protects the beat AFTER a leg; this protects the leg itself.
+  //
+  // It matters because of one property of this game's warp: guidance rotates
+  // VELOCITY onto the NOSE (game-physics.js), so during a burn the nose is not
+  // a camera decision, it is the trajectory. Anything that swings the ship —
+  // a combat break-off, a phase re-routing to a closer nebula — therefore
+  // steers the burn, and every measured instance of it ended the leg on the
+  // cut's `blown` clause tens of thousands of units short. While this returns
+  // true, the arrival framing hold in update() is the only authority on the
+  // nose, and the destination the burn was armed for is frozen.
+  function _burnCommitted() {
+    if (typeof gameState === 'undefined') return false;
+    const as = gameState._arrivalSubject, ew = gameState.emergencyWarp;
+    if (!as || !as.obj || !ew || ew.isJump) return false;
+    if (!(ew.active || ew.transitioning)) return false;
+    return _arrivalSubjectFresh(as);
+  }
+
   function _parkOwnsBeat() {
     const _prev = (typeof gameState !== 'undefined' && gameState._arrivalSubject) || null;
     if (!_prev || !_prev._parkT0) return false;
+    // A KEEP-OUT IS NOT A BEAT. Once the arrival's own beat has been served,
+    // the park can re-arm purely to stop the ship drifting into the body it
+    // parked at (see "THE STANDOFF IS A FLOOR" above). That hold must not also
+    // hold the DEMO: measured, it deferred 16 consecutive legs and pinned the
+    // ship at one nebula for four minutes. Staging a new leg is exactly the
+    // right way to leave a body you are too close to, and `_departureBlocked`
+    // already refuses a heading that goes through it.
+    if (_prev._keepOut) return false;
     const _now = Date.now();
     // Hard ceiling first: a pathological park always hands the leg back.
     if (_now - _prev._parkT0 >= PARK_MAX_MS) return false;
@@ -3613,11 +3861,67 @@
   // the instant the subject goes abeam, whatever the clock says.
   //
   // MIN exists so a close destination still gets a real warp beat instead of
-  // a stutter; MAX bounds both the tunnel's screen time and how far a single
-  // charge may carry the ship (25 s x 15 u/frame x 60 = 22,500 u).
+  // a stutter; MAX bounds the tunnel's screen time.
   const EW_BURN_MS_MIN = 2000;
   const EW_BURN_MS_MAX = 25000;
   const EW_BURN_MARGIN = 1.12;
+
+  // ── THE DRIVE RUNS UNTIL THE MARKER: SPEED IS SIZED TO THE LEG TOO ────────
+  // A duration alone could only ever buy 25 s x 15 u/frame x 60 = 22,500 u,
+  // and that ceiling was the single reason the whole arrival machinery above
+  // was unreachable code. Measured on this build, at the instant each leg
+  // ignited (D.census over the live world, 6 consecutive forced legs, 4 min):
+  //
+  //     framable bodies in the world : 284      reachable by a 22,500 u burn : 0
+  //     every one of them classified : 'tooFar'
+  //     nearest framable body        : beyond 22,224 u on EVERY leg
+  //
+  // With nothing stageable, `_burnFits` was false everywhere, `_stageAndArm`
+  // never ran, and 8 of 8 (then 6 of 6) O-warps flew a subject-less ~8,000 ms
+  // stopwatch into empty space — arrivalCuts 0, arrivalExts 0, arrivalParks 0.
+  // The park, the cut, the extension and the dead-band tiling were all correct
+  // and all dead, because no leg could ever nominate a destination.
+  //
+  // A Star Citizen quantum drive does not stop at 45 % of the way and let go:
+  // it SPOOLS TO THE DISTANCE. So does this. `boostSpeed` is read by physics
+  // exactly once per burn — captured at the O-key press
+  // (`capturedBoostSpeed`, game-physics.js) and used as the velocity clamp for
+  // as long as the burn is active — which makes it as much an output of the
+  // arrival arithmetic as `boostDuration` is. Sizing both together lets one
+  // charge reach anything the world actually contains while the tunnel still
+  // lasts a watchable ~12 s instead of a minute.
+  //
+  // The ceiling is not invented: 100 u/frame is the emergency-warp speed this
+  // game's own gameState literal ships (game-core.js), and game-physics.js's
+  // guidance notes are written against "boostSpeed 100 u/frame for 15,000 ms".
+  // It costs nothing visually — speedWhipLevel() (visual-flair.js) saturates
+  // at 16 u/frame, so every streak/FOV/lens curve is already pinned at full
+  // long before this — and nothing physically: the exit ramp eases from
+  // whatever the boost speed was down to the ship's pre-warp cruise over its
+  // own 1 s, so the arrival park still starts from cruise no matter how fast
+  // the leg was flown.
+  const EW_BOOST_SPEED_MAX = 100;
+  // The length the tunnel WANTS to be. Speed is chosen to make the leg fit in
+  // this; only when the leg cannot fit even at EW_BOOST_SPEED_MAX does the
+  // duration stretch toward EW_BURN_MS_MAX. Legs under the stock reach keep
+  // the stock 15 u/frame and behave exactly as before — this only ever adds
+  // speed to a leg that would otherwise have been refused as unreachable.
+  const EW_BURN_MS_NOMINAL = 12000;
+  // ...and what a burn ACTUALLY delivers per wall-clock second, as a fraction
+  // of the 60 fps arithmetic above. The burn is armed in MILLISECONDS but
+  // travel is integrated PER FRAME with a clamped delta, so on anything under
+  // 60 fps the clock runs out before the distance does. Measured on this
+  // instrumented rig (20-40 fps, four legs): 12,527 u delivered against 14,952
+  // nominal (0.84), 55,360/78,078 (0.71), 34,261/49,036 (0.70), 58,971/112,530
+  // (0.52). Taking 0.6 makes the armed clock long enough for the geometric cut
+  // to be what ends the burn on a slow machine — which is the ordering this
+  // whole file is built on ("arrival is the terminator, the stopwatch is the
+  // fallback") — and on a 60 fps machine simply means the cut fires with clock
+  // to spare. It also keeps `_burnFits` honest: reach is 90,000 u of DELIVERED
+  // distance, so a leg that cannot actually be closed is refused and the
+  // corridor search picks a body on the way instead of a 20 s burn that ends
+  // 26,913 u short of its subject at 2.6 degrees (measured, delivery 0.52).
+  const EW_BURN_DELIVERY = 0.6;
 
   // How long after ignition the arrival cut-off keeps its hands off the burn.
   // The cut decomposes on the VELOCITY axis, and for the first few hundred ms
@@ -3726,9 +4030,16 @@
   // staging path is gated on. This replaces `_oWarpBoostDist()` in those
   // tests: what matters is not how far the CURRENT duration would carry the
   // ship, but how far a duration we are about to CHOOSE can.
+  //
+  // It is measured against the FASTEST burn that can be armed, not the speed
+  // sitting in gameState right now: speed is an output of _armWarpBurn (see
+  // EW_BOOST_SPEED_MAX above), so asking "how far does the CURRENT boostSpeed
+  // reach" is the same category error as asking "how far does the CURRENT
+  // boostDuration reach" was. 100 u/frame x 60 x 25 s = 150,000 u, which
+  // covers the whole framable population the census found stranded outside the
+  // old 22,500 u horizon.
   function _oWarpMaxBoostDist() {
-    const ew = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || {};
-    return (ew.boostSpeed || 15) * 60 * (EW_BURN_MS_MAX / 1000);
+    return EW_BOOST_SPEED_MAX * 60 * (EW_BURN_MS_MAX / 1000) * EW_BURN_DELIVERY;
   }
 
   // CAN A BURN BE BUILT THAT ACTUALLY CLOSES THIS? — the reachability test the
@@ -3743,23 +4054,46 @@
   // ship 5,099 u away — a 1.97 degree speck, the exact "arrives nowhere"
   // symptom. Requiring the UNCLAMPED size to fit means every staged subject is
   // one the burn can reach with its margin intact.
+  //
+  // ...and it asks it of the burn that CAN be built (EW_BOOST_SPEED_MAX), not
+  // of the one currently loaded. Same distance either way — the margin is
+  // applied to the ground, and the ground is what _oWarpMaxBoostDist bounds.
   function _burnFits(range, stand) {
-    const ew = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || {};
-    const perSec = (ew.boostSpeed || 15) * 60;
-    return ((Math.max(0, range - stand)) / perSec) * 1000 * EW_BURN_MARGIN <= EW_BURN_MS_MAX;
+    return Math.max(0, range - stand) * EW_BURN_MARGIN <= _oWarpMaxBoostDist();
   }
 
-  // Size the next burn so it expires at `stand` from a subject at `range`.
-  // Returns the armed duration in ms. The pre-existing value is stashed once
-  // so a burn with no subject (and any warp a human player fires later) still
-  // gets the stock 8 s boost — see _disarmWarpBurn.
+  // Size the next burn so it expires at `stand` from a subject at `range` —
+  // SPEED FIRST, then the clock. Returns the armed duration in ms. Both
+  // pre-existing values are stashed once so a burn with no subject (and any
+  // warp a human player fires later) still gets the stock 8 s / 15 u-frame
+  // boost — see _disarmWarpBurn.
   function _armWarpBurn(range, stand) {
     if (typeof gameState === 'undefined' || !gameState.emergencyWarp) return 0;
     const ew = gameState.emergencyWarp;
     if (ew._baseBoostDuration == null) ew._baseBoostDuration = ew.boostDuration || 8000;
-    const perSec = (ew.boostSpeed || 15) * 60;
-    const ms = Math.max(EW_BURN_MS_MIN, Math.min(EW_BURN_MS_MAX,
-      ((Math.max(0, range - stand)) / perSec) * 1000 * EW_BURN_MARGIN));
+    if (ew._baseBoostSpeed == null) ew._baseBoostSpeed = ew.boostSpeed || 15;
+    const ground = Math.max(0, range - stand) * EW_BURN_MARGIN;
+    // ── SPEED IS PICKED ONCE PER LEG, AND ONLY UPWARD ────────────────────────
+    // Once, because physics captures `boostSpeed` at the KEY PRESS
+    // (`const capturedBoostSpeed = ...` in game-physics.js) and writes
+    // `velocityVector = forward * capturedBoostSpeed` at ignition, while the
+    // velocity CLAMP it applies for the rest of the burn reads the live value.
+    // Re-picking a lower speed during the pre-ignition re-arm below would
+    // therefore clamp the ship under the speed the burn's own duration was
+    // sized for and land it short; latching it makes the two agree by
+    // construction. Only upward, because a leg the stock 15 u/frame can
+    // already reach must fly exactly as it did before this change — the whole
+    // point is to stop REFUSING far destinations, not to re-tune near ones.
+    if (ew._burnBoostSpeed == null) {
+      ew._burnBoostSpeed = Math.max(ew._baseBoostSpeed,
+        Math.min(EW_BOOST_SPEED_MAX,
+          ground / (60 * EW_BURN_DELIVERY * (EW_BURN_MS_NOMINAL / 1000))));
+      ew.boostSpeed = ew._burnBoostSpeed;
+    }
+    // Delivered ground per wall-clock second (see EW_BURN_DELIVERY) — the
+    // clock has to be long enough for the geometry to arrive under it.
+    const perSec = ew._burnBoostSpeed * 60 * EW_BURN_DELIVERY;
+    const ms = Math.max(EW_BURN_MS_MIN, Math.min(EW_BURN_MS_MAX, (ground / perSec) * 1000));
     ew.boostDuration = ms;
     // ── THE ARM LATCH ────────────────────────────────────────────────────────
     // Sizing the burn to the arrival is this whole mechanism, and until this
@@ -3795,6 +4129,12 @@
     if (typeof gameState === 'undefined' || !gameState.emergencyWarp) return;
     const ew = gameState.emergencyWarp;
     if (ew._baseBoostDuration != null) ew.boostDuration = ew._baseBoostDuration;
+    // ...and the SPEED with it, so an interstellar leg's 60-100 u/frame can
+    // never be inherited by the next leg (or by a human who takes over with T
+    // and presses O). Clearing the latch is also what re-opens the per-leg
+    // speed choice in _armWarpBurn.
+    if (ew._baseBoostSpeed != null) ew.boostSpeed = ew._baseBoostSpeed;
+    ew._burnBoostSpeed = null;
     ew._burnArmedAt = null;
   }
 
@@ -3878,6 +4218,21 @@
       const range = _owarpToTmp.length();
       if (range <= so.stand * 1.3) continue;
       if (!_burnFits(range, so.stand)) continue;
+      // ── "ON THE WAY" MEANS ON THE WAY, NOT PAST IT ────────────────────────
+      // `boostDist` used to be documentation only — the function took it and
+      // never read it, leaving reachability entirely to _burnFits. That was
+      // harmless while a burn could only fly 22,500 u and every real leg was
+      // longer. The moment the reach became 150,000 u it turned into a
+      // measured catastrophe: a leg whose destination was a nebula 1,759 u
+      // away staged Tartarus Nebula Prime — 76,741 u out, in the same 30 deg
+      // cone — armed a 13.8 s / 100 u-frame burn for it, and then the phase
+      // (still flying to its own 1,759 u destination) swung the nose onto
+      // THAT, guidance followed the nose, and the staged subject went from
+      // 11.2 deg off the bow to 138 deg behind in 2.5 s. Three legs in a row,
+      // each ended by the cut's `blown` clause at ~2.7 s of a 13 s burn.
+      // A body further away than the place we are going is not on the way to
+      // it, so the caller's segment length is now enforced, not annotated.
+      if (boostDist && range > boostDist) continue;
       const cosA = _owarpToTmp.dot(dir) / Math.max(1e-6, range);
       if (cosA < _ARRIVAL_CONE_COS) continue;
       // WILL THE BURN ACTUALLY GET INSIDE THIS BODY'S CORRIDOR?
@@ -4644,7 +4999,26 @@
     // Clear it by its own danger radius plus a ship-length of margin. Refusing
     // is cheap: the caller retries next frame and the demo is always moving, so
     // a blocked heading opens within a second or two of lap.
-    return off < (as.dangerR || 0) + 300;
+    //
+    // ...AND BY AN ANGLE, NOT ONLY A DISTANCE, WHILE WE ARE STANDING AT IT.
+    // At the arrival standoff the destination is a 30-degree object: a heading
+    // that clears its danger radius by 300 u can still be pointed squarely at
+    // its face. `off < 0.45 x range` is a ~24 degree cone, comfortably wider
+    // than the ~30 degree body it is protecting, and it only applies inside 3x
+    // the standoff — beyond that the burn has room to bend and the old
+    // distance rule is the right one.
+    //
+    // MEASURED, this build: parked 1,947 u off Hyperion Nebula Prime, 34
+    // degrees, dead centre, holding station — then followDiscoveryPath fired a
+    // tactical W-jump straight down the boresight: 1,947 -> 1,455 -> 643 u in
+    // two seconds at 14.9 u/frame, "PLANETARY IMPACT". The O-warp path was
+    // already guarded here; the jump path was not, and it is the same mistake
+    // with a different key.
+    const _depNear = as._flown && as.stand && camPos().distanceTo(as.obj.position) < as.stand * 3;
+    const _depClear = _depNear
+      ? Math.max((as.dangerR || 0) + 300, _depTmp.length() * 0.45)
+      : (as.dangerR || 0) + 300;
+    return off < _depClear;
   }
 
   // Emergency warp is gated: the autopilot is NOT allowed to use its own
@@ -4766,17 +5140,70 @@
           // CAN be built to arrive at. The leg still spends its whole boost
           // closing on the destination, and it still ends ON something.
           _owarpFwdTmp.subVectors(dp, camPos());
+          const _destRange = _owarpFwdTmp.length();
           if (_owarpFwdTmp.lengthSq() > 1e-6) {
             _owarpFwdTmp.normalize();
-            const way = _findArrivalSubjectAlongRay(camPos(), _owarpFwdTmp, _boostDist);
+            // The segment searched is HERE → THE DESTINATION (plus 10 % so a
+            // body just beyond the marker still counts as arriving at it), and
+            // never further than one burn. See the range cap inside
+            // _findArrivalSubjectAlongRay for what happened when it was
+            // unbounded.
+            const way = _findArrivalSubjectAlongRay(camPos(), _owarpFwdTmp,
+              Math.min(_boostDist, _destRange * 1.1));
             if (way) { _stageAndArm(way.obj, way.radius); staged = true; }
           }
         }
       }
     }
-    // No destination handed in (or nothing reachable toward it) — fall back to
-    // the current heading, which still refuses to claim a reveal in open space.
-    if (!staged) _stageOWarpArrivalSubject();
+    // No destination handed in AT ALL — fall back to the current heading,
+    // which still refuses to claim a reveal in open space.
+    //
+    // Only when none was handed in. A leg that HAS a destination and could not
+    // stage anything on the way to it must not go looking down the boresight
+    // instead: the heading search is bounded only by the maximum burn, so on a
+    // short leg it happily claims a body tens of thousands of units past the
+    // place we are actually going — the same "not on the way" failure the
+    // range cap in _findArrivalSubjectAlongRay fixes, arriving through the
+    // back door. Such a leg has nowhere to arrive, and the refusal below is
+    // the correct answer.
+    if (!staged && !dest) staged = _stageOWarpArrivalSubject();
+
+    // ── NO DESTINATION, NO IGNITION ──────────────────────────────────────────
+    // This is the line that makes every clause above matter. Until it existed,
+    // failing to stage anything did not stop the warp — it just fired one
+    // without a subject, and a subject-less burn is a stopwatch pointed at
+    // empty space: the arrival cut-off's guard (update(), :825) needs
+    // `gameState._arrivalSubject`, so with none the cut, the extension, the
+    // dead-band tiling and the arrival park are ALL unreachable and the leg can
+    // only end by the clock running out, wherever that happens to be.
+    //
+    // MEASURED, this build, before this line: 8 of 8 and then 6 of 6 forced
+    // O-warp legs staged nothing, ran a mean 8.5 s raw stopwatch, and logged
+    // arrivalCuts 0 / arrivalExts 0 / arrivalParks 0. Those are not arrivals
+    // with bad framing, they are burns with nowhere to arrive.
+    //
+    // Refusing is cheap and is NOT a stall: every caller (:1851, :2377, :2387,
+    // :2596, :4092) reads false as "not this frame" and retries, and the travel
+    // phase's own t > 8 s fallback hands the leg to a plain cruise rather than
+    // waiting forever. What the refusal buys is that a warp charge is only ever
+    // spent on a leg that has somewhere to end.
+    // A LEFTOVER SUBJECT IS NOT A DESTINATION EITHER — the test is a subject
+    // staged for THIS leg, or one still inside its own live window; anything
+    // older is the previous arrival's handle and flying on it would aim this
+    // burn at a place we already left.
+    const _liveSubj = !!(gameState._arrivalSubject && gameState._arrivalSubject.obj &&
+                         _arrivalSubjectFresh(gameState._arrivalSubject));
+    if (!staged && !_liveSubj) {
+      ap._warpNoSubjectRefusals = (ap._warpNoSubjectRefusals || 0) + 1;
+      if (!ap._warpRefuseLoggedAt || Date.now() - ap._warpRefuseLoggedAt > 4000) {
+        ap._warpRefuseLoggedAt = Date.now();
+        console.log('🚫 WARP REFUSED — nothing stageable to arrive at (' +
+          ap._warpNoSubjectRefusals + ' this run)');
+      }
+      _disarmWarpBurn();
+      _clearArrivalSubject();   // no-op while a park owns the beat
+      return false;
+    }
     keys().o = true;
     setTimeout(() => { keys().o = false; }, 100);
     return true;
@@ -5136,12 +5563,32 @@
     return best;
   }
 
-  function nearestNebula() {
+  // ── A LEG HAS TO GO SOMEWHERE ─────────────────────────────────────────────
+  // `minDist` (optional) rejects candidates the ship is effectively already
+  // at. 10,000 u is not a new number: it is the coast phase's own REWARP_RANGE
+  // — the distance at which that phase declares "too far to cruise, warp" —
+  // so anything INSIDE it is, by the demo's own definition, somewhere to fly
+  // to on thrusters rather than to spend a warp charge on.
+  //
+  // WHY THIS EXISTS. Measured on this build, 6 consecutive forced O-warp legs:
+  // the destination handed to the warp was 20, 396, 1,364, 1,536, 1,856 and
+  // 2,685 u away — the demo was firing an interstellar warp at a nebula centre
+  // it was ALREADY STANDING IN, because nearestNebula() is happy to return the
+  // cloud the ship is inside. Nothing can be staged for such a leg (the
+  // destination clause rejects candidates inside 1.3x their own standoff — a
+  // place we are at is not an arrival), so every one of those legs went
+  // subject-less, which is the state in which none of the arrival machinery
+  // can run. The reach fix (EW_BOOST_SPEED_MAX) makes far destinations
+  // reachable; this makes the demo actually PICK one.
+  const TRAVEL_LEG_MIN_DIST = 10000;
+  function nearestNebula(minDist) {
     if (typeof nebulaClouds === 'undefined') return null;
+    const _min = minDist || 0;
     let best = null, bestDist = Infinity;
     nebulaClouds.forEach(n => {
       if (!n.userData || n.userData.deepDiscovered) return;
       const d = camPos().distanceTo(n.position);
+      if (d < _min) return;
       if (d < bestDist) { bestDist = d; best = n; }
     });
     return best;
@@ -5151,8 +5598,9 @@
   // Each cluster index holds two nebulas; pick the cluster center
   // (average of the pair) as the warp destination so the boost
   // delivers the player into the middle of a twin formation.
-  function nearestTwinNebula() {
+  function nearestTwinNebula(minDist) {
     if (typeof nebulaClouds === 'undefined' || !nebulaClouds.length) return null;
+    const _min = minDist || 0;
     const cp = camPos();
     // Group by cluster index
     const clusters = {};
@@ -5174,6 +5622,7 @@
       pair.forEach(n => center.add(n.position));
       center.divideScalar(pair.length);
       const d = cp.distanceTo(center);
+      if (d < _min) continue;   // a cluster we are already inside is not a leg
       if (d < bestDist) { bestDist = d; bestCenter = center; bestPair = pair; }
     }
     if (!bestCenter) return null;
@@ -5645,6 +6094,25 @@
   }
 
   function goPhase(name) {
+    // ── A LIT BURN IS COMMITTED (see _burnCommitted) ─────────────────────────
+    // Break-offs to combat are written for a ship that is flying: "a hostile
+    // appeared, go fight it". During a warp burn the ship is doing 60-100
+    // u/frame inside a tunnel and cannot fight anything — but the combat phase
+    // still takes the stick and swings the nose onto the hostile, and warp
+    // guidance (game-physics.js) rotates VELOCITY onto the nose, so the
+    // break-off does not pause the leg, it destroys it.
+    //
+    // MEASURED, this build: a leg armed 13.4 s for Distant Nebula Zeta Prime
+    // was converging perfectly — 73,460 u out, miss angle 11 deg -> 5.7 deg,
+    // 12,000 u flown — when an intruder pulled the demo into 'combat' at
+    // +1.7 s. The nose went 15 -> 40 -> 62 -> 88 deg off the subject, velocity
+    // followed it, and the cut ended the burn on `blown` with the destination
+    // still 61,475 u away at 1.16 deg. The hostile was never engaged either:
+    // the phase flipped back the moment the burn ended.
+    //
+    // The leg is not cancelled, only deferred — every caller re-detects the
+    // intruder on the next frame, and the burn is at most ~25 s long.
+    if ((name === 'combat' || name === 'bossEngage') && _burnCommitted()) return;
     console.log('🤖 autopilot →', name);
     ap.phase = name;
     ap.phaseStart = Date.now();
@@ -5997,6 +6465,12 @@
       return { boostDist: Math.round(boostDist), tally: tally,
         pass: rows.filter(r => r.why === 'PASS').slice(0, 8),
         reach: reach,
+        // The nearest bodies that could be arrivals AT ALL, whatever the burn
+        // can do — the set whose distances decide how far a burn has to be
+        // able to fly. Their being 22,224 u+ out on every measured leg is what
+        // proved the reach ceiling (not the cone, not the framing rules) was
+        // the thing starving the whole arrival path.
+        framNear: rows.filter(r => r.framable).slice(0, 8),
         nearest: rows.slice(0, 12) };
     };
     D.state = function () {

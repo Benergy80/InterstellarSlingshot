@@ -6783,12 +6783,32 @@ function createPirateExplosionVariant(position, variant) {
         spark: cfg.particles, sparkCount: cfg.count, scale: 1.0
     });
 
-    // Delayed secondary pop — small offset burst so each variant reads as
-    // a two-beat detonation rather than a single flash.
-    const offset = position.clone().add(new THREE.Vector3(
-        (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10));
+    // Delayed secondary pop — a SMALLER burst, thrown clear of the first.
+    //
+    // ROUND 11 — THIS WAS A SECOND FULL-SIZE KILL. `createExplosionEffect`
+    // runs the complete `_fxKillBurst`, sized off the victim's own hull, and
+    // the offset was +-5 world units — about 7 px at fighting range, i.e.
+    // concentric. So the game's most common kill (the demo's pirate deaths)
+    // drew TWO whole detonations on the same pixels 130 ms apart, and their
+    // additive sum clips: measured on a paused world at 250 u, stepping the
+    // manager by hand while letting the timer fire, the composite carried
+    // 10,384 px at >= 250/255 at t = 250 ms and 15,875 px at t = 400 ms —
+    // an r = 57-71 px flat white disc, the "untextured white orb" read, and
+    // it is invisible to any harness that steps the burst inside a single JS
+    // task (the setTimeout cannot fire there, so the sweep only ever saw
+    // burst one). Same beat, a third of the size, and displaced by half a
+    // hull length so the two pops are separate events on screen: the second
+    // now reads as a magazine cooking off, not as a brighter first frame.
+    const _sOff = 0.55 * _fxVictimWorldLen(null, position);
+    const _sDir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5,
+                                    Math.random() - 0.5);
+    if (_sDir.lengthSq() < 1e-6) _sDir.set(1, 0, 0);
+    const offset = position.clone().add(_sDir.normalize().multiplyScalar(_sOff));
     setTimeout(() => {
-        if (typeof createExplosionEffect === 'function') createExplosionEffect(offset);
+        _fxLayeredBurst(offset, {
+            core: 0xfff3d0, flash: cfg.core, ring: cfg.secondary,
+            spark: cfg.particles, sparkCount: Math.round(cfg.count * 0.45), scale: 0.42
+        });
     }, variant === 'plasma' ? 200 : 130);
 }
 window.createPirateExplosionVariant = createPirateExplosionVariant;
@@ -6860,8 +6880,18 @@ function _fxGetHardCoreTexture() {
     // frame was primed (see explosionManager.addExplosion) this shoulder was
     // the composite's worst remaining edge, at 38.8/255 on the detonation
     // frame, r = +17 px — the last reading still inside 5/255 of the bar.
-    g.addColorStop(0.30, 'rgba(255,255,255,1.0)');
-    g.addColorStop(0.64, 'rgba(255,255,255,0.55)');
+    // ROUND 11 — THE SHOULDER IS MEASURED IN PIXELS, AND THE DISC JUST GOT
+    // SMALLER. This profile's steepest segment is the 1.00 -> 0.55 roll,
+    // and its slope on screen is 0.45 of alpha divided by the segment's
+    // width IN PIXELS. At _FX_HOT_CORE_K 0.53 that segment was 0.34 of a
+    // ~14 px radius (~5 px, ~25/255 per px); at 0.30 the same segment is
+    // ~2.9 px and the composite's steepest radial step measured 42.8/255 at
+    // r = 17 px on faction0 — over the 40 bar, and put there by the shrink,
+    // not by any new layer. Spreading the roll over 0.48 of the radius
+    // instead of 0.34 restores the pixel slope the bar was written against
+    // without moving the plateau that carries the >= 230 intensity.
+    g.addColorStop(0.24, 'rgba(255,255,255,1.0)');
+    g.addColorStop(0.72, 'rgba(255,255,255,0.55)');
     g.addColorStop(1.00, 'rgba(255,255,255,0.0)');
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, size, size);
@@ -7010,7 +7040,26 @@ function _fxHotCore(center, color, startSize, endSize, life, capFrac, glareColor
             const gEnd = endSize * _FX_GLARE_MULT, gWant = want * _FX_GLARE_MULT;
             const gMax = _fxMaxScale(gs.position, 0.5 / _cg);
             gs.scale.setScalar(gEnd > gMax ? gWant * (gMax / gEnd) : gWant);
-            const o = (k < 0.72) ? 1 : Math.max(0, (1 - k) / 0.28);
+            // ROUND 11 — THE FLASH IS A FLASH, NOT A MOON. This held the
+            // hard disc at FULL opacity for 72% of its life — 238 ms of a
+            // 330 ms layer — and because the disc is the one element built
+            // to clip, that is 238 ms of gradient-free white. Measured
+            // same-frame at 250 u, the composited burst carried a >= 250/255
+            // flat region of 14,285-17,520 px (equivalent radius 64.7-74.7
+            // px: a 150 px-wide disc with no gradient in it) and stayed
+            // >= 230 for 875-1,525 ms. Read blind, the frames are "an
+            // untextured white orb with a faint rim — indistinguishable from
+            // a moon". A detonation's clipped centre is supposed to be the
+            // shortest thing in the event, not the longest.
+            //
+            // Hold 0.72 -> 0.25 makes the clipped plateau an ~82 ms flash on
+            // a 330 ms layer and spends the remaining 248 ms as a ramp, so
+            // the disc spends most of its life as a GRADIENT. The >= 230
+            // intensity bar is unaffected in kind — it is a peak-value bar
+            // and the peak is untouched — only the plateau's duration moves.
+            // The exponent 1.25 keeps the ramp off a straight line so the
+            // decay reads as cooling rather than as a dissolve.
+            const o = (k < 0.25) ? 1 : Math.max(0, Math.pow((1 - k) / 0.75, 1.25));
             mat.opacity = o;
             // The shoulder outlasts the disc slightly (^0.7) so the hard core
             // never fades out from under its own glare and re-exposes an edge
@@ -7187,9 +7236,18 @@ function _fxFireBody(center, r0, r1, color, life, opacity, capFrac, hold) {
             // up to fill the fireball. Nothing about the area, fill or
             // annulus acceptance moves: all three are measured at the burst's
             // peak, ~700 ms, where this ramp is long finished.
+            // TAIL EXPONENT 0.85 -> 0.55. With the hold cut to 0.30 (see the
+            // call sites) the 0.85 tail put the body at 0.128 of its peak by
+            // t = 700 ms, and measured that dropped the burst's interior
+            // ground to 32.6/255 at the AREA peak — under acceptance (b)'s
+            // 40/255 no-annulus floor, in the one frame the bar is read on.
+            // A shallower tail leaves the early-mid ground where it was
+            // (t = 400 ms moves 90.2 -> ~92, still inside the 40-90 band the
+            // ground is supposed to sit in) and lifts only the back half,
+            // which is where the outer front is still travelling.
             const fadeIn = Math.min(1, k / 0.34);
             mat.opacity = op * fadeIn * fadeIn * (3 - 2 * fadeIn) *
-                          (k < hd ? 1 : Math.pow((1 - k) / (1 - hd), 0.85));
+                          (k < hd ? 1 : Math.pow((1 - k) / (1 - hd), 0.55));
             return k < 1;
         },
         cleanup() { scene.remove(sp); mat.dispose(); }
@@ -7227,7 +7285,7 @@ function _fxLayeredBurst(position, o) {
     _fxCoreFlash(center, o.core || 0xfff3d0, 0.58 * K, 2 * _FX_BANG_K * K, 210, _FX_CAP_BANG);
     _fxCoreFlash(center, o.flash || 0xff8a3c, 0.64 * K, 2 * _FX_FIRE_K * K, 420, _FX_CAP_FIRE, 0.72);
     // Body fill — same layer, same job, same ladder as _fxKillBurst.
-    _fxFireBody(center, 0.52 * K, _FX_BODY_K * K, o.core || 0xffd9b0, 900, 0.78, _FX_CAP_BODY, 0.62);
+    _fxFireBody(center, 0.52 * K, _FX_BODY_K * K, o.core || 0xffd9b0, 980, 0.32, _FX_CAP_BODY, 0.42);
     // THE FRONT, replacing a CONSTANT-WIDTH ANNULUS. `_fxRing(center, 9*S,
     // 0xff6a22, 0.62, 9, 0.85)` drew a hard-edged brown circle of uniform
     // thickness: measured, a rim scanline step of 113/255 (bar: < 40) and,
@@ -7244,6 +7302,8 @@ function _fxLayeredBurst(position, o) {
         _fxParticles(center, o.sparkCount || 26, o.spark || 0xffb454, 2.1 * S, 3.4 * S, 12, 0);
     }
     _fxEmberTail(center, K, o.spark || 0xffb454, 96, 1850);
+    // Thrown wreckage — same layer, same job, same numbers as _fxKillBurst.
+    _fxShards(center, 18, o.spark || 0xffd0a0, 0.055 * K, 0.075 * K, 20, 'octa');
 }
 
 // ── KILL SPECTACLE: size the detonation off the thing that died ──────────
@@ -7773,7 +7833,19 @@ const _FX_KILL_GAIN = 0.84;
 // circle lands at 1.24x the surviving core's rim — the disc's own roll-off
 // now happens on top of a still-strong smooth field instead of straight down
 // to black. Same peak VALUE, same >= 230/255 hold, none of the edge.
-const _FX_HOT_CORE_K = 0.53;
+//
+// ROUND 11 — 0.53 -> 0.30. Halving it in round 10 was measured on the
+// LAYER; the composite went the other way, because the layers under it
+// (body, bang, fireball, glare) all grew at the same time and their
+// additive sum re-made the plateau the core had just given up: composited
+// same-frame readback at 250 u found a >= 250/255 clipped region of
+// 14,285-17,520 px, equivalent radius 64.7-74.7 px, up from the r ~ 24 px
+// plateau round 10 measured on the isolated layer. The clipped part of a
+// kill has to be small enough to read as a SOURCE inside the fireball, so
+// the disc is now 0.30K (peak radius 0.201K) — at fighting range ~40 px —
+// and the light around it is carried by the glare and the body, which are
+// gradients and cannot clip on their own.
+const _FX_HOT_CORE_K = 0.30;
 
 // SCREEN-CAP SHARES. _fxCapPx() is one radius — 35% of viewport HEIGHT as a
 // diameter — and every layer of the kill is now clamped against it. Each
@@ -7807,7 +7879,20 @@ const _FX_FRONT_IN_K  = 1.88;
 // 0.83 x 1.72K = 1.43K — on the inner front's band — and its rim at 1.72K,
 // still well inside the outer front's 2.20K, so the FRONT keeps the bounding
 // box and the 35% cap is untouched. The body only buys the middle.
-const _FX_BODY_K      = 1.88;     // fireball body — reaches the inner front's band
+// ROUND 11 — THE BODY STOPS BEING THE FRONT. 1.88K is EXACTLY the inner
+// front's radius, so the two layers occupied the same circle: measured at
+// the area peak, the radial profile was flat within +-10% from r = 0 out to
+// r ~ 0.55R and the front's band rose only 25-44/255 above a 159-211/255
+// body plateau. A ring that is 15% brighter than the thing it is crossing is
+// not a travelling front, it is a highlight on a ball — which is exactly how
+// the frames read. The body now ends INSIDE the inner front's painted band
+// (0.86 x 1.88K = 1.62K), so there is a real radius where the fill has
+// stopped and the ring has not yet arrived, and the ring crosses ground
+// instead of crossing itself. Its opacity drops with it (see _fxFireBody
+// call sites: 0.78 -> 0.34) so that ground is 40-60/255 — lit enough that
+// acceptance (b)'s no-annulus floor holds, dim enough that a 200/255 front
+// travelling over it is unmistakably the brightest thing in the frame.
+const _FX_BODY_K      = 1.68;     // fireball body — ends just inside the inner front's band
 const _FX_GLOW_K      = 0.68;     // afterglow   (was 0.325K)
 const _FX_FIRE_K      = 0.56;     // fireball    (was 0.31K)
 const _FX_BANG_K      = 0.36;     // bang        (was 0.275K)
@@ -7815,7 +7900,7 @@ const _FX_BANG_K      = 0.36;     // bang        (was 0.275K)
 // rides with it reaches _FX_GLARE_MULT x that, 1.63K — inside the inner
 // front's 1.88K, so the shoulder fills the middle without touching the
 // bounding box the 35% cap is measured on.
-const _FX_HOTCORE_R_K = 0.36;     // hot core peak radius (glare: x4.6 = 1.63K)
+const _FX_HOTCORE_R_K = 0.20;     // hot core peak radius (glare: x4.6 = 0.92K)
 
 // SCREEN-CAP SHARES, derived from the ladder above. The outer front owns
 // the whole cap; everything else is squeezed toward it in proportion.
@@ -7917,8 +8002,17 @@ function _fxKillBurst(center, S, cfg) {
     // synthwave rose as the base while letting a Klingon kill actually read
     // gold-shifted. VALUE is unchanged (red stays 255), so nothing about the
     // intensity or area acceptance moves.
+    // ROUND 11: 0.78 / hold 0.62 -> 0.32 / hold 0.38. This layer is what
+    // turned the kill into a lit sphere. At 0.78 its plateau alone lands
+    // ~128/255 of luminance UNDER the core, the glare and both flashes, so
+    // their additive sum clips flat across the whole middle and the fronts
+    // had nothing to travel over. At 0.32 the plateau lands ~50/255: the
+    // annulus acceptance (min >= 40 between centre and front) is still met —
+    // that bar has a ceiling now, 40-90, precisely because chasing its floor
+    // is what bought the filled ball — and the front's 200/255 band is a
+    // 150/255 rise instead of a 25-44/255 one.
     _fxFireBody(center, 0.52 * K, _FX_BODY_K * K,
-                _fxTintHue(0xff86c8, c.core, 0.46), 900, 0.78, _FX_CAP_BODY, 0.62);
+                _fxTintHue(0xff86c8, c.core, 0.46), 980, 0.32, _FX_CAP_BODY, 0.42);
     // AFTERGLOW, trimmed 2.70K/980ms -> 1.80K/700ms. This layer was the
     // reason the burst's area peak landed at 425-450 ms as a huge dim cloud:
     // it grows 4.9x while fading, so it contributed almost all of the peak's
@@ -7944,6 +8038,20 @@ function _fxKillBurst(center, S, cfg) {
     // 0.062 (see _fxEmberTail), and the count triples to keep the tail's
     // presence while every individual ember becomes a SPARK.
     _fxEmberTail(center, K, _fxTintHue(0xffbcdd, c.ember, 0.70), 96, 1850);
+    // THROWN WRECKAGE, WITH TRAILS. The 96 embers are Points, and a Point's
+    // gl_PointSize is computed against the CSS height rather than the
+    // drawing buffer — measured at 250 u they are sub-pixel sparks carrying
+    // under 6% of the burst's lit pixels, which is why the composite reads
+    // as one smooth object with nothing thrown out of it. These are the
+    // same camera-aligned streak sprites the Klingon and Sith recipes
+    // already use (see _fxShards): each one is stretched 4.4:1 ALONG ITS OWN
+    // screen-space heading, so a dozen of them radiating from the kill are
+    // read as debris in motion, not as a particle puff. Hull-relative like
+    // everything else here, and they travel to ~1.6K — past the body's rim,
+    // across the fronts' band and out of the burst's own bounding disc,
+    // which is the one thing in the effect that crosses that boundary.
+    _fxShards(center, 18, _fxTintHue(0xffd2e8, c.ember, 0.55),
+              0.055 * K, 0.075 * K, 20, 'octa');
 }
 
 function createExplosionEffect(targetObject) {
@@ -8343,12 +8451,26 @@ function _fxShards(center, count, color, size, speed, life, kind) {
         mesh.renderOrder = 73;
         mesh.userData.__dbTris = Infinity;
         scene.add(mesh);
+        const v = new THREE.Vector3(
+            Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+        ).normalize().multiplyScalar(speed * (0.5 + Math.random()));
+        // BORN AS A CLOUD, NOT AS A STACK — the same fix the ember tail
+        // already carries. Every shard used to be spawned at the exact
+        // detonation point at opacity 1, so the frame between `scene.add`
+        // and the first explosionManager tick drew all of them on one spot:
+        // the worst edge in the effect, in the frame most likely to be
+        // screenshotted. Each streak gets a head start of 1-3 steps along
+        // its OWN velocity (so the cloud is already radial on frame zero)
+        // and fades in over the first ~200 ms while it is still inside the
+        // fireball, where it adds nothing the bang is not already doing.
+        const head = 1.0 + Math.random() * 2.0;
+        const off0 = v.clone().multiplyScalar(head);
+        mesh.position.copy(center).add(off0);
+        m.opacity = 0;
         shards.push({
             mesh: mesh, geo: null, mat: m,
-            off: new THREE.Vector3(),
-            vel: new THREE.Vector3(
-                Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
-            ).normalize().multiplyScalar(speed * (0.5 + Math.random())),
+            off: off0,
+            vel: v,
             spin: new THREE.Vector3(
                 (Math.random() - 0.5) * 0.5,
                 (Math.random() - 0.5) * 0.5,
@@ -8362,9 +8484,14 @@ function _fxShards(center, count, color, size, speed, life, kind) {
     // shards were the layer carrying p98 bbox-height to 0.99 of the viewport
     // while every layer of the burst proper sat inside the 0.35 cap.
     const TERM = speed * 1.5 * Math.max(1, life);
+    let et = 0;
     explosionManager.addExplosion({
         update(dt) {
             l -= (1 / life) * (dt / 50);
+            et += dt;
+            // Leading-edge ramp, as on the fronts and the ember tail: the
+            // wreckage becomes visible as it LEAVES the flash.
+            const lead = Math.min(1, et / 200);
             const f = dt / 50;
             const maxR = _fxMaxScale(center, 1);
             const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
@@ -8389,7 +8516,7 @@ function _fxShards(center, count, color, size, speed, life, kind) {
                 const sx = c.vel.x * rx + c.vel.y * ry + c.vel.z * rz;
                 const sy = c.vel.x * ux + c.vel.y * uy + c.vel.z * uz;
                 c.mat.rotation = Math.atan2(sy, sx) + c.spin.z * 0.35;
-                c.mat.opacity = Math.max(0, l);
+                c.mat.opacity = Math.max(0, l) * lead;
             }
             return l > 0;
         },
