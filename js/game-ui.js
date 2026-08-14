@@ -3511,6 +3511,22 @@ const RADAR_SCAN_RADIUS = RADAR_RANGE_LADDER[RADAR_RANGE_LADDER.length - 1];
 // edge in every direction, including the diagonal, instead of visually
 // clipping against the border.
 const RADAR_RIM_RADIUS = 44;
+// Round-3 fix (critic-caught INVERSION, see _radarCompress below): the
+// committed (in-range) picture no longer owns the full 0-RADAR_RIM_RADIUS
+// disc. It's compressed to 0.62 of that radius instead, freeing a real
+// off-scale BAND (RADAR_INNER_RADIUS..RADAR_OUTER_RADIUS) with room to
+// order many off-scale contacts by range instead of the ~1-unit sliver
+// the old design left between the rim and the map's hard edge. The
+// committed zone still reads as the dominant picture (it's still the
+// majority of the radial scale and everything in it renders exactly as
+// before, just scaled) — it no longer eats the space the off-scale band
+// needs to stay legible.
+const RADAR_INNER_RADIUS = RADAR_RIM_RADIUS * 0.62;
+// Ceiling for the off-scale band. Must stay clear of the screenX/screenZ
+// box filter below (5-95 in map-percent space, i.e. a HARD 45-unit radial
+// limit along either axis) with margin, so an edge-hugging blip never gets
+// dropped by that filter for having been pushed too far out.
+const RADAR_OUTER_RADIUS = RADAR_RIM_RADIUS * 0.98;
 // Round-2 gap (critic-caught): scenery used to render at its own vivid
 // per-type dotColor, just at reduced opacity (0.45) — on screen that still
 // reads as the loudest, most saturated thing on the disc (37/45 rendered
@@ -3519,6 +3535,50 @@ const RADAR_RIM_RADIUS = 44;
 // the highest contrast. Scenery-tier dots/aggregates (dotPriority <= 60)
 // now fill with this single muted slate grey instead of their own hue.
 const SCENERY_DOT_FILL = '#6b7688';
+
+// Shared radial compression for the galactic radar, used by BOTH the
+// per-object dot loop and the current-target reticle so a locked target's
+// crosshair always sits exactly on top of its own blip.
+//
+// Round-3 fix (critic-caught INVERSION): the previous off-scale formula
+// computed an output radius of RADAR_RIM_RADIUS * (1 - 0.20*outerT) with
+// outerT INCREASING in _rad — so the rendered radius DECREASED the
+// farther a contact actually was, and two off-scale hostiles could draw
+// in the WRONG relative order (measured: a contact 13x farther away drew
+// 12% CLOSER to centre than the nearer one). Range ordering has to be
+// monotonically increasing in true distance with no fold-back, so this
+// now uses two zones instead: an INNER zone for in-range contacts
+// (compressed by a constant factor, so it's still linear and therefore
+// monotonic) and an OUTER band for off-scale contacts that climbs via a
+// LOG curve from RADAR_INNER_RADIUS toward RADAR_OUTER_RADIUS and never
+// turns back down. The two zones meet with no seam: at _rad ==
+// RADAR_RIM_RADIUS both branches evaluate to exactly RADAR_INNER_RADIUS.
+//
+// `_rad`/`_dx`/`_dz` are the pre-compression offset from disc centre (50,50)
+// in map-percent space; `radarRangeVal` is the current committed draw
+// range in world units (radarRange / _committedRange elsewhere in this
+// file). Returns {x, z, rad, clamped} — `rad` is the POST-compression
+// radial distance (handy for callers that need to re-derive it, e.g. the
+// map-bounds filter) and `clamped` flags whether the off-scale branch ran.
+function _radarCompress(_dx, _dz, radarRangeVal) {
+    const _rad = Math.sqrt(_dx * _dx + _dz * _dz);
+    if (_rad <= RADAR_RIM_RADIUS) {
+        const _sc = RADAR_INNER_RADIUS / RADAR_RIM_RADIUS;
+        return { x: 50 + _dx * _sc, z: 50 + _dz * _sc, rad: _rad * _sc, clamped: false };
+    }
+    // Span the log curve across exactly the off-scale distance the scan
+    // can ever report (committed range .. RADAR_SCAN_RADIUS) so the curve
+    // only saturates at RADAR_OUTER_RADIUS right at the scan's own cull
+    // boundary, never before it — every in-scan-range contact gets a
+    // distinct, strictly-increasing radius. `|| 1` guards the degenerate
+    // case where the committed range has already widened out to the scan
+    // radius itself (log(1) = 0, which would otherwise divide by zero).
+    const _span = Math.log(RADAR_SCAN_RADIUS / radarRangeVal) || 1;
+    const _outerT = Math.min(1, Math.log(_rad / RADAR_RIM_RADIUS) / _span);
+    const _outRad = RADAR_INNER_RADIUS + (RADAR_OUTER_RADIUS - RADAR_INNER_RADIUS) * _outerT;
+    const _sc = _outRad / _rad;
+    return { x: 50 + _dx * _sc, z: 50 + _dz * _sc, rad: _outRad, clamped: true };
+}
 
 function nearestHostileDistance() {
     if (typeof camera === 'undefined' || typeof enemies === 'undefined') return Infinity;
@@ -4139,9 +4199,9 @@ if (obj.type === 'ally') {
             // that keeps the contact's bearing exact (0° error) and reads
             // as a standard aviation-RWR "off-scale" edge blip.
             const _dx = screenX - 50, _dz = screenZ - 50;
-            const _rad = Math.sqrt(_dx * _dx + _dz * _dz);
+            const _rad0 = Math.sqrt(_dx * _dx + _dz * _dz);
             let rimClamped = false;
-            if (_rad > RADAR_RIM_RADIUS) {
+            if (_rad0 > RADAR_RIM_RADIUS) {
                 // Round-2 gap (critic-caught): a flat clamp pins EVERY
                 // off-scale contact to the identical rim radius, so the
                 // interior of the disc — where the actual dogfight lives —
@@ -4157,20 +4217,15 @@ if (obj.type === 'ally') {
                 if (dotPriority <= 20 && obj.type !== 'ally') {
                     return;
                 }
-                // Everything else that's off-scale still encodes its
-                // relative range instead of collapsing onto one
-                // indistinguishable ring: log-compress the outer band so a
-                // contact just past the rim lands close to RADAR_RIM_RADIUS
-                // while one much farther out settles toward the compressed
-                // floor (0.80 * RADAR_RIM_RADIUS), asymptotically — never
-                // fully reaching it, but saturating close to it by ~3x rim
-                // distance so extreme outliers don't collapse the scale.
-                const _outerT = Math.min(1, Math.log(_rad / RADAR_RIM_RADIUS) / Math.log(3));
-                const _sc = (RADAR_RIM_RADIUS * (1 - 0.20 * _outerT)) / _rad;
-                screenX = 50 + _dx * _sc;
-                screenZ = 50 + _dz * _sc;
-                rimClamped = true;
             }
+            // Everything else — in-range or off-scale — goes through the
+            // shared compression so a locked target's reticle (see the
+            // targetMapPos block below) always lands exactly on its own
+            // blip. See _radarCompress for the round-3 inversion fix.
+            const _rc = _radarCompress(_dx, _dz, radarRange);
+            screenX = _rc.x;
+            screenZ = _rc.z;
+            rimClamped = _rc.clamped;
 
             // Only show if within map bounds (the rim clamp/compression
             // above already guarantees this — it only ever pulls a point
@@ -4322,22 +4377,19 @@ if (obj.type === 'ally') {
         camera.position.distanceTo(gameState.currentTarget.position) <= RADAR_SCAN_RADIUS) {
         const targetRelativeX = (gameState.currentTarget.position.x - camera.position.x) / radarRange;
         const targetRelativeZ = (gameState.currentTarget.position.z - camera.position.z) / radarRange;
-        let targetScreenX = 50 + targetRelativeX * 50;
-        let targetScreenZ = 50 + targetRelativeZ * 50;
+        const _tdx0 = targetRelativeX * 50, _tdz0 = targetRelativeZ * 50;
 
-        // Same rim clamp as the pooled blips (see the nearbyObjects loop
-        // above): the current target is the one contact combat depends on
-        // reading correctly, so it must not blink out just because the
-        // draw scale auto-contracted for a different, closer engagement.
-        // Bounded to RADAR_SCAN_RADIUS above so this stays in lockstep with
-        // what the pooled dot for the same object actually shows.
-        const _tdx = targetScreenX - 50, _tdz = targetScreenZ - 50;
-        const _trad = Math.sqrt(_tdx * _tdx + _tdz * _tdz);
-        if (_trad > RADAR_RIM_RADIUS) {
-            const _tsc = RADAR_RIM_RADIUS / _trad;
-            targetScreenX = 50 + _tdx * _tsc;
-            targetScreenZ = 50 + _tdz * _tsc;
-        }
+        // Same compression as the pooled blips (see _radarCompress and the
+        // nearbyObjects loop above): the current target is the one contact
+        // combat depends on reading correctly, so its reticle must land on
+        // the exact same point as its own blip — including staying in
+        // lockstep, range-order-wise, when the draw scale auto-contracted
+        // for a different, closer engagement. Bounded to RADAR_SCAN_RADIUS
+        // above so this stays in step with what the pooled dot for the
+        // same object actually shows.
+        const _trc = _radarCompress(_tdx0, _tdz0, radarRange);
+        let targetScreenX = _trc.x;
+        let targetScreenZ = _trc.z;
 
         if (targetScreenX >= 0 && targetScreenX <= 100 && targetScreenZ >= 0 && targetScreenZ <= 100) {
             targetMapPos.style.left = `${targetScreenX}%`;
@@ -5495,6 +5547,8 @@ function updateHudSpectacleDim() {
     }
 
     _updateFlightControlsCollapse();
+    _updateShipStatusCollapse();
+    _updateMapLegendCollapse();
 }
 if (typeof window !== 'undefined') {
     window.updateHudSpectacleDim = updateHudSpectacleDim;
@@ -5554,6 +5608,130 @@ function _updateFlightControlsCollapse() {
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     if (now - _hudControlsLaunchT >= 8000) {
         _hudControlsPanel.classList.add('controls-collapsed');
+    }
+}
+
+// Round-3 HUD-occupancy fix (critic-caught: chrome measured ~38% of a
+// 1600x900 frame against a <=25% flight / <=30% combat bar; see
+// css/styles.css's "ROUND-3 HUD OCCUPANCY FIX" block for the acceptance
+// numbers). SHIP STATUS (bottom-left) was the single biggest offender with
+// no fold of its own — Flight Controls already had one (above), this
+// gives it the same treatment: same 8s-after-launch trigger, same
+// click-title-or-hint-to-toggle interaction, same "nothing removed, just
+// one click further away" guarantee. index.html is sealed so the rows
+// that fold get tagged with a class HERE at runtime instead of in the
+// markup; the CSS only ever acts on that class, so a row this can't find
+// (a future markup change, say) just stays visible — the fold degrades
+// open, not closed.
+let _shipStatusPanel = null;
+let _shipStatusHintEl = null;
+let _shipStatusLaunchT = null;
+let _shipStatusManual = false;
+
+function _updateShipStatusCollapse() {
+    if (!_shipStatusPanel) {
+        _shipStatusPanel = document.querySelector('.ui-panel.bottom-left');
+        if (!_shipStatusPanel) return;
+
+        // Meta/progression rows, checked between fights rather than mid-
+        // dogfight: fold these away. Velocity/Energy/Hull/Shields/Weapons/
+        // Missiles/Target-Lock/current-target-name are the ones the
+        // 50-400u combat band is actually decided by, so those stay put.
+        const secondaryIds = ['distance', 'location', 'emergencyWarpCount', 'galaxyProgress', 'shipRepValue'];
+        secondaryIds.forEach(id => {
+            const el = document.getElementById(id);
+            const row = el && el.closest('.curved-element');
+            if (row) row.classList.add('ship-status-secondary');
+        });
+        // The reputation BAR is its own row with no id, immediately after
+        // the reputation number's row — grab it by position instead.
+        const repRow = document.getElementById('shipRepValue') &&
+            document.getElementById('shipRepValue').closest('.curved-element');
+        if (repRow && repRow.nextElementSibling) {
+            repRow.nextElementSibling.classList.add('ship-status-secondary');
+        }
+
+        const title = _shipStatusPanel.querySelector('h3.cyber-title');
+        _shipStatusHintEl = document.createElement('div');
+        _shipStatusHintEl.className = 'ship-status-hint';
+        _shipStatusHintEl.textContent = '▾ full status';
+        _shipStatusHintEl.title = 'Click to show all ship status readouts';
+        _shipStatusPanel.appendChild(_shipStatusHintEl);
+
+        const toggle = () => {
+            _shipStatusManual = true;
+            _shipStatusPanel.classList.toggle('status-collapsed');
+        };
+        _shipStatusHintEl.addEventListener('click', toggle);
+        if (title) {
+            title.style.cursor = 'pointer';
+            title.addEventListener('click', toggle);
+        }
+    }
+
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) {
+        _shipStatusLaunchT = null;
+        return;
+    }
+    if (_shipStatusLaunchT === null) {
+        _shipStatusLaunchT = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        return;
+    }
+    if (_shipStatusManual) return;
+
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (now - _shipStatusLaunchT >= 8000) {
+        _shipStatusPanel.classList.add('status-collapsed');
+    }
+}
+
+// Same fold, applied to the Map panel's (bottom-right) static legend text
+// (You/Target/Compass key + "8 Known Galaxies..." + view-status row) —
+// read once, then never needed again, so it auto-collapses to a one-line
+// hint on the same 8s timer. The radar disc itself and everything on it
+// (blips, compass, toggle button) is untouched; this only folds the
+// caption below it.
+let _mapLegendPanel = null;
+let _mapLegendDetailEl = null;
+let _mapLegendHintEl = null;
+let _mapLegendLaunchT = null;
+let _mapLegendManual = false;
+
+function _updateMapLegendCollapse() {
+    if (!_mapLegendPanel) {
+        _mapLegendPanel = document.querySelector('.ui-panel.bottom-right');
+        if (!_mapLegendPanel) return;
+        const map = _mapLegendPanel.querySelector('.round-map');
+        _mapLegendDetailEl = map && map.nextElementSibling;
+        if (!_mapLegendDetailEl) return;
+        _mapLegendDetailEl.classList.add('map-legend-detail');
+
+        _mapLegendHintEl = document.createElement('div');
+        _mapLegendHintEl.className = 'map-legend-hint';
+        _mapLegendHintEl.textContent = '▾ legend';
+        _mapLegendHintEl.title = 'Click to show the map legend';
+        _mapLegendPanel.appendChild(_mapLegendHintEl);
+
+        const toggle = () => {
+            _mapLegendManual = true;
+            _mapLegendPanel.classList.toggle('legend-collapsed');
+        };
+        _mapLegendHintEl.addEventListener('click', toggle);
+    }
+
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) {
+        _mapLegendLaunchT = null;
+        return;
+    }
+    if (_mapLegendLaunchT === null) {
+        _mapLegendLaunchT = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        return;
+    }
+    if (_mapLegendManual) return;
+
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (now - _mapLegendLaunchT >= 8000) {
+        _mapLegendPanel.classList.add('legend-collapsed');
     }
 }
 

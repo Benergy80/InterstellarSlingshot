@@ -2071,6 +2071,93 @@ const _PLUME_LEN_FAR = 1.58, _PLUME_WID_FAR = 1.44, _PLUME_OPA_FAR = 1.00;
 const _PLUME_CORE_NEAR = 0.28;      // size multiplier at dogfight range
 const _PLUME_CORE_NEAR_OPA = 0.66;  // opacity multiplier at dogfight range
 
+// ── THE CORE IS NOW CLAMPED AGAINST THE HULL, NOT AGAINST THE RANGE ─────────
+//
+// Everything above subordinates the nozzle core by RANGE: `_PLUME_CORE_NEAR`
+// is handed back through `farLift`, and `farLift` is a pure function of
+// `widen`, which is a pure function of the plume's width IN DRAWING-BUFFER
+// PIXELS. That coupling is the bug. It means the moment the plume falls under
+// `_PLUME_MIN_PX` the subordination releases — and WHERE that happens is not a
+// property of the fight, it is a property of the framebuffer. The game runs an
+// adaptive-resolution scaler, so the same 300u tail-on contact is subordinated
+// on a full-size buffer and blown out on a scaled one.
+//
+// MEASURED, live world, paused, other movers hidden, three renders in one
+// frame (background / bare hull / as-shipped), hull mask = |bare-bg| > 10,
+// FX-cover = share of hull pixels the FX raise by >= 8/255, contrast = p90-p10
+// over the hull mask. Same ships, same poses, ONLY the drawing buffer changed:
+//
+//                      1600x900                    800x450 (adaptive scale)
+//   Fed  600u tail-on  cover 10.4%  FX/hull 0.38   cover 57.7%  FX/hull 2.80
+//   Fed  900u tail-on  cover 53.3%  FX/hull 1.23   cover  100%  FX/hull 11.44
+//   Klin 900u tail-on  cover 33.8%  FX/hull 0.46   cover  100%  FX/hull  4.36
+//
+// and the contrast the hull is there to carry goes with it: Federation 900u
+// tail-on p90-p10 73.6 (bare hull) -> 14.6 (as shipped) on the scaled buffer.
+// The hull is not dimmed at that point, it is ERASED — one billboarded sprite
+// covering every pixel of the ship it belongs to. Zeroing the core sprites
+// alone recovers it (cover 100% -> 6.3%, contrast 14.6 -> 70.2), so this is
+// one layer, not a stack.
+//
+// TAIL-ON IS THE POSE THAT BREAKS, and for a geometric reason: the streak is a
+// quad on the thrust axis, so looking down the exhaust it goes edge-on and
+// contributes nothing (measured streak opacity 0.000 at yaw 180), while the
+// core is a SPRITE and does not foreshorten at all. Every joule the layer has
+// lands in a camera-facing disc sitting exactly over the hull — and chasing a
+// fleeing target is the single most common dogfight framing there is.
+//
+// So the clamp below is keyed to the thing that actually matters, the ship's
+// own projected size. The plume rig already solves a local-frame hull box
+// (`_plumeLocalBox`, kept for the hull readout) and already knows the world
+// scale (`_plumeSx`), so the hull's projected radius is free. The core may
+// never be wider than _HULL_FRAC of it.
+//
+// WHY THIS DOES NOT COST THE FAR-RANGE PRESENCE FLOOR — the thing every note
+// above rightly refuses to spend. The clamp is a CEILING, never a floor: it
+// can only shrink a core that is already bigger than the ship. At 15,000u the
+// core measures ~1.3 px of radius against a hull radius of ~0.9 px, so the
+// ceiling would bite at 0.26 px — which is why `_MIN_PX` sits under it. Below
+// that allowance the clamp is inert by construction and the survey-range
+// contact is bit-identical to what it was. What the clamp removes is only the
+// band where the sprite is BIGGER THAN THE SHIP, which is never a presence
+// cue: a 13 px blob where a 7 px ship should be does not read as "there is a
+// contact out there", it reads as a lens artefact.
+const _PLUME_CORE_HULL_FRAC = 0.30; // core radius, as a share of hull radius
+const _PLUME_CORE_MIN_PX = 2.2;     // ...but never clamped under this radius
+
+// TAIL-ON OPACITY MIRROR. `coreBoost` gives the core its full +105% "you are
+// staring into the bell" lift exactly at the aspect where the streak has
+// vanished and the billboard has stopped foreshortening — i.e. it doubles down
+// on the one pose that was already the failure. The mirror below is the same
+// shape as the head-on aspect gate, pointing the other way: full strength from
+// broadside through ~57 degrees astern, then falling to _TAIL_OPA by dead
+// astern. It is deliberately an OPACITY term and not a size term — the size is
+// what says "engines, pointed at you", and the size is what the coverage clamp
+// above already governs, so taking the read off brightness is what leaves the
+// aspect cue intact while giving the hull its pixels back.
+const _PLUME_CORE_TAIL_LO = 0.55;   // signed aspect where the mirror starts
+const _PLUME_CORE_TAIL_HI = 0.86;   // ...and where it is at full strength
+// 0.30 -> 0.45. At 0.30 the mirror took the measured on-hull FX cover at
+// 300 u tail-on from 7.8% to 6.3%, and the acceptance floor that stops this
+// work from simply DELETING the plume sits at 8%. The far-range failure this
+// piece is about is fixed by the coverage clamp above, not by this term
+// (measured at 900 u on a scaled buffer the core's radius goes 13.18 px ->
+// 2.20 px on the clamp alone, while `farLift` has already released the
+// mirror), so the mirror can afford to be the gentler of the two.
+const _PLUME_CORE_TAIL_OPA = 0.45;  // opacity multiplier dead astern
+
+// SATURATION BUDGET. The old line was `Math.min(1.0, o)` with a comment saying
+// the core "is deliberately allowed to clip (that's the white-hot read)". At
+// 1.0 an additive white sprite adds 255 to every pixel under it, so the
+// white-hot read and the ERASED HULL are the same number — there is no setting
+// of the rest of the rig that can survive it. Held to 0.62 the nozzle still
+// pins its own centre to white over the sky (the two cores overlap, and the
+// streak's hot end is under them) while a lit hull pixel underneath keeps
+// enough of its own value to stay a surface. Released to 1.0 by `farLift`, so
+// the survey-range contact — where there is no hull left to protect and the
+// sprite IS the ship — is untouched.
+const _PLUME_CORE_OPA_CAP = 0.62;
+
 // Fixed ALARM hue for the attack wind-up (see the alarm bulb in
 // _ensureShipThrusterCones). Deliberately NOT the faction colour: the
 // telegraph has to be one learnable colour across all eight factions, and
@@ -2185,14 +2272,26 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // saturates at its 2.2 cap by ~1,600u for a standard hull and is flat
     // (and therefore blind) across the whole survey band beyond that.
     let plumePx = 0;
+    // Framebuffer px per world unit, and the HULL'S OWN projected radius in
+    // those px. The second one is what the nozzle core is clamped against
+    // (see _PLUME_CORE_HULL_FRAC) — the local-frame hull box was already
+    // measured once at attach time for the hull readout, so this costs a
+    // multiply, not a traverse.
+    let ppu = 0;
+    let hullRpx = 0;
     if (dist) {
-        const ppu = _plumePxPerUnit(dist);
+        ppu = _plumePxPerUnit(dist);
         if (ppu > 0) {
             const halo = ship.userData._thrusters[1];
             const rad = halo && halo.mesh.userData._plumeWorldRad;
             if (rad > 0) {
                 plumePx = rad * 2 * ppu;
                 if (plumePx < _PLUME_MIN_PX) widen = Math.min(_PLUME_MAX_WIDEN, _PLUME_MIN_PX / plumePx);
+            }
+            const _hb = ship.userData._plumeLocalBox;
+            if (_hb) {
+                hullRpx = 0.5 * Math.max(_hb.maxx - _hb.minx, _hb.maxy - _hb.miny)
+                        * (ship.userData._plumeSx || 1) * ppu;
             }
         }
     }
@@ -2351,6 +2450,20 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // whole contact.
     const coreNearK = _PLUME_CORE_NEAR + (1 - _PLUME_CORE_NEAR) * farLift;
     const coreNearO = _PLUME_CORE_NEAR_OPA + (1 - _PLUME_CORE_NEAR_OPA) * farLift;
+    // ── COVERAGE CLAMP AND TAIL-ON MIRROR (see _PLUME_CORE_HULL_FRAC) ─────
+    // The ceiling the core's on-screen radius is measured against, in px.
+    // Deliberately NOT ridden back by farLift: farLift releasing the core is
+    // the failure this clamp exists to stop, and the _MIN_PX floor is what
+    // keeps the survey-range contact out of its reach instead.
+    const coreAllowPx = (hullRpx > 0)
+        ? Math.max(_PLUME_CORE_HULL_FRAC * hullRpx, _PLUME_CORE_MIN_PX) : 0;
+    // Signed aspect again: +1 is dead astern, where the streak is edge-on and
+    // the billboard is not. `1 - farLift` hands the whole mirror back at
+    // survey range for the same reason the clamp has a floor.
+    const coreTailO = 1 - (1 - _PLUME_CORE_TAIL_OPA)
+        * THREE.MathUtils.smoothstep(aspect, _PLUME_CORE_TAIL_LO, _PLUME_CORE_TAIL_HI)
+        * (1 - farLift);
+    const coreOpaCap = _PLUME_CORE_OPA_CAP + (1 - _PLUME_CORE_OPA_CAP) * farLift;
 
     const flicker = 0.90 + Math.sin(Date.now() * 0.026 + (ship.id || 0)) * 0.10;
 
@@ -2365,13 +2478,15 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         const c = cones[i];
         const isCore = (i % 2 === 0);
         const bo = c.mesh.userData._plumeBaseOpacity;
-        // Additive over black sky: opacity IS luminance here. The core is
-        // deliberately allowed to clip (that's the white-hot read); the
-        // streak is held under 1.0 so it keeps its faction hue instead of
-        // washing out to the same white the starfield already owns.
+        // Additive over black sky: opacity IS luminance here. BOTH layers are
+        // now held under 1.0 — the streak so it keeps its faction hue instead
+        // of washing out to the same white the starfield already owns, and the
+        // core so a hull underneath it survives as a surface (see
+        // _PLUME_CORE_OPA_CAP; it used to be allowed to clip, and "clip" and
+        // "erase the ship" are the same number for an additive sprite).
         let o = bo * opaK * flicker
                 * (1 + chgQ * (isCore ? 0.35 : 0.55))
-                * (isCore ? coreBoost * coreNearO : streakFade);
+                * (isCore ? coreBoost * coreNearO * coreTailO : streakFade);
         // The faction profile steps ASIDE for the alarm profile — it does not
         // simply get overpainted. Leaving it at full strength would keep
         // pumping white into the same clipped centre pixels the alarm layer
@@ -2388,7 +2503,7 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         // telegraph's signature is a green DROP alongside the red lift, and
         // that only happens if the faction profile actually gets out of the way.
         if (!isCore && alarmMix > 0) o *= (1 - 0.88 * alarmMix);
-        c.mat.opacity = Math.min(1.0, o);
+        c.mat.opacity = Math.min(isCore ? coreOpaCap : 1.0, o);
         const aq = c.mesh.userData._plumeAlarmQuad;
         if (aq) {
             if (alarmMix <= 0) {
@@ -2439,7 +2554,16 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         const w = widen * widK * (1 + chgQ * 0.12);
         const l = lenK * (1 + chgQ * 0.20);
         if (isCore) {
-            const ck = w * coreBoost * coreNearK;
+            let ck = w * coreBoost * coreNearK;
+            // COVERAGE CLAMP. `_plumeWorldRad` is this sprite's baked world
+            // radius, so `_plumeWorldRad * ck * ppu` is exactly what it will
+            // measure on screen — no projection, no second traverse. Shrink
+            // it, never grow it: `allow` is a ceiling and the sprite keeps its
+            // natural size everywhere it is already smaller than the ship.
+            if (coreAllowPx > 0 && ppu > 0) {
+                const px = (c.mesh.userData._plumeWorldRad || 0) * ck * ppu;
+                if (px > coreAllowPx) ck *= coreAllowPx / px;
+            }
             c.mesh.scale.set(bs.x * ck, bs.y * ck, 1);
         }
         else {
@@ -7302,8 +7426,15 @@ function _fxLayeredBurst(position, o) {
         _fxParticles(center, o.sparkCount || 26, o.spark || 0xffb454, 2.1 * S, 3.4 * S, 12, 0);
     }
     _fxEmberTail(center, K, o.spark || 0xffb454, 96, 1850);
-    // Thrown wreckage — same layer, same job, same numbers as _fxKillBurst.
-    _fxShards(center, 18, o.spark || 0xffd0a0, 0.055 * K, 0.075 * K, 20, 'octa');
+    // Thrown wreckage — same layer, same job, same numbers as _fxKillBurst,
+    // and the comment above has to stay TRUE: this round changed those numbers
+    // there (0.055K/0.075K/life 20/peak 1.0 -> 0.100K/0.30K/life 24/peak 0.78)
+    // and left this copy behind for one measurement round. Measured, that cost
+    // the pirate kill — the demo's most common death by a wide margin — a
+    // 57/255 one-pixel scanline step at t = 150 ms against a < 40 bar (27 with
+    // the debris layers hidden), because the old thin full-opacity streak is
+    // also the slow one that never leaves the flash.
+    _fxShards(center, 18, o.spark || 0xffd0a0, 0.100 * K, 0.30 * K, 24, 'octa', 0.78);
 }
 
 // ── KILL SPECTACLE: size the detonation off the thing that died ──────────
@@ -7636,7 +7767,22 @@ function _fxShockwave(center, r0, r1, color, life, opacity, capFrac) {
 // draw call) of soft additive embers thrown outward with drag, on a slow
 // power-curve fade plus a flicker so it reads as burning debris rather than
 // a dissolve.
-const _FX_EMBER_OPA = 0.80;
+// ROUND 12: 0.80 -> 0.62, paired with a 1.28x wider spark (see the size note
+// below). Once the cloud actually LEAVES the fireball it stops sitting on a
+// bright field and starts being a bright sprite against black, where the
+// steepest gradient it can have is peak/radius. Measured with the two debris
+// layers toggled inside one frame on a paused kill, the burst's worst 1-px
+// scanline step ran 47 / 46 / 44 with the debris drawn and 27 / 25 / 7 with it
+// hidden (bar: < 40) — the sparks were the whole remaining edge. Wider and
+// dimmer holds more total light at a gentler slope.
+// ...AND THEN 0.62 -> 0.76, because 0.62 overpaid. Most of that 47 was not
+// the profile at all, it was `_fxParticles` drawing its whole cloud stacked
+// on the detonation point at full opacity on the spawn frame (fixed there);
+// with that gone the burst measured a worst step of 23/255 against the 40
+// bar, and eyes-on at 250 u over a bright nebula the wreckage had gone too
+// faint to read as wreckage. 0.76 against the 1.28x wider spark is still
+// 0.74x the old slope and 1.9x the old total light.
+const _FX_EMBER_OPA = 0.76;
 function _fxEmberTail(center, S, color, count, life) {
     if (typeof scene === 'undefined') return;
     count = count || 30;
@@ -7644,7 +7790,14 @@ function _fxEmberTail(center, S, color, count, life) {
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(count * 3);
     const vel = new Float32Array(count * 3);
-    const spd = S * 0.055;
+    // ROUND 12 — THE CLOUD HAS TO OUTRUN THE FIREBALL, 0.055 -> 0.137.
+    // At 0.055 the terminal spread worked out at ~1.55 S against an outer
+    // front of 2.60 S: the wreckage stopped at 0.60 of the front and every
+    // spark died inside the flash that made it. Measured, that is why 99.5%
+    // of the kill's lit pixels sat inside its own bounding disc at every beat.
+    // 0.137 puts terminal spread at 14.3 x 0.137 x 2.30 = ~4.5 S — 2.8x the
+    // new 1.60 S front — so the cloud crosses the ring and keeps going.
+    const spd = S * 0.137;
     for (let i = 0; i < count; i++) {
         pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
         let dx = Math.random() - 0.5, dy = Math.random() - 0.5, dz = Math.random() - 0.5;
@@ -7681,7 +7834,14 @@ function _fxEmberTail(center, S, color, count, life) {
     // head start of 0.5-2.5 steps along its OWN velocity, so the cloud is
     // born as a cloud. No new state, no extra work per frame.
     for (let i = 0; i < count; i++) {
-        const head = 1.6 + Math.random() * 3.2;
+        // ROUND 12: 1.6 + rand*3.2 -> 0.64 + rand*1.28. The head start is
+        // measured in STEPS of each ember's own velocity, and this round made
+        // that velocity 2.5x, which would have scaled the BIRTH CLOUD by 2.5x
+        // as a side effect. The anti-stacking job this does is an absolute
+        // world-space one — 96 sprites must not share a pixel on frame zero —
+        // so the multiplier is divided by the same 2.5 and the cloud is born
+        // exactly the size it was measured at.
+        const head = 0.64 + Math.random() * 1.28;
         off[i*3] = vel[i*3] * head; off[i*3+1] = vel[i*3+1] * head; off[i*3+2] = vel[i*3+2] * head;
         // ROUND 9 — AND THE SPREAD HAS TO BE IN THE BUFFER, NOT JUST IN
         // `off`. The head start above was only folded into the POSITIONS
@@ -7693,10 +7853,11 @@ function _fxEmberTail(center, S, color, count, life) {
         // wide margin the worst edge in the game, and it is in EVERY kill.
         pos[i*3] += off[i*3]; pos[i*3+1] += off[i*3+1]; pos[i*3+2] += off[i*3+2];
     }
-    // Terminal spread: v0 * sum(drag^n) = v0/(1-0.93) ~= 14.3 v0, and the
-    // fastest ember leaves at spd*(0.62+1.35) = spd*1.97, so with spd = S *
-    // 0.055 the cloud settles at 14.3 * 0.055 * 1.97 = ~1.55 S.
-    const TERM = 1.81 * S;
+    // Terminal spread, for the record: v0 * sum(drag^n) = v0/(1-0.93) ~= 14.3
+    // v0, and the fastest ember leaves at spd*(0.95+1.35) = spd*2.30, so with
+    // spd = S * 0.137 the cloud settles at 14.3 * 0.137 * 2.30 = ~4.5 S — 2.8x
+    // the outer front. The screen allowance below is measured against where
+    // the cloud IS, not against this number, so it is documentation now.
     const mat = new THREE.PointsMaterial({
         // SPARKS, NOT BOKEH. At 0.145 hull-lengths each ember was a soft
         // blob wider than a nav light, and 30 of them read as a lens effect
@@ -7713,7 +7874,11 @@ function _fxEmberTail(center, S, color, count, life) {
         // brightness is a 36/255 step from one spark alone, and 96 of them
         // overlapping at the detonation point measured 54-82 (bar: < 40).
         // Wider and dimmer holds the same total light with 0.54x the slope.
-        color: color || 0xffbcdd, size: Math.max(1.6, S * 0.090),
+        // ROUND 12: 0.090 -> 0.115 hull lengths, against _FX_EMBER_OPA 0.62.
+        // Same argument as the 0.062 -> 0.090 step recorded above, applied to
+        // a cloud that now travels clear of the fireball instead of dying
+        // inside it — out there a spark's own edge is the frame's steepest.
+        color: color || 0xffbcdd, size: Math.max(1.6, S * 0.115),
         // Born dark: the ramp below lives in update(), so a non-zero
         // opacity here is one full frame of un-ramped cloud.
         map: _fxSparkTex(), transparent: true, opacity: 0,
@@ -7732,21 +7897,29 @@ function _fxEmberTail(center, S, color, count, life) {
             const f = dt / 50;
             const drag = Math.pow(0.93, f);
             const arr = geo.attributes.position.array;
-            // Same screen cap as every scaled layer, and the same compression
-            // rule: the debris is the one part of the kill that can still
-            // cross the 35% bbox rule at point-blank range once the sprites
-            // and fronts are clamped. The cloud's share of the cap radius is
-            // its design size relative to the outer front, 1.55/2.05 = 0.756.
-            // Scaling every offset by one factor shrinks the cloud without
-            // flattening it onto the cap the way a per-spark clamp would —
-            // that would pile the fast embers into a hard shell.
-            const maxR = _fxMaxScale(center, 1 / 0.756);
-            const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
+            // DEBRIS ALLOWANCE, NOT THE FIREBALL'S CAP — see
+            // _FX_DEBRIS_CAP_MULT. This used to be `1 / 0.756` measured
+            // against TERM: the cloud was rescaled every frame to stay at 76%
+            // of the FIREBALL's cap radius, so the wreckage was clamped INSIDE
+            // the flash it came out of, by construction, at every range and
+            // from frame one. The allowance is now 2.4x that radius and is
+            // measured against where the cloud ACTUALLY IS, so it does nothing
+            // at all until the sparks reach it. One factor for the whole cloud
+            // keeps its shape — a per-spark clamp would pile the fast embers
+            // into a hard shell.
+            const maxR = _fxMaxScale(center, 1 / _FX_DEBRIS_CAP_MULT);
+            let curR = 0;
             for (let i = 0; i < count; i++) {
                 vel[i*3] *= drag; vel[i*3+1] *= drag; vel[i*3+2] *= drag;
                 off[i*3]   += vel[i*3]   * f;
                 off[i*3+1] += vel[i*3+1] * f;
                 off[i*3+2] += vel[i*3+2] * f;
+                const rr = off[i*3]*off[i*3] + off[i*3+1]*off[i*3+1] + off[i*3+2]*off[i*3+2];
+                if (rr > curR) curR = rr;
+            }
+            curR = Math.sqrt(curR);
+            const shrink = (maxR !== Infinity && curR > maxR) ? maxR / curR : 1;
+            for (let i = 0; i < count; i++) {
                 arr[i*3]   = center.x + off[i*3]   * shrink;
                 arr[i*3+1] = center.y + off[i*3+1] * shrink;
                 arr[i*3+2] = center.z + off[i*3+2] * shrink;
@@ -7868,8 +8041,30 @@ const _FX_HOT_CORE_K = 0.30;
 // which is precisely the hole the measurement found. Everything below is a
 // RADIUS in hull-lengths-times-gain (K) so the ladder can be read at a
 // glance, and each cap share is that radius divided by the outer front's.
-const _FX_FRONT_OUT_K = 2.60;     // the layer the 35% rule is about
-const _FX_FRONT_IN_K  = 1.88;
+// ROUND 12 — THE FIREBALL COMES OFF THE CAP, AND THE DEBRIS LEAVES IT.
+//
+// Measured at the area peak on a paused world, four victims, composited
+// same-frame readback: R99 = 147 px against a 157.5 px cap radius at 200 u,
+// 250 u, 300 u AND 400 u alike. The burst was pinned to the screen cap across
+// the entire combat band, which means the SAME-SIZE DISC was drawn whatever
+// you killed and wherever it was — perspective was gone, and the note below
+// claiming "the cap only ever BINDS closer than roughly 140u" was simply
+// false as measured (the arithmetic: 2.60K at K = 0.84 x a 48 u hull is 228 px
+// of radius at 250 u, half again over the cap).
+//
+// 2.60 -> 1.60 is what unpins it: 141 px of natural radius at 250 u for that
+// same hull, i.e. under the cap with room, so a kill at 400 u is visibly
+// smaller than a kill at 200 u again. The two layers under it move by the
+// same 0.615 factor, because the ladder's VALUE is its nesting — the inner
+// front has to stay inside the outer one and the body has to end inside the
+// inner front's painted band (the round-11 note below), and those are ratios,
+// not absolutes. The hot core, the bang, the fireball and the afterglow do NOT
+// move: the core already measures the ~90 px of white this effect wants, it
+// is the layer carrying the >= 230/255 intensity bar, and shrinking it would
+// spend the one acceptance that currently passes with margin to buy one that
+// the debris fix below buys for free.
+const _FX_FRONT_OUT_K = 1.60;     // the layer the 35% rule is about
+const _FX_FRONT_IN_K  = 1.16;
 // ROUND 9 — THE BODY REACHES THE FRONT. 1.06K put the body's rim at 0.48 of
 // the cap and its half-brightness circle at 0.83K, while the inner front's
 // painted band sits at 0.86 x 1.58K = 1.36K: a 0.5K-wide radius range with
@@ -7892,7 +8087,10 @@ const _FX_FRONT_IN_K  = 1.88;
 // call sites: 0.78 -> 0.34) so that ground is 40-60/255 — lit enough that
 // acceptance (b)'s no-annulus floor holds, dim enough that a 200/255 front
 // travelling over it is unmistakably the brightest thing in the frame.
-const _FX_BODY_K      = 1.68;     // fireball body — ends just inside the inner front's band
+// ROUND 12: 1.68 -> 1.03, the same 0.615 the two fronts took, so 0.86 x the
+// inner front's new 1.16K = 1.00K still lands on the body's rim and the
+// "ring crosses ground, not itself" property is preserved exactly.
+const _FX_BODY_K      = 1.03;     // fireball body — ends just inside the inner front's band
 const _FX_GLOW_K      = 0.68;     // afterglow   (was 0.325K)
 const _FX_FIRE_K      = 0.56;     // fireball    (was 0.31K)
 const _FX_BANG_K      = 0.36;     // bang        (was 0.275K)
@@ -7905,12 +8103,48 @@ const _FX_HOTCORE_R_K = 0.20;     // hot core peak radius (glare: x4.6 = 0.92K)
 // SCREEN-CAP SHARES, derived from the ladder above. The outer front owns
 // the whole cap; everything else is squeezed toward it in proportion.
 const _FX_CAP_FRONT_OUT = 1.00;
-const _FX_CAP_FRONT_IN  = _FX_FRONT_IN_K  / _FX_FRONT_OUT_K;   // 0.718
-const _FX_CAP_BODY      = _FX_BODY_K      / _FX_FRONT_OUT_K;   // 0.482
-const _FX_CAP_HOTCORE   = _FX_HOTCORE_R_K / _FX_FRONT_OUT_K;   // 0.138 (glare 0.50)
-const _FX_CAP_GLOW      = _FX_GLOW_K      / _FX_FRONT_OUT_K;   // 0.309
-const _FX_CAP_FIRE      = _FX_FIRE_K      / _FX_FRONT_OUT_K;   // 0.255
-const _FX_CAP_BANG      = _FX_BANG_K      / _FX_FRONT_OUT_K;   // 0.164
+const _FX_CAP_FRONT_IN  = _FX_FRONT_IN_K  / _FX_FRONT_OUT_K;   // 0.725
+const _FX_CAP_BODY      = _FX_BODY_K      / _FX_FRONT_OUT_K;   // 0.644
+const _FX_CAP_HOTCORE   = _FX_HOTCORE_R_K / _FX_FRONT_OUT_K;   // 0.125 (glare 0.575)
+const _FX_CAP_GLOW      = _FX_GLOW_K      / _FX_FRONT_OUT_K;   // 0.425
+const _FX_CAP_FIRE      = _FX_FIRE_K      / _FX_FRONT_OUT_K;   // 0.350
+const _FX_CAP_BANG      = _FX_BANG_K      / _FX_FRONT_OUT_K;   // 0.225
+
+// ── THE DEBRIS FIELD IS NOT PART OF THE FIREBALL ──────────────────────────
+//
+// The 35% rule is about the FIREBALL BODY — the thing that can white out the
+// frame and take a fight away from the player. Applied to the WRECKAGE it was
+// enforcing the failure it was written to prevent: measured at every beat and
+// at every range in the combat band, 99.5% of the kill's lit pixels sat inside
+// the burst's own bounding disc, because both debris layers were explicitly
+// rescaled every frame to stay inside it (the ember cloud at 0.756 of the cap,
+// the shard streaks at 1.00 of it). A detonation whose every pixel is inside a
+// circle is a firework in a jar; the one thing that makes an explosion read as
+// an explosion is stuff LEAVING it.
+//
+// So the sparks get their own, much wider allowance. It is still an allowance
+// and not "uncapped": at point-blank range a drag-free cloud will happily
+// throw a streak off the side of the monitor, and the reason the original cap
+// exists — a kill you cannot fight through — applies to a spark that crosses
+// the whole viewport just as much as to a fireball that fills it. 2.4 x the
+// fireball's cap radius is 378 px against a 900 px-tall buffer — a debris
+// field 0.84 of the frame's height across at the very closest kills, and off
+// the limit entirely past ~300 u, so the wreckage keeps its perspective
+// exactly where the fireball has just got its own back. (3.2 was measured
+// first and was too much: at 200 u the >= 40/255 debris spanned 831-1098 px,
+// i.e. wider than the frame.)
+//
+// AND IT IS NOW A CEILING, NOT A COMPRESSION. Both debris layers used to
+// divide by their TERMINAL spread — the radius the cloud would reach at the
+// END of its life — so a cloud whose terminal was over the limit got scaled
+// down from FRAME ONE, right through the window where it was nowhere near it.
+// For the drag-free streaks that terminal is 3.6x where they actually are at
+// 500 ms, so the clamp was quietly taking half their travel away across the
+// entire bright half of every kill. Scaling against the cloud's ACTUAL
+// current radius is the same uniform, shape-preserving scale (still not a
+// per-spark clamp, which would pile the fast sparks into a hard shell) that
+// simply does nothing until the wreckage really arrives at the limit.
+const _FX_DEBRIS_CAP_MULT = 2.4;
 
 // FACTION IDENTITY WITHOUT A SECOND CODEBASE.
 //
@@ -7935,6 +8169,45 @@ function _fxTintHue(base, tint, amt) {
     return new THREE.Color(base).lerp(new THREE.Color(tint), amt).getHex();
 }
 
+// THE SAME TINT, BUT IT MAY NOT SPEND VALUE.
+//
+// Additive over the sky, a layer's contribution IS its colour, so tinting a
+// layer toward a dark faction hue dims it — and one acceptance on this effect
+// ("no annulus": the radial mean between the centre and the front never drops
+// under 40/255) is a VALUE bar that a hue mix has no business moving.
+// Measured at the area peak, that is exactly where faction 6 failed and
+// nobody else did: radial minimum 44.8 / 42.7 / 26.5 / 44.6 on
+// faction0 / faction1 / faction6 / pirate. The cause is arithmetic, not
+// tuning — the fireball body is 0xff86c8 (relative luminance 164/255) pulled
+// 46% toward Sith's 0xff2222 (81/255), which lands at 126/255, i.e. 0.77x the
+// value every other faction's body is drawn at, on the one layer that owns
+// the fill.
+//
+// So: mix the hue, then put the value back. Scale the mixed colour to the
+// base's luminance; if a channel would clip past 1.0, the shortfall is paid
+// in WHITE rather than thrown away, which keeps the mix monotone for hues
+// (like a saturated red) that cannot reach the base's luminance on their own.
+// The result is faction identity carried entirely on hue and saturation, on
+// the same principle the hot core already states — the hot core is white for
+// every faction because 230/255 is a value bar and no faction hue can clear
+// it. This is the same rule applied to the 40/255 floor at the other end.
+function _fxTintHueLumSafe(base, tint, amt) {
+    if (tint === undefined || tint === null) return base;
+    const b = new THREE.Color(base);
+    const targetL = 0.2126 * b.r + 0.7152 * b.g + 0.0722 * b.b;
+    const m = b.clone().lerp(new THREE.Color(tint), amt);
+    const mixL = 0.2126 * m.r + 0.7152 * m.g + 0.0722 * m.b;
+    if (mixL > 1e-4 && targetL > mixL) m.multiplyScalar(targetL / mixL);
+    m.r = Math.min(1, m.r); m.g = Math.min(1, m.g); m.b = Math.min(1, m.b);
+    const clipL = 0.2126 * m.r + 0.7152 * m.g + 0.0722 * m.b;
+    if (clipL < targetL - 1e-4 && clipL < 1) {
+        // Pay the rest in white: lerp toward (1,1,1) by exactly the deficit.
+        const k = Math.min(1, (targetL - clipL) / (1 - clipL));
+        m.lerp(new THREE.Color(0xffffff), k);
+    }
+    return m.getHex();
+}
+
 function _fxKillBurst(center, S, cfg) {
     const K = S * _FX_KILL_GAIN;
     const c = cfg || {};
@@ -7949,8 +8222,14 @@ function _fxKillBurst(center, S, cfg) {
     // measured mid-life cloud came out 0.10 saturated, i.e. grey dust. The
     // glare therefore carries the synthwave rose, pulled 42% toward the
     // faction, so the light around the white centre still has a hue.
+    // The GLARE is value-preserving too (see _fxTintHueLumSafe). It is the
+    // smooth field the white disc's roll-off happens on top of, so it is a
+    // first-class contributor to the >= 230/255 area even though the disc is
+    // the layer named in that bar — and at a plain 42% lerp toward Sith's
+    // 0xff2222 it was rendering at 0.75x the luminance every other faction's
+    // shoulder gets.
     _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330,
-               _FX_CAP_HOTCORE, _fxTintHue(0xffb4d8, c.core, 0.42));
+               _FX_CAP_HOTCORE, _fxTintHueLumSafe(0xffb4d8, c.core, 0.42));
     // THE CORE STOPS CHASING THE FRONT. These three end sizes were 1.10K /
     // 1.50K / 1.80K, which as sprite RADII (a Sprite's scale is its full
     // size) is 0.55K / 0.75K / 0.90K — running right up under the two shock
@@ -7976,9 +8255,18 @@ function _fxKillBurst(center, S, cfg) {
     // the front. Growing them alone cannot fix that (the flash texture is a
     // spike, so a bigger one is a bigger spike over a wider dark ring); they
     // grow here only to keep the ladder continuous under the new body.
-    _fxCoreFlash(center, _fxTintHue(0xfff0f7, c.core, 0.30),
+    // ROUND 12 — VALUE-PRESERVING TINTS ON THE THREE FLASH LAYERS TOO (see
+    // _fxTintHueLumSafe). These three plus the hot core are what hold the
+    // >= 230/255 bar, and the plain hue lerp was quietly spending value on the
+    // dark-hued factions: Sith's 0xff2222 is 81/255 of luminance, so the bang
+    // came out at 196 instead of 246 and the fireball at 100 instead of 131.
+    // Measured, that is why faction 6 held >= 1,000 px above 230/255 for only
+    // 150 ms against a 200 ms bar while every other faction ran 300-425 ms —
+    // a VALUE bar decided by a HUE knob, which is exactly the confusion the
+    // white hot core exists to avoid.
+    _fxCoreFlash(center, _fxTintHueLumSafe(0xfff0f7, c.core, 0.30),
                  0.58 * K, 2 * _FX_BANG_K * K, 240, _FX_CAP_BANG);                // the bang
-    _fxCoreFlash(center, _fxTintHue(0xff5aa8, c.core, 0.62),
+    _fxCoreFlash(center, _fxTintHueLumSafe(0xff5aa8, c.core, 0.62),
                  0.64 * K, 2 * _FX_FIRE_K * K, 380, _FX_CAP_FIRE, 0.72);          // the fireball
     // THE BODY — the layer that makes the kill solid instead of hollow.
     // Plateau profile (see _fxFireBody), travelling on the fronts' own
@@ -8011,15 +8299,19 @@ function _fxKillBurst(center, S, cfg) {
     // that bar has a ceiling now, 40-90, precisely because chasing its floor
     // is what bought the filled ball — and the front's 200/255 band is a
     // 150/255 rise instead of a 25-44/255 one.
+    // ROUND 12: the body's tint is now VALUE-PRESERVING — see
+    // _fxTintHueLumSafe. This layer owns the fill between the hot core and the
+    // travelling front, so the "no annulus" floor is measured on it, and a
+    // dark faction hue was quietly taking 23% off that floor for one faction.
     _fxFireBody(center, 0.52 * K, _FX_BODY_K * K,
-                _fxTintHue(0xff86c8, c.core, 0.46), 980, 0.32, _FX_CAP_BODY, 0.42);
+                _fxTintHueLumSafe(0xff86c8, c.core, 0.46), 980, 0.32, _FX_CAP_BODY, 0.42);
     // AFTERGLOW, trimmed 2.70K/980ms -> 1.80K/700ms. This layer was the
     // reason the burst's area peak landed at 425-450 ms as a huge dim cloud:
     // it grows 4.9x while fading, so it contributed almost all of the peak's
     // pixel count and almost none of its brightness, which is exactly what
     // dragged the above-230 fraction to 0.05-0.26%. Smaller and shorter moves
     // the area peak forward into the window where the core is still white.
-    _fxCoreFlash(center, _fxTintHue(0xff2f78, c.core, 0.55),
+    _fxCoreFlash(center, _fxTintHueLumSafe(0xff2f78, c.core, 0.55),
                  0.76 * K, 2 * _FX_GLOW_K * K, 620, _FX_CAP_GLOW, 0.45);          // the afterglow
     // Shock rings: opacity up (the cyan front was at 0.62 and read as a grey
     // smudge over the starfield). The outer front is 2.05K -> 2.20K because
@@ -8029,15 +8321,24 @@ function _fxKillBurst(center, S, cfg) {
     // legal size was going unspent while the effect measured too small; the
     // extra 7% of radius lands the front on the cap instead of under it, and
     // the cap (not this number) still decides what happens point-blank.
-    _fxShockwave(center, 0.20 * K, _FX_FRONT_IN_K * K, _fxTintHue(0xff3fa8, c.front, 0.68),
+    // ROUND 12 — VALUE-PRESERVING ON THE FRONTS AND THE EMBERS TOO. Every
+    // acceptance this effect answers to is a VALUE bar (>= 230/255 held for
+    // >= 200 ms, >= 40/255 with no annulus, a bright box wider than a ship)
+    // and every one of them was being decided by a HUE knob: the accent hues
+    // range from Federation's 0x33ddff at 0.72 relative luminance to Sith's
+    // 0xaa00ff at 0.21, so the same burst was rendering three times dimmer
+    // for one faction than another. Faction identity is HUE, and
+    // _fxTintHueLumSafe keeps all of it while putting the value back — which
+    // is exactly the rule the white hot core has always followed.
+    _fxShockwave(center, 0.20 * K, _FX_FRONT_IN_K * K, _fxTintHueLumSafe(0xff3fa8, c.front, 0.68),
                  620, 1.0,  _FX_CAP_FRONT_IN);
-    _fxShockwave(center, 0.15 * K, _FX_FRONT_OUT_K * K, _fxTintHue(0x53ecff, c.front, 0.40),
+    _fxShockwave(center, 0.15 * K, _FX_FRONT_OUT_K * K, _fxTintHueLumSafe(0x53ecff, c.front, 0.40),
                  820, 1.0, _FX_CAP_FRONT_OUT);
     // Embers: 30 fat soft blobs read as bokeh, not as burning wreckage. The
     // size floor drops 3.0 -> 1.2 px and the hull-relative size 0.145 ->
     // 0.062 (see _fxEmberTail), and the count triples to keep the tail's
     // presence while every individual ember becomes a SPARK.
-    _fxEmberTail(center, K, _fxTintHue(0xffbcdd, c.ember, 0.70), 96, 1850);
+    _fxEmberTail(center, K, _fxTintHueLumSafe(0xffbcdd, c.ember, 0.70), 96, 1850);
     // THROWN WRECKAGE, WITH TRAILS. The 96 embers are Points, and a Point's
     // gl_PointSize is computed against the CSS height rather than the
     // drawing buffer — measured at 250 u they are sub-pixel sparks carrying
@@ -8050,8 +8351,25 @@ function _fxKillBurst(center, S, cfg) {
     // everything else here, and they travel to ~1.6K — past the body's rim,
     // across the fronts' band and out of the burst's own bounding disc,
     // which is the one thing in the effect that crosses that boundary.
-    _fxShards(center, 18, _fxTintHue(0xffd2e8, c.ember, 0.55),
-              0.055 * K, 0.075 * K, 20, 'octa');
+    // ROUND 12 — SPEED 0.075K -> 0.30K, LIFE 20 -> 24. These are drag-free, so
+    // a streak's radius is speed x (t/50). At 0.075K it stood at 0.45K after
+    // 300 ms and 0.75K after 500 ms — i.e. it spent the ENTIRE bright half of
+    // the kill inside the body (1.03K), which is the whole reason the burst
+    // had no silhouette but a circle. At 0.30K it is at 1.8K by 300 ms and
+    // 3.0K by 500 ms: across the inner front, past the outer one, and still at
+    // 73% opacity when it gets there. The longer life keeps the last of them
+    // alive to ~1.2 s so the frame after the flash still has wreckage in it.
+    // ...and WIDER AND DIMMER while it does it. Inside the fireball a streak
+    // was sitting on a bright field and its own edge was invisible; out on the
+    // sky it is a thin sprite against black, where the steepest gradient it
+    // can have is peak/half-width. 0.055K at peak 1.0 measured a 41-50/255
+    // one-pixel step (bar: < 40) in exactly the beats where the wreckage first
+    // clears the flash. 0.100K at peak 0.78 is 3.1x the total light at 0.55x
+    // the slope — the same trade the ember cloud's size note already records,
+    // and with `_fxParticles`' stacked spawn frame fixed there is room for the
+    // peak: the burst measured a worst 1-px step of 23/255 at peak 0.60.
+    _fxShards(center, 18, _fxTintHueLumSafe(0xffd2e8, c.ember, 0.55),
+              0.100 * K, 0.30 * K, 24, 'octa', 0.78);
 }
 
 function createExplosionEffect(targetObject) {
@@ -8424,9 +8742,16 @@ function _fxRing(center, radius, color, growth, life, opacity) {
 // Cost: one Sprite each, no per-shard geometry to build or dispose.
 const _FX_STREAK_AXES = { tetra: [3.1, 1.25], octa: [4.4, 0.95] };
 const _fxStreakV = new THREE.Vector3();
-function _fxShards(center, count, color, size, speed, life, kind) {
+// `opa` is the streak's PEAK opacity, default 1. It exists because a streak
+// that has left the fireball is no longer sitting on top of a bright field:
+// out on the sky it is a thin bright sprite against black, and a sprite's
+// steepest gradient is peak/half-width. The generic kill pairs a lower peak
+// with a larger sprite (see the call site) — same light, gentler slope — which
+// is the same trade the ember cloud's own size/opacity note records.
+function _fxShards(center, count, color, size, speed, life, kind, opa) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const AX = _FX_STREAK_AXES[kind] || _FX_STREAK_AXES.tetra;
+    const PK = (opa > 0) ? opa : 1;
     const shards = [];
     for (let i = 0; i < count; i++) {
         const s = size * (0.6 + Math.random() * 0.8);
@@ -8463,8 +8788,12 @@ function _fxShards(center, count, color, size, speed, life, kind) {
         // its OWN velocity (so the cloud is already radial on frame zero)
         // and fades in over the first ~200 ms while it is still inside the
         // fireball, where it adds nothing the bang is not already doing.
-        const head = 1.0 + Math.random() * 2.0;
-        const off0 = v.clone().multiplyScalar(head);
+        // ROUND 12: the head start is now measured in SPRITE SIZES, not in
+        // steps of the shard's own velocity. Anti-stacking is an absolute
+        // job — N sprites must not share a pixel on frame zero — and pegging
+        // it to velocity meant this round's 4x faster wreckage was also born
+        // as a 4x wider cloud, which is a different effect, not a faster one.
+        const off0 = v.clone().normalize().multiplyScalar(s * (0.8 + Math.random() * 2.0));
         mesh.position.copy(center).add(off0);
         m.opacity = 0;
         shards.push({
@@ -8478,12 +8807,6 @@ function _fxShards(center, count, color, size, speed, life, kind) {
         });
     }
     let l = 1.0;
-    // Drag-free like _fxParticles, so the cloud's terminal radius is
-    // speed * 1.5 * life — for the Klingon recipe (speed 12, life 16) that is
-    // 288 world units, which at 250u is 1,074 px of framebuffer: measured,
-    // shards were the layer carrying p98 bbox-height to 0.99 of the viewport
-    // while every layer of the burst proper sat inside the 0.35 cap.
-    const TERM = speed * 1.5 * Math.max(1, life);
     let et = 0;
     explosionManager.addExplosion({
         update(dt) {
@@ -8493,8 +8816,22 @@ function _fxShards(center, count, color, size, speed, life, kind) {
             // wreckage becomes visible as it LEAVES the flash.
             const lead = Math.min(1, et / 200);
             const f = dt / 50;
-            const maxR = _fxMaxScale(center, 1);
-            const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
+            // DEBRIS ALLOWANCE — see _FX_DEBRIS_CAP_MULT. This was
+            // `_fxMaxScale(center, 1)` divided into the cloud's TERMINAL
+            // radius: the one layer in the effect whose whole job is to LEAVE
+            // the fireball was both pinned to the fireball's own cap radius
+            // and — because these are drag-free, so the terminal is 3.6x where
+            // they are at 500 ms — compressed by that ratio from frame one.
+            // Now the allowance is wider AND measured against where the cloud
+            // actually is, so it does nothing until the wreckage reaches it.
+            const maxR = _fxMaxScale(center, 1 / _FX_DEBRIS_CAP_MULT);
+            let curR = 0;
+            for (let i = 0; i < shards.length; i++) {
+                shards[i].off.addScaledVector(shards[i].vel, f);
+                const q = shards[i].off.lengthSq(); if (q > curR) curR = q;
+            }
+            curR = Math.sqrt(curR);
+            const shrink = (maxR !== Infinity && curR > maxR) ? maxR / curR : 1;
             // Screen-space basis, resolved once per frame for the whole
             // cloud: a streak has to lie along where it is GOING on the
             // player's screen, and projecting the velocity onto the camera's
@@ -8508,7 +8845,6 @@ function _fxShards(center, count, color, size, speed, life, kind) {
             }
             for (let i = 0; i < shards.length; i++) {
                 const c = shards[i];
-                c.off.addScaledVector(c.vel, f);
                 c.mesh.position.copy(center).addScaledVector(c.off, shrink);
                 // Sprite rotation replaces the old mesh tumble: the shard
                 // still spins (spin.z wobbles the streak around its own
@@ -8516,7 +8852,7 @@ function _fxShards(center, count, color, size, speed, life, kind) {
                 const sx = c.vel.x * rx + c.vel.y * ry + c.vel.z * rz;
                 const sy = c.vel.x * ux + c.vel.y * uy + c.vel.z * uz;
                 c.mat.rotation = Math.atan2(sy, sx) + c.spin.z * 0.35;
-                c.mat.opacity = Math.max(0, l) * lead;
+                c.mat.opacity = Math.max(0, l) * lead * PK;
             }
             return l > 0;
         },
@@ -8664,6 +9000,18 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
     for (let i = 0; i < count; i++) {
         const head = 0.4 + Math.random() * 1.4;
         off[i*3] = vel[i].x * head; off[i*3+1] = vel[i].y * head; off[i*3+2] = vel[i].z * head;
+        // ROUND 12 — AND THE SPREAD HAS TO BE IN THE BUFFER, NOT JUST IN
+        // `off`. Identical to the bug the ember tail's own ROUND 9 note
+        // records, still live in this copy of the pattern: the head start was
+        // only folded into the POSITIONS inside update(), so the frame between
+        // `scene.add` and the first explosionManager tick drew all 26-36
+        // points stacked on the detonation coordinate — and unlike the embers
+        // this material was born at full _FX_PARTICLE_OPA rather than at zero,
+        // so that frame was drawn at full brightness too. Measured on a paused
+        // kill with the debris layers toggled inside one frame, the spawn
+        // frame's worst 1-px scanline step was 47-53/255 (bar: < 40) and
+        // 27-41 with the point clouds hidden.
+        pos[i*3] += off[i*3]; pos[i*3+1] += off[i*3+1]; pos[i*3+2] += off[i*3+2];
     }
     // UNLIKE THE EMBERS, THESE HAVE NO DRAG: every particle flies at a
     // constant velocity for the whole life, so the terminal spread is
@@ -8672,8 +9020,9 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
     // shrapnel measurements keep catching. Measured on a staged faction kill
     // at 250u, lit pixels reached 1,112 px from the detonation and p98
     // bbox-height hit 0.913 of the viewport, against a 0.35 rule, while every
-    // layer of the generic burst was already inside the cap.
-    const TERM = speed * 1.5 * (1 + (swirl || 0)) * Math.max(1, life);
+    // layer of the generic burst was already inside the cap. (Kept as
+    // documentation: the screen allowance below is now measured against where
+    // the cloud IS, not against this number — see _FX_DEBRIS_CAP_MULT.)
     const mat = new THREE.PointsMaterial({
         // A MAP, because an unmapped PointsMaterial is a HARD SQUARE. These
         // are 2.4-3.0 world units wide with size attenuation on, which at
@@ -8681,7 +9030,9 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
         // four sides — the same untextured-polygon artifact the shards were
         // just taken off, in the layer that carries four factions' identity.
         map: _fxSparkTex(),
-        color: color, size: size * 1.75, transparent: true, opacity: _FX_PARTICLE_OPA,
+        // Born dark, like the ember tail: the lead ramp lives in update(), so
+        // a non-zero opacity here is one full frame of un-ramped cloud.
+        color: color, size: size * 1.75, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
     const pts = new THREE.Points(geo, mat);
@@ -8689,19 +9040,33 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
     pts.renderOrder = 72;
     pts.userData.__dbTris = Infinity;
     scene.add(pts);
-    let l = 1.0;
+    let l = 1.0, pt = 0;
     explosionManager.addExplosion({
         update(dt) {
             l -= (1 / life) * (dt / 50);
-            mat.opacity = Math.max(0, l) * _FX_PARTICLE_OPA;
+            pt += dt;
+            // Leading-edge ramp, as on the ember tail and the shard streaks:
+            // the cloud becomes visible as it LEAVES the flash, which is both
+            // where it starts meaning something and where its own edge stops
+            // being the steepest thing in the frame.
+            mat.opacity = Math.max(0, l) * _FX_PARTICLE_OPA * Math.min(1, pt / 240);
             const arr = geo.attributes.position.array;
             const f = dt / 50;
-            const maxR = _fxMaxScale(center, 1);
-            const shrink = (maxR !== Infinity && TERM > maxR) ? maxR / TERM : 1;
+            // Debris allowance, same as the ember tail and the shard streaks,
+            // and measured the same way — against where the cloud actually is,
+            // not against its terminal radius. See _FX_DEBRIS_CAP_MULT.
+            const maxR = _fxMaxScale(center, 1 / _FX_DEBRIS_CAP_MULT);
+            let curR = 0;
             for (let i = 0; i < count; i++) {
                 off[i*3]   += vel[i].x * f;
                 off[i*3+1] += vel[i].y * f;
                 off[i*3+2] += vel[i].z * f;
+                const rr = off[i*3]*off[i*3] + off[i*3+1]*off[i*3+1] + off[i*3+2]*off[i*3+2];
+                if (rr > curR) curR = rr;
+            }
+            curR = Math.sqrt(curR);
+            const shrink = (maxR !== Infinity && curR > maxR) ? maxR / curR : 1;
+            for (let i = 0; i < count; i++) {
                 arr[i*3]   = center.x + off[i*3]   * shrink;
                 arr[i*3+1] = center.y + off[i*3+1] * shrink;
                 arr[i*3+2] = center.z + off[i*3+2] * shrink;

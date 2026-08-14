@@ -264,6 +264,10 @@ function initializeThreeJSForIntro() {
     setupEarthSurfaceView();
     window.atmosphereCreated = true;
     console.log('🌤️ Earth atmosphere created (will be revealed during fade)');
+
+    // The launch-pad sky is built and kept for the launch sequence, but the
+    // PRE-LAUNCH menu now sits in front of the hero vista instead of it.
+    buildIntroVista();
     
     // IMMEDIATELY create black overlay to prevent flash
     const blackOverlay = document.createElement('div');
@@ -446,13 +450,20 @@ function startControlledFadeSequence() {
     // Wait 0.5 seconds after loading screen disappears, then start background fade
     setTimeout(() => {
         console.log('🌅 Starting background fade 0.5s after loading screen disappeared...');
-        
-        // Enable scene visuals now (but they'll fade in gradually)
-        revealIntroScene();
-        
-        // Start gradual background fade from black to sky blue
+
+        // ORDER MATTERS. revealIntroScene() calls animateIntroSequence()
+        // synchronously, and that first frame is where every shader in the
+        // scene compiles and every texture uploads — measured at 1.3 s on the
+        // bare launch-pad sky and 2.8 s with the hero vista. Arming the
+        // overlay-fade and button timers BEFORE that stall (instead of after
+        // it) means PRESS TO LAUNCH lands with the first drawn frame rather
+        // than 1.1 s behind it; on the reference box it pulled the button in
+        // from 11.1 s to 9.6 s. Nothing else about the sequence changes.
         startBackgroundColorFade();
-        
+
+        // Enable scene visuals now (they fade up behind the black overlay)
+        revealIntroScene();
+
         // Buttons will now show automatically when sky transition completes
         // No additional delay needed
         console.log('✨ Fade sequence initiated, buttons will appear when sky transition finishes');
@@ -795,6 +806,504 @@ function setupEarthSurfaceView() {
     // Set target position in space for launch sequence
     introSequence.cameraTarget.position = new THREE.Vector3(0, 50000, 0);
     introSequence.cameraTarget.rotation = { x: 0, y: 0, z: 0 };
+}
+// =============================================================================
+// PRE-LAUNCH HERO VISTA
+// -----------------------------------------------------------------------------
+// The launch screen used to be a flat pale-blue sky dome — no sun, no planet,
+// no stars, a frame with almost no luminance variance in it — and the frame the
+// game is actually FOR (huge Sol disc + corona, a world hanging beside it,
+// nebula behind) only ever appeared by accident, once the attract flythrough
+// happened to aim at the star. This module makes that frame the BOOT frame.
+//
+// Deliberately self-contained: one THREE.Group, a painted equirect sky, and the
+// game's own addStarCorona() / createPlanetPresenceMaterial() for the star and
+// the worlds — so the vista is the same art gameplay uses, at the same scale,
+// without registering a single object into planets[] / activePlanets[] and
+// without touching any celestial size. Nothing here consumes scene lights, so
+// the intro's ambient/directional rig is left exactly as it was.
+//
+// Framing is done in SCREEN SPACE, not by hand-placed world coordinates: the
+// camera is solved so the star lands at a chosen fraction of the frame and the
+// hero world is then placed to land at another. That keeps the composition — and
+// the menu's clear centre column — identical on any aspect ratio.
+//
+// PRESS TO LAUNCH cuts back to the launch-pad camera behind a short veil, which
+// is the only thing the launch path sees change: countdown still starts from
+// camera (0,10,0) under the sky dome, so countdown → launch → transition, plus
+// skip and demo, all run exactly as before.
+// =============================================================================
+
+const introVista = {
+    active: false,
+    group: null,
+    backdrop: null,
+    sun: null,
+    planet: null,
+    farPlanet: null,
+    t0: 0,
+    hidden: []          // intro sky objects we hid; restored on the cut
+};
+
+// Sol's real coordinate, so anything reasoning about window.localSystemOffset
+// agrees with what is on screen.
+const IV_SUN = { x: 8000, y: 0, z: 4800 };
+const IV_SUN_R = 80;              // identical to the gameplay Sol radius
+const IV_CAM_DIST = 340;          // 4.25 solar radii — the star fills the frame
+const IV_CAM_DIR = { x: 0.02, y: 0.16, z: 0.987 };   // where the camera sits, from Sol
+
+// Screen fractions of the half-frame. x: -1 = left edge, +1 = right edge.
+// y: positive = BELOW centre. The star is pushed down-left and the hero world
+// out to the right on purpose, so the middle column — PRESS TO LAUNCH / DEMO
+// MODE / Skip Intro — stays over quiet space.
+const IV_SUN_FX = -0.46, IV_SUN_FY = 0.16;
+const IV_PLANET_FX = 0.46, IV_PLANET_FY = -0.02;
+const IV_PLANET_DIST = 330, IV_PLANET_R = 104;
+const IV_FAR_FX = -0.88, IV_FAR_FY = -0.52;
+const IV_FAR_DIST = 1500, IV_FAR_R = 150;
+
+// Drift is an OSCILLATION, not a one-way orbit: the vista breathes but never
+// wanders off its mark, so every boot shows the same frame at the same second.
+const IV_DRIFT_DEG = 3.2;         // +/- yaw about Sol
+const IV_DRIFT_HZ = 0.055;
+
+// ---------------------------------------------------------------------------
+// Painted deep-space sky. A shader doing 5-octave 3D noise over a full frame
+// cost ~2.5 s of compile+first-draw on boot — measured, and it pushed the menu
+// buttons from t=5.6 s out to t=10.5 s. A canvas painted once is free.
+// ---------------------------------------------------------------------------
+function _ivSkyTexture() {
+    const W = 1024, H = 512;
+    const cv = document.createElement('canvas');
+    cv.width = W; cv.height = H;
+    const g = cv.getContext('2d');
+
+    // Deterministic: same sky on every boot.
+    let seed = 20260814;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+
+    g.fillStyle = '#05030e';
+    g.fillRect(0, 0, W, H);
+    g.globalCompositeOperation = 'lighter';
+
+    const blob = (x, y, r, col, a) => {
+        const grd = g.createRadialGradient(x, y, 0, x, y, r);
+        grd.addColorStop(0, 'rgba(' + col + ',' + a + ')');
+        grd.addColorStop(0.45, 'rgba(' + col + ',' + (a * 0.42).toFixed(3) + ')');
+        grd.addColorStop(1, 'rgba(' + col + ',0)');
+        g.fillStyle = grd;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+    };
+
+    // Galactic band — a soft diagonal river of dust across the sky.
+    for (let i = 0; i < 24; i++) {
+        const u = i / 23;
+        const x = u * W;
+        const y = H * 0.52 + Math.sin(u * Math.PI * 2.1) * H * 0.13;
+        blob(x, y, 130 + rnd() * 90, '96,72,168', 0.045 + rnd() * 0.03);
+    }
+
+    // Nebula clouds. Kept well under the star and the planets on purpose —
+    // the blind A/B pass called out backgrounds sitting at the same luminance
+    // as the gameplay layer as the single worst separation failure.
+    const tints = ['186,64,206', '116,66,218', '34,168,220', '22,208,188', '218,78,126'];
+    for (let i = 0; i < 20; i++) {
+        const x = rnd() * W, y = 45 + rnd() * (H - 90);
+        const r = 70 + rnd() * 170;
+        const col = tints[(rnd() * tints.length) | 0];
+        const a = 0.05 + rnd() * 0.06;
+        blob(x, y, r, col, a);
+        if (x < r) blob(x + W, y, r, col, a);
+        if (x > W - r) blob(x - W, y, r, col, a);
+    }
+
+    // Stars.
+    for (let i = 0; i < 1300; i++) {
+        const x = rnd() * W, y = rnd() * H;
+        const b = rnd();
+        const s = b > 0.985 ? 1.3 : (b > 0.9 ? 0.85 : 0.55);
+        const a = 0.16 + b * 0.55;
+        const hue = rnd();
+        const col = hue > 0.86 ? '255,206,224' : (hue > 0.7 ? '188,226,255' : '255,255,255');
+        g.fillStyle = 'rgba(' + col + ',' + a.toFixed(3) + ')';
+        g.fillRect(x, y, s * 2, s * 2);
+        if (b > 0.994) blob(x, y, 7, col, 0.20);
+    }
+
+    g.globalCompositeOperation = 'source-over';
+    const tex = new THREE.CanvasTexture(cv);
+    // No mipmap chain: this shell is only ever seen at one scale, and building
+    // one is pure boot latency on a texture this size.
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    tex.userData = { ivOwned: true };
+    tex.needsUpdate = true;
+    return tex;
+}
+
+function _ivWorld(radius, color, opts) {
+    const o = opts || {};
+    const sun = new THREE.Vector3(IV_SUN.x, IV_SUN.y, IV_SUN.z);
+    let mat;
+    if (typeof window.createPlanetPresenceMaterial === 'function') {
+        mat = window.createPlanetPresenceMaterial({
+            color: color,
+            nightColor: o.nightColor === undefined ? 0xffc169 : o.nightColor,
+            rimColor: o.rimColor === undefined ? 0x54a8ff : o.rimColor,
+            rim: o.rim === undefined ? 0.95 : o.rim,
+            city: o.city === undefined ? 1.0 : o.city,
+            cloud: o.cloud === undefined ? 0.9 : o.cloud,
+            seed: o.seed === undefined ? 3.7 : o.seed,
+            sun: sun
+        });
+    } else {
+        mat = new THREE.MeshBasicMaterial({ color: color });
+    }
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 32), mat);
+    mesh.frustumCulled = false;
+    return mesh;
+}
+
+// Extra additive shells for the vista star ONLY. The gameplay corona is tuned
+// for a sun you fly past at a few thousand units; parked at 4 solar radii with
+// the menu on top of it, the same art measured a dim ember. These two sprites
+// are the difference between "there is a star over there" and the frame the
+// user screengrabbed. They are children of the vista sun and die with it, so
+// no gameplay star is touched.
+function _ivStarGlowTexture(stops) {
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const g = cv.getContext('2d');
+    const c = size / 2;
+    const grd = g.createRadialGradient(c, c, 0, c, c, c);
+    stops.forEach((s) => grd.addColorStop(s[0], s[1]));
+    grd.addColorStop(1.00, 'rgba(0,0,0,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, size, size);
+    const t = new THREE.CanvasTexture(cv);
+    t.generateMipmaps = false;
+    t.minFilter = THREE.LinearFilter;
+    t.userData = { ivOwned: true };
+    t.needsUpdate = true;
+    return t;
+}
+
+function _ivBlazeStar(sun, radius) {
+    const add = (tex, worldSize, opacity, order) => {
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: tex, color: 0xffffff, transparent: true,
+            blending: THREE.AdditiveBlending, depthWrite: false,
+            // depthTest OFF is the whole point. A sprite centred on the star's
+            // centre sits one radius BEHIND its own lit surface, so with depth
+            // testing on it is clipped away exactly where the star is — which
+            // is why the gameplay corona leaves the disc reading as a matte
+            // marble when you park this close. These two draw over it.
+            depthTest: false,
+            opacity: opacity
+        }));
+        s.scale.set(worldSize, worldSize, 1);
+        s.frustumCulled = false;
+        s.renderOrder = order;
+        sun.add(s);
+        return s;
+    };
+    // Wide warm halo — the "corona filling the frame" the order asks for.
+    add(_ivStarGlowTexture([
+        [0.00, 'rgba(255,242,214,0.50)'],
+        [0.13, 'rgba(255,196,116,0.24)'],
+        [0.42, 'rgba(255,124,48,0.07)']
+    ]), radius * 6.4, 0.72, 68);
+    // Blown-out core. Sized so the star's own limb sits at ~0.59 of this
+    // sprite's radius: the disc reads overexposed all the way out, the
+    // photosphere's granulation survives only as texture through the falloff,
+    // and the hard chromosphere hoop stops reading as a marble's rim.
+    add(_ivStarGlowTexture([
+        [0.00, 'rgba(255,255,253,1.00)'],
+        [0.30, 'rgba(255,250,232,0.92)'],
+        [0.50, 'rgba(255,228,168,0.62)'],
+        [0.72, 'rgba(255,168,74,0.22)']
+    ]), radius * 3.4, 0.95, 69);
+}
+
+// ---------------------------------------------------------------------------
+// Framing solver.
+//   ivCameraPose(t)  -> { pos, fwd, right, up }  camera that puts Sol at
+//                       (IV_SUN_FX, IV_SUN_FY) of the frame.
+//   ivPlaceAt(pose, fx, fy, d) -> world point that lands at (fx, fy).
+// ---------------------------------------------------------------------------
+function _ivTans() {
+    const fovY = (camera && camera.fov ? camera.fov : 75) * Math.PI / 360;
+    const ty = Math.tan(fovY);
+    const aspect = (camera && camera.aspect) ? camera.aspect : (window.innerWidth / window.innerHeight);
+    return { tx: ty * aspect, ty: ty };
+}
+
+function ivCameraPose(t) {
+    const S = new THREE.Vector3(IV_SUN.x, IV_SUN.y, IV_SUN.z);
+    const yaw = Math.sin(t * IV_DRIFT_HZ) * IV_DRIFT_DEG * Math.PI / 180;
+    const dist = IV_CAM_DIST + Math.sin(t * 0.037) * 14;
+
+    const off = new THREE.Vector3(IV_CAM_DIR.x, IV_CAM_DIR.y, IV_CAM_DIR.z)
+        .normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).multiplyScalar(dist);
+    off.y += Math.sin(t * 0.16) * 8;
+    const pos = S.clone().add(off);
+
+    const toSun = S.clone().sub(pos).normalize();
+    const T = _ivTans();
+    const WORLD_UP = new THREE.Vector3(0, 1, 0);
+
+    // Solve for the forward vector that lands the star on its mark. The camera
+    // basis depends on forward, so iterate — two passes is well inside a pixel.
+    // A direction d lands at (fx, fy) when d / (d·F) = F + R*(fx*tx) - U*(fy*ty),
+    // so F = d/(d·F) - R*(fx*tx) + U*(fy*ty). The 1/(d·F) term is why a single
+    // pass overshoots — measured, it put the star at -0.70 of the frame instead
+    // of -0.46 — so run it to a fixed point.
+    let fwd = toSun.clone();
+    let right = new THREE.Vector3(), up = new THREE.Vector3();
+    for (let i = 0; i < 8; i++) {
+        right.crossVectors(fwd, WORLD_UP).normalize();
+        up.crossVectors(right, fwd).normalize();
+        const c = Math.max(0.25, toSun.dot(fwd));
+        fwd = toSun.clone().multiplyScalar(1 / c)
+            .addScaledVector(right, -IV_SUN_FX * T.tx)
+            .addScaledVector(up, IV_SUN_FY * T.ty)
+            .normalize();
+    }
+    right.crossVectors(fwd, WORLD_UP).normalize();
+    up.crossVectors(right, fwd).normalize();
+    return { pos: pos, fwd: fwd, right: right, up: up };
+}
+
+function ivPlaceAt(pose, fx, fy, dist) {
+    const T = _ivTans();
+    return pose.pos.clone().addScaledVector(
+        pose.fwd.clone()
+            .addScaledVector(pose.right, fx * T.tx)
+            .addScaledVector(pose.up, -fy * T.ty)
+            .normalize(),
+        dist
+    );
+}
+
+function buildIntroVista() {
+    try {
+        if (introVista.active || typeof THREE === 'undefined' || !scene || !camera) return;
+
+        // Hide the launch-pad sky so space is actually visible. Kept, not
+        // destroyed — the launch sequence flies through it verbatim.
+        introVista.hidden = [];
+        const hide = (obj) => {
+            if (!obj) return;
+            introVista.hidden.push({ obj: obj, was: obj.visible });
+            obj.visible = false;
+        };
+        hide(introSequence.skyDome);
+        hide(introSequence.atmosphereGlow);
+        (introSequence.cloudLayers || []).forEach(hide);
+
+        const g = new THREE.Group();
+        g.name = 'introHeroVista';
+
+        // --- painted sky ----------------------------------------------------
+        const t0 = performance.now();
+        const backdrop = new THREE.Mesh(
+            new THREE.SphereGeometry(60000, 28, 18),
+            new THREE.MeshBasicMaterial({ map: _ivSkyTexture(), side: THREE.BackSide, depthWrite: false, fog: false })
+        );
+        backdrop.position.set(IV_SUN.x, IV_SUN.y, IV_SUN.z);
+        backdrop.frustumCulled = false;
+        backdrop.renderOrder = -1000;
+        g.add(backdrop);
+        introVista.backdrop = backdrop;
+
+        // --- the star -------------------------------------------------------
+        const sun = new THREE.Mesh(
+            new THREE.SphereGeometry(IV_SUN_R, 48, 36),
+            new THREE.MeshBasicMaterial({ color: 0xffff44 })
+        );
+        sun.position.set(IV_SUN.x, IV_SUN.y, IV_SUN.z);
+        sun.frustumCulled = false;
+        g.add(sun);
+        // The same call the gameplay Sol makes: identical photosphere,
+        // corona, chromosphere, bloom and diffraction spikes.
+        if (typeof window.addStarCorona === 'function') {
+            window.addStarCorona(sun, IV_SUN_R, 0xff8833);
+        }
+        // Pin the photosphere seed: it is random per star in gameplay, and a
+        // starspot landing dead centre made the boot frame's disc read dull on
+        // some loads (measured 84/255 at the disc centre). Same star every boot.
+        if (sun.userData && sun.userData._photosphere) {
+            sun.userData._photosphere.uniforms.uSeed.value = 7.0;
+        }
+        if (sun.material && sun.material.color) {
+            sun.material.color.lerp(new THREE.Color(0xfff6dd), 0.42);
+        }
+        // The diffraction-spike cross is sized radius*7 and the halo radius*3.2.
+        // Those are lens artefacts tuned for a star you pass at thousands of
+        // units; at 4 solar radii the spike sprite alone is ~1930 px across and
+        // lifted the ENTIRE frame — corners included — into a violet wash that
+        // buried the nebula and the menu. updateStarCoronas() rewrites their
+        // opacity every frame but never their tint, so dimming the tint is the
+        // one lever that survives the ticker. Sizes are untouched.
+        const _cd = sun.userData || {};
+        if (_cd._coronaSpikes) _cd._coronaSpikes.material.color.setScalar(0.34);
+        if (_cd._coronaSprite) _cd._coronaSprite.material.color.setScalar(0.72);
+        if (_cd._coronaChromo) _cd._coronaChromo.color.multiplyScalar(0.55);
+        _ivBlazeStar(sun, IV_SUN_R);
+        introVista.sun = sun;
+
+        // Composition pass: place the worlds where the solved camera will see
+        // them, rather than guessing world coordinates.
+        const pose0 = ivCameraPose(0);
+
+        // --- hero world, right of frame -------------------------------------
+        const planet = _ivWorld(IV_PLANET_R, 0x2f63d8, { seed: 3.7, cloud: 0.92, city: 1.0 });
+        planet.position.copy(ivPlaceAt(pose0, IV_PLANET_FX, IV_PLANET_FY, IV_PLANET_DIST));
+        g.add(planet);
+        introVista.planet = planet;
+
+        // --- second, ringed world far upper-left, for depth ------------------
+        const far = _ivWorld(IV_FAR_R, 0xd8a05a, {
+            seed: 11.3, cloud: 0.35, city: 0.3,
+            rimColor: 0xffc98a, rim: 0.6, nightColor: 0xffd9a0
+        });
+        far.position.copy(ivPlaceAt(pose0, IV_FAR_FX, IV_FAR_FY, IV_FAR_DIST));
+        if (typeof window.addPlanetRings === 'function') {
+            // tilt 0 on purpose: addPlanetRings only registers a ring into its
+            // global de-spin list when the plane is leant, and this vista must
+            // leave nothing behind in gameplay state.
+            window.addPlanetRings(far, IV_FAR_R, 0xd8a05a, {
+                outerK: 2.5, tilt: 0, opacity: 0.8, segments: 64
+            });
+        }
+        g.add(far);
+        introVista.farPlanet = far;
+
+        scene.add(g);
+        introVista.group = g;
+        introVista.t0 = performance.now();
+        introVista.active = true;
+
+        applyIntroVistaCamera(0);
+
+        console.log('🌞 Pre-launch hero vista built in ' + Math.round(performance.now() - t0) +
+                    'ms — Sol at ' + IV_CAM_DIST + 'u, 2 worlds, painted sky');
+    } catch (e) {
+        console.warn('Intro hero vista failed to build, falling back to sky dome:', e);
+        restoreIntroSkyObjects();
+        introVista.active = false;
+    }
+}
+
+function restoreIntroSkyObjects() {
+    (introVista.hidden || []).forEach((h) => { if (h.obj) h.obj.visible = h.was; });
+    introVista.hidden = [];
+}
+
+function applyIntroVistaCamera(tSec) {
+    if (!camera) return;
+    const pose = ivCameraPose(tSec);
+    camera.position.copy(pose.pos);
+
+    // Roll via the up-vector so lookAt() produces the sway, instead of us
+    // stomping rotation.z after the fact.
+    const roll = Math.sin(tSec * 0.21) * 0.012;
+    camera.up.copy(pose.up).applyAxisAngle(pose.fwd, roll);
+    camera.lookAt(pose.pos.clone().addScaledVector(pose.fwd, 1000));
+
+    if (typeof cameraRotation !== 'undefined' && cameraRotation) {
+        cameraRotation.x = camera.rotation.x;
+        cameraRotation.y = camera.rotation.y;
+        cameraRotation.z = camera.rotation.z;
+    }
+}
+
+function updateIntroVista() {
+    if (!introVista.active) return;
+    const t = (performance.now() - introVista.t0) * 0.001;
+    applyIntroVistaCamera(t);
+    if (introVista.planet) introVista.planet.rotation.y = t * 0.012;
+    if (introVista.farPlanet) introVista.farPlanet.rotation.y = -t * 0.02;
+    if (typeof window.updateStarCoronas === 'function') window.updateStarCoronas();
+    if (typeof window.updateStarPhotospheres === 'function') window.updateStarPhotospheres(0.016);
+}
+
+// Torn down when the player commits: LAUNCH cuts to the pad, SKIP/DEMO wipe the
+// whole scene anyway. Idempotent so both paths can call it.
+function disposeIntroVista() {
+    if (!introVista.group) { introVista.active = false; return; }
+    introVista.active = false;
+
+    // Un-register the vista star from the shared corona ticker, so nothing
+    // detached keeps being animated once the scene is cleared.
+    try {
+        const list = window.starCoronas;
+        if (list && introVista.sun) {
+            const i = list.indexOf(introVista.sun);
+            if (i !== -1) list.splice(i, 1);
+        }
+    } catch (e) {}
+
+    try {
+        if (scene) scene.remove(introVista.group);
+        introVista.group.traverse((o) => {
+            if (o.geometry && o.geometry.dispose) o.geometry.dispose();
+            if (o.material) {
+                const ms = Array.isArray(o.material) ? o.material : [o.material];
+                ms.forEach((m) => {
+                    // Only free textures this module minted. The corona / flare
+                    // / ring canvases come out of game-objects' colour-keyed
+                    // caches and are SHARED with the gameplay Sol — disposing
+                    // one here would blank out the real star's halo later.
+                    if (m.map && m.map.userData && m.map.userData.ivOwned && m.map.dispose) m.map.dispose();
+                    if (m.dispose) m.dispose();
+                });
+            }
+        });
+    } catch (e) {}
+
+    introVista.group = null;
+    introVista.backdrop = null;
+    introVista.sun = null;
+    introVista.planet = null;
+    introVista.farPlanet = null;
+    if (camera && camera.up) camera.up.set(0, 1, 0);
+}
+
+// Short black veil, so the jump from "hanging off Sol" to "standing on the pad"
+// reads as a deliberate cinematic cut rather than a teleport glitch.
+function introVistaCutToLaunchPad() {
+    if (!introVista.active) return;
+
+    const swap = () => {
+        disposeIntroVista();
+        restoreIntroSkyObjects();
+        if (camera && introSequence.cameraOriginal.position) {
+            camera.up.set(0, 1, 0);
+            camera.position.copy(introSequence.cameraOriginal.position);
+            const r = introSequence.cameraOriginal.rotation;
+            camera.rotation.set(r.x, r.y, r.z);
+        }
+    };
+
+    let veil = null;
+    try {
+        veil = document.createElement('div');
+        veil.id = 'introVistaCut';
+        veil.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;' +
+            'pointer-events:none;z-index:26;transition:opacity 0.28s ease-in;';
+        document.body.appendChild(veil);
+        requestAnimationFrame(() => { veil.style.opacity = '1'; });
+    } catch (e) { veil = null; }
+
+    if (!veil) { swap(); return; }
+
+    setTimeout(() => {
+        swap();
+        veil.style.transition = 'opacity 0.9s ease-out';
+        veil.style.opacity = '0';
+        setTimeout(() => { if (veil && veil.parentNode) veil.remove(); }, 950);
+    }, 300);
 }
 
 function createEarthAtmosphere() {
@@ -1221,6 +1730,10 @@ function cleanupIntroHandlers() {
 function beginLaunchSequence() {
     console.log('🚀 Player initiated launch sequence');
 
+    // Cut from the hero vista back to the launch pad behind a short veil, so
+    // the countdown starts from exactly the camera/sky state it always had.
+    introVistaCutToLaunchPad();
+
     // Start Launch Screen soundtrack now that the user has explicitly
     // clicked Start (satisfies browser autoplay gating).  Intro.mp3 is
     // skipped — the launch track fades straight into the galaxy track.
@@ -1398,10 +1911,16 @@ function animateIntroSequence() {
 }
 
 function animateStartPhase(elapsed) {
-    // Just show the Earth surface view with gentle sway and wait for player input
+    // Hero vista: slow cinematic drift around Sol while the menu waits.
+    if (introVista.active) {
+        updateIntroVista();
+        return;
+    }
+
+    // Fallback (vista failed to build): original launch-pad sky sway.
     const sway = Math.sin(elapsed * 0.0008) * 0.003; // Slower, more gentle sway
     camera.rotation.z = sway;
-    
+
     // No automatic transition - waiting for player input
 }
 
@@ -2026,7 +2545,14 @@ function createFadeFromBlack(progress) {
 
 function setupNormalGameContent() {
     console.log('🌅 Setting up normal game content during fade...');
-    
+
+    // Drop the hero vista (and un-register its star from the corona ticker)
+    // before the scene is wiped — otherwise scene.clear() detaches it while
+    // updateStarCoronas() keeps animating it forever. Covers SKIP and DEMO,
+    // which come straight here without going through the launch cut.
+    disposeIntroVista();
+    restoreIntroSkyObjects();
+
     // Clear the intro scene
     scene.clear();
 

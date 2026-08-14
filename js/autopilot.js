@@ -80,7 +80,49 @@
     // How many times a new leg (warp / slingshot) was DEFERRED because a park
     // still owned the beat — the interlock that makes a park survivable at
     // all, in machine-readable form. See _parkOwnsBeat.
-    get arrivalParkDefers() { return ap._parkDefers || 0; }
+    get arrivalParkDefers() { return ap._parkDefers || 0; },
+    // ── WHICH IGNITION PATH EACH LEG TOOK ────────────────────────────────
+    // The drive is reached by two routes (triggerOKeyWarp -> keys.o, and
+    // _igniteJump -> keys.wDoubleTap) and until now nothing recorded which
+    // one a leg used — the split had to be reconstructed externally from a
+    // property trap on gameState.emergencyWarp.active plus a boostSpeed
+    // heuristic. `ignitions` is the ordered record (path, phase, gap asked
+    // vs gap committed, sized speed/duration, staged subject); `ignitionCounts`
+    // is the running tally per path. Both are the same data the "🔥 IGNITION"
+    // console line is built from.
+    get ignitions() { return (ap._ignitions || []).slice(); },
+    get lastIgnition() { return ap._lastIgnition || null; },
+    get ignitionCounts() { return Object.assign({ owarp: 0, jump: 0 }, ap._ignitionCounts || {}); },
+    // The jump path's own anti-overshoot terminator (see the jump-arrival
+    // tracker in update()) — the jump-side equivalent of arrivalCuts.
+    get jumpCuts() { return ap._jumpCuts || 0; },
+    get lastJumpCut() { return ap._lastJumpCut || null; },
+    // How many jump legs handed their arrival to the park (see the handoff in
+    // the jump-arrival tracker). This is the number that used to be 0 by
+    // construction — the park stands down for `isJump` and physics held that
+    // flag through the whole post-dash beat.
+    get jumpHandoffs() { return ap._jumpHandoffs || 0; },
+    // Jumps refused because the corridor ahead was not clear or the gap was
+    // too small to be worth a beat.
+    get jumpsRefused() { return ap._jumpsRefused || 0; },
+    get warpNoSubjectRefusals() { return ap._warpNoSubjectRefusals || 0; },
+    // The reach a jump actually delivers — the number that replaced
+    // `jumpMaxDist: Infinity`. Exposed so a test can assert legs beyond it
+    // took the O-warp path.
+    get jumpMaxReach() { return _jumpMaxReach(); },
+    get oWarpMaxReach() { return _oWarpMaxBoostDist(); },
+    // TEST SURFACE — fire ONE jump leg at a named destination, through the
+    // exact same _igniteJump the phases use (same interlocks, same reach
+    // clamp, same corridor check, same staging). It exists because the
+    // destination-bearing jump is rare in ordinary play — the phases that
+    // hand a jump a real body are deep in the demo's sequence — and the
+    // arrival contract on this path is otherwise only provable by waiting
+    // out a 40-minute session. Refuses unless the demo is actually driving,
+    // and returns the same boolean the phases read.
+    igniteJumpProbe: function (dest, gap) {
+      if (!ap.active || ap.paused) return false;
+      return _igniteJump({ dest: dest, gap: gap, subject: true, why: 'probe' });
+    }
   };
 
   // Per-frame enemy buffs + swarm — previously only applied while demo
@@ -737,7 +779,20 @@
         window.orientTowardsTarget) {
       const _ew = gameState.emergencyWarp;
       const _sl = gameState.slingshot;
+      // ...AND A JUMP LEG'S AUTO-BRAKE TAIL IS PART OF ITS CYCLE. A jump has no
+      // exit ramp, so `gameState._warpExitT` is never a number on this path and
+      // the hold used to switch off the frame the boost ended — leaving the
+      // ~1.5 s of physics auto-brake (0.985/frame down to the floor) with
+      // nobody holding the nose, which is the window the destination used to
+      // slide out of frame in. The park picks the nose up only after isJump
+      // clears; this covers the gap between the two.
+      // ...and only for a subject THIS jump staged (`_jumpLeg`): a combat dash
+      // that claimed nothing must not spend its brake tail swinging the nose
+      // onto some earlier leg's arrival, which is still fresh and would drag
+      // the bow off the hostile it is closing on.
       const _inCycle = !!(_ew && (_ew.active || _ew.transitioning)) ||
+        !!(_ew && _ew.isJump && _ew.autoBraking && gameState._arrivalSubject &&
+           gameState._arrivalSubject._jumpLeg) ||
         !!(_sl && _sl.active) ||
         (typeof gameState._warpExitT === 'number');
       if (_inCycle && !(gameState.slingshot && gameState.slingshotWhip)) {
@@ -774,8 +829,15 @@
         // subject the decisive authority for as long as the boost owns the
         // ship — which is exactly the window in which "where the warp is
         // going" should outrank "where the phase was cruising".
+        // A JUMP LEG GETS THE FAST RATE TOO, for the framing half of the
+        // reason rather than the guidance half. Guidance does not steer a jump
+        // so the nose is not the trajectory here — but it IS the shot, and the
+        // dash is over in a couple of seconds, which the 0.016 rad/frame demo
+        // cap cannot close a large arrival error inside.
         const _wantFastOrient = ((typeof gameState._warpExitT === 'number') ||
-            !!(_ew && _ew.active && !_ew.isJump)) &&
+            !!(_ew && _ew.active && !_ew.isJump) ||
+            !!(_ew && _ew.isJump && gameState._arrivalSubject &&
+               gameState._arrivalSubject._jumpLeg)) &&
           typeof window !== 'undefined' && window.demoPilot && window.demoPilot.driving;
         if (_wantFastOrient) {
           const _prevPaused = ap.paused;
@@ -1115,6 +1177,107 @@
       }
     }
 
+    // ── JUMP ARRIVAL — THE SAME CONTRACT ON THE OTHER IGNITION PATH ─────────
+    // Everything above this stands down on `emergencyWarp.isJump`, and that is
+    // correct for what those blocks do: guidance does not steer a jump
+    // (game-physics.js:2910), so a geometric cut that assumes a converging ray
+    // would be reasoning about a trajectory the dash does not fly, and the
+    // burn-extension has nothing to extend — a jump's length is consumed by
+    // physics from `_pendingJumpMs` and re-arming `boostDuration` does not
+    // touch it.
+    //
+    // What a jump leg DOES need from the contract is the two things the park
+    // provides, and it could not reach either of them:
+    //   * `_flown` — the park's gate at :1278 — is set ONLY inside the O-warp
+    //     cut block, so no jump leg has ever satisfied it. That is why 0 of 19
+    //     measured jump legs parked.
+    //   * an anti-overshoot terminator. A jump is ballistic and physics ends it
+    //     purely on the clock, so a dash whose subject goes abeam mid-boost
+    //     sails straight past it — the "destination behind your head" ending,
+    //     15 of 19 legs.
+    //
+    // Both are cheap here. The dash is sized to land at the subject's own
+    // arriveDist by `_igniteJump`, so the cut below is a fail-safe rather than
+    // the primary terminator, and once physics' auto-brake finishes (it clears
+    // isJump itself at game-physics.js:3419, having decayed to the 0.4 u/frame
+    // floor) the park at :1278 takes the arrival exactly as it does after an
+    // O-warp: hold the nose, null the closing rate, keep the standoff.
+    const _jEw = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || null;
+    const _jSub = (typeof gameState !== 'undefined' && gameState._arrivalSubject) || null;
+    if (_jSub && _jSub._jumpLeg && _jSub.obj && _jSub.obj.position && _jEw) {
+      // LATCH ONLY ONCE THE DASH HAS ACTUALLY BEEN OBSERVED BOOSTING. Setting
+      // `_flown` at ignition would open the park in the handful of frames
+      // between the wDoubleTap latch and physics consuming it — the park would
+      // brake a jump that had not lit yet, which is precisely the failure
+      // `_flown` exists to prevent on the O-warp side.
+      if (_jEw.isJump && (_jEw.active || _jEw.transitioning)) _jSub._flown = true;
+      // ── HAND THE ARRIVAL TO THE PARK THE MOMENT THE DASH IS OVER ──────────
+      // The park stands down for `isJump`, and physics only clears that flag
+      // from INSIDE its own auto-brake, when speed finally reaches
+      // minVelocity * 1.2 = 0.48 u/frame. That brake is a 0.985/frame decay
+      // fighting whatever the phase underneath is commanding, so it settles at
+      // an equilibrium instead of at the floor: MEASURED on this build, a dash
+      // that ended its boost at 430.8 s sat at a dead-flat 1.05 u/frame with
+      // `isJump` still true SEVEN SECONDS later, and the arrival was still
+      // walking in (3,930 -> 3,244 u) when the next leg ignited. The park —
+      // the one thing that cuts the phase's thrust and nulls the closing rate
+      // — was locked out of its own arrival for the entire beat.
+      //
+      // The flag has done its job by then: `isJump` selects the half-tunnel and
+      // the jump exit beat (visual-flair.js) and excludes the dash from warp
+      // guidance, all of which only matter while the boost is live. Once the
+      // boost is over on a leg that staged an arrival, the arrival owns the
+      // ship. Clearing it here is also the safer state for the flag itself —
+      // game-physics.js:3327 documents a latched `isJump` silently switching
+      // off every later "is this a ramped warp?" test for the rest of the run.
+      // Only ever for a leg WE staged: a plain combat dash keeps physics' own
+      // ending, untouched.
+      if (_jSub._flown && _jEw.isJump && !_jEw.active && !_jEw.transitioning) {
+        _jEw.isJump = false;
+        if (!_jSub._jumpHandoffLogged) {
+          _jSub._jumpHandoffLogged = true;
+          ap._jumpHandoffs = (ap._jumpHandoffs || 0) + 1;
+          console.log('🤝 JUMP → ARRIVAL PARK handoff → ' +
+            ((_jSub.obj.userData && (_jSub.obj.userData.name || _jSub.obj.userData.type)) || 'body') +
+            ' d=' + Math.round(camPos().distanceTo(_jSub.obj.position)) + 'u speed=' +
+            (gameState.velocityVector ? gameState.velocityVector.length().toFixed(2) : '?') + ' u/f');
+        }
+      }
+      if (_jEw.isJump && _jEw.active && gameState.velocityVector && _arriveToTmp && _arriveFwdTmp) {
+        const _jSpeed = gameState.velocityVector.length();
+        if (_jSpeed > 1e-3) {
+          _arriveFwdTmp.copy(gameState.velocityVector).normalize();
+          _arriveToTmp.subVectors(_jSub.obj.position, camPos());
+          const _jAlong = _arriveToTmp.dot(_arriveFwdTmp);
+          // The ground still to be eaten after the boost ends: the fixed tail
+          // (see JUMP_TAIL_U) or a quarter-second of the CURRENT boost speed,
+          // whichever is larger — the latter is what covers the frames between
+          // this test and physics actually acting on `timeRemaining = 0`.
+          const _jCoast = Math.max(JUMP_TAIL_U, _jSpeed * 60 * 0.25);
+          const _jStand = _jSub.stand || (_jSub.arriveDist * 1.25);
+          // OUT OF RUNWAY: what is left ahead no longer needs the boost —
+          // either the coast alone covers it, or the subject is already abeam.
+          if (_jAlong <= _jStand + _jCoast) {
+            _jEw.timeRemaining = 0;
+            if (!_jSub._jumpCutLogged) {
+              _jSub._jumpCutLogged = true;
+              ap._jumpCuts = (ap._jumpCuts || 0) + 1;
+              ap._lastJumpCut = {
+                at: Date.now(), along: Math.round(_jAlong),
+                range: Math.round(_arriveToTmp.length()),
+                stand: Math.round(_jStand), coast: Math.round(_jCoast),
+                subject: (_jSub.obj.userData &&
+                  (_jSub.obj.userData.name || _jSub.obj.userData.type)) || 'body'
+              };
+              console.log('🎯 JUMP ARRIVAL CUT → ' + ap._lastJumpCut.subject +
+                '  along=' + ap._lastJumpCut.along + 'u (stand=' +
+                ap._lastJumpCut.stand + ' coast=' + ap._lastJumpCut.coast + ')');
+            }
+          }
+        }
+      }
+    }
+
     // ── SIZE THE BURN AT IGNITION, NOT AT THE KEY PRESS ─────────────────────
     // triggerOKeyWarp arms the burn from the range it measures when it presses
     // O, but physics does not light the engine until the camera has finished
@@ -1174,8 +1337,24 @@
     // evade keeps its brake (dumping warp speed is correct there).
     // coastToNebulaCluster already had its own version of this lock; this
     // covers the combat / followDiscoveryPath warps too.
-    if (typeof gameState !== 'undefined' && gameState.emergencyWarp &&
-        gameState.emergencyWarp.active && !gameState.emergencyWarp.isJump &&
+    //
+    // ...AND THE SAME PROTECTION FOR A JUMP LEG THAT CARRIES AN ARRIVAL.
+    // `!isJump` was right while every jump was a combat dash whose overshoot
+    // brake is a feature. It is exactly wrong for a jump sized to land at a
+    // staged subject's standoff: the dash is BALLISTIC (no guidance, no
+    // velocity clamp — physics writes velocity once at ignition and lets
+    // ordinary damping act), so the phase underneath pressing X does not merely
+    // shorten it, it dissolves it. MEASURED, this build: a leg armed 5,773 ms
+    // at 26 u/frame for Atlantis Nebula Prime (7,095 u to close, landing dead
+    // on its 2,129 u standoff) decayed 23.7 -> 21.2 -> 17.8 -> 8.9 -> 1.6 ->
+    // 0.4 u/frame WHILE STILL BOOSTING and closed 2,432 u of the 7,095 —
+    // 34 %, ending 6,793 u out at 10.4 degrees. The burn was correct; the
+    // brake underneath it was not. A combat dash keeps its brake (no subject
+    // staged, so `_jumpLeg` is false).
+    const _wiEw = (typeof gameState !== 'undefined' && gameState.emergencyWarp) || null;
+    const _wiJumpLeg = !!(_wiEw && _wiEw.isJump && gameState._arrivalSubject &&
+                          gameState._arrivalSubject._jumpLeg);
+    if (_wiEw && _wiEw.active && (!_wiEw.isJump || _wiJumpLeg) &&
         !(ap._evadeUntil && Date.now() < ap._evadeUntil)) {
       keys().x = false;
     }
@@ -1914,14 +2093,18 @@
         camera.getWorldDirection(_coneFwd);
         _recF = _coneFwd.dot(_coneVec);
       }
+      // Recovery dash: close 80 % of the drift. Routed through the one
+      // ignition site so it answers to the park interlock, the corridor
+      // clearance and the reach clamp like every other jump — a recovery that
+      // fires through a live arrival is the same "PLANETARY IMPACT" bug with a
+      // different caller.
       if (_recF > 0.9 && gameState.energy > 25) {
+        // One-shot on ATTEMPT, not on success — the recovery latch exists to
+        // stop the demo re-triggering the manoeuvre every frame, and a jump
+        // that _igniteJump refuses (blocked corridor, live park) is still an
+        // attempt. The drift guard above re-arms it if the gap keeps growing.
         ap._recJump = false;
-        gameState._pendingJumpSpeed = 45;
-        gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist * 0.8 - 45 * 65) / 45 * 16.67));
-        if (window.keys) {
-          window.keys.wDoubleTap = true;
-          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
-        }
+        _igniteJump({ gap: dist * 0.8, dest: enemy, subject: false, why: 'combatRecovery' });
         setStatus('Reorient + warp back to target (' + (dist | 0) + ' u)');
       } else {
         setStatus('Reorienting on target (' + (dist | 0) + ' u)');
@@ -2043,20 +2226,14 @@
           gameState.energy > 25 &&
           !_isMissileInFlightAt(enemy) &&
           Date.now() - (ap._lastJumpTap || 0) > 4000) {
-        ap._lastJumpTap = Date.now();
-        if (window.keys) {
-          if (typeof gameState !== 'undefined') {
-            // Size the jump to land near the target in one tap. At
-            // boostSpeed 15 (~0.9 u/ms) plus the gentle coast tail it
-            // travels a bit past 0.9*t, so aim for (dist - 700) and let
-            // the overshoot brake settle the last bit. 700-6000ms.
-            gameState._pendingJumpMs = Math.min(6000, Math.max(700, (dist - 700) * 1.0));
-          }
-          window.keys.wDoubleTap = true;
-          setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+        // Land ~700 u short and let the overshoot brake below settle the rest.
+        // subject:false — a dogfight closing move is not an arrival, and
+        // staging the hostile would hand the park a target that shoots back
+        // and hand the interstellar leg's staged reveal away.
+        if (_igniteJump({ gap: dist - 700, dest: enemy, subject: false, why: 'combatPursuit' })) {
+          setStatus('Tactical jump — closing on hostile');
+          return;
         }
-        setStatus('Tactical jump — closing on hostile');
-        return;
       }
 
       // Brake if the jump overshoots past the target — detect by
@@ -2308,17 +2485,13 @@
     if (dist > 3500 && facing > 0.92 && _beSpeed < 4 && !_beWarpBusy &&
         gameState.energy > 25 &&
         Date.now() - (ap._lastJumpTap || 0) > 5000) {
-      ap._lastJumpTap = Date.now();
-      const S = 45;                    // matches _pendingJumpSpeed below
-      const coast = S * 65;            // ~auto-brake coast distance
-      gameState._pendingJumpSpeed = S;
-      gameState._pendingJumpMs = Math.min(5000, Math.max(450, (dist * 0.8 - coast) / S * 16.67));
-      if (window.keys) {
-        window.keys.wDoubleTap = true;
-        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+      // Land ~80 % of the way in. The hand-tuned 45 u/frame this site has used
+      // since it was written is now just what _jumpSpeedFor picks for a gap
+      // this size, so the sizing arithmetic lives in one place.
+      if (_igniteJump({ gap: dist * 0.8, dest: boss, subject: false, why: 'bossApproach' })) {
+        setStatus('Tactical jump → boss (' + (dist | 0) + ' u)');
+        return;
       }
-      setStatus('Tactical jump → boss (' + (dist | 0) + ' u)');
-      return;
     }
 
     flyToward(boss, 2.5);
@@ -3094,16 +3267,34 @@
         // approachRange 3500: the mission system anchors 7+ hostiles within
         // ~3000u of the endpoint — enter that zone below 9,500 km/s so the
         // demo arrives fighting instead of overshooting the stronghold.
+        // ── MULTI-BURN: ONE CHARGE IS NOT ONE LEG ───────────────────────────
+        // `allowWarp: !ap._followPathWarpFired` granted this phase exactly ONE
+        // warp and then handed a 62,000-142,000 u transit (measured range of
+        // real discovery paths) to the tactical jump — which is how the second
+        // ignition path came to own more than half the demo's warps in the
+        // first place. Even at its new honest reach a jump closes ~12,645 u,
+        // and one O-warp reaches at most _oWarpMaxBoostDist() = 90,000 u, so a
+        // long path genuinely NEEDS several burns.
+        //
+        // Nothing here needs to schedule them: navigateTo re-asks every frame,
+        // and the burn is already throttled from four directions — the 20 s
+        // cooldown at :4447, canEmergencyWarp's charge count (max 5, one per
+        // minute) and 3-kill gate, the park interlock (a leg fired inside an
+        // arrival is deferred, not queued), and triggerOKeyWarp's refusal when
+        // nothing stageable is in reach. So the one-shot becomes a bounded
+        // count: enough burns to actually cross the longest path in the game,
+        // few enough that the demo cannot spend its whole warp budget on one.
         const st = navigateTo(endPos, {
           arriveRadius: 300,
           arriveSpeed: 1.0,
           boost: true,
           allowJump: true,
-          allowWarp: !ap._followPathWarpFired,
+          allowWarp: (ap._followPathWarps || 0) < FOLLOW_PATH_MAX_WARPS,
           approachRange: 3500,
           approachSpeed: 9.5,
         });
         if (st === 'warping') {
+          ap._followPathWarps = (ap._followPathWarps || 0) + 1;
           ap._followPathWarpFired = true;
           setStatus('Emergency warp → revealed hostile sector');
         } else if (st === 'jumping') {
@@ -3305,10 +3496,17 @@
         const awayDummy = { position: awayPos };
         if (window.orientTowardsTarget) window.orientTowardsTarget(awayDummy);
       }
-      if (window.keys) {
-        window.keys.wDoubleTap = true;
-        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
-      }
+      // THE ONE GENUINELY DESTINATION-LESS IGNITION IN THIS FILE. There is
+      // nowhere to arrive — the whole point is to be somewhere else than the
+      // gravity well — so no subject is staged and none is claimed. What the
+      // contract still owes it is the other half: it ends at controlled speed
+      // (physics' jump auto-brake decays to the 0.4 u/frame floor and clears
+      // isJump itself, game-physics.js:3419) and it is REFUSED outright rather
+      // than fired blind if anything solid sits in the corridor ahead
+      // (_jumpClearAhead). A 2,500 u nudge clear of the well is all this beat
+      // was ever asking for; the old version asked physics for its 2,000 ms
+      // default and got whatever boostSpeed the last leg had left behind.
+      _igniteJump({ gap: 2500, subject: false, why: 'postWarpEvasion' });
       setStatus('Post-warp evasion — short jump engaged');
       return;
     }
@@ -4138,6 +4336,323 @@
     ew._burnArmedAt = null;
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // THE SECOND IGNITION PATH — THE TACTICAL JUMP
+  // ══════════════════════════════════════════════════════════════════════════
+  // Everything above this line is the O-warp's arrival contract, and it works:
+  // measured 15/15 legs staged, cut, parked, dead centre, 29.8 deg median. It
+  // is also, until now, HALF THE WARPS THIS DEMO FIRES. The drive is reached by
+  // two routes and only one of them passed through any of it:
+  //
+  //   * O-warp  — triggerOKeyWarp -> keys.o -> game-physics.js:3360. Stages a
+  //     subject, sizes speed AND duration to the leg, gets guidance, gets the
+  //     geometric cut, the extension and the park.
+  //   * JUMP    — keys.wDoubleTap + gameState._pendingJumpMs -> game-physics.js
+  //     :3247. Sets emergencyWarp.isJump, which the cut (:838), the pre-ignition
+  //     re-arm (:1134), the warp-integrity lock (:1178), guidance
+  //     (game-physics.js:2910) and the park (:1280) ALL explicitly stand down
+  //     for. It stages nothing, arms nothing, and reuses whatever boostSpeed is
+  //     lying in gameState — which triggerOKeyWarp's own _disarmWarpBurn has
+  //     just reset to the stock 15.
+  //
+  // To the player the two are the same move: the same warpStreakBurst field,
+  // a warpTunnelBurst(0.5) half-tunnel, the same first-person camera snap.
+  // MEASURED across 34 classified legs: armed O-warp n=15, cut-or-extension
+  // 15/15, park 12/15, behind-camera 0/15, median subject 29.8 deg at 2,333 u.
+  // UNARMED jump n=19, cut-or-extension 0/19, park 0/19, behind-camera 15/19,
+  // median subject 2.37 deg at 31,016 u.
+  //
+  // THE ROOT CAUSE WAS ONE DEFAULT. navigateTo took `jumpMaxDist: Infinity`,
+  // so followDiscoveryPath dispatched a jump at a destination 48,476 u away
+  // and armed it as `Math.min(6000, ...)` at 15 u/frame — 15 x 60 x 6.0 s x
+  // 0.6 delivery = ~3,240 u of real reach against a 48,476 u gap, 6.7 % of the
+  // way. Every measured burn duration clustered dead on that 6,000 ms clamp.
+  //
+  // So the jump gets the same contract, expressed as three rules that this
+  // block and the jump-arrival tracker in update() enforce together:
+  //   1. A JUMP MAY NEVER CLAIM MORE GROUND THAN IT DELIVERS. The gap is
+  //      clamped to _jumpMaxReach() and the speed/duration are SIZED to it, the
+  //      way _armWarpBurn sizes a burn. Anything longer is not a jump; the
+  //      caller falls through to the O-warp branch, which can reach 90,000 u.
+  //   2. A JUMP WITH A DESTINATION STAGES AN ARRIVAL SUBJECT and hands the leg
+  //      to the park, so it ends framed and parked instead of drifting.
+  //   3. A JUMP WITHOUT ONE (the post-warp black-hole evasion, the only
+  //      genuinely destination-less ignition in this file) still ends at
+  //      controlled speed — physics' own jump auto-brake owns that — and is
+  //      refused outright if anything solid sits in its corridor.
+  //
+  // Every wDoubleTap in this file now goes through _igniteJump. That is what
+  // makes "both ignition paths" a property of the code rather than a promise.
+
+  // The stock jump speed physics falls back to (gameState.emergencyWarp
+  // .boostSpeed after _disarmWarpBurn), and the ceiling this file already
+  // proved safe on the boss-approach jump at :2312 — a dash, not a journey.
+  const JUMP_SPEED_STOCK = 15;
+  const JUMP_SPEED_MAX = 45;
+  // Physics clamps _pendingJumpMs at 8,000; 6,000 is this file's own existing
+  // clamp and leaves the half-tunnel a watchable length without turning a dash
+  // into a second warp.
+  const JUMP_MS_MAX = 6000;
+  const JUMP_MS_MIN = 450;
+  // The auto-brake tail. Physics decays a finished jump at 0.985/frame down to
+  // the 0.4 u/frame floor, so the coast integrates to speed/(1-0.985) ~= 66
+  // frames of travel; :2313 has used `S * 65` for this since the boss jump was
+  // written and it is measured, not derived.
+  // ── THE TAIL, AND WHY IT IS A CONSTANT ──────────────────────────────────
+  // `S * 65` — the boss jump's hand-tuned coast, the number this file has used
+  // since that site was written — models the tail as 65 frames of decay AT THE
+  // BOOST SPEED. That is not what happens. The instant `active` goes false the
+  // dash is ordinary flight again, so physics clamps velocity to
+  // `gameState.maxVelocity` (4 u/frame) and THEN decays it: the tail is
+  // ~4 x 66 frames of ground no matter how fast the boost was. MEASURED, this
+  // build: a 15 u/frame dash ended its boost at 2,243 u and settled at 2,098 u
+  // of total travel against 2,020 u of pure boost — a ~260 u tail, not the
+  // 975 u the old model claimed.
+  const JUMP_TAIL_U = 300;
+  // ...AND WHY THE DELIVERY FACTOR IS 1.0 HERE AND 0.6 FOR THE O-WARP.
+  // EW_BURN_DELIVERY exists because a burn armed in wall-clock milliseconds
+  // under-flies on a machine below 60 fps, and for the O-warp erring LONG is
+  // the safe direction: the geometric cut ends that burn at the arrival, so a
+  // generous clock only means the cut fires with time to spare. A jump has no
+  // guidance and no cut in physics at all — its clock IS its terminator — so
+  // for a dash the safe direction is exactly reversed. Sizing a jump at 0.6
+  // means a machine that actually delivers 1.0 flies 1.67x the ground it was
+  // asked for: MEASURED, this build at 30 fps, a dash sized to stop on a
+  // 2,129 u standoff 9,954 u away passed the body at 176 u — a fly-through of
+  // the destination on the very path this piece is about. At 1.0 the error can
+  // only ever be an UNDERSHOOT, which the park then closes.
+  const JUMP_DELIVERY = 1.0;
+  const _JUMP_U_PER_SPEED = 60 * (JUMP_MS_MAX / 1000) * JUMP_DELIVERY;
+  function _jumpReach(speed) { return speed * _JUMP_U_PER_SPEED + JUMP_TAIL_U; }
+  // THE NUMBER THAT REPLACES `Infinity`: 45 x 360 + 300 = 16,500 u. A leg
+  // longer than that is an O-warp leg; that is the whole fix.
+  function _jumpMaxReach() { return _jumpReach(JUMP_SPEED_MAX); }
+  // Smallest speed that delivers this gap, so short dashes keep the stock feel
+  // and only a long one spends the extra.
+  function _jumpSpeedFor(gap) {
+    return Math.max(JUMP_SPEED_STOCK,
+      Math.min(JUMP_SPEED_MAX, (gap - JUMP_TAIL_U) / _JUMP_U_PER_SPEED));
+  }
+  function _jumpMsFor(gap, speed) {
+    return Math.max(JUMP_MS_MIN, Math.min(JUMP_MS_MAX,
+      ((gap - JUMP_TAIL_U) / (speed * 60 * JUMP_DELIVERY)) * 1000));
+  }
+
+  // HOW FAR THIS DASH MAY GO BEFORE IT HITS SOMETHING. A jump is BALLISTIC —
+  // game-physics.js:2910 excludes isJump from warp guidance — so unlike an
+  // O-warp it cannot bend around anything, and unlike an O-warp it has no
+  // geometric cut of its own in physics. `_departureBlocked` only ever asked
+  // about the CURRENT arrival subject; this asks about the whole corridor.
+  // Returns the furthest distance along `dir` that is clear, so the caller can
+  // shorten the dash rather than cancel it.
+  const _jcTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _jumpFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function _jumpClearAhead(from, dir, gap) {
+    if (typeof planets === 'undefined' || !from || !dir || !_jcTmp) return gap;
+    let limit = gap;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      const ud = p && p.userData;
+      if (!p || !p.position || !ud) continue;
+      if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
+      _jcTmp.subVectors(p.position, from);
+      const along = _jcTmp.dot(dir);
+      if (along <= 0 || along > gap + 2000) continue;
+      const off = Math.sqrt(Math.max(0, _jcTmp.lengthSq() - along * along));
+      // Its danger radius plus a ship-length of margin — the same clearance
+      // _departureBlocked uses, applied to every body rather than one.
+      const clear = _arrivalDangerR(p) + 300;
+      if (off >= clear) continue;
+      const stopBy = along - clear;
+      if (stopBy < limit) limit = stopBy;
+    }
+    return Math.max(0, limit);
+  }
+
+  // ── THE ONE JUMP IGNITION SITE ──────────────────────────────────────────
+  // opts:
+  //   gap      (u)   how much ground this dash is being asked to close
+  //   dest           the destination object/vector this leg is flying to, if
+  //                  any — what makes the leg DESTINATION-BEARING
+  //   subject  bool  stage an arrival subject near `dest` (default: yes when
+  //                  a dest was handed in). Combat pursuit passes false: a
+  //                  dogfight closing move is not an arrival and must not
+  //                  overwrite the interstellar leg's staged reveal.
+  //   why      str   log tag, so a leg's code path is provable from telemetry
+  // Returns true when the latch was actually set.
+  function _igniteJump(opts) {
+    opts = opts || {};
+    if (typeof gameState === 'undefined' || typeof camera === 'undefined') return false;
+    if (!window.keys || !_jcTmp) return false;
+    // THE SAME TWO INTERLOCKS THE O-WARP ANSWERS TO, asked in the same order.
+    // Before this, a jump could fire straight through a live park (the park
+    // swallows the latch at :1448, but only for the frames it owns) and there
+    // was nothing at all stopping one being aimed down the boresight at the
+    // body we were parked next to — measured "PLANETARY IMPACT", :5011.
+    if (_parkOwnsBeat()) return _parkDefer('jump');
+    if (_departureBlocked()) return false;
+    const _ewJ = gameState.emergencyWarp || {};
+    if (_ewJ.active || _ewJ.transitioning) return false;
+    if ((gameState.energy || 0) <= 25) return false;
+
+    camera.getWorldDirection(_jumpFwdTmp);
+    const _cpJ = camPos();
+    // RULE 1 — NEVER CLAIM MORE GROUND THAN THE DASH DELIVERS.
+    const _reach = _jumpMaxReach();
+    let gap = Math.max(0, opts.gap || 0);
+    const _asked = gap;
+
+    // ── RESOLVE THE ARRIVAL BEFORE SIZING THE DASH ──────────────────────────
+    // The candidate has to be known FIRST, because the single most important
+    // bound on a dash's length is its subject's own standoff: a jump sized
+    // from the caller's fraction of the range lands wherever that fraction
+    // happens to fall. MEASURED, this build: a dash asked to close 0.85 of a
+    // 6,805 u range to Atlantis Nebula Prime was sized for 5,784 u — which
+    // lands 1,021 u from a body whose standoff is 2,129 u, i.e. the arrival
+    // beat would have started HALF A STANDOFF INSIDE the body it was framing.
+    // The O-warp has never had this problem because _armWarpBurn is handed
+    // `stand` and sizes the burn as (range - stand). This does the same.
+    let cand = null, candSo = null, candRange = 0;
+    if (opts.subject !== false && opts.dest) {
+      const dp = opts.dest.position || (opts.dest.isVector3 ? opts.dest : null);
+      if (dp) {
+        cand = _findArrivalSubject(dp, Math.max(1500, Math.min(gap, 4000)));
+        if (!cand && (opts.dest.geometry || (opts.dest.userData && opts.dest.userData.type))) {
+          cand = {
+            obj: opts.dest,
+            radius: (opts.dest.geometry && opts.dest.geometry.parameters &&
+                     opts.dest.geometry.parameters.radius) ||
+                    (opts.dest.userData && opts.dest.userData.size) || 20
+          };
+        }
+        if (cand && cand.obj && cand.obj.position) {
+          candSo = _arrivalStandoff(cand.radius, _arrivalDangerR(cand.obj));
+          candRange = _cpJ.distanceTo(cand.obj.position);
+          // ...and not a place we are already standing (the same test the
+          // O-warp's destination clause makes) — arriving where you already
+          // are is the stutter-warp class of non-arrival.
+          if (!candSo.framable || candRange <= candSo.stand * 1.3) { cand = null; candSo = null; }
+        } else { cand = null; }
+      }
+    }
+    // THE STANDOFF IS THE LANDING SITE, not a number the arrival hopes for.
+    if (cand) gap = Math.min(gap, Math.max(0, candRange - candSo.stand));
+
+    // RULE 1 — NEVER CLAIM MORE GROUND THAN THE DASH DELIVERS.
+    const _reachClamped = gap > _reach;
+    if (_reachClamped) gap = _reach;
+    // AN ATTEMPT SPENDS THE COOLDOWN, which is what every call site assumed
+    // when it stamped `_lastJumpTap` itself before firing. Stamping here — and
+    // only past the interlocks, so a park deferral still costs nothing — keeps
+    // that behaviour and, more importantly, stops a jump that is refused for
+    // geometric reasons (blocked corridor, gap too small) from re-running the
+    // clearance scan over every body in `planets` on every single frame.
+    ap._lastJumpTap = Date.now();
+    // RULE 3 — AND NEVER INTO SOMETHING.
+    const _clear = _jumpClearAhead(_cpJ, _jumpFwdTmp, gap);
+    const _corridorClamped = _clear < gap;
+    if (_corridorClamped) gap = _clear;
+    // Below this a dash is not worth a beat (and physics' own 450 ms floor
+    // would overshoot it anyway).
+    if (gap < 400) {
+      ap._jumpsRefused = (ap._jumpsRefused || 0) + 1;
+      return false;
+    }
+
+    const speed = _jumpSpeedFor(gap);
+    const ms = _jumpMsFor(gap, speed);
+
+    // RULE 2 — A JUMP WITH A DESTINATION STAGES ITS ARRIVAL...
+    // ...AND ONLY IF THIS DASH ACTUALLY ARRIVES AT IT. `gap` has now been cut
+    // by the reach and by the corridor, and a subject staged regardless is an
+    // arrival CLAIMED and not DELIVERED — the precise failure the O-warp's
+    // "no destination, no ignition" refusal exists to prevent, arriving on the
+    // other path. MEASURED, this build: a dash asked 5,470 u at a body 6,435 u
+    // out, the corridor guard cut it to 2,170 u, and the leg ended 3,244 u from
+    // a body whose standoff is 295 u — subject staged, park armed, nothing
+    // arrived at. So require the dash to finish inside the same 2.5x standoff
+    // the park itself calls "at the standoff"; short of that this is a
+    // repositioning move, and it stages nothing.
+    //
+    // Staged from what the setter ACCEPTED, not from whatever is in gameState
+    // afterwards: under the park interlock the set can be refused, and reading
+    // the live subject then would hand this leg a DIFFERENT body's standoff.
+    let staged = null;
+    if (cand) {
+      const _landsAt = Math.max(0, candRange - gap);
+      if (_landsAt <= candSo.stand * 2.5 && _setArrivalSubject(cand.obj, cand.radius)) {
+        staged = gameState._arrivalSubject;
+        // THE JUMP LEG DECLARES ITSELF. The park gates on `_flown`, which only
+        // the O-warp's cut block ever set; the tracker in update() latches it
+        // for this leg once the dash has actually been observed boosting, and
+        // then hands the arrival over the moment the boost ends.
+        staged._jumpLeg = true;
+        staged._jumpGap = Math.round(gap);
+        staged._jumpLandsAt = Math.round(_landsAt);
+        // The dash is short and the auto-brake tail is long; keep the subject's
+        // window consistent with the O-warp's rule that a subject outlives its
+        // own burn.
+        staged.liveMs = Math.max(staged.liveMs || 19000, ms + 12000);
+      }
+    }
+
+    // A DASH THAT CLAIMED NOTHING MUST NOT INHERIT THE LAST ONE'S CLAIM. If
+    // this jump staged no subject (a combat closing move, the black-hole
+    // evasion, or a destination with nothing framable near it) then any
+    // subject still sitting in gameState belongs to an EARLIER leg, and the
+    // jump tracker in update() would happily point this dash's anti-overshoot
+    // cut at that old body. Drop the flag, not the subject: the subject may
+    // still be a live O-warp park's, and clearing it would destroy the park.
+    if (!staged && gameState._arrivalSubject) gameState._arrivalSubject._jumpLeg = false;
+
+    gameState._pendingJumpSpeed = speed;
+    gameState._pendingJumpMs = ms;
+    window.keys.wDoubleTap = true;
+    setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+    _logIgnition('jump', {
+      why: opts.why || 'jump',
+      asked: Math.round(_asked), gap: Math.round(gap),
+      // WHY the dash was shortened, kept apart: one means "this leg is longer
+      // than a jump delivers, and the O-warp should have it" (the bug this
+      // whole block exists for), the other means "something solid is in the
+      // way" (the collision guard). Conflating them made a corridor clamp read
+      // as a reach clamp in the log.
+      clamped: _reachClamped || _corridorClamped,
+      reachClamped: _reachClamped, corridorClamped: _corridorClamped,
+      reach: Math.round(_reach),
+      speed: Math.round(speed * 10) / 10, ms: Math.round(ms),
+      subject: staged ? ((staged.obj.userData &&
+        (staged.obj.userData.name || staged.obj.userData.type)) || 'body') : null,
+      stand: staged ? Math.round(staged.stand) : null,
+      landsAt: staged ? staged._jumpLandsAt : null
+    });
+    return true;
+  }
+
+  // ── PER-LEG CODE-PATH LOG ───────────────────────────────────────────────
+  // Which of the two ignition paths each leg took, in machine-readable form.
+  // The critic's split ("armed vs unarmed") had to be RECONSTRUCTED from an
+  // Object.defineProperty trap on gameState.emergencyWarp.active plus a
+  // boostSpeed heuristic, because nothing in this file recorded it. It does
+  // now, so an acceptance run can classify legs instead of inferring them.
+  const IGNITION_LOG_MAX = 64;
+  function _logIgnition(path, detail) {
+    if (!ap._ignitions) ap._ignitions = [];
+    const rec = Object.assign({ at: Date.now(), path: path, phase: ap.phase }, detail || {});
+    ap._ignitions.push(rec);
+    if (ap._ignitions.length > IGNITION_LOG_MAX) ap._ignitions.shift();
+    ap._lastIgnition = rec;
+    ap._ignitionCounts = ap._ignitionCounts || { owarp: 0, jump: 0 };
+    ap._ignitionCounts[path] = (ap._ignitionCounts[path] || 0) + 1;
+    console.log('🔥 IGNITION [' + path + '] ' + (detail && detail.why ? detail.why : '') +
+      ' gap=' + (detail && detail.gap != null ? detail.gap : '?') + 'u' +
+      (detail && detail.reachClamped ? ' (CLAMPED from ' + detail.asked + 'u — beyond jump reach)' : '') +
+      (detail && detail.corridorClamped ? ' (SHORTENED from ' + detail.asked + 'u — body in the corridor)' : '') +
+      (detail && detail.speed != null ? ' speed=' + detail.speed : '') +
+      (detail && detail.ms != null ? ' ms=' + detail.ms : '') +
+      ' subject=' + ((detail && detail.subject) || 'none'));
+  }
+
   // How long a staged subject stays authoritative for the framing hold, the
   // camera nudge and the cut-off. Was a flat 19,000 ms, which silently became
   // a THIRD way for the cut to be dead once burns could run to 25 s: the
@@ -4335,7 +4850,24 @@
     const arriveRadius = opts.arriveRadius != null ? opts.arriveRadius : 300;
     const arriveSpeed = opts.arriveSpeed != null ? opts.arriveSpeed : 1.5;
     let allowJump = opts.allowJump !== false;
-    const jumpMaxDist = opts.jumpMaxDist != null ? opts.jumpMaxDist : Infinity;
+    // ── THE ONE-LINE ROOT CAUSE, AND ITS FIX ────────────────────────────────
+    // This default used to be `Infinity`. The combat caller passes 2500
+    // (:3192) but followDiscoveryPath — the demo's main long-haul phase — took
+    // the default, so the gate below happily dispatched a tactical jump at a
+    // destination 48,476 u away against a dash that delivers ~3,240 u. That
+    // single default is what put HALF OF ALL WARPS in the void: 19 of 19
+    // measured jump legs staged nothing, cut nothing, parked nothing, and 15
+    // of them ended with the destination BEHIND THE CAMERA at a median 2.37
+    // deg / 31,016 u.
+    //
+    // The honest default is the dash's own delivered reach (~12,645 u, see
+    // _jumpMaxReach). A leg longer than that is not a jump leg — it falls
+    // through to the O-warp branch below, which stages, arms, cuts and parks
+    // 15/15. `_igniteJump` clamps to the same number a second time, so a
+    // caller that passes its own larger jumpMaxDist still cannot buy reach
+    // that does not exist.
+    const jumpMaxDist = opts.jumpMaxDist != null ?
+      Math.min(opts.jumpMaxDist, _jumpMaxReach()) : _jumpMaxReach();
     let allowWarp = !!opts.allowWarp;
     let boost = !!opts.boost;
     const approachRange = opts.approachRange || 0;
@@ -4441,7 +4973,19 @@
     // 15000 floor (was 8000): an O-warp is ~7200u of hands-off boost plus
     // a long high-speed coast — from 8000u out, boost+coast routinely
     // carried past the target before the controller regained authority.
-    const _warpMinDist = Math.max(15000, approachRange ? approachRange + 12000 : 0);
+    //
+    // ...AND THE TWO PATHS MUST NOW TILE THE DISTANCE AXIS WITH NO GAP.
+    // Bounding the jump at its real reach (~12,645 u) creates a hole wherever
+    // the warp floor sits above it: a 14,000 u leg would qualify for neither
+    // and crawl the whole way at cruise. The 15,000 floor was written when a
+    // warp's ending was a stopwatch — "boost+coast routinely carried past the
+    // target before the controller regained authority" — and that is no longer
+    // what ends a burn: _armWarpBurn sizes the burn to (range - stand) and the
+    // arrival cut/park own the ending, on legs as short as the 2,000 ms floor.
+    // So the floor is derived from the jump's reach instead of guessed, and
+    // deliberately sits BELOW it so the two overlap rather than abut.
+    const _warpMinDist = Math.max(_jumpMaxReach() * 0.8,
+      approachRange ? approachRange + _jumpMaxReach() * 0.8 : 0);
     if (allowWarp && dist > _warpMinDist && facing > 0.9 && canEmergencyWarp() &&
         Date.now() - (ap._lastBHWarp || 0) > 20000) {
       if (triggerOKeyWarp(targetObj)) {
@@ -4467,39 +5011,46 @@
     // instead: close enough for >=15 deg angular size, never inside its own
     // danger radius. No candidate body → no subject staged, and the flat
     // 700u tail is unchanged (nothing claimed, nothing to frame).
+    //
+    // THE TAIL IS NOW SIZED, NOT STAGED, HERE. Staging is an ARRIVAL decision
+    // and it belongs to the one place that can honour the whole contract
+    // (_igniteJump) — doing it here meant a subject was set for a dash that
+    // the gate below might refuse, leaving a claimed arrival with no burn
+    // flying to it. This only measures how much of the gap the dash should
+    // close; _igniteJump re-resolves and stages the body it actually commits
+    // to.
     let _jumpTail = 700;
     if (!approachRange) {
       const _arrivalCand = _findArrivalSubject(targetObj.position, Math.max(1500, Math.min(dist, 4000)));
-      // Size the tail from what the setter ACCEPTED, not from whatever is in
-      // gameState afterwards: under the park interlock the set can be refused,
-      // and reading the live subject then would size this jump's landing from
-      // a DIFFERENT body — the one currently parked at.
-      if (_arrivalCand && _setArrivalSubject(_arrivalCand.obj, _arrivalCand.radius)) {
-        _jumpTail = Math.min(gameState._arrivalSubject.arriveDist, dist * 0.6, 4500);
-      } else if (!_arrivalCand) {
-        _clearArrivalSubject();
+      if (_arrivalCand) {
+        const _tailSo = _arrivalStandoff(_arrivalCand.radius, _arrivalDangerR(_arrivalCand.obj));
+        _jumpTail = Math.min(_tailSo.arriveDist, dist * 0.6, 4500);
       }
     }
     const _jumpGap = approachRange ? (dist - approachRange) : (dist - _jumpTail);
     // A tactical jump sets emergencyWarp.isJump, which the park explicitly
     // stands down for — so an unguarded jump does not merely disturb the
     // arrival, it silently switches the park off and boosts away from it.
+    // (_igniteJump asks _parkOwnsBeat and _departureBlocked itself; the check
+    // here just avoids the work.)
     if (allowJump && !_parkOwnsBeat() &&
         dist > 1200 && _jumpGap > 500 && dist < jumpMaxDist && speed < 4 &&
         facing > 0.9 && gameState.energy > 25 &&
         Date.now() - (ap._lastJumpTap || 0) > 5000) {
-      ap._lastJumpTap = Date.now();
-      // Jump distance ≈ 0.9u/ms of boost PLUS a ~500u auto-brake tail, so
-      // size the boost for (gap - tail). gap·1.0 overshot short hops by
-      // ~30% (gap 1000 → ~1310u traveled) and pushed warp speed into the
-      // approach zone.
-      gameState._pendingJumpMs = Math.min(6000, Math.max(700, _jumpGap - 500));
-      if (window.keys) {
-        window.keys.wDoubleTap = true;
-        setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
+      // ONE IGNITION SITE, ONE CONTRACT. The dash is sized to the gap (speed
+      // AND duration, the way _armWarpBurn sizes a burn), clamped to what it
+      // can deliver, refused if anything solid sits in the corridor, and — on
+      // a leg with a real destination — staged so the arrival park owns its
+      // ending. `approachRange` legs pass subject:false: a combat approach
+      // zone is an engagement, not an arrival, and must not overwrite the
+      // interstellar leg's staged reveal.
+      if (_igniteJump({
+        gap: _jumpGap, dest: approachRange ? null : targetObj,
+        subject: !approachRange, why: 'navigateTo'
+      })) {
+        ap._navStatus = 'jumping';
+        return 'jumping';
       }
-      ap._navStatus = 'jumping';
-      return 'jumping';
     }
 
     // 7) Cruise — thrust only once the bow is roughly on target.
@@ -5204,6 +5755,17 @@
       _clearArrivalSubject();   // no-op while a park owns the beat
       return false;
     }
+    const _oSubj = gameState._arrivalSubject;
+    _logIgnition('owarp', {
+      why: staged ? 'staged' : 'liveSubject',
+      gap: _oSubj && _oSubj.obj ? Math.round(camPos().distanceTo(_oSubj.obj.position)) : null,
+      speed: Math.round((gameState.emergencyWarp.boostSpeed || 0) * 10) / 10,
+      ms: Math.round(gameState.emergencyWarp.boostDuration || 0),
+      reach: Math.round(_boostDist),
+      subject: _oSubj && _oSubj.obj ? ((_oSubj.obj.userData &&
+        (_oSubj.obj.userData.name || _oSubj.obj.userData.type)) || 'body') : null,
+      stand: _oSubj ? Math.round(_oSubj.stand) : null
+    });
     keys().o = true;
     setTimeout(() => { keys().o = false; }, 100);
     return true;
@@ -5522,6 +6084,12 @@
   // The precise guard is the ORIGIN test that's already here: a path is
   // ours when it starts at the nebula we're orbiting. Distance is kept only
   // as an absurd-value backstop.
+  // How many O-warp burns one discovery transit may spend. Paths measure
+  // 62,000-142,000 u and a single burn reaches at most _oWarpMaxBoostDist()
+  // = 90,000 u of delivered ground, so two or three is what "arrive" costs on
+  // a long one; four is that with margin, and still leaves a charge for the
+  // nebula leg that follows.
+  const FOLLOW_PATH_MAX_WARPS = 4;
   const MAX_PATH_ENDPOINT = 250000;
 
   // Discovery paths that ORIGINATE within originRadius of originPos and
@@ -6142,10 +6710,12 @@
     if (name !== 'followDiscoveryPath') {
       ap._followingPath = null;
     }
-    // Re-arm the single emergency-warp shot each time the demo enters
-    // the follow phase, so every new dotted-line mission gets one.
+    // Re-arm the emergency-warp budget each time the demo enters the follow
+    // phase, so every new dotted-line mission gets its own burns (see
+    // FOLLOW_PATH_MAX_WARPS — a 142,000 u path needs more than one).
     if (name === 'followDiscoveryPath') {
       ap._followPathWarpFired = false;
+      ap._followPathWarps = 0;
       ap._tacticalMsgShown = false;
       // Re-measure the trip budget for THIS path (see phaseFollowDiscoveryPath).
       ap._followPathBudgetMs = 0;
@@ -6186,6 +6756,7 @@
     ap._prevCombatTarget = null;
     ap._prevCombatDist = undefined;
     ap._followPathWarpFired = false;
+    ap._followPathWarps = 0;
     ap._tacticalMsgShown = false;
   }
 

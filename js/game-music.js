@@ -214,6 +214,24 @@
   // fallback when the running mean hasn't primed yet (fx.bedPowerRunning < 0).
   const BED_RUNNING_TAU = 1.0;          // s — see fx.bedPowerRunning below
 
+  // fx.bedPowerHold below (20260814 audit): BED_RUNNING_TAU's 1s SYMMETRIC
+  // window is exactly what makes combat-entry stingers miss — at the instant
+  // updateCombatState sets combat.key and starts the bed crossfade, the
+  // running mean still describes the OUTGOING bed for another ~1s, so a
+  // stinger fired on that same tick gets sized against a bed level that's
+  // about to disappear. Measured live: identical stinger slice fired into a
+  // bed dip vs a settled bed produced a 10.9dB sizing error from timing
+  // alone. Fix is a second, ASYMMETRIC follower alongside the symmetric one:
+  // fast attack (grabs a loud bed almost immediately) but slow release (a
+  // bed that's merely dipped for a moment doesn't get to drag the target
+  // down with it). max(running, hold) then means a stinger is always sized
+  // against whichever bed — outgoing or incoming — is actually the LOUDER
+  // one right now, which is the one a listener's ear is still anchored to
+  // through a crossfade. A bed that's genuinely quieter for good still
+  // decays the hold down to match within BED_HOLD_RELEASE_TAU.
+  const BED_HOLD_ATTACK_TAU  = 0.15;    // s — fast: catch the incoming bed
+  const BED_HOLD_RELEASE_TAU = 3.0;     // s — slow: don't chase a mere dip
+
   // ─── 4. Spatialization ────────────────────────────────────────────────────
   const SPATIAL_NEAR = 600;             // full volume inside this radius
   const SPATIAL_REF  = 1800;            // half-ish volume around here
@@ -340,6 +358,16 @@
                                  // -1 = not primed; primes directly off the
                                  // first instantaneous read instead of
                                  // ramping up from zero on cold start.
+      bedPowerHold: -1,          // asymmetric fast-attack/slow-release power
+                                 // follower run ALONGSIDE bedPowerRunning —
+                                 // see the BED_HOLD_ATTACK_TAU/RELEASE_TAU
+                                 // comment above. Exists so a stinger fired
+                                 // on the SAME TICK a bed crossfade starts
+                                 // (updateCombatState setting combat.key) is
+                                 // sized against the incoming bed, not a
+                                 // 1s-stale outgoing one. -1 = not primed.
+      bedRmsHold: -1,            // sqrt(bedPowerHold); computeLevel() reads
+                                 // max(bedRmsRunning, bedRmsHold).
       lastPushedGain: -1,
       lastPushedLp: -1,
     },
@@ -1652,7 +1680,18 @@
     const targetOverBed = Math.pow(10, (STINGER_OVER_BED_DB + relDb) / 20);
     function computeLevel() {
       const sliceRMS = st.stingerSliceRMS[key];
-      const bedRms = st.fx.bedRmsRunning >= 0 ? st.fx.bedRmsRunning : currentBedRMS();
+      // max(running, hold): the running mean is right except in the first
+      // ~1s after a bed crossfade starts, where it still describes the
+      // OUTGOING bed. The hold follower (fast attack / slow release, see
+      // BED_HOLD_ATTACK_TAU above) catches whichever bed is louder RIGHT
+      // NOW, so a combat-entry stinger fired the same tick the crossfade
+      // begins is sized against the bed it's actually about to play over,
+      // not a stale pre-crossfade reading. A bed that's genuinely gone
+      // quiet for good still pulls the hold down within ~3s.
+      const bedRms = st.fx.bedRmsRunning >= 0 || st.fx.bedRmsHold >= 0
+        ? Math.max(st.fx.bedRmsRunning >= 0 ? st.fx.bedRmsRunning : 0,
+                   st.fx.bedRmsHold >= 0 ? st.fx.bedRmsHold : 0)
+        : currentBedRMS();
       let makeup;
       if (typeof sliceRMS === 'number' && sliceRMS > 0) {
         const targetRMS = Math.max(bedRms, STINGER_FLOOR_RMS) * targetOverBed;
@@ -1889,24 +1928,35 @@
       const held = c.contactSince && (now - c.contactSince) >= (bossForced ? 0 : COMBAT_ENTER_DELAY);
       const rearmed = (now - c.leftAt) >= (bossForced ? 0 : COMBAT_REARM);
       if (held && rearmed) {
-        c.active = true;
-        c.enteredAt = now;
-        c.clearSince = 0;
-        c.rank = bossForced ? 4 : (t.rank || 1);
-        c.key = RANK_TRACK[c.rank] || 'eliteGuardians';
+        // Fire the entry stinger BEFORE combat.key is assigned below —
+        // assigning combat.key is what starts the bed crossfade (see the
+        // COMBAT OVERRIDE section further down, which crossfades to
+        // combat.key on its next tick), so firing first keeps the servo's
+        // bed read strictly pre-crossfade. Belt-and-braces on top of the
+        // bedRmsHold fast-attack/slow-release follower above, which is what
+        // actually corrects the sizing once the crossfade is under way
+        // (20260814 audit — combat-entry stingers were the one event class
+        // measurably failing to land, sized against a bed reading that was
+        // up to 1s stale exactly at the moment it mattered most).
+        const entryRank = bossForced ? 4 : (t.rank || 1);
         // Every combat entry gets a transient ahead of the crossfade — the
         // score should audibly NOTICE contact, not just dissolve into a new
         // bed 2.5s later.  Severity scales the hit: a boss gets its own
         // stinger, a serious threat gets the full 'threat' stab, and a lone
         // skirmish still gets one, just pulled back so it doesn't read as
         // loud as a Borg cube.
-        if (c.rank >= 4) {
+        if (entryRank >= 4) {
           playStinger('bossSpawn', t.lead ? t.lead.position : null);
-        } else if (c.rank >= 3) {
+        } else if (entryRank >= 3) {
           playStinger('threat', t.lead ? t.lead.position : null);
-        } else if (c.rank >= 1) {
+        } else if (entryRank >= 1) {
           playStinger('threat', t.lead ? t.lead.position : null, false, 0.55);
         }
+        c.active = true;
+        c.enteredAt = now;
+        c.clearSince = 0;
+        c.rank = entryRank;
+        c.key = RANK_TRACK[c.rank] || 'eliteGuardians';
       }
     } else {
       // Escalate only — a boss arriving mid-skirmish upgrades the track; a
@@ -2067,6 +2117,19 @@
         fx.bedPowerRunning += (instPower - fx.bedPowerRunning) * kb;
       }
       fx.bedRmsRunning = Math.sqrt(Math.max(0, fx.bedPowerRunning));
+
+      // Asymmetric hold follower — see BED_HOLD_ATTACK_TAU/RELEASE_TAU
+      // comment above. Same instPower reading, different (faster-attack,
+      // slower-release) time constant, so it tracks whichever bed — the one
+      // crossfading OUT or the one crossfading IN — is currently the louder
+      // one, instead of the running mean's 1s-stale blend of both.
+      if (fx.bedPowerHold < 0) {
+        fx.bedPowerHold = instPower;
+      } else {
+        const kh = 1 - Math.exp(-dt / (instPower > fx.bedPowerHold ? BED_HOLD_ATTACK_TAU : BED_HOLD_RELEASE_TAU));
+        fx.bedPowerHold += (instPower - fx.bedPowerHold) * kh;
+      }
+      fx.bedRmsHold = Math.sqrt(Math.max(0, fx.bedPowerHold));
     }
 
     applyFx();
@@ -3156,6 +3219,18 @@
         bedRmsRunning: st.fx.bedRmsRunning,       // ~1s running-mean read —
                                                    // what a stinger's makeup
                                                    // gain actually targets
+        bedRmsHold: st.fx.bedRmsHold,             // TEST-ONLY: fast-attack/
+                                                   // slow-release follower —
+                                                   // computeLevel() targets
+                                                   // max(bedRmsRunning,
+                                                   // bedRmsHold), see the
+                                                   // BED_HOLD_ATTACK_TAU
+                                                   // comment. Exposed so a
+                                                   // harness can catch the
+                                                   // crossfade-coincident
+                                                   // case directly instead of
+                                                   // only inferring it from
+                                                   // the servo's bedRms.
         db: 20 * Math.log10(rms + 1e-9),
         element: st.currentEl ? st.currentEl.volume : 0,
         paused: st.currentEl ? st.currentEl.paused : true,
