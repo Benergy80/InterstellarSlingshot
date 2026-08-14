@@ -106,6 +106,17 @@
     // too small to be worth a beat.
     get jumpsRefused() { return ap._jumpsRefused || 0; },
     get warpNoSubjectRefusals() { return ap._warpNoSubjectRefusals || 0; },
+    // ── THE CORRIDOR GATE ON THE O-WARP PATH ─────────────────────────────
+    // The same question _igniteJump asks (_jumpClearAhead), now asked by the
+    // other ignition path too. `clamps` counts legs whose corridor was NOT
+    // clear all the way to the staged standoff (each one is a collision the
+    // 90,000 u reach would otherwise have flown into), `restages` how many of
+    // those were saved by arriving at something inside the clear run instead,
+    // `refusals` how many had nothing framable in there and were declined.
+    get warpCorridorClamps() { return ap._warpCorridorClamps || 0; },
+    get warpCorridorRestages() { return ap._warpCorridorRestages || 0; },
+    get warpCorridorRefusals() { return ap._warpCorridorRefusals || 0; },
+    get lastCorridor() { return ap._lastCorridor || null; },
     // The reach a jump actually delivers — the number that replaced
     // `jumpMaxDist: Infinity`. Exposed so a test can assert legs beyond it
     // took the O-warp path.
@@ -4447,7 +4458,19 @@
   // shorten the dash rather than cancel it.
   const _jcTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
   const _jumpFwdTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
-  function _jumpClearAhead(from, dir, gap) {
+  // WHAT STOPPED THE CORRIDOR, as an out-parameter. The jump path only ever
+  // needed the distance ("shorten the dash"), but the O-warp path can do
+  // something better with the body itself: a planet sitting across a 25,000 u
+  // burn is not merely an obstacle, it is usually the best thing on the leg to
+  // arrive AT. Read it immediately after the call — the next call overwrites
+  // it. Never a return-shape change, so the jump call site at :4552 is
+  // untouched.
+  let _jcBlocker = null;
+  // `skip` is the body this burn is deliberately flying to (its own standoff
+  // already keeps the ship clear of it); without it a subject whose standoff
+  // sits inside dangerR + 300 would report its own destination as a blocker.
+  function _jumpClearAhead(from, dir, gap, skip) {
+    _jcBlocker = null;
     if (typeof planets === 'undefined' || !from || !dir || !_jcTmp) return gap;
     let limit = gap;
     for (let i = 0; i < planets.length; i++) {
@@ -4455,6 +4478,7 @@
       const ud = p && p.userData;
       if (!p || !p.position || !ud) continue;
       if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') continue;
+      if (skip && p === skip) continue;
       _jcTmp.subVectors(p.position, from);
       const along = _jcTmp.dot(dir);
       if (along <= 0 || along > gap + 2000) continue;
@@ -4464,7 +4488,7 @@
       const clear = _arrivalDangerR(p) + 300;
       if (off >= clear) continue;
       const stopBy = along - clear;
-      if (stopBy < limit) limit = stopBy;
+      if (stopBy < limit) { limit = stopBy; _jcBlocker = p; }
     }
     return Math.max(0, limit);
   }
@@ -4549,7 +4573,29 @@
     // clearance scan over every body in `planets` on every single frame.
     ap._lastJumpTap = Date.now();
     // RULE 3 — AND NEVER INTO SOMETHING.
-    const _clear = _jumpClearAhead(_cpJ, _jumpFwdTmp, gap);
+    let _clear = _jumpClearAhead(_cpJ, _jumpFwdTmp, gap);
+    // ...ALONG THE RAY THE NOSE IS ABOUT TO BE SWUNG ONTO, TOO. A jump is
+    // BALLISTIC in whatever direction the nose has AT IGNITION, and ignition is
+    // a latch (`wDoubleTap`) that physics consumes a frame or more after this
+    // scan — by which time the arrival framing hold at the top of update() may
+    // have rotated the nose onto a live subject. The dash then flies down a
+    // corridor nobody checked. MEASURED, this build: a dash scanned clear to
+    // 1,856 u along the nose ("SHORTENED from 2,371 u — body in the corridor"),
+    // ignited after the hold pulled the nose back onto the body it had just
+    // parked at, and flew into Void Nebula Prime — the game's own "PLANETARY
+    // IMPACT — Ship destroyed by collision with Void Nebula Prime", hull
+    // 100 -> 0, 1.3 s after ignition. Scanning the second ray costs one more
+    // pass over `planets`, at ignition only, and can only ever shorten a dash.
+    const _liveNose = gameState._arrivalSubject;
+    if (_liveNose && _liveNose.obj && _liveNose.obj.position && _ocDirTmp &&
+        _arrivalSubjectFresh(_liveNose)) {
+      _ocDirTmp.subVectors(_liveNose.obj.position, _cpJ);
+      if (_ocDirTmp.lengthSq() > 1e-6) {
+        _ocDirTmp.normalize();
+        const _clearHold = _jumpClearAhead(_cpJ, _ocDirTmp, gap, _liveNose.obj);
+        if (_clearHold < _clear) _clear = _clearHold;
+      }
+    }
     const _corridorClamped = _clear < gap;
     if (_corridorClamped) gap = _clear;
     // Below this a dash is not worth a beat (and physics' own 450 ms floor
@@ -4715,6 +4761,41 @@
   // guidance's ceiling rate (15 u/frame / 0.07 rad/frame ~= 215 u), rounded up
   // to leave the manoeuvre room rather than exactly none.
   const _ARRIVAL_TURN_RADIUS = 400;
+  // ...AND IT IS NOT A CONSTANT ANY MORE. That 400 was derived at the stock
+  // 15 u/frame; the reach fix made a burn's speed an OUTPUT (up to
+  // EW_BOOST_SPEED_MAX = 100), and turn radius is speed / rate, so the same
+  // geometry that needs 215 u of room at 15 u/frame needs 1,429 u at 100.
+  // Using the stock number on a 100 u/frame burn is exactly how a subject that
+  // guidance can never swing onto gets staged, and the cut then ends the burn
+  // in deep space on its `_blown` clause (measured: off 19,732 u against a
+  // 3,561 u lateral budget, along 3,408 u — the burn was still turning when it
+  // ran out of leg).
+  const _GUIDANCE_RATE_MAX = 0.07;   // rad/frame ceiling, game-physics.js:2942
+  // The speed _armWarpBurn will pick for this leg — same expression, so the
+  // gate and the burn can never disagree about how fast this leg flies.
+  function _burnSpeedFor(range, stand) {
+    const ground = Math.max(0, range - stand) * EW_BURN_MARGIN;
+    const base = (typeof gameState !== 'undefined' && gameState.emergencyWarp &&
+      gameState.emergencyWarp._baseBoostSpeed) || 15;
+    return Math.max(base, Math.min(EW_BOOST_SPEED_MAX,
+      ground / (60 * EW_BURN_DELIVERY * (EW_BURN_MS_NOMINAL / 1000))));
+  }
+  function _arrivalTurnRadius(range, stand) {
+    return Math.max(_ARRIVAL_TURN_RADIUS, _burnSpeedFor(range, stand) / _GUIDANCE_RATE_MAX);
+  }
+  // CAN THE BURN ACTUALLY SWING ONTO THIS SUBJECT BEFORE IT ARRIVES AT IT?
+  // Two questions, both geometric, both cheap:
+  //   * is the subject more AHEAD of us than BESIDE us, with room for the turn
+  //     (the runway rule this file already used, now with the real radius);
+  //   * is it inside the cone guidance is allowed to work in at all — the
+  //     corridor search has always asked this, and the DESTINATION clause of
+  //     triggerOKeyWarp never did, which is the hole a 19,732 u lateral miss
+  //     came through.
+  function _arrivalTurnFits(range, stand, along, off) {
+    if (!(along > 0)) return false;
+    if (along / Math.max(1e-6, range) < _ARRIVAL_CONE_COS) return false;
+    return along >= off + _arrivalTurnRadius(range, stand);
+  }
   // `boostDist` is retained for the callers' sake (and for the comment above);
   // reachability itself is now decided by _burnFits, which asks the stricter
   // question — can a burn be SIZED for this without its margin being clamped.
@@ -4774,7 +4855,9 @@
       // cone anyway) plus enough room for the turn radius at boost speed.
       const offNow = range * Math.sqrt(Math.max(0, 1 - cosA * cosA));
       const alongNow = range * cosA;
-      if (alongNow < offNow + _ARRIVAL_TURN_RADIUS) continue;
+      // ...charged against the turn radius THIS leg's speed implies, not the
+      // stock one (see _arrivalTurnRadius).
+      if (!_arrivalTurnFits(range, so.stand, alongNow, offNow)) continue;
       // Radius dominates: a big body is both a better reveal and a far more
       // forgiving target (its lateral budget scales with it), so prefer one
       // decisively over a nearer moon. Then distance flown, then centring.
@@ -4811,6 +4894,156 @@
     const so = _arrivalStandoff(radius, _arrivalDangerR(obj));
     _armWarpBurn(camPos().distanceTo(obj.position), so.stand);
     return _setArrivalSubject(obj, radius);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // IS THE CORRIDOR CLEAR? — the second of the two questions _igniteJump asks
+  // and the O-warp never did.
+  //
+  // _igniteJump asks both ("can this burn deliver the subject", :4552 via
+  // _jumpClearAhead) before it commits. triggerOKeyWarp asked NEITHER: its only
+  // pre-flight guard is _departureBlocked, which by its own comment "only ever
+  // asked about the CURRENT arrival subject" — am I too close to leave, not
+  // what is between here and the far end of the burn. That was survivable while
+  // a burn could only fly 22,500 u. It stopped being survivable when the reach
+  // fix took a burn to ~90,000 u: the unguarded corridor now crosses whole star
+  // systems.
+  //
+  // MEASURED, this build, before this gate: a burn to Hyperion Nebula Prime at
+  // 25,115 u at 59.9 u/frame swept past three planets at 751 / 1,076 / 716 u
+  // and then flew into Elysium Nebula Prime (r = 620) — hull 100 -> 0, the
+  // game's own "MISSION FAILED — Ship destroyed by collision with Elysium
+  // Nebula Prime", with emergencyWarp.active still true 6.7 s later and the
+  // corpse parked 32 u INSIDE the planet.
+  //
+  // Two rays are swept, because a warp burn is not a straight line and not a
+  // pursuit curve either — it is both, in that order:
+  //   * THE NOSE, for the first stretch. Physics writes
+  //     `velocityVector = forward * capturedBoostSpeed` at the key press, so
+  //     the burn leaves along the heading the ship had at ignition and only
+  //     then rotates onto the subject (<= 0.07 rad/frame, game-physics.js) —
+  //     about one turn radius' worth of ground, so that is how far this ray is
+  //     swept.
+  //   * THE LINE OF SIGHT to the subject, for the rest, which is what pursuit
+  //     converges onto and where the ship spends the other 95 % of the leg.
+  //
+  // Blocked does NOT mean cancelled. A body across a 25,000 u burn is usually
+  // the best thing on that leg to arrive AT, so the gate re-stages: first the
+  // blocker itself, then the best framable body inside the clear distance, and
+  // the burn is re-sized to THAT (one call to _stageAndArm, exactly as the
+  // jump path re-sizes its dash to `clear`). Only when nothing inside the clear
+  // corridor can be framed does the leg refuse — the same "no destination, no
+  // ignition" answer the clause above already gives, for the same reason.
+  const _ocDirTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _ocNoseTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  // Below this there is no leg left to fly, so there is nothing to re-stage on.
+  const OWARP_MIN_CLEAR = 600;
+  function _bodyRadius(p) {
+    return (p && p.geometry && p.geometry.parameters && p.geometry.parameters.radius) ||
+      (p && p.userData && p.userData.size) || 20;
+  }
+  // Would this body be a legal arrival for a burn that may fly `budget` units?
+  function _stageableWithin(p, from, dir, budget) {
+    if (!p || !p.position) return null;
+    const ud = p.userData || {};
+    if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') return null;
+    const radius = _bodyRadius(p);
+    const so = _arrivalStandoff(radius, _arrivalDangerR(p));
+    if (!so.framable) return null;
+    _owarpToTmp.subVectors(p.position, from);
+    const range = _owarpToTmp.length();
+    if (range <= so.stand * 1.3) return null;
+    if (!_burnFits(range, so.stand)) return null;
+    // It has to be reachable INSIDE the clear corridor: the ship must be able
+    // to stop at its standoff without ever entering the blocked zone.
+    if (Math.max(0, range - so.stand) > budget) return null;
+    const along = _owarpToTmp.dot(dir);
+    const off = Math.sqrt(Math.max(0, _owarpToTmp.lengthSq() - along * along));
+    if (!_arrivalTurnFits(range, so.stand, along, off)) return null;
+    return { obj: p, radius: radius, stand: so.stand, range: range };
+  }
+  function _owarpCorridorGate() {
+    if (typeof gameState === 'undefined' || !_ocDirTmp || !_owarpToTmp) return true;
+    // Up to three resolutions: subject -> blocked -> re-stage -> re-check. The
+    // re-check matters because the body we re-staged onto sits inside a 30 deg
+    // cone, not on the original ray, so its own corridor is a different one.
+    for (let pass = 0; pass < 3; pass++) {
+      const subj = gameState._arrivalSubject;
+      if (!subj || !subj.obj || !subj.obj.position) return true;
+      const from = camPos();
+      const range = from.distanceTo(subj.obj.position);
+      const gap = Math.max(0, range - subj.stand);
+      if (gap < 1) return true;
+      _ocDirTmp.subVectors(subj.obj.position, from).divideScalar(Math.max(1e-6, range));
+      let clear = _jumpClearAhead(from, _ocDirTmp, gap, subj.obj);
+      let blocker = _jcBlocker;
+      if (typeof camera !== 'undefined' && _ocNoseTmp) {
+        camera.getWorldDirection(_ocNoseTmp);
+        const noseRun = Math.min(gap, _arrivalTurnRadius(range, subj.stand) * 2);
+        const noseClear = _jumpClearAhead(from, _ocNoseTmp, noseRun, subj.obj);
+        if (noseClear < noseRun && noseClear < clear) { clear = noseClear; blocker = _jcBlocker; }
+      }
+      ap._lastCorridor = {
+        subject: (subj.obj.userData && (subj.obj.userData.name || subj.obj.userData.type)) || 'body',
+        range: Math.round(range), gap: Math.round(gap), clear: Math.round(clear),
+        blocker: blocker ? ((blocker.userData && (blocker.userData.name || blocker.userData.type)) || 'body') : null,
+        pass: pass
+      };
+      if (clear >= gap) {
+        if (pass > 0) ap._warpCorridorRestages = (ap._warpCorridorRestages || 0) + 1;
+        return true;
+      }
+      ap._warpCorridorClamps = (ap._warpCorridorClamps || 0) + 1;
+      // ── RE-STAGE INSIDE THE CLEAR CORRIDOR ────────────────────────────────
+      // The blocker first: it is the biggest thing on this heading by
+      // construction (it is what the corridor ran into) and arriving at it is
+      // the leg the player wanted anyway, one system short.
+      let next = blocker ? _stageableWithin(blocker, from, _ocDirTmp, Infinity) : null;
+      if (!next && clear >= OWARP_MIN_CLEAR) {
+        const way = _findArrivalSubjectAlongRay(from, _ocDirTmp, clear);
+        if (way) next = _stageableWithin(way.obj, from, _ocDirTmp, clear) ||
+          { obj: way.obj, radius: way.radius };
+      }
+      if (!next) {
+        ap._warpCorridorRefusals = (ap._warpCorridorRefusals || 0) + 1;
+        // Throttled like the no-subject refusal above: every caller retries
+        // this trigger EVERY FRAME, so one blocked corridor is 20-200 identical
+        // lines. MEASURED, a 26-minute run: 282 refusals were THREE obstructions
+        // (a star at 7,136 u of an 18,459 u leg; a nebula prime at 1,790 u of a
+        // 30,203 u leg; a planet at 142 u of a 30,109 u leg), each deferring its
+        // leg for 1-5 s until the geometry moved. The counter is the honest
+        // measure; the console line is for a human watching one happen.
+        if (!ap._corridorLoggedAt || Date.now() - ap._corridorLoggedAt > 4000) {
+          ap._corridorLoggedAt = Date.now();
+          console.log('🚧 WARP REFUSED — corridor blocked by ' +
+            (ap._lastCorridor.blocker || '?') + ' at ' + ap._lastCorridor.clear +
+            'u of a ' + ap._lastCorridor.gap + 'u leg to ' + ap._lastCorridor.subject +
+            ' (nothing framable inside the clear run; ' +
+            (ap._warpCorridorRefusals) + ' this run)');
+        }
+        _disarmWarpBurn();
+        _clearArrivalSubject();
+        return false;
+      }
+      // Re-size the burn to the NEW subject from scratch — _armWarpBurn latches
+      // its speed per leg, so the far subject's 100 u/frame must not be
+      // inherited by a leg that is now a third as long.
+      _disarmWarpBurn();
+      console.log('🚧 WARP CORRIDOR CLAMPED → ' + ap._lastCorridor.subject + ' (' +
+        ap._lastCorridor.gap + 'u) blocked by ' + (ap._lastCorridor.blocker || '?') +
+        ' at ' + ap._lastCorridor.clear + 'u → re-staged on ' +
+        ((next.obj.userData && (next.obj.userData.name || next.obj.userData.type)) || 'body'));
+      if (!_stageAndArm(next.obj, next.radius)) {
+        ap._warpCorridorRefusals = (ap._warpCorridorRefusals || 0) + 1;
+        _disarmWarpBurn();
+        return false;
+      }
+    }
+    // Three passes and still blocked — refuse rather than fly it.
+    ap._warpCorridorRefusals = (ap._warpCorridorRefusals || 0) + 1;
+    _disarmWarpBurn();
+    _clearArrivalSubject();
+    return false;
   }
 
   // ─── navigateTo: closed-loop travel controller ─────────────────────────────
@@ -5602,6 +5835,20 @@
     // fired the warp. Returning false here is the whole leg deferred, which
     // every caller retries on the next frame.
     if (_parkOwnsBeat()) return _parkDefer('O-warp');
+    // ── A LEG THAT IS ALREADY ARMED AND WAITING TO LIGHT IS NOT A NEW LEG ────
+    // `_disarmWarpBurn()` below runs unconditionally, and every caller retries
+    // this trigger EVERY FRAME — so the frame between "armed, O pressed" and
+    // "physics captures boostSpeed at ignition" is a window in which the next
+    // (usually refused) attempt strips the speed this leg was sized for. The
+    // burn then flies at the stock 15 u/frame with a duration built for 50-100,
+    // and a 67,000 u leg delivers 13,000 u of it. MEASURED, this build: a leg
+    // armed speed=100 / ms=21,060 for Tartarus Nebula Prime at 69,823 u flew at
+    // 14.7 u/frame and stopped 56,505 u short. update() already refuses to hand
+    // the stock length back inside ARM_LATCH_MS of `_burnArmedAt`; this is the
+    // same protection against the other disarm site.
+    const _ewArm = gameState.emergencyWarp;
+    if (_ewArm && _ewArm._burnArmedAt && !_ewArm.active && !_ewArm.transitioning &&
+        Date.now() - _ewArm._burnArmedAt < ARM_LATCH_MS) return false;
     // ...and not straight through the body we are parked next to (see
     // _departureBlocked). Same contract: false means "not this frame".
     if (_departureBlocked()) return false;
@@ -5755,9 +6002,18 @@
       _clearArrivalSubject();   // no-op while a park owns the beat
       return false;
     }
+    // ── AND NEVER INTO SOMETHING ─────────────────────────────────────────────
+    // The other half of what _igniteJump asks before IT commits (:4552). Runs
+    // last, on whatever subject this leg actually resolved — staged fresh or
+    // inherited live — because that subject is what the burn will be flown at,
+    // and it is the LEG, not the staging clause, that has to survive the
+    // corridor. See _owarpCorridorGate for the two rays and the re-stage.
+    if (!_owarpCorridorGate()) return false;
     const _oSubj = gameState._arrivalSubject;
     _logIgnition('owarp', {
       why: staged ? 'staged' : 'liveSubject',
+      clear: ap._lastCorridor ? ap._lastCorridor.clear : null,
+      blockedBy: ap._lastCorridor ? ap._lastCorridor.blocker : null,
       gap: _oSubj && _oSubj.obj ? Math.round(camPos().distanceTo(_oSubj.obj.position)) : null,
       speed: Math.round((gameState.emergencyWarp.boostSpeed || 0) * 10) / 10,
       ms: Math.round(gameState.emergencyWarp.boostDuration || 0),
@@ -7019,7 +7275,12 @@
         else if (range <= so.stand * 1.3) why = 'tooClose';
         else if (!_burnFits(range, so.stand)) why = 'tooFar';
         else if (cosA < _ARRIVAL_CONE_COS) why = 'outOfCone';
-        else if (along < off + _ARRIVAL_TURN_RADIUS) why = 'turnDoesNotFit';
+        else if (!_arrivalTurnFits(range, so.stand, along, off)) why = 'turnDoesNotFit';
+        else {
+          // ...and the corridor, which is now asked on this path too.
+          const _cl = _jumpClearAhead(from, dir, Math.max(0, range - so.stand), p);
+          if (_cl < Math.max(0, range - so.stand)) why = 'corridorBlocked';
+        }
         rows.push({ n: ud.name || ud.type, r: Math.round(radius), range: Math.round(range),
           deg: +(Math.acos(Math.max(-1, Math.min(1, cosA))) * 180 / Math.PI).toFixed(1),
           stand: Math.round(so.stand), maxOff: Math.round(so.maxOff), dangerR: Math.round(_arrivalDangerR(p)),

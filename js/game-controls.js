@@ -2144,7 +2144,91 @@ const _PLUME_CORE_TAIL_HI = 0.86;   // ...and where it is at full strength
 // (measured at 900 u on a scaled buffer the core's radius goes 13.18 px ->
 // 2.20 px on the clamp alone, while `farLift` has already released the
 // mirror), so the mirror can afford to be the gentler of the two.
-const _PLUME_CORE_TAIL_OPA = 0.45;  // opacity multiplier dead astern
+//
+// ROUND 2 — 0.45 -> 0.75, AND THE TAIL GETS A SIZE TERM OF ITS OWN.
+// Everything above is written as though the tail hemisphere were the pose
+// that had to be DEFENDED AGAINST. Measured, it is the pose that had nothing
+// left in it. Chasing a fleeing hostile at 250-400u, the aft view was two
+// ~4 px sprites on a 27-58 px-radius hull: on-hull FX cover 2.29% (Klingon),
+// 3.80% (Federation), 2.77% (Romulan) at 250u against this piece's own 8%
+// floor, so "coming" and "going" were two dark hulls with two cyan dots —
+// the exact failure the aspect gate below was written to fix, arrived at
+// from the other side. The cause is that the tail was being taxed three
+// times over for a crime only ONE of the three taxes was ever about:
+//   - `streakFade` zeroes the spear astern, correctly: the quad is
+//     geometrically edge-on there and no opacity can un-edge-on it.
+//   - `_PLUME_CORE_NEAR` (0.28) shrinks the core at fighting range, which
+//     was aimed at the BROADSIDE/quarter poses where the sprite lands
+//     beside the hull it belongs to.
+//   - this mirror then took another 55% off the only layer left.
+//
+// THE COVERAGE CLAMP WAS NOT WHAT WAS BINDING — measured, not assumed. At
+// dead astern, thrusting, 1600x900 buffer:
+//     250u   Klingon core radius 4.86 px   allowance 17.54 px
+//     300u   Klingon core radius 4.05 px   allowance 14.61 px
+//     400u   Klingon core radius 3.04 px   allowance 10.96 px
+// (Federation 4.53/16.34, Romulan 3.71/13.37 at 250u.) The clamp had ~3.6x
+// of headroom it was never using, so raising _PLUME_CORE_HULL_FRAC astern —
+// the obvious-looking fix — moves nothing at all. What was binding is the
+// SIZE CHAIN: `widK * coreBoost * coreNearK` = 0.70 * 2.05 * 0.28 = 0.40 of
+// a baked nozzle. So the tail's own case is a size term, and the clamp is
+// left at 0.30 precisely so it stays a live ceiling underneath it.
+//
+// WHY THIS IS NOT A REGRESSION OF THE ERASED-HULL BUG. That failure was one
+// sprite at opacity 1.0 covering EVERY pixel of the ship at 900u on a scaled
+// buffer. Both of its causes are still fixed: the coverage clamp still caps
+// the radius at 0.30 of the hull's own projected radius — measured astern at
+// 300u the lifted core lands at 0.72 of that ceiling on seven of the eight
+// factions and at 0.94 on the Rebel rig, so the ceiling is live and bites
+// FIRST on the model whose proportions differ, which is the whole reason it
+// is left at 0.30 instead of being lerped open — and _PLUME_CORE_OPA_CAP
+// still holds the additive sum under the value where a lit hull pixel stops
+// being a surface (measured peak add over a hull pixel astern: 107-118/255,
+// against the 77-87 the nose halo already ships at the pose it owns). Dead
+// astern the nozzle sits BETWEEN the camera and the hull: covering a fifth of
+// the hull's pixels there is not the sprite eating the ship, it is the ship's
+// engines pointed at you, which is the one thing this framing has to say.
+const _PLUME_CORE_TAIL_OPA = 0.75;  // opacity multiplier dead astern
+
+// SIZE multiplier dead astern, on the same smoothstep as the opacity mirror.
+// This is the term the tail read actually lives on: cover goes as its SQUARE,
+// so it is the only lever in the chain that can move 2% to 15-27% at all.
+//
+// 2.6 AND NOT 3.4 IS SET BY THE EMPTIEST SILHOUETTE, exactly as _PLUME_NOSE_R
+// is for the halo at the other pole. A sprite of a given radius buys a much
+// bigger SHARE of a hull that is mostly holes, so the band's ceiling is
+// decided by the sparsest model in the game and its floor by the densest.
+// Measured on-hull cover at 300u dead astern, before -> after, all eight
+// factions plus the UFO, against the 8%..45% acceptance band:
+//     Klingon 2.02 -> 15.19    Federation 3.52 -> 26.16
+//     Romulan 2.66 -> 17.46    Cardassian 2.51 -> 18.41
+//     Empire  2.67 -> 18.79    Rebel      3.96 -> 25.30
+//     Sith    3.42 -> 25.15    Vulcan     5.24 -> 38.50    UFO 4.81 -> 30.95
+// Vulcan is the sparse hull that decides this number, and the whole sweep was
+// measured rather than extrapolated (300u dead astern, cover / p90-p10):
+//     K = 2.0   Klingon  9.02   Federation 15.35   Vulcan 23.08   Rebel 16.95
+//     K = 2.6   Klingon 15.28   Federation 26.85   Vulcan 38.11   Rebel 25.12
+//     K = 3.0   Klingon 19.85   Federation 33.89   Vulcan 49.59   Rebel 28.81
+// 3.0 puts Vulcan over the 45% ceiling inside the acceptance band itself;
+// 2.0 brings Klingon back to 9.02% with no margin over the floor at all. At
+// 2.6 the densest hull sits at ~1.9x the floor and the sparsest at ~0.85 of
+// the ceiling, and every faction's contrast goes UP rather than down (the
+// cores add p90 without touching p10 — Rebel 130.4 -> 137.2 against a
+// 124.9 bare hull, Federation 153.4 -> 159.2 against 146.4).
+//
+// INSIDE ~150u the sparse hulls do run over that ceiling — measured dead
+// astern, cover / contrast as-shipped / contrast bare hull:
+//     Rebel  100u 46.6% 139.3/130.3    60u 80.3% 130.0/127.2
+//     Vulcan 150u 44.0% 160.7/151.7    60u 57.6% 152.8/158.3
+// That is knife range, where the 64px texture stops being minified and the
+// sprite keeps its full peak, and it is left alone deliberately: the band
+// this piece is measured in is 250-400u, the contrast control says the hull
+// is not being erased at any of it (never more than 6/255 under its own bare
+// value, against a bar of 100), and an engine bell that gets hotter as you
+// close on it is the behaviour this cue is supposed to have. The ceiling
+// that stops it running away entirely is still `coreAllowPx`: at K = 3.0 the
+// Rebel rig hits it and stops moving (60u cover 82.87 at both 3.0 and 3.4).
+const _PLUME_CORE_TAIL_K = 2.6;     // size multiplier dead astern
 
 // SATURATION BUDGET. The old line was `Math.min(1.0, o)` with a comment saying
 // the core "is deliberately allowed to clip (that's the white-hot read)". At
@@ -2457,12 +2541,20 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     // keeps the survey-range contact out of its reach instead.
     const coreAllowPx = (hullRpx > 0)
         ? Math.max(_PLUME_CORE_HULL_FRAC * hullRpx, _PLUME_CORE_MIN_PX) : 0;
-    // Signed aspect again: +1 is dead astern, where the streak is edge-on and
-    // the billboard is not. `1 - farLift` hands the whole mirror back at
-    // survey range for the same reason the clamp has a floor.
-    const coreTailO = 1 - (1 - _PLUME_CORE_TAIL_OPA)
-        * THREE.MathUtils.smoothstep(aspect, _PLUME_CORE_TAIL_LO, _PLUME_CORE_TAIL_HI)
+    // HOW FAR INTO THE TAIL HEMISPHERE WE ARE. 0 from the nose through
+    // broadside and out to ~57 degrees astern, 1 dead astern. Signed aspect:
+    // +1 is dead astern, where the streak is edge-on and the billboard is
+    // not. `1 - farLift` hands the whole tail case back at survey range for
+    // the same reason the clamp has a floor — out there the core is the
+    // contact and neither the trim nor the lift has anything to act on.
+    const tailW = THREE.MathUtils.smoothstep(aspect, _PLUME_CORE_TAIL_LO, _PLUME_CORE_TAIL_HI)
         * (1 - farLift);
+    const coreTailO = 1 - (1 - _PLUME_CORE_TAIL_OPA) * tailW;
+    // ...and the size term the tail read actually lives on (see
+    // _PLUME_CORE_TAIL_K). Ceilinged by `coreAllowPx` below exactly like
+    // every other input to the core's scale, so this can grow the nozzle
+    // toward the hull's own projected size and never past a share of it.
+    const coreTailK = 1 + (_PLUME_CORE_TAIL_K - 1) * tailW;
     const coreOpaCap = _PLUME_CORE_OPA_CAP + (1 - _PLUME_CORE_OPA_CAP) * farLift;
 
     const flicker = 0.90 + Math.sin(Date.now() * 0.026 + (ship.id || 0)) * 0.10;
@@ -2554,7 +2646,7 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
         const w = widen * widK * (1 + chgQ * 0.12);
         const l = lenK * (1 + chgQ * 0.20);
         if (isCore) {
-            let ck = w * coreBoost * coreNearK;
+            let ck = w * coreBoost * coreNearK * coreTailK;
             // COVERAGE CLAMP. `_plumeWorldRad` is this sprite's baked world
             // radius, so `_plumeWorldRad * ck * ppu` is exactly what it will
             // measure on screen — no projection, no second traverse. Shrink

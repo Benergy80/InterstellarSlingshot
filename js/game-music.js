@@ -569,6 +569,15 @@
       wa.master.connect(wa.limiter);
       wa.limiter.connect(wa.hardClip);
       wa.hardClip.connect(ctx.destination);
+      // TEST-ONLY: a tap on the TRUE final output (post-hardClip, exactly
+      // what reaches the speakers) so a harness verifying "no clipping" can
+      // measure the actual guarantee instead of trusting the pre-limiter
+      // `master` tap above (which reads hotter by design — see wa.master's
+      // own comment). Never used by normal playback.
+      wa.outAnalyser = ctx.createAnalyser();
+      wa.outAnalyser.fftSize = 1024;
+      wa.hardClip.connect(wa.outAnalyser);
+      wa.outAnalyserBuf = new Float32Array(wa.outAnalyser.fftSize);
       wa.ctx = ctx;
       wa.ok = true;
       Object.keys(st.loaded).forEach(k => waRoute(st.loaded[k]));
@@ -1134,7 +1143,15 @@
       const t0 = wa.ctx.currentTime;
       node.onaudioprocess = function () {
         const tMs = (wa.ctx.currentTime - t0) * 1000;
-        samples.push({ t: tMs, bedRms: currentBedRMS(), rms: currentMasterRMS() });
+        let truePeak = 0;
+        if (wa.outAnalyser) {
+          wa.outAnalyser.getFloatTimeDomainData(wa.outAnalyserBuf);
+          for (let i = 0; i < wa.outAnalyserBuf.length; i++) {
+            const av = Math.abs(wa.outAnalyserBuf[i]);
+            if (av > truePeak) truePeak = av;
+          }
+        }
+        samples.push({ t: tMs, bedRms: currentBedRMS(), rms: currentMasterRMS(), gain: st.fx.gain, peak: wa.analyser ? (function(){ wa.analyser.getFloatTimeDomainData(wa.analyserBuf); let p=0; for (let i=0;i<wa.analyserBuf.length;i++){const av=Math.abs(wa.analyserBuf[i]); if(av>p)p=av;} return p; })() : 0, truePeak: truePeak });
         if (tMs >= durationMs) {
           node.onaudioprocess = null;
           try { wa.master.disconnect(node); node.disconnect(); sink.disconnect(); } catch (e) { /* ignore */ }
@@ -2087,7 +2104,23 @@
     // carve doesn't get the full-depth treatment.
     if (now < fx.duckUntil) gain *= (1 - fx.duckDepth);
 
-    fx.gainT = Math.max(0.05, Math.min(1.5, gain));
+    // ── BED FLOOR MAKEUP.  The stinger servo already closes this loop
+    // against fx.bedRmsRunning (BED_RUNNING_TAU block, ~15 lines below —
+    // one frame stale here, which is fine for a ~1s-constant follower).
+    // Without this term the multiplier stack above (emergency-warp *0.82,
+    // tunnel duck, stinger sidechain, bloom) has NO reference to how loud
+    // the bed actually is, so it can and does mix the bed down into
+    // silence on its own. Apply the same closed-loop idea to the bed
+    // itself: when the running bed level is genuinely below the game's
+    // documented "healthy audible" floor, make up the difference (capped
+    // at 4x / ~12dB so a truly-silent bed doesn't get amplified into a
+    // hiss). FX_TAU_DOWN (0.32s) still governs the release, so this
+    // doesn't pump — it just stops the score trailing off into nothing.
+    const bedFloor = (fx.bedRmsRunning > 1e-4 && fx.bedRmsRunning < STINGER_FLOOR_RMS)
+      ? Math.min(STINGER_FLOOR_RMS / fx.bedRmsRunning, 4) : 1;
+    gain *= bedFloor;
+
+    fx.gainT = Math.max(0.05, Math.min(4.0, gain));   // 1.5 cap raised to 4.0 — the bed-floor path needs headroom or it clamps away
     fx.lpT = Math.max(200, Math.min(FILTER_OPEN_HZ, lp));
 
     // Asymmetric smoothing: grabs fast, releases slow.

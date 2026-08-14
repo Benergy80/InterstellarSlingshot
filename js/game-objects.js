@@ -4245,6 +4245,7 @@ const _PLANET_PRESENCE_FRAG = `
     uniform vec3 uColor;
     uniform vec3 uNight;
     uniform vec3 uRim;
+    uniform vec3 uTwilight;
     uniform vec3 uSun;
     uniform float uCity;
     uniform float uCloud;
@@ -4321,13 +4322,26 @@ const _PLANET_PRESENCE_FRAG = `
         // TWILIGHT SCATTER: the atmosphere lit edge-on across the terminator.
         // This is the band that turns the day/night boundary from a seam into
         // a shoulder, and it carries the atmosphere's HUE, so the boundary is
-        // a colour transition and not only a value one.
+        // a colour transition and not only a value one — and the hue it carries
+        // now REDDENS on the night side of the terminator (see uTwilight in
+        // _NIGHT_SHELL_FRAG for why the shipped blue-only band read as "no
+        // sunset anywhere on the planet").
         float tw = exp(-(ndl * ndl) / (2.0 * 0.19 * 0.19));
-        vec3 scatter = uRim * tw * 0.85 * (0.30 + 0.95 * pow(1.0 - mu, 1.5));
+        vec3 twCol = mix(uTwilight, uRim, smoothstep(-0.16, 0.14, ndl));
+        vec3 scatter = twCol * tw * 0.85 * (0.30 + 0.95 * pow(1.0 - mu, 1.5));
 
-        // ATMOSPHERE RIM.
-        float fres = pow(1.0 - mu, 3.6);
-        vec3 rim = uRim * fres * (0.16 + 1.10 * smoothstep(-0.42, 0.30, ndl));
+        // ATMOSPHERE RIM. pow(1-mu, 3.6) is half-power at mu = 0.17, i.e. it
+        // only covers r = 0.985..1.0 of the disc — a 1-2 px hairline that reads
+        // as an outline. Same air-column band as the Sol shell instead: a
+        // gaussian anchored on the silhouette, ~4.5% of the radius wide on the
+        // inside, and keyed to the sun so the lit limb is the bright one.
+        float sinT = sqrt(max(0.0, 1.0 - mu * mu));
+        float hAir = sinT - 1.0;
+        float wAir = (hAir < 0.0) ? 0.052 : 0.012;
+        float air = exp(-(hAir * hAir) / (2.0 * wAir * wAir));
+        float vdl = dot(V, L);
+        float mie = pow(max(0.0, 0.5 - 0.5 * vdl), 2.0) * smoothstep(-0.55, -0.02, ndl);
+        vec3 rim = uRim * air * (0.03 + 0.97 * smoothstep(-0.24, 0.32, ndl) + 0.55 * mie * air) * 1.15;
 
         gl_FragColor = vec4(base + lights * 2.4 + scatter + rim, 1.0);
     }
@@ -4356,6 +4370,12 @@ function createPlanetPresenceMaterial(opts) {
     const col = new THREE.Color(o.color === undefined ? 0x88aacc : o.color);
     const hsl = { h: 0, s: 0, l: 0 };
     col.getHSL(hsl);
+    const rimCol = o.rimColor !== undefined
+        ? new THREE.Color(o.rimColor)
+        : new THREE.Color().setHSL(
+            _hueTowardBlue(hsl.h, 0.40),
+            Math.min(1, hsl.s * 0.62 + 0.22), 0.64
+          ).multiplyScalar(o.rim === undefined ? 0.55 : o.rim);
     return new THREE.ShaderMaterial({
         uniforms: {
             uColor: { value: col },
@@ -4371,12 +4391,13 @@ function createPlanetPresenceMaterial(opts) {
             // toward blue: enough for the limb to read as a different material
             // from the ground under it, not so far that a violet world gets a
             // cyan halo that fights the palette.
-            uRim: { value: o.rimColor !== undefined
-                ? new THREE.Color(o.rimColor)
-                : new THREE.Color().setHSL(
-                    _hueTowardBlue(hsl.h, 0.40),
-                    Math.min(1, hsl.s * 0.62 + 0.22), 0.64
-                  ).multiplyScalar(o.rim === undefined ? 0.55 : o.rim) },
+            uRim: { value: rimCol },
+            // The same rim light after the air has eaten its short wavelengths:
+            // this is what the twilight band fades into on the night side of
+            // the terminator, and it is the only reason a sunset exists here.
+            uTwilight: { value: o.twilightColor !== undefined
+                ? new THREE.Color(o.twilightColor)
+                : _sunsetColour(rimCol) },
             uSun: { value: (o.sun && o.sun.clone) ? o.sun.clone() : new THREE.Vector3(0, 0, 0) },
             uCity: { value: o.city === undefined ? 0.0 : o.city },
             uCloud: { value: o.cloud === undefined ? 0.0 : o.cloud },
@@ -4431,8 +4452,13 @@ const _NIGHT_SHELL_FRAG = `
     uniform float uCity;
     uniform float uSeed;
     uniform float uScatter;
-    uniform float uRimPow;
     uniform float uTermW;
+    uniform vec3 uTwilight;
+    uniform float uShellK;
+    uniform float uLimbIn;
+    uniform float uLimbOut;
+    uniform float uRimNight;
+    uniform float uRimGain;
     varying vec3 vN;
     varying vec3 vW;
 
@@ -4487,16 +4513,65 @@ const _NIGHT_SHELL_FRAG = `
 
         // TWILIGHT: gaussian straddling the terminator, strongest where we are
         // looking through the most air (grazing angles).
+        //
+        // The band used to be tinted with uRim — the SAME blue as the daylight
+        // limb — so a hue traverse across the terminator measured 211deg ->
+        // 203deg -> 90deg and R never once exceeded G anywhere on the disc:
+        // there was no sunset. Light that reaches the ground at the terminator
+        // has crossed the most air of any light on the planet, which is exactly
+        // the light that arrives red. So the band now REDDENS as it crosses
+        // into night: blue on the daylight side of the terminator, amber-rose
+        // on the dark side of it.
         float tw = exp(-(ndl * ndl) / (2.0 * uTermW * uTermW));
-        vec3 scatter = uRim * (tw * uScatter) * (0.30 + 0.95 * pow(1.0 - mu, 1.5));
+        vec3 twCol = mix(uTwilight, uRim, smoothstep(-0.16, 0.14, ndl));
+        vec3 scatter = twCol * (tw * uScatter) * (0.30 + 0.95 * pow(1.0 - mu, 1.5));
 
-        // The night limb keeps a third of the rim rather than 12% of it. Air
-        // does not stop existing when the sun sets, and the thin bright arc
-        // that continues around the dark side is what closes the silhouette
-        // into a SPHERE — cut it off at the terminator and the planet reads as
-        // a lit crescent pasted on black.
-        float fres = pow(1.0 - mu, uRimPow);
-        vec3 rim = uRim * fres * (0.34 + 1.05 * smoothstep(-0.42, 0.26, ndl));
+        // ---------------------------------------------------------------------
+        // ATMOSPHERIC LIMB — anchored to the PLANET's edge, keyed to the sun.
+        // ---------------------------------------------------------------------
+        // Two bugs lived in the one line this replaces:
+        //
+        //   float fres = pow(1.0 - mu, uRimPow);
+        //   vec3 rim = uRim * fres * (0.34 + 1.05 * smoothstep(-0.42, 0.26, ndl));
+        //
+        // 1. WRONG PLACE. This shell is a sphere of radius uShellK * R, so a
+        //    Fresnel evaluated on it peaks at the SHELL's limb — measured, the
+        //    rim's maximum sat at r = 1.02R, OUTSIDE the planet's silhouette,
+        //    and the whole band lived in r = 0.99..1.025 (about 3 CSS px). A
+        //    bright ring drawn just outside a disc is the definition of a decal
+        //    outline. Air sits ON the planet: the band has to be centred on the
+        //    silhouette and be wider on the inside (where you look through air
+        //    onto ground) than on the outside (thin high air against space).
+        //    So convert the fragment's normal into the DISC RADIUS it occupies,
+        //    in planet radii, and shape the band around s = 1.0.
+        //
+        // 2. WRONG BRIGHTNESS. The old multiplier bottomed out at 0.34, i.e. a
+        //    constant additive that ignored the sun for a third of its value.
+        //    Measured, the same term put ~+21/255 on a night surface sitting at
+        //    L=43 (3.9x local contrast — the eye reads that as chrome) and the
+        //    same +21 on a day surface at L=190 (invisible). Net effect: the
+        //    rim was BRIGHTEST on the night limb and the day limb measured
+        //    NEGATIVE against its own interior. Air is only bright when it is
+        //    lit, so the band is now keyed to the sun response, with a whisper
+        //    left over on the dark side to close the silhouette.
+        float sinT = sqrt(max(0.0, 1.0 - mu * mu));
+        float s = uShellK * sinT;              // this fragment's disc radius, in planet radii
+        float h = s - 1.0;                     // 0 exactly on the silhouette
+        float w = (h < 0.0) ? uLimbIn : uLimbOut;
+        float air = exp(-(h * h) / (2.0 * w * w));
+
+        // MIE FORWARD SCATTER. A backlit atmosphere carries sunlight around the
+        // limb — it is why a crescent world wears a ring of light and a gibbous
+        // one does not — so the arc gains as the sun moves behind the planet.
+        // Gated to within ~33 degrees of the terminator (ndl > -0.55): forward
+        // scatter is light coming THROUGH the air at a grazing angle, and there
+        // is none of it over the deep night side. Without that gate this term
+        // rebuilds the very hoop the rest of this block exists to remove.
+        float vdl = dot(V, L);
+        float mie = pow(max(0.0, 0.5 - 0.5 * vdl), 2.0) * smoothstep(-0.55, -0.02, ndl);
+        float lit = smoothstep(-0.24, 0.32, ndl);
+        float rimAmt = uRimNight + (1.0 - uRimNight) * lit + 0.55 * mie * air;
+        vec3 rim = uRim * air * rimAmt * uRimGain;
 
         gl_FragColor = vec4(lamps * 2.6 + scatter + rim, 1.0);
     }
@@ -4516,26 +4591,60 @@ function _warmLampColour(c) {
 function addAtmosphereShell(planet, radius, opts) {
     if (!planet || typeof THREE === 'undefined') return null;
     const o = opts || {};
+    const shellK = o.shellK || 1.015;
+    const rimCol = new THREE.Color(o.rimColor === undefined ? 0x4d9fff : o.rimColor)
+        .multiplyScalar(o.rim === undefined ? 0.60 : o.rim);
     const mat = new THREE.ShaderMaterial({
         uniforms: {
             uNight: { value: _warmLampColour(o.nightColor === undefined ? 0xffc169 : o.nightColor) },
-            uRim: { value: new THREE.Color(o.rimColor === undefined ? 0x4d9fff : o.rimColor)
-                .multiplyScalar(o.rim === undefined ? 0.60 : o.rim) },
+            uRim: { value: rimCol },
+            // SUNSET COLOUR. Light crossing the terminator has travelled through
+            // more air than any other light on the planet, so it arrives red —
+            // and the shipped shader tinted the twilight band with uRim (blue),
+            // which is why a hue traverse across Earth's terminator never once
+            // put R above G. Derived from the rim hue so an exotic world's
+            // sunset still belongs to its own palette, then forced warm.
+            uTwilight: { value: o.twilightColor !== undefined
+                ? new THREE.Color(o.twilightColor)
+                : _sunsetColour(rimCol) },
             uSun: { value: (o.sun && o.sun.clone) ? o.sun.clone() : new THREE.Vector3(0, 0, 0) },
             uCity: { value: o.city === undefined ? 1.0 : o.city },
             uSeed: { value: o.seed === undefined ? Math.random() * 40 : o.seed },
             // Airless rocks get a thin, dim scatter; thick-atmosphere worlds a
             // wide bright one. This is the knob that says "Mercury" or "Venus".
             uScatter: { value: o.scatter === undefined ? 0.55 : o.scatter },
-            // 4.6 puts the half-power point of the rim at ~0.955 of the disc
-            // radius, i.e. a band ~5% of the radius wide — around 9px on a
-            // hero planet. Lower exponents spread it into a halo, and this
-            // scene already carries a broad outer glow from
-            // atmospheric-perspective.js; the job here is the crisp inner limb
-            // line sitting ON the silhouette, which is the part that reads as
-            // air rather than as a sticker outline.
+            // Kept so external callers that still pass rimPow do not break; the
+            // limb band is no longer a raw Fresnel (see _NIGHT_SHELL_FRAG).
             uRimPow: { value: o.rimPow === undefined ? 4.6 : o.rimPow },
-            uTermW: { value: o.termWidth === undefined ? 0.17 : o.termWidth }
+            uTermW: { value: o.termWidth === undefined ? 0.17 : o.termWidth },
+            // The shell's radius, in planet radii. The fragment stage needs it
+            // to convert its own normal into a DISC radius and so anchor the
+            // limb band to the planet's silhouette rather than to the shell's.
+            uShellK: { value: shellK },
+            // Band half-widths, as a fraction of the planet radius. Measured on
+            // Earth across the approach band, 0.052 puts the arc at 6-15 CSS px
+            // — the 5-15px the acceptance asks for — from 400u in, and ~4px at
+            // 700u where the whole disc is only 49px. Wider than this and the
+            // band stops being an ARC: at 0.085 it reaches r=0.87 and lifts the
+            // outer third of the day disc into a flat wash, which measured as
+            // dAdj +8 (the arc is no longer brighter than the ground beside it)
+            // even though more light is going in. Outside the silhouette the
+            // air thins fast — 0.012R keeps the overshoot to a couple of pixels,
+            // so apparent size is untouched.
+            uLimbIn: { value: o.limbIn === undefined ? 0.052 : o.limbIn },
+            uLimbOut: { value: o.limbOut === undefined ? 0.012 : o.limbOut },
+            // What survives on the unlit limb. The old shader's floor was 0.245
+            // of full strength, which is what made the night limb the BRIGHTEST
+            // thing on the planet. Three percent is enough to close the
+            // silhouette without drawing a hoop.
+            uRimNight: { value: o.rimNight === undefined ? 0.03 : o.rimNight },
+            // 0.95 measured out as the largest gain that clears the acceptance
+            // across the approach band (700/400/300/200u x 60/78/100 deg) while
+            // keeping the sunlit disc off the 255 ceiling — at 1.05 the arc
+            // starts clipping to white at four of those twelve poses, which is
+            // the "chrome" failure again with the sign flipped. See the
+            // band-width note above for why this is not just "turn it up".
+            uRimGain: { value: o.rimGain === undefined ? 0.95 : o.rimGain }
         },
         vertexShader: _PLANET_PRESENCE_VERT,
         fragmentShader: _NIGHT_SHELL_FRAG,
@@ -4552,12 +4661,52 @@ function addAtmosphereShell(planet, radius, opts) {
     // hero planet's silhouette by under 3px and is inside the +/-5% scale
     // guard by a factor of three.
     const shell = new THREE.Mesh(
-        new THREE.SphereGeometry(radius * (o.shellK || 1.015), 56, 40), mat);
+        new THREE.SphereGeometry(radius * shellK, 56, 40), mat);
     shell.frustumCulled = false;
     shell.renderOrder = 3;
     shell.userData.isNightShell = true;
     planet.add(shell);
+    _atmoShells.push(mat);
     return shell;
+}
+
+// FLOATING ORIGIN. uSun holds an ABSOLUTE world position and was cloned once at
+// build time, so after the first world rebase every shell in the game was
+// lighting its planet from a point that no longer existed — the terminator, the
+// twilight band and the whole limb response drifted off the real sun. Track the
+// live materials and subtract the shift, the same way this module's other
+// cached absolutes are handled.
+const _atmoShells = [];
+if (typeof window !== 'undefined') {
+    window.__worldShiftHandlers = window.__worldShiftHandlers || [];
+    window.__worldShiftHandlers.push(function (offset) {
+        if (!offset) return;
+        for (let i = 0; i < _atmoShells.length; i++) {
+            const u = _atmoShells[i] && _atmoShells[i].uniforms;
+            if (u && u.uSun && u.uSun.value && u.uSun.value.isVector3) u.uSun.value.sub(offset);
+        }
+    });
+}
+
+// A sunset is the rim colour after the atmosphere has eaten its short
+// wavelengths: same family, rotated toward amber, saturated up, and pinned so
+// red always leads. Keeps an exotic world's twilight inside its own palette
+// while guaranteeing the terminator can actually redden — and returned at the
+// SAME magnitude as the rim it came from, because the twilight band's strength
+// is set by uScatter, not by this colour.
+function _sunsetColour(rim) {
+    const c = new THREE.Color(rim);
+    const mag = Math.max(c.r, c.g, c.b) || 1;
+    const hsl = { h: 0, s: 0, l: 0 };
+    c.getHSL(hsl);
+    // Drag the hue the short way toward 0.055 (amber) by 80%.
+    let d = 0.055 - hsl.h;
+    if (d > 0.5) d -= 1; else if (d < -0.5) d += 1;
+    const out = new THREE.Color().setHSL((hsl.h + d * 0.80 + 1) % 1,
+        Math.min(1, hsl.s * 0.55 + 0.45), 0.60);
+    if (out.g > out.r * 0.72) out.g = out.r * 0.72;
+    if (out.b > out.r * 0.42) out.b = out.r * 0.42;
+    return out.multiplyScalar(mag / (Math.max(out.r, out.g, out.b) || 1));
 }
 // Name kept for the existing call sites and for anything outside this file.
 const addNightSideShell = addAtmosphereShell;

@@ -873,64 +873,266 @@ const IV_DRIFT_HZ = 0.055;
 // buttons from t=5.6 s out to t=10.5 s. A canvas painted once is free.
 // ---------------------------------------------------------------------------
 function _ivSkyTexture() {
-    const W = 1024, H = 512;
+    // 2048x1024, not 1024x512. This canvas is stretched over a 60000u shell that
+    // fills the frame, so texture resolution IS screen resolution here: at
+    // 1024x512 one texel magnified to ~4.7 screen px and the bilinear seams
+    // between them read as a visible mesh over the whole sky (measured: a
+    // regular 7.5 px / 16 px lattice, 6.4 LSB peak-to-peak, edge to edge).
+    // Doubling drops the texel to ~2.4 px; the grain pass at the bottom of this
+    // function kills what is left of the lattice.
+    const W = 2048, H = 1024;
+    // The gas itself is computed at half that. Nebula has no detail worth 2M
+    // pixels, and the two things that DO need the full resolution — the stars
+    // and the grain — are painted at 2048 afterwards.
+    const NW = 1024, NH = 512;
     const cv = document.createElement('canvas');
     cv.width = W; cv.height = H;
     const g = cv.getContext('2d');
 
-    // Deterministic: same sky on every boot.
-    let seed = 20260814;
-    const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+    // Deterministic: same sky on every boot. Three independent streams, so that
+    // retuning the gas does not reshuffle the star field or the composition.
+    const mkRnd = (s0) => { let s = s0; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; };
+    const rnd = mkRnd(20260814);    // stars, grain
+    const rMask = mkRnd(6180339);   // composition
+    const rNoise = mkRnd(2718281);  // the noise fields
 
-    g.fillStyle = '#05030e';
-    g.fillRect(0, 0, W, H);
-    g.globalCompositeOperation = 'lighter';
+    // ---- screen -> canvas ---------------------------------------------------
+    // The shell is an equirectangular sphere centred on Sol with no rotation, so
+    // a direction d lands at canvas (W*atan2(dz,-dx)/2pi, H*acos(dy)/pi) — that
+    // is exactly SphereGeometry's uv through a flipY CanvasTexture. Knowing the
+    // mapping means the nebula can be COMPOSED against the star and the worlds
+    // rather than scattered and hoped for: mass where the frame is empty, dust
+    // down the column where PRESS TO LAUNCH sits. (fx: -1 = left edge, +1 =
+    // right; fy: + = below centre — the convention IV_SUN_FX/IV_PLANET_FX use.)
+    let toCanvas = null, SPX = 0.38;
+    try {
+        const pose = ivCameraPose(0);
+        const SC = new THREE.Vector3(IV_SUN.x, IV_SUN.y, IV_SUN.z);
+        toCanvas = (fx, fy) => {
+            const d = ivPlaceAt(pose, fx, fy, 60000).sub(SC).normalize();
+            let u = Math.atan2(d.z, -d.x) / (Math.PI * 2);
+            u -= Math.floor(u);
+            return { x: u * W, y: (Math.acos(Math.max(-1, Math.min(1, d.y))) / Math.PI) * H };
+        };
+        const a = toCanvas(-0.25, 0), b = toCanvas(0.25, 0);
+        let dx = Math.abs(b.x - a.x); if (dx > W / 2) dx = W - dx;
+        SPX = dx / (0.25 * (window.innerWidth || 1600));
+        if (!(SPX > 0.05 && SPX < 4)) SPX = 0.38;
+    } catch (e) { toCanvas = null; }
+    // If the framing solver is unavailable the sky still gets painted — it just
+    // stops being aimed. Never fall back to the flat launch-pad dome.
+    const at = (fx, fy) => (toCanvas ? toCanvas(fx, fy)
+                                     : { x: (0.5 + fx * 0.15) * W, y: (0.42 + fy * 0.22) * H });
+    const px = (screenPx) => screenPx * SPX;
 
-    const blob = (x, y, r, col, a) => {
-        const grd = g.createRadialGradient(x, y, 0, x, y, r);
-        grd.addColorStop(0, 'rgba(' + col + ',' + a + ')');
-        grd.addColorStop(0.45, 'rgba(' + col + ',' + (a * 0.42).toFixed(3) + ')');
-        grd.addColorStop(1, 'rgba(' + col + ',0)');
-        g.fillStyle = grd;
-        g.fillRect(x - r, y - r, r * 2, r * 2);
+    // ---- value noise --------------------------------------------------------
+    // Wraps in x (the sphere seam is at u=0), clamps in y.
+    const grid = (w, h) => {
+        const a = new Float32Array(w * h);
+        for (let i = 0; i < a.length; i++) a[i] = rNoise();
+        return { w: w, h: h, a: a };
+    };
+    const smp = (q, x, y) => {
+        const fx = x * q.w, fy = y * q.h;
+        let x0 = Math.floor(fx), y0 = Math.floor(fy);
+        const tx = fx - x0, ty = fy - y0;
+        const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty);
+        const x1 = (((x0 + 1) % q.w) + q.w) % q.w; x0 = ((x0 % q.w) + q.w) % q.w;
+        let y1 = y0 + 1;
+        if (y0 < 0) y0 = 0; else if (y0 > q.h - 1) y0 = q.h - 1;
+        if (y1 < 0) y1 = 0; else if (y1 > q.h - 1) y1 = q.h - 1;
+        const r0 = y0 * q.w, r1 = y1 * q.w;
+        const u = q.a[r0 + x0] + (q.a[r0 + x1] - q.a[r0 + x0]) * sx;
+        const v = q.a[r1 + x0] + (q.a[r1 + x1] - q.a[r1 + x0]) * sx;
+        return u + (v - u) * sy;
+    };
+    const stack = (n, w0) => { const s = []; for (let i = 0; i < n; i++) s.push(grid(w0 << i, Math.max(2, (w0 << i) >> 1))); return s; };
+    const fbm = (s, x, y, oct, ridged) => {
+        let sum = 0, amp = 1, norm = 0;
+        for (let i = 0; i < oct; i++) {
+            let n = smp(s[i], x, y);
+            if (ridged) { n = 1 - Math.abs(n * 2 - 1); n *= n; }
+            sum += n * amp; norm += amp; amp *= 0.55;
+        }
+        return sum / norm;
+    };
+    const S_DENS = stack(4, 14);   // 14..112 cells: clumping inside the mass
+    const S_DET  = stack(6, 24);   // 24..768 cells: filaments
+    const S_DUST = stack(5, 16);   // 16..256 cells: the lanes that cut them
+    const S_HUE  = stack(4, 5);    //  4..16  cells: slow colour drift
+
+    // ---- composition mask ---------------------------------------------------
+    // Painted, not noised, because this is the art direction: a band of gas
+    // sweeping across the TOP of the frame between the star and the hero world,
+    // a second body draping down the right, and a hole punched down the middle
+    // column where the menu lives. The old sky had 20 blobs scattered at 3-8%
+    // alpha over near-black and measured std 7.4 on a pure-sky patch against
+    // the reference art's 36.3 — it wasn't a nebula, it was a tint.
+    const MW = 256, MH = 128;
+    const mcv = document.createElement('canvas');
+    mcv.width = MW; mcv.height = MH;
+    const mg = mcv.getContext('2d');
+    mg.fillStyle = '#000'; mg.fillRect(0, 0, MW, MH);
+    const mblob = (cx, cy, r, a, aspect, rot, op) => {
+        const x = cx * MW / W, y = cy * MH / H, rr = Math.max(1, r * MW / W);
+        // An erase has to actually erase: a soft gradient at 45% of its radius
+        // only removes half the gas, and half of a bright filament is still a
+        // bright filament under the button. Additive masses stay soft.
+        const cut = (op === 'destination-out');
+        for (let k = -1; k <= 1; k++) {
+            mg.save();
+            mg.globalCompositeOperation = op || 'lighter';
+            mg.translate(x + k * MW, y);
+            if (rot) mg.rotate(rot);
+            if (aspect && aspect !== 1) mg.scale(1, aspect);
+            const grd = mg.createRadialGradient(0, 0, 0, 0, 0, rr);
+            grd.addColorStop(0, 'rgba(255,255,255,' + a.toFixed(3) + ')');
+            grd.addColorStop(cut ? 0.62 : 0.45, 'rgba(255,255,255,' + (a * (cut ? 0.94 : 0.55)).toFixed(3) + ')');
+            if (cut) grd.addColorStop(0.85, 'rgba(255,255,255,' + (a * 0.42).toFixed(3) + ')');
+            grd.addColorStop(1, 'rgba(255,255,255,0)');
+            mg.fillStyle = grd;
+            mg.fillRect(-rr, -rr, rr * 2, rr * 2);
+            mg.restore();
+        }
+    };
+    // the band, plus the right-hand drape and a left-hand shoulder
+    [[-1.75, -0.98, 520, 0.40], [-1.30, -0.86, 520, 0.44], [-0.86, -0.76, 540, 0.50],
+     [-0.42, -0.70, 540, 0.56], [ 0.02, -0.68, 540, 0.60], [ 0.46, -0.73, 520, 0.62],
+     [ 0.90, -0.82, 520, 0.60], [ 1.34, -0.92, 520, 0.56], [ 1.75, -1.02, 500, 0.48],
+     [ 0.62, -0.62, 380, 0.50], [ 1.00, -0.56, 360, 0.44],
+     [ 1.62,  0.02, 520, 0.40], [ 1.80,  0.60, 520, 0.32],
+     [-1.85, -0.20, 480, 0.34], [-1.70,  0.55, 460, 0.26],
+     [-1.25,  0.92, 440, 0.30], [ 1.30,  1.00, 440, 0.28]
+    ].forEach((b) => { const p = at(b[0], b[1]); mblob(p.x, p.y, px(b[2]), b[3], 0.55, 0.12); });
+    // knots of denser gas inside the band, so it is not a smooth ramp
+    for (let i = 0; i < 26; i++) {
+        const p = at(-1.9 + rMask() * 3.6, -1.15 + rMask() * 0.75);
+        mblob(p.x, p.y, px(150 + rMask() * 260), 0.16 + rMask() * 0.22, 0.4 + rMask() * 0.5, rMask() * 3.14);
+    }
+    // the rest of the sphere — 250 degrees the camera never looks at, kept lit
+    // so nothing goes black if the drift is ever widened
+    for (let i = 0; i < 14; i++) {
+        mblob(rMask() * W, 0.18 * H + rMask() * 0.64 * H, px(300 + rMask() * 400),
+              0.12 + rMask() * 0.16, 0.4 + rMask() * 0.5, rMask() * 3.14);
+    }
+    // and the hole: PRESS TO LAUNCH / DEMO MODE / Skip Intro sit in the middle
+    // column, so the gas is erased there. White text over a mean sky luminance
+    // under ~55/255 stays legible; this is what keeps it there while the rest
+    // of the frame gets brighter, not dimmer.
+    // Wide and shallow on purpose: the hole has to clear the buttons (frame
+    // rows 400-890) without eating the gas above them (rows 130-340), so the
+    // erase is an ellipse ~3x wider than it is tall.
+    [[-0.06, 0.08, 430, 0.34], [-0.02, 0.42, 440, 0.34], [0.02, 0.78, 450, 0.34],
+     [0.00, 1.14, 470, 0.36], [0.02, 1.52, 500, 0.38]]
+        .forEach((q) => { const p = at(q[0], q[1]); mblob(p.x, p.y, px(q[2]), 0.99, q[3], 0.06, 'destination-out'); });
+    // Fold the two channels into one map before sampling. The additive pass
+    // runs over an OPAQUE black fill, so 'lighter' leaves alpha pinned at 255
+    // and writes the gas into RGB; 'destination-out' does the reverse — it only
+    // ever touches alpha (verified: a white 0.6 fill then a 0.9 erase reads back
+    // [153,153,153,25], the red channel untouched). So RGB alone is the gas with
+    // the hole missing, and alpha alone is the hole. The mask is their product.
+    const mimg = mg.getImageData(0, 0, MW, MH).data;
+    const mask = new Float32Array(MW * MH);
+    for (let i = 0; i < mask.length; i++) mask[i] = (mimg[i * 4] / 255) * (mimg[i * 4 + 3] / 255);
+    const maskAt = (x, y) => {   // x,y in [0,1)
+        const fx = x * MW, fy = y * MH;
+        let x0 = Math.floor(fx), y0 = Math.floor(fy);
+        const tx = fx - x0, ty = fy - y0;
+        const x1 = (((x0 + 1) % MW) + MW) % MW; x0 = ((x0 % MW) + MW) % MW;
+        let y1 = y0 + 1;
+        if (y0 < 0) y0 = 0; else if (y0 > MH - 1) y0 = MH - 1;
+        if (y1 < 0) y1 = 0; else if (y1 > MH - 1) y1 = MH - 1;
+        const a0 = mask[y0 * MW + x0], b0 = mask[y0 * MW + x1];
+        const a1 = mask[y1 * MW + x0], b1 = mask[y1 * MW + x1];
+        const u = a0 + (b0 - a0) * tx, v = a1 + (b1 - a1) * tx;
+        return u + (v - u) * ty;
     };
 
-    // Galactic band — a soft diagonal river of dust across the sky.
-    for (let i = 0; i < 24; i++) {
-        const u = i / 23;
-        const x = u * W;
-        const y = H * 0.52 + Math.sin(u * Math.PI * 2.1) * H * 0.13;
-        blob(x, y, 130 + rnd() * 90, '96,72,168', 0.045 + rnd() * 0.03);
+    // ---- the gas ------------------------------------------------------------
+    const GAIN = 2.45;
+    const ncv = document.createElement('canvas');
+    ncv.width = NW; ncv.height = NH;
+    const ng = ncv.getContext('2d');
+    const nimg = ng.createImageData(NW, NH);
+    const nd = nimg.data;
+    for (let y = 0; y < NH; y++) {
+        const v = (y + 0.5) / NH;
+        for (let x = 0; x < NW; x++) {
+            const u = (x + 0.5) / NW;
+            const m = maskAt(u, v);
+            const i = (y * NW + x) * 4;
+            if (m <= 0.004) { nd[i] = 0; nd[i + 1] = 0; nd[i + 2] = 0; nd[i + 3] = 255; continue; }
+            // density: the mask says where, the low fbm says how clumpy
+            let dens = m * (0.55 + 0.62 * fbm(S_DENS, u, v, 4, false));
+            // filaments: ridged noise is what makes gas look like sheets seen
+            // edge-on instead of fog
+            const fil = fbm(S_DET, u, v, 6, true);
+            // lanes: opaque dust in front of the emission
+            const dust = fbm(S_DUST, u, v, 5, false);
+            const lane = 0.16 + 0.84 * Math.max(0, Math.min(1, (dust - 0.34) * 3.1));
+            // Tone: a hard gamma, because a nebula is not a fog bank. The
+            // reference art's sky patch is mean 59 with only 22% of its pixels
+            // above L=60 — mostly dark, with a small very bright fraction —
+            // and a linear field cannot produce that shape at any gain.
+            let e = Math.pow(Math.max(0, dens * (0.15 + 1.60 * fil) * lane), 2.0) * GAIN;
+            e = Math.max(0, Math.min(1.5, e));
+            // colour drifts slowly across the field: violet -> magenta -> teal
+            // fbm of several octaves piles up around 0.5; stretch it or the
+            // whole sky comes out one colour.
+            const hn = Math.max(0, Math.min(1, (fbm(S_HUE, u, v, 4, false) - 0.5) * 2.4 + 0.5));
+            let r, gg, b;
+            if (hn < 0.5) { const t = hn * 2; r = 108 + (222 - 108) * t; gg = 54 + (76 - 54) * t; b = 208 + (146 - 208) * t; }
+            else { const t = (hn - 0.5) * 2; r = 222 + (44 - 222) * t; gg = 76 + (176 - 76) * t; b = 146 + (214 - 146) * t; }
+            // hot cores burn out toward white
+            const hot = Math.max(0, e - 0.74) * 1.6;
+            nd[i]     = Math.min(255, r * e * 0.92 + hot * 150);
+            nd[i + 1] = Math.min(255, gg * e * 0.92 + hot * 150);
+            nd[i + 2] = Math.min(255, b * e * 0.92 + hot * 150);
+            nd[i + 3] = 255;
+        }
     }
+    ng.putImageData(nimg, 0, 0);
 
-    // Nebula clouds. Kept well under the star and the planets on purpose —
-    // the blind A/B pass called out backgrounds sitting at the same luminance
-    // as the gameplay layer as the single worst separation failure.
-    const tints = ['186,64,206', '116,66,218', '34,168,220', '22,208,188', '218,78,126'];
-    for (let i = 0; i < 20; i++) {
-        const x = rnd() * W, y = 45 + rnd() * (H - 90);
-        const r = 70 + rnd() * 170;
-        const col = tints[(rnd() * tints.length) | 0];
-        const a = 0.05 + rnd() * 0.06;
-        blob(x, y, r, col, a);
-        if (x < r) blob(x + W, y, r, col, a);
-        if (x > W - r) blob(x - W, y, r, col, a);
-    }
+    g.fillStyle = '#04030c';
+    g.fillRect(0, 0, W, H);
+    g.globalCompositeOperation = 'lighter';
+    g.imageSmoothingEnabled = true;
+    g.drawImage(ncv, 0, 0, W, H);
 
-    // Stars.
-    for (let i = 0; i < 1300; i++) {
+    // ---- stars --------------------------------------------------------------
+    for (let i = 0; i < 3400; i++) {
         const x = rnd() * W, y = rnd() * H;
         const b = rnd();
-        const s = b > 0.985 ? 1.3 : (b > 0.9 ? 0.85 : 0.55);
-        const a = 0.16 + b * 0.55;
+        const s = (b > 0.985 ? 2.6 : (b > 0.9 ? 1.7 : 1.1));
+        const a = 0.16 + b * 0.62;
         const hue = rnd();
         const col = hue > 0.86 ? '255,206,224' : (hue > 0.7 ? '188,226,255' : '255,255,255');
         g.fillStyle = 'rgba(' + col + ',' + a.toFixed(3) + ')';
-        g.fillRect(x, y, s * 2, s * 2);
-        if (b > 0.994) blob(x, y, 7, col, 0.20);
+        g.fillRect(x, y, s, s);
+        if (b > 0.991) {
+            const grd = g.createRadialGradient(x, y, 0, x, y, 16);
+            grd.addColorStop(0, 'rgba(' + col + ',0.22)');
+            grd.addColorStop(1, 'rgba(' + col + ',0)');
+            g.fillStyle = grd;
+            g.fillRect(x - 16, y - 16, 32, 32);
+        }
     }
-
     g.globalCompositeOperation = 'source-over';
+
+    // ---- film grain ---------------------------------------------------------
+    // +/-1.5 LSB of per-texel noise. This is the one thing that actually
+    // destroys the magnified-texel lattice — it decorrelates the bilinear seams
+    // — and it is the grain every hand-painted space sky carries.
+    try {
+        const img = g.getImageData(0, 0, W, H);
+        const d = img.data;
+        for (let i = 0; i < d.length; i += 4) {
+            const n = (rnd() - 0.5) * 3.0;
+            d[i] += n; d[i + 1] += n; d[i + 2] += n;
+        }
+        g.putImageData(img, 0, 0);
+    } catch (e) { /* never break the boot over grain */ }
+
     const tex = new THREE.CanvasTexture(cv);
     // No mipmap chain: this shell is only ever seen at one scale, and building
     // one is pure boot latency on a texture this size.

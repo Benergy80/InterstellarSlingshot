@@ -3626,7 +3626,17 @@ function _snapRadarRange(want, currentRung) {
     // reopen it.
     while (idx > 0) {
         const belowRung = RADAR_RANGE_LADDER[idx - 1];
-        const threshold = (idx - 1 === 0) ? belowRung : belowRung * 0.8;
+        // Gate contraction on the CURRENT rung (RADAR_RANGE_LADDER[idx]),
+        // not the rung below it. Gating on belowRung*0.8 made the test ask
+        // "is want already deep inside the NEXT rung down" — for a rung as
+        // coarse as 1500, that's want<800, a bar a close-range `want` of
+        // ~800-1200 can never clear, so the ladder gets stuck one notch too
+        // wide for the entire engagement. Gating on the rung we're
+        // currently sitting on (want < currentRung*0.8) asks the right
+        // question — "has want dropped meaningfully below where we are
+        // now" — and still gives 20% hysteresis against the step-out
+        // boundary (currentRung*1.25) above, so it can't oscillate.
+        const threshold = (idx - 1 === 0) ? belowRung : RADAR_RANGE_LADDER[idx] * 0.8;
         if (want < threshold || (idx - 1 === 0 && want <= belowRung)) {
             idx--;
         } else {
@@ -3671,7 +3681,7 @@ function _currentRadarRange(nowMs) {
     // skipped in one frame, dragging the committed range through a 6x leap
     // (see the single-rung stepping below, which now refuses to leap
     // regardless of how far `want` jumps).
-    const _want = Math.max(500, Math.min(3000, _near * 2.2));
+    const _want = Math.max(500, Math.min(3000, _near * 1.6));
     const snapped = _snapRadarRange(_want, st.value);
 
     if (snapped !== st.value) {
