@@ -232,6 +232,33 @@
   const BED_HOLD_ATTACK_TAU  = 0.15;    // s — fast: catch the incoming bed
   const BED_HOLD_RELEASE_TAU = 3.0;     // s — slow: don't chase a mere dip
 
+  // fx.bedPowerFast/bedRmsFast (20260814c audit): a THIRD follower, needed
+  // once live measurement showed neither of the two above is right for
+  // FLOOR detection specifically. bedRmsRunning's ~1s symmetric tau takes
+  // ~3s to fully recognize a step drop (too slow for the 33 documented
+  // sub-second holes). bedRmsHold is actively WRONG for this: its whole
+  // job is to stay latched to the LOUDEST recent moment (fast attack, 3s
+  // release) so a stinger never under-sizes against a stale-quiet outgoing
+  // bed — but that same latch means max(bedRmsHold, bedRmsRunning) stays
+  // pinned above the floor for up to 3s of real silence after every
+  // transient, which measured live as the bed-floor makeup never engaging
+  // AT ALL for a full 10s sustained duck (busGain pinned at the raw duck
+  // level the entire time — a total miss, not a slow one). Floor detection
+  // needs the opposite bias from stinger sizing: fast in BOTH directions,
+  // symmetric, no latch. BED_FAST_TAU matches FX_TAU_UP's order of
+  // magnitude so the measurement isn't the bottleneck once the correction
+  // fires.
+  const BED_FAST_TAU = 0.15;            // s — symmetric fast EMA, floor-only
+
+  // TIME CONSTANT NOTE: currentBedRMS() taps `wa.bus` DOWNSTREAM of the
+  // gain node all three followers above ultimately feed correction logic
+  // for — the "raw bed" any of them reconstructs (measured / fx.gain) is
+  // only as accurate as the assumption that fx.gain was constant across the
+  // follower's own memory window. A 3s-release follower reconstructs badly
+  // for ~3s after any gain change (the bedRmsHold failure above); a 1s
+  // follower for ~1-3s (still too slow for a sub-second hole); a 0.15s
+  // follower is accurate within ~0.3-0.45s, which is the actual target.
+
   // ─── 4. Spatialization ────────────────────────────────────────────────────
   const SPATIAL_NEAR = 600;             // full volume inside this radius
   const SPATIAL_REF  = 1800;            // half-ish volume around here
@@ -368,6 +395,20 @@
                                  // 1s-stale outgoing one. -1 = not primed.
       bedRmsHold: -1,            // sqrt(bedPowerHold); computeLevel() reads
                                  // max(bedRmsRunning, bedRmsHold).
+      bedPowerFast: -1,          // ~0.15s SYMMETRIC power EMA — see the
+                                 // BED_FAST_TAU comment above. Floor-makeup
+                                 // reads bedRmsFast, NOT bedRmsRunning or
+                                 // bedRmsHold: this is the one follower with
+                                 // no bias toward the loudest recent moment,
+                                 // so it doesn't mask a genuine hole.
+      bedRmsFast: -1,            // sqrt(bedPowerFast).
+      floorBoosting: false,      // true this frame iff the bed-floor makeup
+                                 // below is actively raising gain — lets the
+                                 // smoother borrow FX_TAU_UP (fast) for a
+                                 // floor CORRECTION even though it's a gain
+                                 // increase, which the plain "rising = fast"
+                                 // rule (kg below) would otherwise route
+                                 // through the slow release tau.
       lastPushedGain: -1,
       lastPushedLp: -1,
     },
@@ -2111,20 +2152,64 @@
     // tunnel duck, stinger sidechain, bloom) has NO reference to how loud
     // the bed actually is, so it can and does mix the bed down into
     // silence on its own. Apply the same closed-loop idea to the bed
-    // itself: when the running bed level is genuinely below the game's
-    // documented "healthy audible" floor, make up the difference (capped
-    // at 4x / ~12dB so a truly-silent bed doesn't get amplified into a
-    // hiss). FX_TAU_DOWN (0.32s) still governs the release, so this
-    // doesn't pump — it just stops the score trailing off into nothing.
-    const bedFloor = (fx.bedRmsRunning > 1e-4 && fx.bedRmsRunning < STINGER_FLOOR_RMS)
-      ? Math.min(STINGER_FLOOR_RMS / fx.bedRmsRunning, 4) : 1;
+    // itself: when the bed is genuinely below the game's documented
+    // "healthy audible" floor, make up the difference (capped at 4x /
+    // ~12dB so a truly-silent bed doesn't get amplified into a hiss).
+    //
+    // 20260814b measured this half-fixed: bedRmsRunning/bedRmsHold are read
+    // from currentBedRMS(), which taps `wa.bus` DOWNSTREAM of the very
+    // gain node this block drives (applyFx() below). So "the bed's level"
+    // as measured here is ALREADY carrying last frame's correction —
+    // dividing STINGER_FLOOR_RMS by that post-gain number only ever closes
+    // half the deficit per pass (equilibrium is the geometric mean of the
+    // raw bed and the floor, never the floor itself), and because a rising
+    // correction fed through the "rising ⇒ fast tau" rule below actually
+    // picked the SLOW release tau (fx.gainT ends up < fx.gain mid-ramp on
+    // a symmetric power EMA), the whole thing took ~4.5s to half-converge.
+    // Fix: undo the currently-applied gain to recover the RAW bed level,
+    // project it through THIS frame's target gain before comparing to the
+    // floor, and size the correction against that — a one-shot fix instead
+    // of a slow asymptote. fx.gain (not fx.gainT) is the multiplier that
+    // was actually pushed to the audio param last frame, so it's the right
+    // thing to divide out.
+    //
+    // Deliberately bedRmsFast here, not max(bedRmsHold, bedRmsRunning) the
+    // way the stinger servo reads it (:~1710 below), and not bedRmsRunning
+    // alone either. Verified live in two stages (w9r2d/w9r2e-deephole
+    // probes, sustained tunnel+emergencyWarp duck ~0.246x over a genuinely
+    // quiet raw bed, held 10s):
+    //   1. max(bedRmsHold, bedRmsRunning) — bedRmsHold's fast-attack/SLOW-
+    //      release (3s) latch, built so a stinger never under-sizes against
+    //      a stale-quiet outgoing bed through a crossfade, does the OPPOSITE
+    //      of what floor detection needs: it kept bedMeasured pinned above
+    //      the floor for the full 10s of real silence, so the makeup NEVER
+    //      engaged — busGain flat at the raw duck level the entire window.
+    //      A total miss, not a slow one.
+    //   2. bedRmsRunning alone (1s symmetric tau) — this DOES engage, but a
+    //      1s EMA needs ~3-5s to recognize and correct a step drop, so it
+    //      converged to within ~1dB of target only around the 5s mark. Real
+    //      correction, but too slow for the documented 33 SUB-SECOND holes.
+    //   3. bedRmsFast (0.15s symmetric tau, BED_FAST_TAU below) — same
+    //      one-shot reconstruction math, but the measurement itself is no
+    //      longer the bottleneck.
+    const bedMeasured = fx.bedRmsFast;
+    const rawBed = bedMeasured / Math.max(0.05, fx.gain);
+    const projectedBed = rawBed * gain;
+    const bedFloor = (rawBed > 1e-4 && projectedBed < STINGER_FLOOR_RMS)
+      ? Math.min(STINGER_FLOOR_RMS / projectedBed, 4) : 1;
     gain *= bedFloor;
+    fx.floorBoosting = bedFloor > 1;
 
     fx.gainT = Math.max(0.05, Math.min(4.0, gain));   // 1.5 cap raised to 4.0 — the bed-floor path needs headroom or it clamps away
     fx.lpT = Math.max(200, Math.min(FILTER_OPEN_HZ, lp));
 
-    // Asymmetric smoothing: grabs fast, releases slow.
-    const kg = 1 - Math.exp(-dt / (fx.gainT < fx.gain ? FX_TAU_UP : FX_TAU_DOWN));
+    // Asymmetric smoothing: grabs fast, releases slow. A floor CORRECTION
+    // also gets the fast tau even on ticks where the symmetric power EMA
+    // makes fx.gainT read as not-yet-above fx.gain (floorBoosting forces
+    // it) — this is the "let the boost use the fast tau" half of the fix;
+    // without it the one-shot target above still arrives over 1s+ instead
+    // of the ~0.1s FX_TAU_UP was already built for.
+    const kg = 1 - Math.exp(-dt / ((fx.gainT < fx.gain || fx.floorBoosting) ? FX_TAU_UP : FX_TAU_DOWN));
     fx.gain += (fx.gainT - fx.gain) * kg;
     const kl = 1 - Math.exp(-dt / (fx.lpT < fx.lp ? FX_TAU_UP : FX_TAU_DOWN));
     fx.lp += (fx.lpT - fx.lp) * kl;
@@ -2163,6 +2248,19 @@
         fx.bedPowerHold += (instPower - fx.bedPowerHold) * kh;
       }
       fx.bedRmsHold = Math.sqrt(Math.max(0, fx.bedPowerHold));
+
+      // Fast SYMMETRIC follower — see BED_FAST_TAU / fx.bedPowerFast field
+      // comments. Deliberately the same tau up and down: unlike the hold
+      // follower above, this one must forget a loud moment exactly as
+      // quickly as it forgets a quiet one, or it inherits the same latch
+      // that made floor detection miss a sustained hole entirely.
+      if (fx.bedPowerFast < 0) {
+        fx.bedPowerFast = instPower;
+      } else {
+        const kf = 1 - Math.exp(-dt / BED_FAST_TAU);
+        fx.bedPowerFast += (instPower - fx.bedPowerFast) * kf;
+      }
+      fx.bedRmsFast = Math.sqrt(Math.max(0, fx.bedPowerFast));
     }
 
     applyFx();
@@ -3264,6 +3362,14 @@
                                                    // case directly instead of
                                                    // only inferring it from
                                                    // the servo's bedRms.
+        bedRmsFast: st.fx.bedRmsFast,             // TEST-ONLY: the 0.15s
+                                                   // symmetric follower the
+                                                   // BED FLOOR MAKEUP block
+                                                   // reads — see BED_FAST_TAU.
+        floorBoosting: st.fx.floorBoosting,       // TEST-ONLY: true this
+                                                   // frame iff the bed-floor
+                                                   // makeup is actively
+                                                   // raising gain.
         db: 20 * Math.log10(rms + 1e-9),
         element: st.currentEl ? st.currentEl.volume : 0,
         paused: st.currentEl ? st.currentEl.paused : true,

@@ -67,6 +67,25 @@ body.ui-mode {
        panel bodily off the screen edge it hugs — frame, glass and content
        together — instead of dimming or deflating it. */
     --hud-yield: 0;
+    /* Round-2 critic gap: every corner plate below is sized in fixed px,
+       so the <=25%/30% frame-occupancy budget only held at the 1600x900
+       reference viewport — measured 22.0%/29.7% there but 29.9%/35.4% at
+       1366x768 (the most common laptop res) and 40.6%/47.6% at 1280x640,
+       because chrome area is constant while frame area shrinks with the
+       square of viewport scale. Fix is a single uniform scale factor,
+       corner-pinned per panel (see .ui-panel.top-left etc. below) so every
+       plate's PX FOOTPRINT shrinks with the viewport instead of eating a
+       growing fraction of it. `min(100vw / 1600px, 100vh / 900px)` is the
+       ratio of the smaller viewport axis to the 1600x900 reference frame
+       (dividing by a px length, not a bare number, so the result is the
+       unitless ratio clamp() needs — NOT a length); clamp(0.62, ..., 1)
+       never scales UP past the reference layout and never scales panels
+       below 62% (readability floor) on very small viewports. This is a
+       pure CSS transform: it touches no JS, no radar math (mapDotPool
+       reads clientWidth, which transforms don't affect — see game-ui.js)
+       and nothing in the 3D scene, so the protected large celestial scale
+       is untouched. */
+    --hud-scale: clamp(0.62, min(100vw / 1600px, 100vh / 900px), 1);
 }
 
 /* Numeric readouts: fixed-width digits so values don't jitter the layout
@@ -191,10 +210,17 @@ body.ui-mode {
 }
 
 .ui-panel.top-left {
-    transform: perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px);
+    /* scale(var(--hud-scale)) appended last + transform-origin pinned to
+       the corner this panel already hugs (top-14 left-4 in index.html):
+       the 3D tilt still composites the same way, but the whole assembly
+       now shrinks TOWARD that corner on small viewports instead of toward
+       the panel's own centre, so it stays flush against the edge with no
+       gap opening up. */
+    transform: perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px) scale(var(--hud-scale));
+    transform-origin: top left;
     backdrop-filter: blur(3px);  /* mobiGlas-style HUD glass */
     border-radius: 0 20px 20px 0;
-    box-shadow: 
+    box-shadow:
         0 15px 50px rgba(0, 150, 255, 0.4),
         inset 2px 0 10px rgba(0,150,255,0.2);
     top: 14px;
@@ -230,26 +256,39 @@ body.ui-mode {
 }
 
 .ui-panel.bottom-left {
-    transform: perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px);
+    transform: perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px) scale(var(--hud-scale));
+    transform-origin: bottom left;
     backdrop-filter: blur(3px);  /* mobiGlas-style HUD glass */
     border-radius: 0 20px 20px 0;
-    box-shadow: 
+    box-shadow:
         0 12px 40px rgba(0, 150, 255, 0.35),
         inset 2px 0 8px rgba(0,150,255,0.18);
 }
 
 .ui-panel.top-right {
-    transform: perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px);
+    transform: perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px) scale(var(--hud-scale));
+    transform-origin: top right;
         backdrop-filter: blur(3px);  /* mobiGlas-style HUD glass */
     border-radius: 20px 0 0 20px;
-    box-shadow: 
+    box-shadow:
         0 15px 50px rgba(0, 150, 255, 0.4),
         inset -2px 0 10px rgba(0,150,255,0.2);
     top: 14px;
+    /* Round-2 critic gap: index.html's max-w-sm (Tailwind, 384px) is a
+       flat 388x287 plate that alone ate 10.63% of a 1366x768 frame — the
+       single biggest fixed-px offender. index.html is sealed to the
+       integrator, so the override lives here: two classes beats one on
+       specificity, so this wins over max-w-sm regardless of source order.
+       Belt-and-braces alongside the corner scale above (the scale factor
+       alone already claws this back, but capping the pre-scale layout
+       width too means text reflows sanely at the very smallest viewports
+       instead of just shrinking a wide box). */
+    max-width: min(384px, 24vw);
 }
 
 .ui-panel.bottom-right {
-    transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px);
+    transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px) scale(var(--hud-scale));
+    transform-origin: bottom right;
             backdrop-filter: blur(3px);  /* mobiGlas-style HUD glass */
     border-radius: 20px 0 0 20px;
     box-shadow:
@@ -301,21 +340,27 @@ body.ui-mode {
     transform: translateX(-50%) translateY(calc(-100% - 24px))
                perspective(1000px) rotateX(2deg) translateZ(8px);
 }
+/* Each appends the same scale(var(--hud-scale)) the resting rule above
+   uses, so a small-viewport panel doesn't pop to full 1:1 size for the
+   250ms it takes to leave the screen — it stays the size it was and slides
+   off at that size. transform-origin cascades in from the base
+   .ui-panel.top-left/etc rule (not re-declared per-selector here) since
+   nothing here overrides it. */
 :root.hud-geo-yield .ui-panel.top-left {
     transform: translate3d(calc(-100% - 48px), 0, 0)
-               perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px);
+               perspective(1000px) rotateY(8deg) rotateX(-4deg) translateZ(10px) scale(var(--hud-scale));
 }
 :root.hud-geo-yield .ui-panel.bottom-left {
     transform: translate3d(calc(-100% - 48px), 0, 0)
-               perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px);
+               perspective(1000px) rotateY(6deg) rotateX(2deg) translateZ(8px) scale(var(--hud-scale));
 }
 :root.hud-geo-yield .ui-panel.top-right {
     transform: translate3d(calc(100% + 48px), 0, 0)
-               perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px);
+               perspective(1000px) rotateY(-8deg) rotateX(-4deg) translateZ(10px) scale(var(--hud-scale));
 }
 :root.hud-geo-yield .ui-panel.bottom-right {
     transform: translate3d(calc(100% + 48px), 0, 0)
-               perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px);
+               perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px) scale(var(--hud-scale));
 }
 
 /* =============================================================================

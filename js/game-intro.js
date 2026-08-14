@@ -82,6 +82,61 @@ function resetIntroState() {
 }
 
 // =============================================================================
+// BOOT BUDGET
+// -----------------------------------------------------------------------------
+// The vista is only the boot frame if it is ON SCREEN at boot. Measured on the
+// reference box (1600x900, cold load, wall clock from navigation commit) the
+// old schedule did not get there: the hero frame was still 90% buried under the
+// black reveal overlay at t=8 s (full-frame luminance std 21.8 and 21.5 on two
+// of three loads, against the 35 the frame has to clear), and PRESS TO LAUNCH
+// was at 0.14 / 0.10 / 0.27 opacity — a menu you cannot read on a vista you
+// cannot see. Three costs stacked up, all of them serial on one thread:
+//
+//   1. a flat 3000 ms hold on the loading screen, spent doing nothing;
+//   2. 3106 ms inside initializeThreeJSForIntro() — cold-JIT sky paint plus
+//      renderer/corona/planet construction — which pushed everything after it;
+//   3. a 2532 ms FIRST gameRender(), where every shader in the vista compiles.
+//      That stall used to land AFTER the fade timers were armed, so the browser
+//      could not service them: the 2.5 s overlay fade and the button's fade-in
+//      both started ~2.5 s late and then took their full duration on top.
+//
+// The fix is ordering plus budget, not art: (3) is now paid under the loading
+// screen (ivWarmFirstFrame()), where the player is already looking at a
+// progress bar, so the reveal timers run on a free thread; (1) is cut to the
+// time the bar actually needs; and the ceremony after it is tightened. The
+// sequence, its phases and every entry point are otherwise untouched.
+// =============================================================================
+// Measured costs on the reference box, cold load, quiet machine (window.__IV_PERF):
+//   window load          ~0.9 s   network + script parse
+//   WebGLRenderer + scene ~1.8 s
+//   buildIntroVista       ~0.42 s (of which the painted sky is ~0.39 s)
+//   first drawn frame     ~2.0 s  shader compile — now paid under the loading
+//                                 screen, and cached, so the launch's own
+//                                 world-gen no longer pays it either
+// That is ~5.1 s of work no schedule can remove, which is exactly why the
+// ceremony around it has to be lean and why the two black fades now OVERLAP
+// instead of running end to end: the loading screen and the reveal overlay are
+// both black, so cross-fading them costs one fade, not two.
+const IV_BOOT = {
+    loadHold:    550,   // was 3000 — the loading bar finishes inside this, and
+                        //            the screen stays up for the init anyway
+    loadFade:    500,   // was 1000 — loading screen -> the black overlay behind it
+    preReveal:   520,   // was 500  — runs CONCURRENTLY with loadFade now
+    overlayLag:   20,   // was 100  — arm the overlay transition
+    overlayFade: 900,   // was 2500 — black -> vista
+    buttonLag:   240,   // was 1100 — after the overlay starts moving
+    buttonFade:  500    // was 1000 — button opacity ramp
+};
+
+// Boot ledger. index.html silences console.log unless GAME_DEBUG_VERBOSE is set,
+// so the numbers that decide whether the vista is on screen in time have to
+// survive somewhere readable. Milliseconds since navigation start.
+const IV_PERF = (window.__IV_PERF = {});
+function ivPerf(key, ms) {
+    try { IV_PERF[key] = Math.round(ms === undefined ? performance.now() : ms); } catch (e) {}
+}
+
+// =============================================================================
 // INTRO SEQUENCE INITIALIZATION
 // =============================================================================
 
@@ -111,23 +166,12 @@ function startGameWithIntro() {
             // Initialize minimal Three.js during loading
             setTimeout(() => {
                 initializeMinimalThreeJS();
-                
-                // Fade loading screen to black instead of hiding abruptly
-                if (loadingScreen) {
-                    loadingScreen.style.transition = 'opacity 1s ease-out';
-                    loadingScreen.style.opacity = '0';
-                    
-                    // Remove loading screen after fade completes
-                    setTimeout(() => {
-                        loadingScreen.style.display = 'none';
-                        
-                        // Start controlled fade-in sequence
-                        startControlledFadeSequence();
-                    }, 1000);
-                } else {
-                    startControlledFadeSequence();
-                }
-            }, 3000); // 3 second loading delay (FAST)
+
+                // Fade the loading screen out and start the reveal in the SAME
+                // beat — see ivFadeOutLoadingScreen().
+                ivFadeOutLoadingScreen(loadingScreen);
+                startControlledFadeSequence();
+            }, IV_BOOT.loadHold);
             return;
         }
         
@@ -147,23 +191,12 @@ function startGameWithIntro() {
         // Initialize Three.js during loading
         setTimeout(() => {
             initializeThreeJSForIntro();
-            
-            // Fade loading screen to black instead of hiding abruptly
-            if (loadingScreen) {
-                loadingScreen.style.transition = 'opacity 1s ease-out';
-                loadingScreen.style.opacity = '0';
-                
-                // Remove loading screen after fade completes
-                setTimeout(() => {
-                    loadingScreen.style.display = 'none';
-                    
-                    // Start controlled fade-in sequence
-                    startControlledFadeSequence();
-                }, 1000);
-            } else {
-                startControlledFadeSequence();
-            }
-        }, 3000); // 3 second loading delay (FAST) - CHANGED FROM 6000
+
+            // Fade the loading screen out and start the reveal in the SAME
+            // beat — see ivFadeOutLoadingScreen().
+            ivFadeOutLoadingScreen(loadingScreen);
+            startControlledFadeSequence();
+        }, IV_BOOT.loadHold);
         
     } catch (error) {
         console.error('❌ Error starting intro sequence:', error);
@@ -180,7 +213,23 @@ function startGameWithIntro() {
     }
 }
 
+// The loading screen and the reveal overlay are BOTH opaque black, one stacked
+// on the other, so the old end-to-end schedule (fade the loading screen out over
+// a second, then wait, then fade the overlay out over another) spent 1.5 s
+// cross-fading black onto black while the finished vista sat behind it. The two
+// now overlap: the loading screen dissolves into the overlay while the reveal
+// clock is already running, and IV_BOOT.preReveal is set just past
+// IV_BOOT.loadFade so the sky only starts coming up once the bar and its text
+// are gone. Nothing after the reveal is re-timed.
+function ivFadeOutLoadingScreen(loadingScreen) {
+    if (!loadingScreen) return;
+    loadingScreen.style.transition = 'opacity ' + (IV_BOOT.loadFade / 1000) + 's ease-out';
+    loadingScreen.style.opacity = '0';
+    setTimeout(() => { loadingScreen.style.display = 'none'; }, IV_BOOT.loadFade);
+}
+
 function initializeThreeJSForIntro() {
+    ivPerf('initStart');
     // Initialize basic Three.js components
     scene = new THREE.Scene();
 
@@ -259,6 +308,8 @@ function initializeThreeJSForIntro() {
     
     console.log('Three.js initialized for intro sequence');
     
+    ivPerf('rendererReady');
+
     // Create Earth atmosphere immediately after Three.js init
     createEarthAtmosphere();
     setupEarthSurfaceView();
@@ -267,7 +318,9 @@ function initializeThreeJSForIntro() {
 
     // The launch-pad sky is built and kept for the launch sequence, but the
     // PRE-LAUNCH menu now sits in front of the hero vista instead of it.
+    ivPerf('padSkyReady');
     buildIntroVista();
+    ivPerf('vistaReady');
     
     // IMMEDIATELY create black overlay to prevent flash
     const blackOverlay = document.createElement('div');
@@ -278,6 +331,10 @@ function initializeThreeJSForIntro() {
     document.body.appendChild(blackOverlay);
 
     console.log('⚫ Black overlay created immediately to prevent flash');
+
+    // Pay the shader-compile stall HERE, behind the loading screen.
+    ivWarmFirstFrame();
+    ivPerf('warmDone');
 
     // Initialize camera system with player ship
     console.log('========================================');
@@ -293,6 +350,35 @@ function initializeThreeJSForIntro() {
         console.log('✅ Camera system initialized in intro mode');
     } else {
         console.warn('⚠️ Camera system initialization deferred - will retry after models load');
+    }
+}
+
+// Draw the vista once while the loading screen is still opaque over it.
+//
+// Every shader in the scene — photosphere, corona, chromosphere, the two
+// planet-presence materials, the rings, the sky shell — compiles on the frame
+// it is first drawn, and that frame was measured at 2532 ms. It used to fall
+// AFTER startBackgroundColorFade() had armed the overlay transition and the
+// button timer, so the browser could not run either until the stall ended: the
+// reveal and the menu both arrived ~2.5 s late, on top of their own durations.
+// Paying it here costs the player nothing (the loading bar is still up) and
+// hands the reveal a thread that is actually free, which is the difference
+// between a menu at t=14.8 s and a menu at t=5-6 s.
+//
+// renderer.compile() is deliberately NOT used: in r128 it walks the whole
+// scene, so it would also compile the launch-pad sky dome and its three cloud
+// planes — hidden objects that a real render skips. One render compiles exactly
+// what is on screen and nothing else.
+function ivWarmFirstFrame() {
+    try {
+        if (!renderer || !scene || !camera) return;
+        const t0 = performance.now();
+        if (typeof gameRender === 'function') gameRender(scene, camera);
+        else renderer.render(scene, camera);
+        ivPerf('warmMs', performance.now() - t0);
+        console.log('🔥 Intro first frame warmed in ' + Math.round(performance.now() - t0) + 'ms');
+    } catch (e) {
+        console.warn('Intro warm frame skipped:', e);
     }
 }
 
@@ -395,8 +481,12 @@ function startLoadingAnimation() {
         "Ready for launch!"
     ];
     
+    // Paced to finish inside IV_BOOT.loadHold. The bar used to run ~3 s because
+    // the hold was 3 s; the hold is now 1.1 s, and a bar still sitting at 40%
+    // when the screen fades reads as a stall, not as loading.
+    const step = 100 / Math.max(6, (IV_BOOT.loadHold - 150) / 45);
     const interval = setInterval(() => {
-        progress += 1.5 + Math.random() * 2.0; // FAST - takes ~3 seconds
+        progress += step * (0.75 + Math.random() * 0.5);
         progress = Math.min(progress, 100);
         
         const loadingBar = document.getElementById('loadingBar');
@@ -418,9 +508,9 @@ function startLoadingAnimation() {
             if (loadingText) {
                 loadingText.textContent = "Ready for launch!";
             }
-            console.log('🚀 Loading animation completed in ~3 seconds');
+            console.log('🚀 Loading animation completed');
         }
-    }, 60); // Update every 60ms - fast updates
+    }, 45); // Update every 45ms - fast updates
     
     console.log('🚀 Loading bar animation started with FAST progress');
 }
@@ -468,7 +558,7 @@ function startControlledFadeSequence() {
         // No additional delay needed
         console.log('✨ Fade sequence initiated, buttons will appear when sky transition finishes');
         
-    }, 500); // T+0.5 seconds: Background fade starts 0.5s after loading screen disappears (total elapsed: 4.5s from start)
+    }, IV_BOOT.preReveal);
 }
 
 function setupIntroContentFirst() {
@@ -546,23 +636,23 @@ function startBackgroundColorFade() {
         return;
     }
     
-    // Fade the black overlay to transparent over 2.5 seconds
+    // Fade the black overlay to transparent, revealing the hero vista
     setTimeout(() => {
-        blackOverlay.style.transition = 'opacity 2.5s ease-out';
+        blackOverlay.style.transition = 'opacity ' + (IV_BOOT.overlayFade / 1000) + 's ease-out';
         blackOverlay.style.opacity = '0';
-        
+
         // Remove overlay after fade completes
         setTimeout(() => {
             blackOverlay.remove();
-            console.log('🎨 Black overlay fade complete - atmosphere revealed');
-        }, 2500);
-    }, 100); // Small delay to ensure transition is applied
-    
-    // ADD THIS: Show buttons 1 second after sky transition starts
+            console.log('🎨 Black overlay fade complete - hero vista revealed');
+        }, IV_BOOT.overlayFade);
+    }, IV_BOOT.overlayLag); // Small delay to ensure transition is applied
+
+    // Buttons come up while the sky is still rising, so they land with it
     setTimeout(() => {
         showStartButton();
-        console.log('🚀 Buttons fading in 1 second after sky transition started');
-    }, 1100); // 100ms (initial delay) + 1000ms = 1.1 seconds after sky transition starts
+        console.log('🚀 Buttons fading in behind the vista reveal');
+    }, IV_BOOT.buttonLag);
 }
 
 function initializeIntroWithVisibleUI() {
@@ -673,29 +763,31 @@ function showStartButton() {
     createStartButton();
     createDemoButton();
 
+    const fadeS = (IV_BOOT.buttonFade / 1000) + 's ease-in-out';
+
     // Fade in start button
     if (introSequence.startButton) {
         introSequence.startButton.style.opacity = '0';
-        introSequence.startButton.style.transition = 'opacity 1s ease-in-out';
+        introSequence.startButton.style.transition = 'opacity ' + fadeS;
 
         // Trigger fade-in after a brief delay
         setTimeout(() => {
             if (introSequence.startButton) introSequence.startButton.style.opacity = '1';
-        }, 100);
+        }, 60);
     }
 
     // Fade in demo button
     if (introSequence.demoButton) {
         introSequence.demoButton.style.opacity = '0';
-        introSequence.demoButton.style.transition = 'opacity 1s ease-in-out';
+        introSequence.demoButton.style.transition = 'opacity ' + fadeS;
         setTimeout(() => {
             if (introSequence.demoButton) introSequence.demoButton.style.opacity = '1';
-        }, 300);
+        }, 150);
     }
 
     // Fade in skip button
     if (introSequence.skipButton) {
-        introSequence.skipButton.style.transition = 'opacity 1s ease-in-out';
+        introSequence.skipButton.style.transition = 'opacity ' + fadeS;
         introSequence.skipButton.style.opacity = '0.7';
     }
 
@@ -828,14 +920,16 @@ function setupEarthSurfaceView() {
 // hero world is then placed to land at another. That keeps the composition — and
 // the menu's clear centre column — identical on any aspect ratio.
 //
-// PRESS TO LAUNCH cuts back to the launch-pad camera behind a short veil, which
-// is the only thing the launch path sees change: countdown still starts from
-// camera (0,10,0) under the sky dome, so countdown → launch → transition, plus
-// skip and demo, all run exactly as before.
+// PRESS TO LAUNCH no longer cuts away from it. The countdown and the ascent are
+// flown THROUGH this vista (ivCameraPose's launch term); phase timings, UI,
+// audio, the fade to black and the handoff to setupNormalGameContent are all
+// untouched, and skip / demo still come straight here as before. The launch-pad
+// dome is still built and still owns the path where the vista fails to build.
 // =============================================================================
 
 const introVista = {
     active: false,
+    launchP: 0,         // 0 = menu drift, 1 = end of the departure burn
     group: null,
     backdrop: null,
     sun: null,
@@ -866,6 +960,28 @@ const IV_FAR_DIST = 1500, IV_FAR_R = 150;
 // wanders off its mark, so every boot shows the same frame at the same second.
 const IV_DRIFT_DEG = 3.2;         // +/- yaw about Sol
 const IV_DRIFT_HZ = 0.055;
+
+// --- the departure burn -----------------------------------------------------
+// PRESS TO LAUNCH used to cut back to the launch-pad dome, which handed the
+// player 16 uninterrupted seconds of a two-stop blue ramp (measured: luminance
+// std 3.0-9.1 on the sky patch, 21-29 full frame, against 57/63 on this vista)
+// for the countdown, LIFTOFF and the whole ascent. The single biggest promise
+// in the game — leaving — was being drawn on a blank wall. So the countdown and
+// the burn now play THROUGH the vista: same star, same worlds, same painted sky.
+//
+// The move is an ARC AT CONSTANT-OR-CLOSING RADIUS about Sol, never a retreat:
+// the star's apparent size grows by 1/IV_LAUNCH_DIST_K over the burn and never
+// shrinks (protected constraint — measured: the star's disc holds 343-364 px of
+// a 900 px frame, 38-40%, from boot through the whole burn), while the swept
+// yaw throws the hero world across the frame — parallax, which is what actually
+// reads as speed. The camera also climbs and banks, so the horizon-line of the
+// composition rolls the way a vehicle leaving a gravity well does.
+const IV_LAUNCH_YAW_DEG = 28;     // arc swept about Sol across the 12 s burn
+const IV_LAUNCH_DIST_K = 0.88;    // 340u -> 299u: the star gets BIGGER, not smaller
+const IV_LAUNCH_RISE = 62;        // units of climb, for vertical parallax
+const IV_LAUNCH_SUN_FX = -0.28;   // the star settles nearer the middle-left...
+const IV_LAUNCH_SUN_FY = 0.34;    // ...and lower, as if the camera were rising
+const IV_LAUNCH_ROLL = 0.075;     // rad of bank into the arc
 
 // ---------------------------------------------------------------------------
 // Painted deep-space sky. A shader doing 5-octave 3D noise over a full frame
@@ -1240,15 +1356,32 @@ function _ivTans() {
     return { tx: ty * aspect, ty: ty };
 }
 
+// Burn shaping. NOT a smoothstep: smoothstep leaves the derivative at zero for
+// the first second, so the frame sat dead still through the word LIFTOFF — the
+// one beat that has to move. A quarter of the rate is delivered as an impulse
+// and the rest accelerates, so the camera responds on the cut and is ~7x faster
+// by the end of the burn than at its start.
+function _ivBurn(p) {
+    const q = Math.max(0, Math.min(1, p || 0));
+    return 0.25 * q + 0.75 * q * q;
+}
+
 function ivCameraPose(t) {
     const S = new THREE.Vector3(IV_SUN.x, IV_SUN.y, IV_SUN.z);
-    const yaw = Math.sin(t * IV_DRIFT_HZ) * IV_DRIFT_DEG * Math.PI / 180;
-    const dist = IV_CAM_DIST + Math.sin(t * 0.037) * 14;
+    const e = _ivBurn(introVista.launchP);
+    const yaw = Math.sin(t * IV_DRIFT_HZ) * IV_DRIFT_DEG * Math.PI / 180
+              + e * IV_LAUNCH_YAW_DEG * Math.PI / 180;
+    const dist = (IV_CAM_DIST + Math.sin(t * 0.037) * 14) * (1 - e * (1 - IV_LAUNCH_DIST_K));
 
     const off = new THREE.Vector3(IV_CAM_DIR.x, IV_CAM_DIR.y, IV_CAM_DIR.z)
         .normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw).multiplyScalar(dist);
-    off.y += Math.sin(t * 0.16) * 8;
+    off.y += Math.sin(t * 0.16) * 8 + e * IV_LAUNCH_RISE;
     const pos = S.clone().add(off);
+
+    // Where the star is asked to land. Fixed for the menu; slides down-inward
+    // during the burn so the frame re-composes as the worlds sweep out of it.
+    const sunFX = IV_SUN_FX + e * (IV_LAUNCH_SUN_FX - IV_SUN_FX);
+    const sunFY = IV_SUN_FY + e * (IV_LAUNCH_SUN_FY - IV_SUN_FY);
 
     const toSun = S.clone().sub(pos).normalize();
     const T = _ivTans();
@@ -1267,8 +1400,8 @@ function ivCameraPose(t) {
         up.crossVectors(right, fwd).normalize();
         const c = Math.max(0.25, toSun.dot(fwd));
         fwd = toSun.clone().multiplyScalar(1 / c)
-            .addScaledVector(right, -IV_SUN_FX * T.tx)
-            .addScaledVector(up, IV_SUN_FY * T.ty)
+            .addScaledVector(right, -sunFX * T.tx)
+            .addScaledVector(up, sunFY * T.ty)
             .normalize();
     }
     right.crossVectors(fwd, WORLD_UP).normalize();
@@ -1308,9 +1441,11 @@ function buildIntroVista() {
 
         // --- painted sky ----------------------------------------------------
         const t0 = performance.now();
+        const _tex = _ivSkyTexture();
+        ivPerf('skyMs', performance.now() - t0);
         const backdrop = new THREE.Mesh(
             new THREE.SphereGeometry(60000, 28, 18),
-            new THREE.MeshBasicMaterial({ map: _ivSkyTexture(), side: THREE.BackSide, depthWrite: false, fog: false })
+            new THREE.MeshBasicMaterial({ map: _tex, side: THREE.BackSide, depthWrite: false, fog: false })
         );
         backdrop.position.set(IV_SUN.x, IV_SUN.y, IV_SUN.z);
         backdrop.frustumCulled = false;
@@ -1408,8 +1543,9 @@ function applyIntroVistaCamera(tSec) {
     camera.position.copy(pose.pos);
 
     // Roll via the up-vector so lookAt() produces the sway, instead of us
-    // stomping rotation.z after the fact.
-    const roll = Math.sin(tSec * 0.21) * 0.012;
+    // stomping rotation.z after the fact. During the burn the sway is joined by
+    // a steady bank into the arc.
+    const roll = Math.sin(tSec * 0.21) * 0.012 + _ivBurn(introVista.launchP) * IV_LAUNCH_ROLL;
     camera.up.copy(pose.up).applyAxisAngle(pose.fwd, roll);
     camera.lookAt(pose.pos.clone().addScaledVector(pose.fwd, 1000));
 
@@ -1430,11 +1566,23 @@ function updateIntroVista() {
     if (typeof window.updateStarPhotospheres === 'function') window.updateStarPhotospheres(0.016);
 }
 
-// Torn down when the player commits: LAUNCH cuts to the pad, SKIP/DEMO wipe the
-// whole scene anyway. Idempotent so both paths can call it.
+// Drives the vista during the burn. progress is 0..1 across
+// introSequence.duration.launch; the countdown calls plain updateIntroVista()
+// so its ten seconds are the same idle drift the menu had.
+function updateIntroVistaLaunch(progress) {
+    if (!introVista.active) return false;
+    introVista.launchP = Math.max(0, Math.min(1, progress));
+    updateIntroVista();
+    return true;
+}
+
+// Torn down when the player commits: the launch disposes it from
+// setupNormalGameContent() once the screen is already black, SKIP/DEMO wipe the
+// whole scene anyway. Idempotent so every path can call it.
 function disposeIntroVista() {
-    if (!introVista.group) { introVista.active = false; return; }
+    if (!introVista.group) { introVista.active = false; introVista.launchP = 0; return; }
     introVista.active = false;
+    introVista.launchP = 0;
 
     // Un-register the vista star from the shared corona ticker, so nothing
     // detached keeps being animated once the scene is cleared.
@@ -1470,42 +1618,6 @@ function disposeIntroVista() {
     introVista.planet = null;
     introVista.farPlanet = null;
     if (camera && camera.up) camera.up.set(0, 1, 0);
-}
-
-// Short black veil, so the jump from "hanging off Sol" to "standing on the pad"
-// reads as a deliberate cinematic cut rather than a teleport glitch.
-function introVistaCutToLaunchPad() {
-    if (!introVista.active) return;
-
-    const swap = () => {
-        disposeIntroVista();
-        restoreIntroSkyObjects();
-        if (camera && introSequence.cameraOriginal.position) {
-            camera.up.set(0, 1, 0);
-            camera.position.copy(introSequence.cameraOriginal.position);
-            const r = introSequence.cameraOriginal.rotation;
-            camera.rotation.set(r.x, r.y, r.z);
-        }
-    };
-
-    let veil = null;
-    try {
-        veil = document.createElement('div');
-        veil.id = 'introVistaCut';
-        veil.style.cssText = 'position:fixed;inset:0;background:#000;opacity:0;' +
-            'pointer-events:none;z-index:26;transition:opacity 0.28s ease-in;';
-        document.body.appendChild(veil);
-        requestAnimationFrame(() => { veil.style.opacity = '1'; });
-    } catch (e) { veil = null; }
-
-    if (!veil) { swap(); return; }
-
-    setTimeout(() => {
-        swap();
-        veil.style.transition = 'opacity 0.9s ease-out';
-        veil.style.opacity = '0';
-        setTimeout(() => { if (veil && veil.parentNode) veil.remove(); }, 950);
-    }, 300);
 }
 
 function createEarthAtmosphere() {
@@ -1932,9 +2044,13 @@ function cleanupIntroHandlers() {
 function beginLaunchSequence() {
     console.log('🚀 Player initiated launch sequence');
 
-    // Cut from the hero vista back to the launch pad behind a short veil, so
-    // the countdown starts from exactly the camera/sky state it always had.
-    introVistaCutToLaunchPad();
+    // NOTE: the countdown deliberately does NOT cut back to the launch-pad sky
+    // dome. That dome's fragment shader is a two-stop blue ramp plus one sun
+    // lobe (see createEarthAtmosphere) and cannot exceed luminance std ~5, so
+    // cutting to it spent the countdown, LIFTOFF and the ascent on a blank
+    // wall. The burn is flown through the hero vista instead — see
+    // ivCameraPose()'s launch term and animateLaunchPhase(). The dome is still
+    // built and still owns the fallback path if the vista failed to build.
 
     // Start Launch Screen soundtrack now that the user has explicitly
     // clicked Start (satisfies browser autoplay gating).  Intro.mp3 is
@@ -2139,7 +2255,10 @@ function animateSurfacePhase(elapsed) {
 
 function animateCountdownPhase(elapsed) {
     const progress = elapsed / introSequence.duration.countdown;
-    
+
+    // The ten seconds before LIFTOFF are the hero vista, still drifting.
+    if (introVista.active) updateIntroVista();
+
     // Show countdown overlay WITH WIPE-DOWN EFFECT
     const overlay = document.getElementById('introCountdownOverlay');
     if (overlay && overlay.classList.contains('hidden')) {
@@ -2188,17 +2307,26 @@ function animateLaunchPhase(elapsed) {
         introSequence.launched = true;
     }
     
-    // Extended camera movement - go much higher to make Earth disappear completely
-    const startPos = introSequence.cameraOriginal.position;
-    const extendedTargetPos = new THREE.Vector3(0, 80000, 0);
-    
-    camera.position.lerpVectors(startPos, extendedTargetPos, easeProgress);
-    
-    // Gradually look more forward as we ascend
-    const startRotX = introSequence.cameraOriginal.rotation.x;
-    const targetRotX = 0;
-    camera.rotation.x = THREE.MathUtils.lerp(startRotX, targetRotX, easeProgress);
-    
+    if (introVista.active) {
+        // Departure burn, flown through the hero vista: the star closes and
+        // holds the frame while the worlds sweep across it. Raw progress, not
+        // easeOutQuart — _ivBurn() does the shaping, and it accelerates rather
+        // than front-loading the speed the way easeOutQuart would.
+        updateIntroVistaLaunch(progress);
+    } else {
+        // Fallback (vista failed to build): the original pad ascent.
+        // Extended camera movement - go much higher to make Earth disappear completely
+        const startPos = introSequence.cameraOriginal.position;
+        const extendedTargetPos = new THREE.Vector3(0, 80000, 0);
+
+        camera.position.lerpVectors(startPos, extendedTargetPos, easeProgress);
+
+        // Gradually look more forward as we ascend
+        const startRotX = introSequence.cameraOriginal.rotation.x;
+        const targetRotX = 0;
+        camera.rotation.x = THREE.MathUtils.lerp(startRotX, targetRotX, easeProgress);
+    }
+
     // Intense camera shake during launch
     introSequence.shakeIntensity = 1.0 - (progress * 0.7);
     
@@ -2552,10 +2680,15 @@ function updateLaunchUI(progress) {
 }
 
 function applyCameraShake() {
-    const shakeX = (Math.random() - 0.5) * introSequence.shakeIntensity * 0.02;
-    const shakeY = (Math.random() - 0.5) * introSequence.shakeIntensity * 0.02;
-    const shakeZ = (Math.random() - 0.5) * introSequence.shakeIntensity * 0.02;
-    
+    // 0.02 world units of jitter is a visible rumble when the nearest geometry
+    // is the pad a few units away; on the vista the nearest thing is 330 u out,
+    // where the same jitter is 1/10000 of a pixel. Scale it so the rumble is
+    // the same ANGULAR size (~2 px peak at full intensity) in both framings.
+    const amp = 0.02 * (introVista.active ? 110 : 1);
+    const shakeX = (Math.random() - 0.5) * introSequence.shakeIntensity * amp;
+    const shakeY = (Math.random() - 0.5) * introSequence.shakeIntensity * amp;
+    const shakeZ = (Math.random() - 0.5) * introSequence.shakeIntensity * amp;
+
     camera.position.add(new THREE.Vector3(shakeX, shakeY, shakeZ));
 }
 
@@ -2590,6 +2723,14 @@ function triggerLaunchEffects() {
 }
 
 function transitionSkyToSpace(progress) {
+    // On the vista the sky is a painted 60000u shell we are inside of, so the
+    // clear colour is never seen — but leave it black rather than lerping it up
+    // to sky blue, so nothing can flash pale if a frame ever misses the shell.
+    if (introVista.active) {
+        if (typeof renderer !== 'undefined' && renderer) renderer.setClearColor(0x000003);
+        return;
+    }
+
     // Transition sky color from blue to black
     if (introSequence.skyDome) {
         const startColor = new THREE.Color(0x87CEEB); // Sky blue
@@ -3770,7 +3911,23 @@ introStyles.textContent = `
     /* Overlays - Higher z-index than fade overlay */
     #introCountdownOverlay {
         z-index: 65 !important;
-        background: radial-gradient(ellipse at center, rgba(0,20,40,0.3) 0%, rgba(0,0,0,0.7) 100%);
+        /* Was a FULL-FRAME vignette: rgba(0,20,40,0.3) at the centre out to
+           rgba(0,0,0,0.7) at the corners. It existed to lift countdown text off
+           the flat pale-blue pad sky — but the countdown now plays over the hero
+           vista, and that vignette was eating it: measured, it dropped the frame
+           from mean 59.1 / std 63.0 to mean 38.9 / std 38.5, blacking the star,
+           the nebula and both worlds by 50-70%. Replaced with a scrim that is
+           only as large as the text it serves: it still puts a dark bed under
+           the timer / MISSION CONTROL lines (which sit in the composition's
+           deliberately empty centre column) and is fully transparent by 80% of
+           the half-width, so the star and the worlds keep their own exposure. */
+        /* Centred at 52%, not 50%: the star sits LEFT of centre in this
+           composition, so nudging the scrim two points right keeps it off the
+           star's limb while still covering the text, which is centred. */
+        background: radial-gradient(ellipse 24% 28% at 52% 45%,
+                    rgba(0,6,16,0.55) 0%,
+                    rgba(0,4,12,0.24) 50%,
+                    rgba(0,0,0,0.00) 78%);
     }
     
     #atmosphereFadeOverlay {

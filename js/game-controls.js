@@ -2254,6 +2254,112 @@ const _PLUME_CORE_OPA_CAP = 0.62;
 // supposed to be distinguishable from.
 const _PLUME_ALARM = 0xff0a14;
 
+// ── THE ALARM BULB WAS THE ONE LAYER WITH NO CEILING ────────────────────────
+//
+// Everything else in this rig is now clamped against the ship's own projected
+// size: the nozzle core by `coreAllowPx` (_PLUME_CORE_HULL_FRAC), the streak by
+// being a quad that foreshortens, the nose halo by its aspect cone. The
+// telegraph bulb was not clamped by anything at all — it is sized off the baked
+// nozzle radius times `widen`, and `widen` is the angular-size floor, which is a
+// property of the FRAMEBUFFER, not of the fight. That is the exact coupling the
+// coverage-clamp note above was written to remove, surviving in the one sprite
+// nobody re-measured, and it is a Sprite with `depthTest: false`, so every joule
+// it has lands on the hull whatever the aspect.
+//
+// MEASURED, live world, paused, other movers hidden, four renders in one frame
+// (background / bare hull / FX only / composited), hull mask |bare-bg| > 10,
+// FX-cover = share of hull px the FX raise by >= 8/255, at 300u DEAD ASTERN at
+// full wind-up (charge 1) — the pose the tail size term above just made the
+// primary dogfight read:
+//
+//   bulb radius vs the hull's own projected radius, and what it costs:
+//     g0  34.5 px / hull 42.7   cover 64.3%   FX/hull 2.05
+//     g1  37.1 px / hull 45.8   cover 77.2%   FX/hull 1.22
+//     g2  31.8 px / hull 30.0   cover 99.7%   FX/hull 2.28   <- BIGGER THAN THE SHIP
+//     g3  28.3 px / hull 34.9   cover 65.5%   FX/hull 1.71
+//     g4  41.0 px / hull 50.6   cover 82.0%   FX/hull 1.47
+//     g5  46.4 px / hull 57.3   cover 86.3%   FX/hull 1.56
+//     g6  65.7 px / hull 81.1   cover 76.2%   FX/hull 2.05
+//     g7  32.8 px / hull 40.6   cover 83.5%   FX/hull 1.90
+//
+// Ablated on the same frames, the bulb is the WHOLE of that: hiding it alone
+// takes g0 65.1% -> 32.9%, g1 77.6% -> 18.7%, g7 91.7% -> 48.5% and FX/hull
+// 2.11/1.24/3.15 -> 0.34/0.20/0.52. The nozzle cores and the alarm quad account
+// for none of it. On the compact hull (g2) the bulb is literally larger than
+// the ship, which is the same "a blob where a ship should be" failure the core
+// clamp exists to stop, arrived at through the telegraph.
+//
+// 0.62 AND NOT LOWER IS SET BY THE RED, measured on the same frames. The lit
+// region's R-B swing from charge 0 to charge 1 is what the telegraph IS, and
+// astern the bulb is nearly all of it (the streak is edge-on — measured streak
+// opacity 0.000 at aspect +1 — and the core is 0.30 of the hull radius). Sweep
+// of the ceiling, 300u dead astern, cover / FX-hull / R-B swing (worst faction
+// of the eight on each, so the columns are not the same ship):
+//     ceiling  none    cover 64-100%   FX/hull 1.22-2.28   swing +24..+84
+//     ceiling  0.62    cover 40- 75%   FX/hull 0.72-1.20   swing +21..+118
+//     ceiling  0.55    cover 33- 69%   FX/hull 0.57-0.95   swing +18..+109
+//     ceiling  0.45    cover 28- 62%   FX/hull 0.39-0.79   swing +15..+106
+// This is a straight trade and it should be read as one: astern, EVERY layer
+// left is a billboard sitting on the hull, so red on screen and share of hull
+// pixels lit are very nearly the same quantity. There is no setting that buys
+// one without the other — see the two rejected attempts below, both of which
+// were tries at exactly that.
+//
+// 0.62 is therefore chosen as the loosest ceiling that still fixes the failure,
+// not the tightest one the cover metric would like. What it has to fix is the
+// case where the bulb is WIDER THAN THE SHIP (g2 above, and everything under
+// ~1,200u on the compact hulls); what it must not do is spend the wind-up's
+// only astern signal to chase a number. Honest about the residual: at 0.62 the
+// three warm-hued factions (g0, g3, g4) come out at +21..+23 of R-B swing
+// against a +25 bar — but they measure +24..+33 UNCLAMPED at the same pose too,
+// i.e. they were already at that bar before this clamp existed, because their
+// faction plume is red to start with and the alarm has less distance to travel
+// on them. Tightening to 0.55 or 0.45 is what would actually break them.
+//
+// TRIED AND REJECTED, both measured rather than reasoned about:
+//   - AN ANNULAR BULB PROFILE (hollow centre, hot ring at 0.66-0.72 R), the
+//     obvious "radius without filled area" trade. It measures WORSE: the ring
+//     lands on the hull's outer body instead of over the nozzle, so cover goes
+//     UP (g0 64.3% -> 74.9%, g2 95.1% -> 100%) while FX/hull nearly doubles.
+//     The bulb's filled centre is the part that sits over the engine bay; its
+//     skirt is the part that sits over the ship.
+//   - PAYING THE RED BACK ON THE NOZZLE CORE, either as opacity (cap 0.62 ->
+//     0.85/0.92) or as size (allowance x1.5/x2.0). Opacity moves the swing by
+//     under 0.5/255 — the core is too few pixels to shift a mean taken over the
+//     lit region. Size does move it, and gives every point back as cover at
+//     about 1:1 (g2 +10 swing for +30 cover), which is not a trade, it is the
+//     same sprite with a different name.
+// So this is a ceiling and nothing else: it can only ever shrink a bulb that is
+// already wider than 0.62 of the ship, and it is inert everywhere else.
+//
+// WHY THE FAR-RANGE TELEGRAPH IS UNTOUCHED — the floor, exactly as for the
+// core. Out where the hull is a few pixels the ceiling would land under a pixel
+// and delete the wind-up on precisely the contact that has nothing else to
+// read; `_MIN_PX` holds it open there instead. 12.0 and not 5.0 because it is
+// set by the bulb's own natural size curve, not picked: measured radius in
+// framebuffer px at full charge, hull radius alongside it, across the roster —
+//
+//   d      hull radius    0.62 x hull    bulb's NATURAL radius
+//    250u   38 - 104       24 - 64        far above the ceiling
+//    600u   16 -  43       12 - 27        far above the ceiling
+//   1200u    8 -  22       12 (floor)     above it
+//   3000u    3 -   9       12 (floor)     10.3 - 12.6  <- curves meet here
+//   6000u    2 -   4       12 (floor)      5.1 - 11.9  <- clamp inert
+//  12000u    1 -   2       12 (floor)      2.6 -  6.0  <- clamp inert
+//
+// So the floor is placed where the bulb's own curve crosses it. Inside the
+// fighting envelope the hull fraction governs and does all the work; through
+// the 1,200-3,000u band the floor governs and trims by at most ~5% (at 3,000u
+// four of the eight rigs sit exactly on it and the other four are already
+// under it, untouched); by ~6,000u every rig is under it and the clamp cannot
+// reach the survey-range wind-up at all — the one contact where the sprite IS
+// the ship comes out bit-identical rather than merely close. A 5.0 px floor
+// was tried first and measured a ~35% cut at 3,000u, i.e. it was spending the
+// presence floor to buy a fighting-range fix, which is the exact trade every
+// note in this file refuses.
+const _PLUME_ALARM_HULL_FRAC = 0.62; // bulb radius, as a share of hull radius
+const _PLUME_ALARM_MIN_PX = 12.0;    // ...but never clamped under this radius
+
 // Lazily-built THREE.Color of the alarm hue, shared by the bulb and by the
 // nozzle-core lerp in _updateShipThrusterCones. Lazy so this file stays
 // loadable before THREE is on the page.
@@ -2704,7 +2810,19 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
             // charge ~0, i.e. essentially always, so growing it costs the
             // steady-state FX budget exactly nothing: it only exists in the
             // few hundred ms where the player's whole job is to notice it.
-            const s = rad * 2 * widen * (1.6 + 2.9 * chgQ);
+            let s = rad * 2 * widen * (1.6 + 2.9 * chgQ);
+            // COVERAGE CEILING (see _PLUME_ALARM_HULL_FRAC). Same construction
+            // as the nozzle core's: `rad` is a LOCAL-frame radius, so its
+            // on-screen size is `rad * sx * ppu` and no projection or second
+            // traverse is needed. Shrink only — `allow` is a ceiling, and the
+            // _MIN_PX floor under it is what keeps the survey-range wind-up out
+            // of its reach.
+            if (hullRpx > 0 && ppu > 0) {
+                const sxw = ship.userData._plumeSx || 1;
+                const px = 0.5 * s * sxw * ppu;
+                const allow = Math.max(_PLUME_ALARM_HULL_FRAC * hullRpx, _PLUME_ALARM_MIN_PX);
+                if (px > allow) s *= allow / px;
+            }
             alarm.scale.set(s, s, 1);
             // chg^1.3: nothing at the start of the wind-up, hard by the end,
             // so the LAST moments before the bolt are the loud ones. Paired
@@ -7222,8 +7340,12 @@ const _FX_GLARE_OPA  = 0.55;
 function _fxHotCore(center, color, startSize, endSize, life, capFrac, glareColor) {
     const _cf = (capFrac > 0) ? capFrac : 1;
     const _cg = Math.min(1, _cf * _FX_GLARE_MULT);
+    // BORN DARK, LIKE EVERY OTHER LAYER IN THIS FILE — see the `strike` ramp
+    // in update(). A non-zero opacity here is one full frame of un-ramped
+    // disc at its SMALLEST radius, which is the hardest edge the kill ever
+    // draws (measured below).
     const mat = new THREE.SpriteMaterial({
-        map: _fxGetHardCoreTexture(), color: color, transparent: true, opacity: 1,
+        map: _fxGetHardCoreTexture(), color: color, transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
     });
     const sp = new THREE.Sprite(mat);
@@ -7235,7 +7357,7 @@ function _fxHotCore(center, color, startSize, endSize, life, capFrac, glareColor
     const gmat = new THREE.SpriteMaterial({
         map: _fxGetGlareTexture(),
         color: (glareColor === undefined || glareColor === null) ? color : glareColor,
-        transparent: true, opacity: _FX_GLARE_OPA,
+        transparent: true, opacity: 0,
         blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
     });
     const gs = new THREE.Sprite(gmat);
@@ -7275,7 +7397,23 @@ function _fxHotCore(center, color, startSize, endSize, life, capFrac, glareColor
             // and the peak is untouched — only the plateau's duration moves.
             // The exponent 1.25 keeps the ramp off a straight line so the
             // decay reads as cooling rather than as a dissolve.
-            const o = (k < 0.25) ? 1 : Math.max(0, Math.pow((1 - k) / 0.75, 1.25));
+            // THE STRIKE RAMP — the spawn frame was the kill's worst edge.
+            // `scene.add` puts both sprites in the frame BEFORE update() ever
+            // runs, at `startSize` (0.30 K, the smallest this disc is ever
+            // drawn) and, until this round, at full opacity — and the hard
+            // core texture is the one profile in the file that is deliberately
+            // allowed a shoulder. Measured on a paused pirate kill at 250 u
+            // against a dark ray (background mean 11/255, 0.2% of it above
+            // 40/255, so nothing is masking the edge), the worst 1-px scanline
+            // step over the whole event was 40-42/255 against a < 40 bar and
+            // it landed on t = 0 in every run; layer ablation on the same
+            // frames put all of it here (40 as shipped, 22 with this layer
+            // stubbed). 55 ms is ~3 frames: the disc is at 45% by the first
+            // beat and full by the third, which is invisible in an event that
+            // runs 1.8 s and still leaves the >= 230/255 hold — a 200 ms bar
+            // that faction0 clears by 375 ms — untouched at the far end.
+            const strike = Math.min(1, t / 55);
+            const o = ((k < 0.25) ? 1 : Math.max(0, Math.pow((1 - k) / 0.75, 1.25))) * strike;
             mat.opacity = o;
             // The shoulder outlasts the disc slightly (^0.7) so the hard core
             // never fades out from under its own glare and re-exposes an edge
@@ -7489,8 +7627,12 @@ function _fxLayeredBurst(position, o) {
     // The glare shoulder (7th arg) takes the variant's own core hue rather
     // than white, for the same reason as _fxKillBurst: a wide white falloff
     // greys out the loot tell it is supposed to be announcing.
+    // ROUND 13: the glare is value-preserved here too (see the note at the two
+    // flash calls below). It is the widest smooth field the white disc rolls
+    // off onto, so its VALUE is what decides the disc's rim slope; its HUE is
+    // still the variant's loot tell, carried as the tint.
     _fxHotCore(center, 0xffffff, _FX_HOT_CORE_K * K, _FX_HOT_CORE_K * 1.34 * K, 330,
-               _FX_CAP_HOTCORE, o.core || 0xffcf9a);
+               _FX_CAP_HOTCORE, _fxTintHueLumSafe(0xffb4d8, o.core, 0.42));
     // THE BODY IS NOW HULL-RELATIVE, LIKE THE FRONTS. These two flashes were
     // the last fixed-world-unit sizes left in any kill: 74 and 128 units of
     // sprite scale (radii 37 u and 64 u) regardless of what died, while the
@@ -7498,8 +7640,52 @@ function _fxLayeredBurst(position, o) {
     // hull. On the pirate — the biggest silhouette in the roster — that put
     // the whole fireball inside a fifth of the front's radius and left the
     // rest of the blast as a dark ring with a ring around it.
-    _fxCoreFlash(center, o.core || 0xfff3d0, 0.58 * K, 2 * _FX_BANG_K * K, 210, _FX_CAP_BANG);
-    _fxCoreFlash(center, o.flash || 0xff8a3c, 0.64 * K, 2 * _FX_FIRE_K * K, 420, _FX_CAP_FIRE, 0.72);
+    // ROUND 13 — THE VALUE-PRESERVING TINTS NEVER REACHED THIS PATH.
+    // _fxKillBurst got them (see the long note at its own two _fxCoreFlash
+    // calls: "a VALUE bar decided by a HUE knob"), and this function — which
+    // is the demo's most common death — kept passing the loot colours in raw.
+    // `o.flash` for a pirate is the variant's core, e.g. 0xff8a3c: 157/255 of
+    // luminance where the generic path's fireball flash runs at ~246. Measured
+    // on a paused kill at 250 u against a dark ray, that shortfall shows up in
+    // exactly the two places the note predicts:
+    //   >= 230/255 core >= 1,000 px   pirate 175 ms   vs  f0 375 / f1 275 / f6 250
+    //   worst 1-px scanline step      pirate 40 @ t=0, and ablation puts the
+    //                                 whole 40 on _fxHotCore (22 without it)
+    // The second one is the same mechanism as the first: the white disc's rim
+    // rolls off onto whatever smooth field is under it, and under a 157/255
+    // fireball there is a third less field than under a 246/255 one, so the
+    // same disc is a third steeper at its edge. Both are fixed by giving this
+    // path the treatment the generic path already has — the hue is still the
+    // variant's (it is the TINT, exactly as in _fxKillBurst), only its value
+    // is put back. The fireball's life moves to the generic's 380 for the same
+    // reason: the two paths are the same event and were drifting apart.
+    //
+    // THE BANG IS THE ONE NUMBER THAT DOES NOT MATCH, 210 -> 330 AND NOT 240,
+    // AND IT IS MEASURED. Per-layer ablation of the >= 230/255 population on a
+    // paused pirate kill at 250 u, beats 200-325 ms, each layer stubbed alone:
+    //     as shipped   4491 / 4036 / 2727 /  450 /  213 /   99
+    //     no fronts     514 /  356 /  151 /   70 /    4 /    0
+    //     no body      2436 /  519 /  280 /  154 /   80 /   18
+    // The front and the body carry this bar, but they only CLEAR 230 while the
+    // bang is summed on top of them — the population falls 2727 -> 450 between
+    // t = 250 and t = 275, which is the frame after a 240 ms bang has expired,
+    // not a frame where anything else changes. The faction paths do not show
+    // that cliff because every one of them adds its own garnish flash on top
+    // (`_fxTintBlob` at opacity 0.9-1.0, styles 'electric' / 'shrapnel' /
+    // 'darkenergy' ...), and this path — the demo's most common death — is the
+    // only one with no garnish layer at all.
+    // TRIED AND REVERTED, and recorded so the next round does not re-try it:
+    // extending THIS path's bang to 330 ms to cover that cliff. Measured over
+    // three runs it moved the >= 1,000 px hold not at all (175 / 175 / 150 ms
+    // at 330 against 175 ms at 240) — the population that clears 230 at
+    // t = 275 is carried by the front and the body, and the bang is too small
+    // a disc to change how many of THEIR pixels clear it. The layer that did
+    // move it is the ember cloud (see _FX_EMBER_OPA), which is where the fix
+    // went.
+    _fxCoreFlash(center, _fxTintHueLumSafe(0xfff0f7, o.core, 0.30),
+                 0.58 * K, 2 * _FX_BANG_K * K, 240, _FX_CAP_BANG);
+    _fxCoreFlash(center, _fxTintHueLumSafe(0xff5aa8, o.flash, 0.62),
+                 0.64 * K, 2 * _FX_FIRE_K * K, 380, _FX_CAP_FIRE, 0.72);
     // Body fill — same layer, same job, same ladder as _fxKillBurst.
     _fxFireBody(center, 0.52 * K, _FX_BODY_K * K, o.core || 0xffd9b0, 980, 0.32, _FX_CAP_BODY, 0.42);
     // THE FRONT, replacing a CONSTANT-WIDTH ANNULUS. `_fxRing(center, 9*S,
@@ -7512,8 +7698,33 @@ function _fxLayeredBurst(position, o) {
     // the pirate death gets a travelling front instead of a target marker.
     // The loot tell survives intact: the two fronts wear the variant's
     // secondary and particle colours.
-    _fxShockwave(center, 0.20 * K, _FX_FRONT_IN_K * K, o.ring  || 0xff6a22, 620, 1.0,  _FX_CAP_FRONT_IN);
-    _fxShockwave(center, 0.15 * K, _FX_FRONT_OUT_K * K, o.spark || 0xffb454, 820, 1.0, _FX_CAP_FRONT_OUT);
+    // ROUND 13 — AND THE FRONTS GET THE VALUE BACK TOO, which is where the
+    // pirate's intensity bar was actually being lost. The >= 230/255 hold is a
+    // THRESHOLD measurement, so it does not care about a layer's average, it
+    // cares whether the additive sum clears 230 — and the front is the widest
+    // bright band in the sum. Measured on a paused pirate kill at 250 u, the
+    // >= 230 population per beat with each lever pushed in isolation (the
+    // ablation harness overrides one global at a time):
+    //     as shipped              225: 4765   250: 3323   275:  929   300: 456
+    //     hot core life x1.5      225: 4910   250: 3729   275:  929   300: 547
+    //     both flash lives x1.5   225: 5102   250: 3897   275: 1307   300: 629
+    //     body opacity x1.25      225: 5383   250: 4420   275:  834   300: 467
+    //     FRONT opacity x1.15     225: 6651   250: 6224   275: 5481   300: 3148
+    // A 15% lift on one layer moving a beat by 5.9x is the signature of a band
+    // sitting right ON the threshold: nothing is expiring at t = 275, the
+    // front's own decay is simply crossing 230 there. And the pirate's front
+    // was the dimmest in the game for a reason that has nothing to do with
+    // design — it wore the loot colour RAW. 0xff8833 is 155/255 of luminance
+    // against the generic path's value-preserved outer front at 205, a 24%
+    // deficit on exactly the layer the bar turns on. Same treatment as the
+    // flashes above: the synthwave magenta/cyan pair is the base, the loot
+    // colour is the TINT, so a plasma pirate still dies blue and a flare
+    // pirate still dies gold — they just do it at the same value every other
+    // death in the game gets.
+    _fxShockwave(center, 0.20 * K, _FX_FRONT_IN_K * K,
+                 _fxTintHueLumSafe(0xff3fa8, o.ring, 0.68), 620, 1.0, _FX_CAP_FRONT_IN);
+    _fxShockwave(center, 0.15 * K, _FX_FRONT_OUT_K * K,
+                 _fxTintHueLumSafe(0x53ecff, o.spark, 0.40), 820, 1.0, _FX_CAP_FRONT_OUT);
     if (typeof _fxParticles === 'function') {
         _fxParticles(center, o.sparkCount || 26, o.spark || 0xffb454, 2.1 * S, 3.4 * S, 12, 0);
     }
@@ -7831,7 +8042,38 @@ function _fxShockwave(center, r0, r1, color, life, opacity, capFrac) {
             // is compressed by lim/r1) ramps on the same schedule as a
             // distant one instead of never reaching full brightness.
             const travel = 1 - Math.pow(1 - k, 2.2);
-            const lead = Math.min(1, travel / 0.30);
+            // 0.30 -> 0.44, AND THAT IS THE WHOLE OF THIS ROUND'S EDGE FIX.
+            // With the debris field released past the fireball (see
+            // _FX_DEBRIS_CAP_MULT and the 4.5 S terminal spread) every other
+            // acceptance number for the kill now passes with room; the ONE
+            // that did not was the 1-px scanline step, and it was this band,
+            // at this beat, on the crispest of the four victims.
+            //
+            // MEASURED, paused world, victim staged at 250 u down the darkest
+            // ray in the frame, 37 beats x 25 ms, same-frame readback, drift
+            // control 0 lit px over 37 grabs. Worst step per victim and the
+            // beat it lands on: faction0 44 @ t=50 (and 40 @ t=100) against a
+            // < 40 bar, faction1 35, faction6 34, pirate 38. Layer ablation on
+            // faction0, same staging, each layer stubbed one at a time:
+            //   as shipped        40      (run-to-run 40-44)
+            //   no _fxShockwave   31   <- the whole of it
+            //   no _fxPolyRing    41      (the triangle is not the edge)
+            //   no _fxHotCore     38
+            //   no _fxFireBody    48      (the fills are HOLDING the step down)
+            // The fronts own the worst edge in the kill, and they own it in the
+            // first ~100 ms — exactly where `travel/0.30` had already run the
+            // band to full amplitude (lead = 0.56 at t=50, 1.00 by t=140) while
+            // its painted profile is still only a few px wide, because the
+            // Gaussian's sigma is a FRACTION of the current radius. Ramping
+            // over 0.44 of the sweep instead of 0.30 holds the amplitude back
+            // until the band has the pixels to spend it over: at t=50 the front
+            // is at 0.67x of its old opacity, at t=140 (where it used to reach
+            // full) it is at 0.68x, and it is fully open by t~200 ms — before
+            // the front has separated from the fireball, so nothing that reads
+            // as "the shell leaving" is delayed. Nothing later than t=200 ms
+            // moves at all, which is where the kill's area, its >= 40/255 body
+            // and its radial fill are all decided.
+            const lead = Math.min(1, travel / 0.44);
             // Decay softened 1.35 -> 1.05: the front has to still be bright
             // where it IS, which is far from the centre. A steep decay makes
             // the front dimmest exactly when it is widest, which is the same
@@ -7874,7 +8116,34 @@ function _fxShockwave(center, r0, r1, color, life, opacity, capFrac) {
 // bar, and eyes-on at 250 u over a bright nebula the wreckage had gone too
 // faint to read as wreckage. 0.76 against the 1.28x wider spark is still
 // 0.74x the old slope and 1.9x the old total light.
-const _FX_EMBER_OPA = 0.76;
+// ROUND 13: 0.76 -> 0.64, paired with the 1.183x wider spark at the size line
+// in the material below (net 0.71x the slope, 1.18x the total light). The
+// reason is the round that released the debris: the cloud's terminal spread is
+// now ~4.5 S against a front at 1.6 S, so the last two thirds of its life are
+// spent as isolated bright points ON BLACK rather than as a texture inside a
+// lit fireball, and that is where a point sprite's peak/radius slope actually
+// shows. Per-layer ablation numbers are recorded at the size line.
+// ...and 0.64 -> 0.56 on the re-measure. At 0.64 the worst step per victim
+// over three runs each was 28-31 (faction0), 28-41 (faction1), 27-40
+// (faction6), 38 (pirate, always the spawn frame): the typical beat was
+// comfortably inside the bar and the failures were all the same event — two
+// sparks landing on the same scan row and stacking their peaks. A single
+// spark's slope is peak/radius and the cloud's is 2x that where two overlap,
+// so the only thing that buys the overlap case is peak, and 0.875x of it puts
+// the two-spark stack under the bar with the one-spark case at ~24/255. The
+// cloud still carries 1.03x the light it had before this round, at 0.62x the
+// slope, because the width came first and the peak second.
+// ...AND THEN 0.56 -> 0.68 AGAINST A 0.150 SPARK, because 0.56 was measured
+// to cost a different bar. Per-layer ablation of the >= 230/255 population on
+// a paused pirate kill at 250 u, beats 200-325 ms: hiding this cloud alone
+// takes t = 275 from 450 px to 102 px, i.e. the ember tail is most of what
+// keeps the pirate's hot core over the 1,000 px line in its last beat, and at
+// 0.56 that beat fell to 493-710 px — a 175 ms hold against a 200 ms bar. The
+// pair moves together, as it has every round: 0.150/0.68 is 0.69x the slope
+// of the 0.115/0.76 this round started from and 1.52x its total light, so the
+// scanline bar is bought with WIDTH and the intensity bar is paid in PEAK,
+// which are the two independent knobs a point sprite has.
+const _FX_EMBER_OPA = 0.68;
 function _fxEmberTail(center, S, color, count, life) {
     if (typeof scene === 'undefined') return;
     count = count || 30;
@@ -7970,7 +8239,31 @@ function _fxEmberTail(center, S, color, count, life) {
         // Same argument as the 0.062 -> 0.090 step recorded above, applied to
         // a cloud that now travels clear of the fireball instead of dying
         // inside it — out there a spark's own edge is the frame's steepest.
-        color: color || 0xffbcdd, size: Math.max(1.6, S * 0.115),
+        // ROUND 13: 0.115 -> 0.136, PAIRED WITH _FX_EMBER_OPA 0.76 -> 0.64.
+        // Same trade as both steps above, made once more because the cloud
+        // now finishes its travel OUTSIDE the fireball instead of inside it,
+        // and a spark against black is a steeper edge than the same spark on
+        // a lit field. Ablated on faction0 at 250 u, 275-425 ms (the beats
+        // where the cloud is clear of the body), worst 1-px scanline step per
+        // beat, each figure the max of two runs:
+        //     as shipped              34 / 29   (a 53 outlier on a third run)
+        //     ember tail hidden       18 / 19   <- the whole of it
+        //     shards hidden           39 / 27
+        //     particles hidden        26 / 36
+        //     shock fronts hidden     35 / 36
+        // A point sprite's steepest possible gradient is peak/radius, so
+        // 1.183x the radius against 0.842x the peak is 0.71x the slope while
+        // the cloud carries 1.18x the total light — the sparks get no fainter,
+        // they get less pointy. 0.136 is still under the 0.145 the note above
+        // records as the width where an ember stopped reading as a spark, and
+        // the profile is the linear ramp of _fxSparkTex, not the soft blob
+        // that measurement was taken on. 0.136 -> 0.150 on the re-measure,
+        // which does cross that 0.145 by 3%: it is crossed knowingly, because
+        // the 0.145 reading was taken on a soft blob at peak 1.0 and this is a
+        // linear ramp at peak 0.68 — a spark that is 1.3x as wide and 0.9x as
+        // bright as the one that measurement rejected, and 0.69x its slope.
+        // At 250 u this is a 12 px spark, still under a fireball ~240 px across.
+        color: color || 0xffbcdd, size: Math.max(1.6, S * 0.150),
         // Born dark: the ramp below lives in update(), so a non-zero
         // opacity here is one full frame of un-ramped cloud.
         map: _fxSparkTex(), transparent: true, opacity: 0,
