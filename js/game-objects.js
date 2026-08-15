@@ -10969,6 +10969,326 @@ const CULL_SUBPIXEL_ANG = 0.00055; // hide below ~0.6px of silhouette radius
 // several passes' worth of approach at any speed the ship can make good
 // against these distances, and it strands nothing.
 const CULL_SUBPIXEL_BACK = 0.00066;
+
+// =============================================================================
+// AERIAL PERSPECTIVE — THE DEPTH TERM THE CULL NEVER HAD
+// =============================================================================
+// THE MEASUREMENT. Same-frame census off a camera pinned at the Earth-300u
+// approach, world paused so nothing orbits between the readings
+// (.critic/r2-ab.js, .critic/ab4.json): 66 bodies drawing a silhouette of 2px
+// or more inside the frustum, 20 of them in the 6-60px band, and the three
+// biggest of those were nebula heart worlds 4,596 / 5,252 / 7,230 u out drawing
+// 79 / 69 / 50 px EACH — every one of them wearing its own ring system and its
+// own atmosphere shell. Their combined disc area, 55,417 px2, was larger than
+// the hero's own 49,174 px2: the backdrop was bigger than the subject. Measured
+// in light rather than area (the backdrop frame minus the same frame with every
+// body hidden, so the gas floor is subtracted) the backdrop bodies put
+// 5,458,948 luminance-pixels into the frame across 92,439 pixels.
+// Every reference frame we are being judged against — Starfall1.png, NMS — puts
+// ONE body in front of near-empty sky. That contrast is the entire reason their
+// planets read as worlds and ours read as one marble in a bowl of marbles.
+//
+// AFTER, same session, same frozen frame: 55 bodies, 16 in the band, and the
+// backdrop's light down to 963,539 across 12,061 pixels — 82% less light, 87%
+// fewer pixels, with the hero's own pixels UNCHANGED (image-differenced: mean
+// change inside the hero's disc 0.00/255, outside it 5.27).
+//
+// WHY THE EXISTING CULL COULD NOT FIX IT. The rule above is purely ANGULAR: a
+// body survives until its silhouette drops under ~0.6px. That is the correct
+// rule for "can the player resolve this at all", and it is the wrong rule for
+// "should this be as bright and as saturated as the thing in front of it".
+// HEART_WORLD_RADIUS is 620, so a heart world only reaches the sub-pixel floor
+// past ~1.1 MILLION units — i.e. never, at any range the galaxy contains. No
+// angular threshold can separate a 54px hero at 300u from a 54px backdrop world
+// at 6,661u, because on the angular axis they are the same body.
+//
+// SO THE TERM IS ABSOLUTE DISTANCE, AND IT IS EXTINCTION, NOT DELETION. Air —
+// or in this palette, the ionised gas the whole galaxy is drawn inside — eats
+// contrast and colour with range long before it eats detail. That is what a
+// landscape painter means by aerial perspective and it is what every one of
+// those reference frames is doing: the far ridge is not smaller, it is paler,
+// bluer and flatter. So beyond AERIAL_NEAR a body's colours are dragged toward
+// a cool haze grey and scaled down on an exponential extinction curve, and only
+// once the curve has effectively reached the void (AERIAL_CULL_K) does the body
+// stop being submitted at all. The player does not see anything vanish; they
+// see the backdrop lie down behind the subject.
+//
+// THE SYSTEM YOU ARE IN IS NEVER HAZED. Distance alone is not enough: Sol's own
+// Jupiter orbits 3,328u out, so a pure distance ramp tuned hard enough to put a
+// neighbouring nebula's super-Jupiter behind glass would also fade the gas giant
+// the player flew here to see. So a body in the SAME SYSTEM as the camera is
+// exempt outright, and only then does distance decide. Measured on the live
+// world: 8 bodies share Sol's `systemCenter` object, and it is the one system in
+// the galaxy that spans more than the 1,500u floor below — every procedural
+// system's worlds sit inside a few hundred units of their star, so they are
+// covered by the floor whether they publish a key or not.
+//
+// THE NUMBERS. The floor is 1,500u: the real dogfight band is 50-400u, the demo
+// laps a heart world at 500-700u and stands off at 700u, and a heart world sits
+// 1,650u from its own nebula's centre — all inside it. The e-folding scale of
+// 2,000u then puts the measured offenders (same session, world frozen, same
+// frame) at k = 0.77 / 0.90 / 0.94 for the three heart worlds 4,400 / 6,212 /
+// 7,129u off the Earth approach, and takes anything past ~8,500u to full
+// extinction. The curve is exp, so it degrades gracefully at any scale: it takes
+// a heart world at 41,690u — the placement another run of the same procedural
+// field produced — to k = 1.000.
+const AERIAL_NEAR = 1500;        // untouched inside this, whatever system it is in
+const AERIAL_SCALE = 2000;       // e-folding distance of the extinction curve
+// Full extinction: the body is now within 3% of the void it is drawn against,
+// so submitting it buys nothing. Hysteresis on the way back for the same reason
+// the sub-pixel floor has it — this pass runs at 6Hz and must not strobe.
+const AERIAL_CULL_K = 0.97;
+const AERIAL_BACK_K = 0.955;
+// ...with one refusal: we never DELETE something whose BALL still draws big. A
+// body over 60px of screen radius is a landmark whatever its distance, and at
+// that size the extinction alone (>=97% down) already takes it to a silhouette.
+// The radius here is the body's own, NOT the assembly radius the cull uses: a
+// heart world's ring plane reaches 2,046u, which would hold a 30px ball on
+// screen out to 20,000u for no gain anyone can see.
+const AERIAL_KEEP_PX = 60;
+// A body this far gone does not get to keep an atmosphere shell either. The
+// shell is additive glow drawn OUTSIDE the silhouette, so leaving it lit on a
+// 3%-brightness body puts a bright ring around a dark disc — the single worst
+// artefact this whole pass could produce.
+const AERIAL_SHELL_K = 0.35;
+// And the shells themselves get a depth term by proxy: AP_ATMO hands its rim
+// glow to the top `maxShells` bodies by ANGULAR size, which is the same blind
+// axis as the cull, and at 40 that meant 35 background marbles wore the exact
+// glow the hero wore (measured: atmosphereDebug().shellsLive was 40/40, hosts
+// included 15 heart worlds). Three is the hero plus its two nearest rivals.
+// AP_ATMO is published live by atmospheric-perspective.js for exactly this.
+const AERIAL_MAX_SHELLS = 3;
+// The grey the haze desaturates toward, as a multiplier on the colour's own
+// luminance. Cool and slightly dim (weighted 0.62), because the gas between
+// here and there scatters short: a red world does not fade to grey, it fades to
+// the sky. This is where the synthwave palette survives — in the accents that
+// are still near, not in a lime disc 8km back at full chroma.
+const _AERIAL_HAZE = { r: 0.55, g: 0.62, b: 0.85 };
+let _aerialShellCapDone = false;
+// Bodies wearing an atmosphere shell that this pass actually drew, with their
+// angular size. Rebuilt every pass; bounded by the shell pool, so a few dozen
+// entries at worst. See _aerialShellBudget().
+const _aerialShellHosts = [];
+
+// THE CAP ALONE DOES NOT RETIRE WHAT IS ALREADY BOUND. AP_ATMO.maxShells only
+// gates ALLOCATION: once the pool holds 40 meshes, lowering the number stops
+// new ones being made and rebinds the worst three per pass, but the other 37
+// stay parented to whatever body they landed on and keep drawing their glow.
+// (Measured: after the cap dropped to 3, atmosphereDebug() still reported 33
+// live hosts.) So the budget is enforced here, on the same numbers the cull is
+// already holding: the top three by angular size keep their air, everything
+// else has its shell switched off. Bodies past AERIAL_SHELL_K never qualify —
+// a glow outside a 3%-brightness silhouette is a halo around a hole.
+function _aerialShellBudget() {
+    const n = _aerialShellHosts.length;
+    if (!n) return;
+    if (n > 1) _aerialShellHosts.sort((a, b) => b.ang - a.ang);
+    for (let i = 0; i < n; i++) {
+        const h = _aerialShellHosts[i];
+        const want = i < AERIAL_MAX_SHELLS && h.k < AERIAL_SHELL_K;
+        if (h.shell.visible !== want) h.shell.visible = want;
+    }
+}
+
+// WHICH SYSTEM DOES THIS BODY BELONG TO? The object identity of its
+// `systemCenter`, which every world built around a star shares with its
+// siblings (measured: Sol's 8 worlds hold one and the same object). Identity,
+// not coordinates, because the floating-origin rebase moves the coordinates out
+// from under any cached number. A moon inherits its planet's system; a nebula
+// heart world publishes no systemCenter at all and falls back to its nebula id;
+// anything with neither gets null, which never matches anything — those are the
+// procedural worlds whose systems are a few hundred units across and therefore
+// already covered by the AERIAL_NEAR floor.
+function _aerialSystem(o) {
+    const ud = o.userData;
+    if (!ud) return null;
+    if (ud._aeSys !== undefined) return ud._aeSys;
+    let k = null;
+    if (ud.parentPlanet && ud.parentPlanet !== o) k = _aerialSystem(ud.parentPlanet);
+    if (k === null || k === undefined) {
+        if (ud.systemCenter && typeof ud.systemCenter === 'object') k = ud.systemCenter;
+        else if (ud.nebulaId !== undefined && ud.nebulaId !== null) k = 'neb' + ud.nebulaId;
+    }
+    ud._aeSys = k;
+    return k;
+}
+
+// The system the CAMERA is in: the system of the nearest body that publishes
+// one, adopted inside 3,000u and dropped past 4,500u. The band is hysteresis
+// and nothing else — without it, a body drifting either side of the adoption
+// radius would flip the whole sky between hazed and clear at this pass's 6Hz.
+const AERIAL_LOCAL_IN = 3000 * 3000;
+const AERIAL_LOCAL_OUT = 4500 * 4500;
+let _aerialLocalSys = null;
+function _aerialLocalPass(cx, cy, cz) {
+    if (typeof planets === 'undefined' || !planets) { _aerialLocalSys = null; return; }
+    let bestD2 = Infinity, best = null;
+    for (let i = 0; i < planets.length; i++) {
+        const o = planets[i];
+        if (!o || !o.position || !o.userData) continue;
+        if (o.userData.type !== 'planet' && o.userData.type !== 'moon' && o.userData.type !== 'star') continue;
+        const sys = _aerialSystem(o);
+        if (sys === null) continue;
+        _cullWorldPos(o);
+        const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bestD2) { bestD2 = d2; best = sys; }
+    }
+    if (best !== null && bestD2 <= AERIAL_LOCAL_IN) _aerialLocalSys = best;
+    else if (_aerialLocalSys !== null && (best !== _aerialLocalSys || bestD2 > AERIAL_LOCAL_OUT)) _aerialLocalSys = null;
+}
+
+// How far gone is this body? 0 = untouched, 1 = the void.
+// Stars are exempt: a distant sun is a point of LIGHT, and the reference frames
+// are full of them. It is the lit BODIES that crowd the frame.
+function _aerialFactor(o, d) {
+    // Kill switch, so the depth term can be A/B'd against itself inside ONE
+    // session. It has to be one session: the nebula field is placed
+    // procedurally per boot, so two runs do not share a backdrop and any
+    // before/after taken across them is comparing two different skies.
+    if (typeof window !== 'undefined' && window.__aerialOff) return 0;
+    const ud = o.userData;
+    if (!ud) return 0;
+    if (ud.type !== 'planet' && ud.type !== 'moon') return 0;
+    if (d <= AERIAL_NEAR) return 0;
+    if (_aerialLocalSys !== null && _aerialSystem(o) === _aerialLocalSys) return 0;
+    return 1 - Math.exp(-(d - AERIAL_NEAR) / AERIAL_SCALE);
+}
+
+// Every material this body draws with, with its untouched colours captured, so
+// the ramp is a WRITE of an absolute value and never an accumulating multiply.
+// Walked once and cached; ~3,600 bodies never pay for it because a body at k=0
+// is returned before we get here.
+//
+// TWO THINGS THE WALK REFUSES TO TOUCH:
+//   * another registered body (userData.type) — a moon is culled, lit and faded
+//     on its own account, and swallowing it here would fade it twice;
+//   * the atmosphere shell — atmospheric-perspective.js RECYCLES those meshes
+//     between hosts, so a colour written into one would follow the shell onto
+//     the next planet it was handed to. Caught two ways (the host's own
+//     `_apShell` pointer, and the shell program's `uSunLock` uniform) because
+//     the shell may be attached after this list is built.
+function _aerialCollect(o) {
+    if (o.userData._aeMats) return o.userData._aeMats;
+    const list = [];
+    const seen = [];
+    const take = (n) => {
+        const m = n.material;
+        if (!m) return;
+        const ms = Array.isArray(m) ? m : [m];
+        for (let i = 0; i < ms.length; i++) {
+            const mm = ms[i];
+            if (!mm || seen.indexOf(mm) >= 0) continue;
+            if (mm.uniforms && mm.uniforms.uSunLock) continue;   // AP's shell program
+            mm.userData = mm.userData || {};
+            // Shared materials are real here (a planet and its moons share one
+            // Lambert 617 times over). First body to claim it owns it; the rest
+            // ride along, which is right — they are within a few hundred units
+            // of their owner and their extinction is the same to two decimals.
+            if (mm.userData._aeOwner && mm.userData._aeOwner !== o) continue;
+            mm.userData._aeOwner = o;
+            seen.push(mm);
+            const rec = { m: mm, u: [], color: null, emissive: null };
+            if (mm.uniforms) {
+                for (const k in mm.uniforms) {
+                    const u = mm.uniforms[k];
+                    if (u && u.value && u.value.isColor) rec.u.push({ k: k, base: u.value.clone() });
+                }
+            }
+            if (mm.color && mm.color.isColor) rec.color = mm.color.clone();
+            if (mm.emissive && mm.emissive.isColor) rec.emissive = mm.emissive.clone();
+            // A PLANETARY RING HAS NO COLOUR UNIFORM. addPlanetRings() takes its
+            // rgb from the ring TEXTURE and exposes only `uOpacity`, so a ring
+            // is the one thing in the assembly the colour ramp cannot reach —
+            // and a heart world fading out from under a full-brightness ring
+            // system would be worse than not fading at all. Where opacity is
+            // the only lever the material has, opacity is the lever we pull.
+            if (!rec.u.length && !rec.color && !rec.emissive &&
+                mm.uniforms && mm.uniforms.uOpacity && typeof mm.uniforms.uOpacity.value === 'number') {
+                rec.op = mm.uniforms.uOpacity.value;
+            } else if (!rec.u.length && !rec.color && !rec.emissive &&
+                       mm.transparent && typeof mm.opacity === 'number') {
+                rec.matOp = mm.opacity;
+            }
+            if (rec.u.length || rec.color || rec.emissive ||
+                rec.op !== undefined || rec.matOp !== undefined) list.push(rec);
+        }
+    };
+    const walk = (n, isRoot) => {
+        if (!isRoot) {
+            if (n.userData && n.userData.type) return;
+            if (n === o.userData._apShell) return;
+        }
+        take(n);
+        const ch = n.children;
+        for (let i = 0; i < ch.length; i++) walk(ch[i], false);
+    };
+    walk(o, true);
+    o.userData._aeMats = list;
+    return list;
+}
+
+// base -> haze, then down the extinction curve. Absolute write, so calling it
+// twice with the same k is a no-op rather than a double fade.
+function _aerialPaint(c, base, s, dsat) {
+    const l = base.r * 0.2126 + base.g * 0.7152 + base.b * 0.0722;
+    c.r = (base.r + (l * _AERIAL_HAZE.r - base.r) * dsat) * s;
+    c.g = (base.g + (l * _AERIAL_HAZE.g - base.g) * dsat) * s;
+    c.b = (base.b + (l * _AERIAL_HAZE.b - base.b) * dsat) * s;
+}
+
+function _aerialApply(o, k) {
+    const ud = o.userData;
+    const prev = ud._aerialK || 0;
+    // 1% of the curve is well under a value step at 8-bit output, and this is
+    // what keeps the pass free for the ~3,600 bodies that are not moving
+    // through the ramp on any given tick.
+    if (Math.abs(prev - k) < 0.01) return;
+    ud._aerialK = k;
+    const list = _aerialCollect(o);
+    const s = 1 - k;
+    const dsat = 0.85 * k;
+    for (let i = 0; i < list.length; i++) {
+        const rec = list[i];
+        for (let j = 0; j < rec.u.length; j++) {
+            const u = rec.m.uniforms[rec.u[j].k];
+            if (u && u.value && u.value.isColor) _aerialPaint(u.value, rec.u[j].base, s, dsat);
+        }
+        if (rec.color && rec.m.color) _aerialPaint(rec.m.color, rec.color, s, dsat);
+        if (rec.emissive && rec.m.emissive) _aerialPaint(rec.m.emissive, rec.emissive, s, dsat);
+        if (rec.op !== undefined && rec.m.uniforms && rec.m.uniforms.uOpacity) rec.m.uniforms.uOpacity.value = rec.op * s;
+        if (rec.matOp !== undefined) rec.m.opacity = rec.matOp * s;
+    }
+}
+
+// QA hook: what the depth term is doing to the frame right now.
+if (typeof window !== 'undefined') {
+    window.aerialDebug = function () {
+        const arr = (typeof planets !== 'undefined' && planets) ? planets : [];
+        const out = [];
+        let faded = 0, extinct = 0;
+        for (let i = 0; i < arr.length; i++) {
+            const ud = arr[i].userData;
+            if (!ud) continue;
+            if (ud._aerialOut) extinct++;
+            if (ud._aerialK > 0.01) {
+                faded++;
+                if (out.length < 12) out.push((ud.name || '?') + ' k=' + ud._aerialK.toFixed(2));
+            }
+        }
+        let localMembers = 0;
+        for (let i = 0; i < arr.length; i++) {
+            if (_aerialLocalSys !== null && _aerialSystem(arr[i]) === _aerialLocalSys) localMembers++;
+        }
+        return { near: AERIAL_NEAR, scale: AERIAL_SCALE, faded: faded, extinct: extinct,
+                 localSystem: _aerialLocalSys === null ? null
+                     : (typeof _aerialLocalSys === 'string' ? _aerialLocalSys : 'sysCentre'),
+                 localMembers: localMembers,
+                 maxShells: (typeof window.AP_ATMO !== 'undefined' && window.AP_ATMO) ? window.AP_ATMO.maxShells : null,
+                 sample: out };
+    };
+}
+
 let _cullFrameCount = 0;
 let _cullLastPassFrame = -999;
 const _cullPrevCam = { x: Infinity, y: Infinity, z: Infinity };
@@ -13143,6 +13463,16 @@ function updateDistanceCulling() {
     _gpuTimerInstall();
     _gpuTick();
     _installGpuBoundGate();
+    // THE OTHER HALF OF THE DEPTH TERM (see AERIAL_MAX_SHELLS). Ahead of the
+    // throttle on purpose: atmospheric-perspective.js loads AFTER this file and
+    // fills its shell pool lazily on its own 15-frame cadence, so the cap has to
+    // land on the first frame there is a config to cap, not on the first frame
+    // this pass happens to do work. Set once and never again — a live
+    // `AP_ATMO.maxShells = 12` from the console still wins after this.
+    if (!_aerialShellCapDone && typeof window !== 'undefined' && window.AP_ATMO && !window.__aerialOff) {
+        _aerialShellCapDone = true;
+        if (window.AP_ATMO.maxShells > AERIAL_MAX_SHELLS) window.AP_ATMO.maxShells = AERIAL_MAX_SHELLS;
+    }
     const jdx = camera.position.x - _cullPrevCam.x,
           jdy = camera.position.y - _cullPrevCam.y,
           jdz = camera.position.z - _cullPrevCam.z;
@@ -13163,7 +13493,16 @@ function updateDistanceCulling() {
     _cullPrevCam.y = camera.position.y;
     _cullPrevCam.z = camera.position.z;
     _cullStomped.length = 0;
+    _aerialShellHosts.length = 0;
     _installMoonVisibilityGuards();
+    // Which system the camera is standing in, decided before anything is faded.
+    // One distance per body, no square roots, ~0.05ms over the whole 4,119-body
+    // universe — and it has to be this pass's answer, not last pass's: a warp
+    // arrival that used the system it left would haze the system it arrived in
+    // for a frame.
+    if (typeof window === 'undefined' || !window.__aerialOff) {
+        _aerialLocalPass(camera.position.x, camera.position.y, camera.position.z);
+    }
 
     const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
 
@@ -13217,6 +13556,11 @@ function updateDistanceCulling() {
             const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
             const d2 = dx * dx + dy * dy + dz * dz;
             const br = angular ? _cullBodyRadius(o) : 0;
+            // AERIAL PERSPECTIVE — the depth term (see the note above the
+            // constants). One sqrt per body per pass, and zero for everything
+            // inside AERIAL_NEAR, which is everything the player is near.
+            const aeD = br > 0 ? Math.sqrt(d2) : 0;
+            const aeK = br > 0 ? _aerialFactor(o, aeD) : 0;
             let inRange;
             if (br > 0) {
                 // ANGULAR IS THE WHOLE RULE. No authored range gets a vote on a
@@ -13259,7 +13603,12 @@ function updateDistanceCulling() {
                             // blinking out — the one seam the old binary switch
                             // left on screen.
                             const f0 = lim * _pxPerAng, f1 = f0 * 3.5;
-                            const fade = rPx >= f1 ? 1 : Math.max(0, (rPx - f0) / (f1 - f0));
+                            let fade = rPx >= f1 ? 1 : Math.max(0, (rPx - f0) / (f1 - f0));
+                            // The far dots take the same extinction the meshes
+                            // do — otherwise the depth ramp would end at the
+                            // impostor threshold and the sky would go pale,
+                            // pale, pale, BRIGHT DOT.
+                            fade *= (1 - aeK);
                             _impostorWrite(o, _cullWP.x, _cullWP.y, _cullWP.z, rPx, fade, undefined, 1 - w);
                             wantImp = true;
                             if (w <= 0) {
@@ -13278,6 +13627,39 @@ function updateDistanceCulling() {
                 // by the non-angular arrays below (belts, comets, ships) that
                 // never ask for a radius. For those the authored range rules.
                 inRange = d2 <= r2;
+            }
+            // FULL EXTINCTION. The ramp has taken this body to within 3% of the
+            // void it is drawn against, so it stops being submitted — mesh,
+            // rings, shells and all. This is the ONE place an absolute distance
+            // is allowed to overrule the angular rule, and it is not a second
+            // opinion on resolvability (the thing the range gate got wrong): a
+            // body this far into the haze has no contrast left to resolve.
+            // Anything still drawing over AERIAL_KEEP_PX keeps its draw call
+            // and lives on as a silhouette instead.
+            // THE BALL, NOT THE ASSEMBLY. `br` is the whole drawn subtree — for a
+            // ringed heart world that is 2,046u against a 620u body — and both
+            // decisions below are about the sphere itself: how big the
+            // SILHOUETTE reads, and (for the shell budget) the same angular
+            // measure atmospheric-perspective.js ranks on. Ranking on the
+            // assembly instead put three ringed heart worlds 5-7km out above
+            // the hero at 300u and took the hero's own air away.
+            const ballR = br > 0
+                ? (o.userData.radius ||
+                   (o.geometry && o.geometry.parameters ? o.geometry.parameters.radius : 0) || br)
+                : 0;
+            if (aeK > 0) {
+                const lim = o.userData._aerialOut ? AERIAL_BACK_K : AERIAL_CULL_K;
+                const out = inRange && aeK >= lim && (ballR * _pxPerAng / aeD) < AERIAL_KEEP_PX;
+                o.userData._aerialOut = out;
+                if (out) inRange = false;
+            } else if (o.userData._aerialOut) {
+                o.userData._aerialOut = false;
+            }
+            // Colours only for what we are actually going to draw.
+            if (inRange && br > 0) {
+                _aerialApply(o, aeK);
+                const sh = o.userData._apShell;
+                if (sh && sh.parent === o) _aerialShellHosts.push({ shell: sh, ang: ballR / aeD, k: aeK });
             }
             // The lit set: this body will be submitted as geometry, so it is a
             // surface a light can actually land on. (Impostors never get here —
@@ -13334,6 +13716,13 @@ function updateDistanceCulling() {
                  cx, cy, cz, _pxPerAng, _impR, _impRBack,
                  CULL_SUBPIXEL_ANG * _cullAng * _pxPerAng);
 
+    // Three bodies get air; the rest of the sky is sky. See _aerialShellBudget.
+    if (typeof window === 'undefined' || !window.__aerialOff) _aerialShellBudget();
+    else for (let i = 0; i < _aerialShellHosts.length; i++) {
+        // Switched off: hand every shell back, so the A/B is reversible.
+        if (!_aerialShellHosts[i].shell.visible) _aerialShellHosts[i].shell.visible = true;
+    }
+
     // Anything the pass stopped crossfading goes back to a full-strength mesh
     // before the frame is published — a world is never left translucent.
     _impXfSettle();
@@ -13356,6 +13745,13 @@ window.updateDistanceCulling = updateDistanceCulling;
 //
 // Invariants, all reported: `nearHidden` must be 0 (nothing inside 40 radii is
 // ever culled) and `farDrawn` must be 0 (nothing sub-pixel is ever submitted).
+//
+// WITH ONE EXPLICIT EXCEPTION, COUNTED SEPARATELY AS `hazeHidden`. The aerial
+// depth term (see AERIAL_NEAR) can retire a body inside 40 of its own radii —
+// a 620u heart world is inside that promise out to 24,800u — once the haze has
+// taken it to within 3% of the void. That is not the angular rule breaking its
+// word; it is a different rule, about contrast rather than resolvability, and
+// it gets its own counter so `nearHidden` still means what it has always meant.
 window.cullDebug = function () {
     return {
         frame: _cullFrameCount, lastPass: _cullLastPassFrame,
@@ -13367,7 +13763,7 @@ window.cullCensus = function (bands) {
     const cp = camera.position;
     const edges = bands || [5, 20, 40, 100, 1000, Infinity];
     const out = edges.map(e => ({ band: e, n: 0, flag: 0, drawn: 0 }));
-    let nearHidden = 0, farDrawn = 0, total = 0;
+    let nearHidden = 0, farDrawn = 0, total = 0, hazeHidden = 0;
     for (let i = 0; i < arr.length; i++) {
         const o = arr[i];
         if (!o || !o.material || !o.material.uniforms) continue;
@@ -13383,7 +13779,9 @@ window.cullCensus = function (bands) {
         for (let p = o; p; p = p.parent) { if (!p.visible) { drawn = false; break; } }
         const radii = d / r;
         total++;
-        if (radii < CULL_NEAR_RADII && !drawn) nearHidden++;
+        if (radii < CULL_NEAR_RADII && !drawn) {
+            if (o.userData._aerialOut) hazeHidden++; else nearHidden++;
+        }
         if (r / d < CULL_SUBPIXEL_ANG && drawn) farDrawn++;
         for (let b = 0; b < edges.length; b++) {
             if (radii < edges[b]) {
@@ -13392,7 +13790,7 @@ window.cullCensus = function (bands) {
             }
         }
     }
-    return { total, bands: out, nearHidden, farDrawn };
+    return { total, bands: out, nearHidden, farDrawn, hazeHidden };
 };
 
 // THE ACCEPTANCE TEST FOR THIS PASS, IN THE ONLY UNIT THAT SETTLES IT: PIXELS.

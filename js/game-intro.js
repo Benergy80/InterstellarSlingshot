@@ -887,10 +887,14 @@ function showStartButton() {
         }, 150);
     }
 
-    // Fade in skip button
+    // Fade in skip button. 0.92, not the 0.7 this shipped at: 0.7 was a "quiet
+    // tertiary control" setting chosen against a black sky, and multiplying an
+    // already-glassy chip by 0.7 over a lit nebula is what made Skip Intro the
+    // one unreadable thing on the title screen. It is still visibly the quietest
+    // of the three buttons — smallest, dimmest border, no accent fill.
     if (introSequence.skipButton) {
         introSequence.skipButton.style.transition = 'opacity ' + fadeS;
-        introSequence.skipButton.style.opacity = '0.7';
+        introSequence.skipButton.style.opacity = '0.92';
     }
 
     console.log('🚀 Start button, demo button, and skip button faded in');
@@ -1112,6 +1116,15 @@ function _ivSkyTexture() {
     const mkRnd = (s0) => { let s = s0; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; };
     const rnd = mkRnd(20260814);    // stars, grain
     const rMask = mkRnd(6180339);   // composition
+    // The counter-sweep below the centre line draws from its OWN stream. Sharing
+    // rMask would have shifted every draw that comes after it — the 14 blobs that
+    // keep the unseen 250 degrees of the sphere lit are seeded from the same
+    // sequence — and reshuffling those moves masses into and out of the visible
+    // frame, which is exactly the coupling the three-stream split exists to
+    // prevent (measured while tuning: the lower blobs' alphas dropped 30% and the
+    // frame got BRIGHTER, because the reshuffle had walked a filler mass into the
+    // bottom-right of the shot).
+    const rLow = mkRnd(1414213);    // composition, lower half only
     const rNoise = mkRnd(2718281);  // the noise fields
 
     // ---- screen -> canvas ---------------------------------------------------
@@ -1222,10 +1235,45 @@ function _ivSkyTexture() {
      [-1.85, -0.20, 480, 0.34], [-1.70,  0.55, 460, 0.26],
      [-1.25,  0.92, 440, 0.30], [ 1.30,  1.00, 440, 0.28]
     ].forEach((b) => { const p = at(b[0], b[1]); mblob(p.x, p.y, px(b[2]), b[3], 0.55, 0.12); });
+    // ---- the counter-sweep: gas BELOW the centre line -----------------------
+    // Every entry in the table above sits at fy <= -0.56 — above centre — and the
+    // only five with fy > 0 are parked at |fx| >= 1.25, i.e. off the left and
+    // right edges of the visible frame. So nothing was adding gas anywhere in
+    // fx [-1,+1] x fy [+0.3,+1.6], and the lower third of the title screen came
+    // out dead black: measured on a pure-sky patch at x620-940 / y690-895,
+    // mean 9.7, std 11.7, and 71.7% of its pixels below L=10, against the
+    // reference art's 63.0 / 42.0 / 0.0%. Half a place, with the menu sitting on
+    // the seam. This is the mirrored lower row.
+    //
+    // It is deliberately thinner than the upper band — alpha 0.22-0.31 against
+    // 0.40-0.62 — because the sweep across the top is still the subject of the
+    // composition and this is the floor it stands on. (Those alphas accumulate:
+    // the blobs are r 460-540 screen px on a 0.44 pitch, so three or four
+    // overlap everywhere and the mask still reaches ~1 in the band's heart. Do
+    // not read a single alpha as the resulting density.) The star and the hero
+    // world are opaque and in front, so none of it touches them.
+    [[-1.80,  1.06, 520, 0.25], [-1.34,  0.94, 520, 0.28], [-0.88,  0.84, 540, 0.30],
+     [-0.44,  0.78, 540, 0.31], [ 0.02,  0.76, 540, 0.30], [ 0.48,  0.80, 520, 0.30],
+     [ 0.92,  0.88, 520, 0.29], [ 1.36,  0.98, 520, 0.28], [ 1.80,  1.10, 520, 0.25],
+     // shoulders that tie it to the band above, so the two are one nebula seen
+     // edge-on and not two stripes with a gap
+     [-1.10,  0.40, 470, 0.24], [-0.30,  0.34, 460, 0.22],
+     [ 0.55,  0.36, 460, 0.24], [ 1.25,  0.44, 470, 0.24],
+     // and the very bottom edge, so the frame does not end on a black hem
+     [-0.95,  1.46, 470, 0.22], [ 0.05,  1.50, 480, 0.22], [ 1.05,  1.46, 470, 0.22]
+    ].forEach((b) => { const p = at(b[0], b[1]); mblob(p.x, p.y, px(b[2]), b[3], 0.55, -0.10); });
     // knots of denser gas inside the band, so it is not a smooth ramp
     for (let i = 0; i < 26; i++) {
         const p = at(-1.9 + rMask() * 3.6, -1.15 + rMask() * 0.75);
         mblob(p.x, p.y, px(150 + rMask() * 260), 0.16 + rMask() * 0.22, 0.4 + rMask() * 0.5, rMask() * 3.14);
+    }
+    // ...and the same treatment for the counter-sweep. Without these the lower
+    // half reads as an airbrushed gradient — the knots are what make the top
+    // band look like structure rather than a wash, and the floor needs them for
+    // exactly the same reason. Span fy [+0.35,+1.35], the mirror of [-1.15,-0.40].
+    for (let i = 0; i < 26; i++) {
+        const p = at(-1.9 + rLow() * 3.6, 0.35 + rLow() * 1.00);
+        mblob(p.x, p.y, px(150 + rLow() * 260), 0.085 + rLow() * 0.115, 0.4 + rLow() * 0.5, rLow() * 3.14);
     }
     // the rest of the sphere — 250 degrees the camera never looks at, kept lit
     // so nothing goes black if the drift is ever widened
@@ -1237,12 +1285,25 @@ function _ivSkyTexture() {
     // column, so the gas is erased there. White text over a mean sky luminance
     // under ~55/255 stays legible; this is what keeps it there while the rest
     // of the frame gets brighter, not dimmer.
-    // Wide and shallow on purpose: the hole has to clear the buttons (frame
-    // rows 400-890) without eating the gas above them (rows 130-340), so the
-    // erase is an ellipse ~3x wider than it is tall.
-    [[-0.06, 0.08, 430, 0.34], [-0.02, 0.42, 440, 0.34], [0.02, 0.78, 450, 0.34],
-     [0.00, 1.14, 470, 0.36], [0.02, 1.52, 500, 0.38]]
-        .forEach((q) => { const p = at(q[0], q[1]); mblob(p.x, p.y, px(q[2]), 0.99, q[3], 0.06, 'destination-out'); });
+    // Wide and shallow on purpose: the hole has to clear the buttons without
+    // eating the gas above them (rows 130-340), so the erase is an ellipse ~3x
+    // wider than it is tall.
+    //
+    // Only TWO of these are load-bearing. Measured on the live page at 1600x900:
+    // #introStartBtn occupies y 400.5-499.5 (fy -0.11..+0.11) and #introDemoBtn
+    // y 560.0-630.6 (fy +0.24..+0.40) — the fy 0.08 and 0.42 erases, which stay
+    // at full strength. The old fy 0.78 / 1.14 / 1.52 trio cleared EMPTY frame at
+    // alpha 0.99 and r 450-500 (vertical reach ~+/-0.34 of the half-frame each,
+    // so they scrubbed a continuous hole from fy +0.44 all the way off the
+    // bottom) — and that hole sat exactly on top of the counter-sweep above. It
+    // is gone, and NOTHING replaces it. Skip Intro (measured at y 846.0-884.0)
+    // is now a chip with its own dark scrim — see createSkipButton — so it stays
+    // readable over whatever the gas is doing, which is the only thing that
+    // works anyway once the burn starts moving the sky under it. Erasing the
+    // floor to protect a control that no longer needs protecting would just put
+    // the black hole back, 7% of the frame wide, dead centre of the bottom.
+    [[-0.06, 0.08, 430, 0.34, 0.99], [-0.02, 0.42, 440, 0.34, 0.99]]
+        .forEach((q) => { const p = at(q[0], q[1]); mblob(p.x, p.y, px(q[2]), q[4], q[3], 0.06, 'destination-out'); });
     // Fold the two channels into one map before sampling. The additive pass
     // runs over an OPAQUE black fill, so 'lighter' leaves alpha pinned at 255
     // and writes the gas into RGB; 'destination-out' does the reverse — it only
@@ -1267,7 +1328,14 @@ function _ivSkyTexture() {
     };
 
     // ---- the gas ------------------------------------------------------------
-    const GAIN = 2.45;
+    // 2.15, down from 2.45. The violet floor added under this pass (see the
+    // base fill below) is a flat +9.1 LSB on every unsaturated pixel, and left
+    // uncompensated it walked the approved upper-band patch from mean 65.4 to
+    // 74.5 — brighter than the reference art it was matched against. Trimming
+    // the emission gain by the same 12% hands those 9 LSB back where the gas is
+    // lit and keeps them where it is not, which is the whole point: the change
+    // is meant to raise the floor, not the ceiling.
+    const GAIN = 2.15;
     const ncv = document.createElement('canvas');
     ncv.width = NW; ncv.height = NH;
     const ng = ncv.getContext('2d');
@@ -1311,7 +1379,17 @@ function _ivSkyTexture() {
     }
     ng.putImageData(nimg, 0, 0);
 
-    g.fillStyle = '#04030c';
+    // The floor under everything. '#04030c' is luminance 3.2 — indistinguishable
+    // from the black the canvas starts as, so every dust lane in the gas above
+    // bottomed out at pure black and 16.8% of the boot frame measured L<10 while
+    // the reference art measures 0.02%. Real nebula-lit space is not vacuum: it
+    // is a deep violet that never quite goes out. rgb(13,11,31) is luminance
+    // 12.3, which clears the L<10 floor by 2.3 LSB even after the grain pass
+    // subtracts its 1.5. It is a flat +9.1 LSB on everything below saturation,
+    // which is why GAIN above was trimmed 2.45 -> 2.15 in the same change: the
+    // two together raise the floor and leave the lit gas where the critic
+    // measured it (upper patch 65.4 before, 64.8-65.2 after).
+    g.fillStyle = '#0d0b1f';
     g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'lighter';
     g.imageSmoothingEnabled = true;
@@ -2130,10 +2208,10 @@ function createSkipButton() {
             left: 50% !important;
             transform: translateX(-50%) !important;
             padding: 10px 22px !important;
-            background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
-            border: 1px solid rgba(0,150,255,0.55) !important;
+            background: linear-gradient(135deg, rgba(6,10,30,0.76), rgba(4,18,50,0.82)) !important;
+            border: 1px solid rgba(0,190,255,0.70) !important;
             border-radius: 8px !important;
-            color: rgba(0,255,255,0.95) !important;
+            color: rgba(180,246,255,0.98) !important;
             font-family: 'Orbitron', monospace !important;
             font-size: 13px !important;
             font-weight: 600 !important;
@@ -2160,7 +2238,27 @@ function createSkipButton() {
             skipButton.style.boxShadow = '0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3)';
         });
     } else {
-        // Desktop AND iPad: transparent glassmorphism style from space-btn class
+        // Desktop AND iPad: the space-btn glass look, but with a scrim behind
+        // the type. space-btn alone is a near-transparent cyan outline, which
+        // was fine when this button sat on the old black launch-pad sky and is
+        // not fine now: the vista's nebula runs right under it (measured on the
+        // boot frame, the 160x70 px patch around this chip reads mean 101 and
+        // p95 225 — white gas behind 13 px cyan type). The fix belongs on the
+        // control, not on the art: a control has to stay readable wherever the
+        // camera happens to be pointing, including mid-burn when the gas moves.
+        //
+        // rgba(6,10,30,~0.78) over that patch composites to L~33 with the text
+        // still at L~200, and to L~70 even under the blown-out cores — legible
+        // in both, while the blur and the cyan rim keep it the same glass chip
+        // the rest of the menu is made of.
+        skipButton.style.background = 'linear-gradient(135deg, rgba(6,10,30,0.76), rgba(4,18,50,0.82))';
+        skipButton.style.border = '1px solid rgba(0,190,255,0.70)';
+        skipButton.style.borderRadius = '8px';
+        skipButton.style.color = 'rgba(180,246,255,0.98)';
+        skipButton.style.textShadow = '0 0 8px rgba(0,220,255,0.85), 0 1px 2px rgba(0,0,0,0.95)';
+        skipButton.style.boxShadow = '0 0 18px rgba(0,0,0,0.55), 0 0 14px rgba(0,190,255,0.25)';
+        skipButton.style.backdropFilter = 'blur(6px)';
+        skipButton.style.webkitBackdropFilter = 'blur(6px)';
         skipButton.style.opacity = '0';
         skipButton.style.zIndex = '10000';
     }

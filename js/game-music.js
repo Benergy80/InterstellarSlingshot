@@ -323,6 +323,7 @@
     volumeScaleTimer: null,
     skipLockUntil: 0,     // while > Date.now(), skip-selected track is preserved
     _preloaded: false,    // guard for one-time preload
+    lastSwitchAt: 0,      // ms timestamp of the last real (non-no-op) play() switch
 
     // ── adaptive-mix state ──────────────────────────────────────────────────
     // Combat state machine (see updateCombatState).
@@ -695,6 +696,20 @@
   // Tracks that should play once, not loop.  When they finish naturally,
   // the next context-detection tick picks whatever track is appropriate.
   const NO_LOOP = new Set(['launchScreen', 'intro', 'gameOver1', 'gameOver2']);
+  // Combat beds must always be allowed to cut in immediately — a fight
+  // starting is never something the dwell gate below should delay. Every
+  // other context switch (nebula/galaxy/outer-system/mainTheme) obeys it.
+  const COMBAT_KEYS = new Set(['bossFight', 'borg', 'eliteGuardians']);
+  // Minimum time a non-combat bed must have been playing before another
+  // non-combat context switch is allowed to replace it. The location
+  // detectors (nebula/galaxy/outer-system) re-evaluate every ~500ms and,
+  // near a boundary, can flip their pick tick to tick; every flip used to
+  // start a fresh 2s crossfade, so a ship clipping a boundary at speed
+  // could restart the "score" every few seconds and it would never read as
+  // continuous. This bounds context churn to at most one switch per
+  // MIN_CONTEXT_DWELL_MS regardless of how often the detector's answer
+  // changes underneath it.
+  const MIN_CONTEXT_DWELL_MS = 20000;
 
   function preload() {
     // Idempotent — do not re-create Audio elements on repeat calls.
@@ -846,6 +861,11 @@
 
   function play(key) {
     if (!st.enabled || st.muted) return;
+    // Captured BEFORE the no-op block below can null out st.current (the
+    // stalled-resume case at :877) — the dwell gate needs to know whether
+    // THIS CALL is actually asking for a different track than what's
+    // playing, not what st.current happens to read after that mutation.
+    const isRealSwitch = key !== st.current;
     // Already on this track: the context tick calls play() with the same key
     // every few seconds, so this must stay a cheap no-op.
     if (key === st.current) {
@@ -860,6 +880,15 @@
         return;
       }
       st.current = null;   // force the full crossfade path below
+    }
+    // Dwell gate — bounds non-combat context churn to at most one switch
+    // per MIN_CONTEXT_DWELL_MS. Combat beds always cut in immediately;
+    // everything else (nebula/galaxy/outer-system/mainTheme) has to wait
+    // out the dwell once a real switch has happened, no matter how often
+    // the location detectors flip their answer underneath it.
+    if (isRealSwitch && !COMBAT_KEYS.has(key) &&
+        Date.now() - st.lastSwitchAt < MIN_CONTEXT_DWELL_MS) {
+      return;
     }
     if (st.loadErrors.has(key)) return;
 
@@ -896,6 +925,7 @@
 
     st.current = key;
     st.currentEl = next;
+    if (isRealSwitch) st.lastSwitchAt = Date.now();
 
     // Route the incoming track through the adaptive bus (no-op if the bus
     // isn't up yet — waEnsure() retro-routes everything when it comes online).
@@ -3032,15 +3062,39 @@
     return sys && sys.userData && (sys.userData.systemType === 'borg_patrol' || sys.userData.hasBorg);
   }
 
+  // Entry radius 3000u / exit radius 4200u — a Schmitt trigger.  Two clouds
+  // both inside the entry radius used to resolve by ARRAY ORDER (first
+  // match wins), so crossing the seam between two overlapping clouds could
+  // flip the winner every tick with no distance change at all; picking the
+  // NEAREST cloud instead removes that source of chatter.  The sticky exit
+  // band removes the other source: riding the 3000u boundary of a single
+  // cloud used to retrigger play() on every tiny in/out wobble.  Together
+  // they kill the boundary-flicker class of context churn (see play()'s
+  // dwell gate for the companion fix — this stops the SELECTION from
+  // flapping, that stops a stable selection from restarting the bed).
+  const NEBULA_ENTER_RADIUS = 3000;
+  const NEBULA_EXIT_RADIUS  = 4200;
   function detectNearbyNebula() {
     if (typeof nebulaClouds === 'undefined' || typeof camera === 'undefined') return -1;
+    let best = -1, bestD = Infinity;
     for (let i = 0; i < nebulaClouds.length; i++) {
       const n = nebulaClouds[i];
       if (!n || !n.position) continue;
       const d = camera.position.distanceTo(n.position);
-      if (d < 3000) return i;
+      if (d < bestD) { bestD = d; best = i; }
     }
-    return -1;
+    // Stay on the previously-selected cloud as long as it's still within
+    // the wider exit radius, even if a different cloud is now nominally
+    // nearer — that's what makes the choice sticky instead of flipping on
+    // array order or a marginal distance delta.
+    if (st.lastNebulaIdx >= 0) {
+      const prev = nebulaClouds[st.lastNebulaIdx];
+      if (prev && prev.position) {
+        const dPrev = camera.position.distanceTo(prev.position);
+        if (dPrev < NEBULA_EXIT_RADIUS) return st.lastNebulaIdx;
+      }
+    }
+    return bestD < NEBULA_ENTER_RADIUS ? best : -1;
   }
 
   // ─── Integration hooks ────────────────────────────────────────────────────

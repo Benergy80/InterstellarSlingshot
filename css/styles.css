@@ -523,6 +523,32 @@ body.ui-mode {
     font-size: 0.7rem !important;
 }
 
+/* Navigation System auto-collapse (js/game-ui.js _updateNavCollapse) — same
+   8s-after-launch fold as Flight Controls / Ship Status / the map legend.
+   The header row (title + Orbits toggle button) is left untagged so it
+   stays visible and clickable even while collapsed; everything else
+   (black-hole warning, target list, Auto-Navigate/Slingshot-Status buttons)
+   is tagged .nav-detail at runtime and folds behind a one-line hint. */
+.nav-hint {
+    display: none;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.7rem;
+    letter-spacing: 0.5px;
+    color: rgba(var(--hud-cyan), 0.85);
+    text-shadow: 0 0 8px rgba(var(--hud-cyan), 0.5);
+    cursor: pointer;
+    padding: 4px 0 0;
+    user-select: none;
+    border-top: 1px solid rgba(var(--hud-cyan), 0.15);
+    margin-top: 4px;
+}
+.ui-panel.top-right.nav-collapsed .nav-hint {
+    display: block;
+}
+.ui-panel.top-right.nav-collapsed .nav-detail {
+    display: none;
+}
+
 .ui-panel.bottom-right {
     padding: 10px 14px !important;
 }

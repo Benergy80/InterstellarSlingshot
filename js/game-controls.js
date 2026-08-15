@@ -9319,18 +9319,25 @@ const _FX_CHUNK_MIN  = 6;         // fragments per kill, low end
 const _FX_CHUNK_MAX  = 9;         // ... and high end (critic's 6-10 window)
 const _FX_CHUNK_LIFE = 1150;      // ms total; the colour ramp finishes at 900
 const _FX_CHUNK_COOL = 900;       // ms white -> orange -> dark
-const _FX_CHUNK_LEAD = 240;       // ms fade-in: visible as it leaves the flash
+const _FX_CHUNK_LEAD = 150;       // ms fade-in: visible as it leaves the flash
 // PEAK ALPHA OF THE SOLID PART. A chunk out on black sky is the one element
 // in the kill whose edge is a real silhouette rather than a texture roll-off,
-// so its one-pixel scanline step IS its own luminance — at full opacity that
-// measured up to 152/255 on the centre row (the fireball alone runs 26-43,
-// and the bar the FX layers answer to is < 40). It cannot go under that bar
-// and still be a solid object: the same measurement on a LIVE HOSTILE at the
-// same range reads 78-229/255, because a ship has a silhouette too. What it
-// can do is stop being the hardest edge in the frame, and 0.55 peak with the
-// halo carrying the glow puts the wreckage under the hull it came off while
-// leaving it plainly solid against the sky.
-const _FX_CHUNK_OPA  = 0.55;
+// so its one-pixel scanline step IS its own luminance — the same measurement
+// on a LIVE HOSTILE at the same range reads 78-229/255, because a ship has a
+// silhouette too, and a piece of that ship cannot be softer than the ship and
+// still be a piece of it.
+//
+// IT USED TO BE 0.55, AND THAT WAS THE BUG. Measured by same-frame ablation
+// on a live 282 u Klingon kill, the whole chunk layer contributed 980 px =
+// 8.0% of the kill's lit pixels at mean +31.5/255 — under the 40/255 bar the
+// fireball body is measured against. Half-alpha white against a fireball
+// already clipping past 200 luma is invisible BY CONSTRUCTION: the ball wins
+// every pixel the chunk shares with it, and out on the sky the chunk is a
+// grey ghost. The wreckage is the only opaque object in the event and the
+// only thing that gives the kill a silhouette instead of a disc, so it is
+// now fully opaque and the shading — not the alpha — is what keeps it under
+// the flash.
+const _FX_CHUNK_OPA  = 1.0;
 // THE HALO IS A RIM FEATHER, NOT A SECOND FIREBALL. At 0.70 peak and 4.4x
 // the chunk's diameter it was a bright enough smooth field to BRIDGE the gap
 // between a chunk and the ball it had just left: measured on the Sith (the
@@ -9340,8 +9347,13 @@ const _FX_CHUNK_OPA  = 0.55;
 // hidden — the debris is exempt from that cap, but only for as long as a
 // measurement can tell the two apart. 0.42 at 3.2x keeps the feather and
 // gives the ball its edge back.
-const _FX_CHUNK_HALO_OPA = 0.42;
-const _FX_CHUNK_HALO_K = 3.2;
+// (Both numbers came down again when the solid part went to full opacity and
+// grew: the halo is scaled off the chunk's radius, so a 1.75x bigger chunk
+// carried a 1.75x bigger glow, and at 3.2x/0.42 that reinstated exactly the
+// bridge described above. The feather now rides at 2.2x/0.32 — the solid
+// piece is doing the work the halo used to be asked to do.)
+const _FX_CHUNK_HALO_OPA = 0.32;
+const _FX_CHUNK_HALO_K = 2.2;
 // Debris allowance, as on the streak cloud (see _FX_DEBRIS_CAP_MULT): the
 // wreckage is exempt from the fireball's 35% screen rule, but not from
 // physical sanity at point-blank range.
@@ -9349,8 +9361,32 @@ const _FX_CHUNK_CAP_MULT = 3.2;
 // Chunk radius as a fraction of the victim's measured hull length. Big
 // enough to read as a piece of ship at 250-400 u, small enough that nobody
 // mistakes it for a second ship.
-const _FX_CHUNK_R_LO = 0.085;
-const _FX_CHUNK_R_HI = 0.155;
+//
+// 0.085-0.155 was too small to be seen. A torn panel is a THIN slice of its
+// bounding sphere, so a chunk whose bounding radius is a twelfth of the hull
+// puts perhaps 80 px on a 1600x900 frame at 280 u, and twelve of those came
+// to 980 px inside a 79x152 box — smaller than the victim's own 178x102
+// silhouette and smaller than the 160 px fireball they exist to escape. At
+// 0.15-0.27 the biggest fragment is roughly half the length of the ship it
+// came off: unmistakably a piece of wreckage, never mistakable for a ship.
+const _FX_CHUNK_R_LO = 0.15;
+const _FX_CHUNK_R_HI = 0.27;
+// Neutral hull metal, used as the floor colour for a fragment torn off a
+// near-black panel (see _fxChunkMat).
+const _FX_CHUNK_BASE = new THREE.Color(0xa8b0ba);
+// Peak emissive of the white-hot stage. Not quite 1.0 on purpose: at a flat
+// 1.0 the map and the shading are washed out and the chunk is back to being
+// a white card for the first 150 ms.
+const _FX_CHUNK_EMIS = 0.88;
+// SOOT. The emissive ramp alone does not put a fragment out: the piece is
+// still the ship's own hull colour lit by the same directional light, and on
+// the pale hulls (Sith, Federation) that measured as a bright white plate
+// still sitting at 132/255 at t = 650 ms — a fragment that never cools, which
+// is the one thing burning wreckage has to do. The base colour therefore
+// chars toward this as the glow goes out, so the last third of the event is a
+// dark tumbling silhouette against the sky rather than a white one.
+const _FX_CHUNK_CHAR = new THREE.Color(0x2b2622);
+const _FX_CHUNK_CHAR_K = 0.62;   // how far toward soot a fully cooled piece goes
 const _fxCkP = new THREE.Vector3();
 const _fxCkS = new THREE.Vector3();
 const _fxCkC = new THREE.Color();
@@ -9383,8 +9419,19 @@ function _fxResolveVictim(target, pos) {
 // of 25-60% of the source triangles: contiguous, because in every geometry
 // this game uses (lathes, boxes, cylinders, spheres) neighbouring triangles
 // are neighbouring surface, so a run of them is a torn-off panel rather than
-// a scatter of loose faces. Positions only — the chunk is drawn unlit, so
-// normals and UVs would be carried for nothing.
+// a scatter of loose faces.
+//
+// NORMALS AND UVS NOW RIDE ALONG. They used to be dropped ("the chunk is
+// drawn unlit, so normals and UVs would be carried for nothing") and that
+// single line is what kept the wreckage invisible: an unlit white polygon at
+// half alpha, thrown against a 200+ luma fireball, measured 980 px = 8.0% of
+// the kill's lit pixels at mean +31.5/255 — BELOW the 40/255 bar the burst
+// body itself is measured against, i.e. white haze rather than debris. A
+// chunk has to be a piece of the SHIP: the victim's own hull texture, shaded
+// by the same directional light the hull was shaded by, so it reads as metal
+// catching the flash and turns into a dark tumbling silhouette as it cools.
+// That needs uv (for the map) and normal (for the shading), so both are
+// copied when the source has them and normals are computed when it does not.
 function _fxFragGeo(g) {
     try {
         if (!g || !g.attributes || !g.attributes.position) return null;
@@ -9393,7 +9440,10 @@ function _fxFragGeo(g) {
         if (triCount < 8) return g.clone();
         const keep = Math.max(4, Math.round(triCount * (0.25 + Math.random() * 0.35)));
         const start = Math.floor(Math.random() * Math.max(1, triCount - keep));
+        const nrm = g.attributes.normal, uvs = g.attributes.uv;
         const P = new Float32Array(keep * 9);
+        const N = nrm ? new Float32Array(keep * 9) : null;
+        const U = uvs ? new Float32Array(keep * 6) : null;
         for (let t = 0; t < keep; t++) {
             for (let v = 0; v < 3; v++) {
                 const src = (start + t) * 3 + v;
@@ -9401,14 +9451,92 @@ function _fxFragGeo(g) {
                 P[t * 9 + v * 3]     = pos.getX(vi);
                 P[t * 9 + v * 3 + 1] = pos.getY(vi);
                 P[t * 9 + v * 3 + 2] = pos.getZ(vi);
+                if (N) {
+                    N[t * 9 + v * 3]     = nrm.getX(vi);
+                    N[t * 9 + v * 3 + 1] = nrm.getY(vi);
+                    N[t * 9 + v * 3 + 2] = nrm.getZ(vi);
+                }
+                if (U) {
+                    U[t * 6 + v * 2]     = uvs.getX(vi);
+                    U[t * 6 + v * 2 + 1] = uvs.getY(vi);
+                }
             }
         }
         const out = new THREE.BufferGeometry();
         out.setAttribute('position', new THREE.BufferAttribute(P, 3));
+        if (U) out.setAttribute('uv', new THREE.BufferAttribute(U, 2));
+        if (N) out.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+        else { try { out.computeVertexNormals(); } catch (e) {} }
         return out;
     } catch (e) {
         try { return g.clone(); } catch (e2) { return null; }
     }
+}
+
+// THE CHUNK'S SKIN. Built from the material the piece was actually wearing
+// when it was part of the ship, so the fragment carries the victim's hull
+// map and the victim's hull colour and is lit by the scene's own directional
+// light — that is the whole difference between "a piece of that Klingon" and
+// "a white card". Three guards make the clone safe as wreckage:
+//   * metalness is pulled down to <= 0.45 and roughness up. A fully metallic
+//     PBR surface with no environment map in range renders BLACK except for
+//     its specular highlight, so a cloned hull material would have made the
+//     debris literally invisible on the sky it is thrown against.
+//   * the base colour gets a luminance floor. Several hulls are near-black
+//     panels that only read in game because of their emissive trim, and the
+//     trim is not on the torn piece.
+//   * vertexColors is forced off — the fragment geometry carries position,
+//     uv and normal, and a material expecting a colour attribute that is not
+//     there renders black.
+// Anything not lit (ShaderMaterial hulls, sprite cards) falls back to a
+// neutral Phong metal, which is still a shaded solid rather than a flat one.
+function _fxChunkMat(src) {
+    let sm = null;
+    try { sm = Array.isArray(src.material) ? src.material[0] : src.material; } catch (e) {}
+    let mat = null;
+    try {
+        if (sm && (sm.isMeshStandardMaterial || sm.isMeshPhysicalMaterial ||
+                   sm.isMeshPhongMaterial || sm.isMeshLambertMaterial)) {
+            mat = sm.clone();
+        }
+    } catch (e) { mat = null; }
+    if (!mat) {
+        let col = null, map = null;
+        try { if (sm && sm.color) col = sm.color.clone(); } catch (e) {}
+        try { if (sm && sm.map) map = sm.map; } catch (e) {}
+        mat = new THREE.MeshPhongMaterial({
+            color: col || new THREE.Color(0x9aa3ad), map: map,
+            specular: new THREE.Color(0x4a5058), shininess: 34
+        });
+    }
+    try {
+        if (typeof mat.metalness === 'number') mat.metalness = Math.min(mat.metalness, 0.45);
+        if (typeof mat.roughness === 'number') mat.roughness = Math.max(mat.roughness, 0.42);
+        if (mat.envMap !== undefined) mat.envMap = null;
+        if (mat.emissiveMap !== undefined) mat.emissiveMap = null;
+        if (mat.lightMap !== undefined) mat.lightMap = null;
+        if (mat.aoMap !== undefined) mat.aoMap = null;
+        if (mat.alphaMap !== undefined) mat.alphaMap = null;
+        mat.vertexColors = false;
+        if (mat.color) {
+            const lum = 0.30 * mat.color.r + 0.59 * mat.color.g + 0.11 * mat.color.b;
+            if (lum < 0.34) mat.color.lerp(_FX_CHUNK_BASE, lum > 0.02 ? 0.62 : 0.85);
+        }
+        if (mat.emissive) mat.emissive.setRGB(1, 1, 1);
+        if (typeof mat.emissiveIntensity === 'number') mat.emissiveIntensity = 1;
+        if (mat.flatShading !== undefined) mat.flatShading = true;
+        // Keep the hull's own colour so the char ramp has something to burn.
+        if (mat.color) mat.userData.__fxBase = mat.color.clone();
+    } catch (e) {}
+    mat.transparent = true;
+    mat.opacity = 0;
+    mat.depthWrite = false;
+    mat.depthTest = true;
+    mat.fog = false;
+    mat.side = THREE.DoubleSide;
+    mat.blending = THREE.NormalBlending;
+    mat.needsUpdate = true;
+    return mat;
 }
 
 function _fxHullChunks(victim, center, K, tint) {
@@ -9474,11 +9602,7 @@ function _fxHullChunks(victim, center, K, tint) {
         // first 200 ms, against a < 40 bar the burst itself passes at 27-35).
         // Without it the chunk is simply painted first and the flash sums on
         // top, so wreckage can only ever ADD light, never subtract it.
-        const mat = new THREE.MeshBasicMaterial({
-            color: 0xffffff, transparent: true, opacity: 0,
-            depthWrite: false, depthTest: true, fog: false,
-            side: THREE.DoubleSide
-        });
+        const mat = _fxChunkMat(src);
         const mesh = new THREE.Mesh(geo, mat);
         mesh.scale.set(_fxCkS.x * fit * (0.75 + Math.random() * 0.5),
                        _fxCkS.y * fit * (0.75 + Math.random() * 0.5),
@@ -9513,7 +9637,15 @@ function _fxHullChunks(victim, center, K, tint) {
         // slowest chunk has to be OUT of the body (1.03 K) by the time the
         // lead-in has faded it up, or it emerges sitting on the fireball and
         // joins the fireball's own connected component.
-        const vel = _fxCkP.clone().multiplyScalar(0.30 * K * (0.60 + Math.random() * 0.65));
+        //
+        // RAISED 0.30 -> 0.50 K per 50 ms. At 0.30 the whole wreckage cloud
+        // measured 79x152 px at the kill's own peak against a 160 px ball:
+        // the debris was still INSIDE the thing it is supposed to escape, so
+        // the kill's outline was the ball's outline and nothing else. At 0.50
+        // the cloud has cleared ~1.0 hull length by t = 200 ms and spans well
+        // over twice the ball's diameter by t = 300 ms, which is the beat the
+        // player's eye is actually on.
+        const vel = _fxCkP.clone().multiplyScalar(0.50 * K * (0.70 + Math.random() * 0.70));
         // HEAD START, same idea as the streaks' (see _fxShards): a piece is
         // born already moving. Here it also keeps the cloud from being
         // switched on while it still overlaps the fireball — a chunk that
@@ -9593,13 +9725,35 @@ function _fxHullChunks(victim, center, K, tint) {
             // time it is fully opaque.
             const lead = Math.min(1, et / _FX_CHUNK_LEAD);
             const leadE = lead * lead * (3 - 2 * lead);
+            // Soot follows the glow down, not the fade: it starts once the
+            // white stage is over (u = 0.34, the same knee the colour ramp
+            // turns at) so a piece is never dark while it is still burning.
+            const cu = Math.min(1, Math.max(0, (u - 0.34) / 0.66));
+            const char = _FX_CHUNK_CHAR_K * cu * cu * (3 - 2 * cu);
             for (let i = 0; i < chunks.length; i++) {
                 const c = chunks[i];
                 c.mesh.position.copy(center).addScaledVector(c.off, shrink);
                 c.mesh.rotation.x += c.spin.x * f;
                 c.mesh.rotation.y += c.spin.y * f;
                 c.mesh.rotation.z += c.spin.z * f;
-                c.mat.color.setRGB(r, g, b);
+                // The ramp drives EMISSIVE, not base colour. The base colour
+                // is the victim's own hull, and it stays: what cools is the
+                // heat glowing THROUGH it, so the piece goes white-hot ->
+                // faction ember -> a dark shaded hull fragment tumbling
+                // against the sky, instead of a white card fading to a grey
+                // card. On the fallback Phong path emissive always exists;
+                // the base-colour branch is kept only for an exotic material
+                // that somehow has none.
+                if (c.mat.emissive) {
+                    c.mat.emissive.setRGB(r * _FX_CHUNK_EMIS,
+                                          g * _FX_CHUNK_EMIS,
+                                          b * _FX_CHUNK_EMIS);
+                    // ...and the hull under the glow chars as the glow dies.
+                    const bs = c.mat.userData && c.mat.userData.__fxBase;
+                    if (bs) c.mat.color.copy(bs).lerp(_FX_CHUNK_CHAR, char);
+                } else if (c.mat.color) {
+                    c.mat.color.setRGB(r, g, b);
+                }
                 c.mat.opacity = _FX_CHUNK_OPA * fade * leadE;
                 c.halo.position.copy(c.mesh.position);
                 c.hmat.color.setRGB(r, g, b);

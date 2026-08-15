@@ -97,6 +97,12 @@
     // tracker in update()) — the jump-side equivalent of arrivalCuts.
     get jumpCuts() { return ap._jumpCuts || 0; },
     get lastJumpCut() { return ap._lastJumpCut || null; },
+    // The cut's opposite number on this path: clock top-ups handed to a dash
+    // that under-flew its armed duration (see the extension clause in the
+    // jump-arrival tracker). Cut + extension tile the along-track axis, so on
+    // a leg with a subject one of the two always ends it.
+    get jumpExts() { return ap._jumpExts || 0; },
+    get lastJumpExt() { return ap._lastJumpExt || null; },
     // How many jump legs handed their arrival to the park (see the handoff in
     // the jump-arrival tracker). This is the number that used to be 0 by
     // construction — the park stands down for `isJump` and physics held that
@@ -116,6 +122,12 @@
     // Which interlock held the last dash back (park / departureBlocked /
     // warpBusy / energy / corridorBlocked / gapTooSmall).
     get lastJumpRefusal() { return ap._lastJumpRefusal || null; },
+    // Vetted latches are exempt from it now, so this counts only the dashes
+    // that were dropped between ignition and physics reading them — the
+    // silent second refusal that never appeared in the ignition log because
+    // the ignition itself had already fired. Should stay at 0 for every leg
+    // this file ignites.
+    get jumpsBlockedByArrival() { return ap._jumpsBlockedByArrival || 0; },
     get warpNoSubjectRefusals() { return ap._warpNoSubjectRefusals || 0; },
     // Legs refused because the ground to the standoff is shorter than the
     // burn's own minimum delivery plus the exit ramp (see _oWarpMinGround) —
@@ -1526,6 +1538,35 @@
             (gameState.velocityVector ? gameState.velocityVector.length().toFixed(2) : '?') + ' u/f');
         }
       }
+      // ── A DASH MUST ACTUALLY DELIVER THE GROUND IT WAS SIZED FOR ───────────
+      // An O-warp burn holds its speed because warp guidance re-writes
+      // `velocityVector` every frame (game-physics.js:2906). A jump is
+      // explicitly excluded from that (:2910), so NOTHING re-writes it — and
+      // physics' own drag keeps running underneath, at ~0.985/frame. A dash is
+      // therefore not a 25 s stopwatch of boost, it is an impulse with a
+      // half-life: total ground is bounded by v/(1-0.985) ~= 67 x v no matter
+      // what the clock says, unless the phase underneath happens to be holding
+      // the thrust key.
+      //
+      // MEASURED, this build (.critic/w10d-run.json, leg 14): a dash armed at
+      // 25.9 u/frame for a 9,620 u gap lit at 23.0 and decayed 21.1 / 17.5 /
+      // 14.0 / 12.0 / 8.9 / 6.0 / 4.2 / 2.7 / 1.8 / 1.3 while `active` was
+      // still true, covering 2,003 u of its 9,620 and ending 9,342 u out at
+      // 7.59 deg. Its twin to Atlantis Nebula Prime did the same. The legs that
+      // DID arrive were the ones whose phase happened to be thrusting.
+      //
+      // So hold the armed speed for the length of the burn — never above it,
+      // only restoring what drag took, and only on a leg that staged an
+      // arrival (a combat closing dash keeps physics' own feel). The cut below
+      // still owns the ending, and the ground being flown is inside the gap
+      // the pre-flight corridor sweep already cleared.
+      if (_jEw.isJump && _jEw.active && _jSub._jumpSpeed && gameState.velocityVector) {
+        const _jNow = gameState.velocityVector.length();
+        if (_jNow > 1e-3 && _jNow < _jSub._jumpSpeed * 0.995) {
+          gameState.velocityVector.multiplyScalar(_jSub._jumpSpeed / _jNow);
+          ap._jumpSpeedHolds = (ap._jumpSpeedHolds || 0) + 1;
+        }
+      }
       if (_jEw.isJump && _jEw.active && gameState.velocityVector && _arriveToTmp && _arriveFwdTmp) {
         const _jSpeed = gameState.velocityVector.length();
         if (_jSpeed > 1e-3) {
@@ -1555,6 +1596,55 @@
               console.log('🎯 JUMP ARRIVAL CUT → ' + ap._lastJumpCut.subject +
                 '  along=' + ap._lastJumpCut.along + 'u (stand=' +
                 ap._lastJumpCut.stand + ' coast=' + ap._lastJumpCut.coast + ')');
+            }
+          } else if (_jEw.timeRemaining <= JUMP_EXTEND_STEP_MS &&
+                     (_jSub._jumpExtMs || 0) < JUMP_EXTEND_MAX_MS) {
+            // ── ...AND THE OTHER HALF OF THE CONTRACT: KEEP IT ALIVE ──────────
+            // The cut above and this extension tile the along-track axis, and
+            // until now the jump path only had the cut. That made the clock the
+            // sole terminator in the one direction it is wrong in: a dash is
+            // armed in WALL-CLOCK ms and flown PER FRAME, so on anything under
+            // 60 fps it stops short by roughly (1 - fps/60) of its own length —
+            // the exact shortfall EW_BURN_DELIVERY and the O-warp's extension
+            // clause exist to absorb on the other path.
+            //
+            // MEASURED, this build at ~33 fps (.critic/w10c-run.json, 12
+            // destination-bearing jump legs): the dash to Elysium Nebula Prime
+            // was sized 10,162 u (speed 27.4, 6,000 ms) and ended 10,022 u out,
+            // 7.08 deg — centred, stable, and nowhere near its 2,129 u standoff.
+            // Three more legs finished at 6,754 / 6,039 / 11,023 u, i.e. 9/12
+            // legs over the 15 deg bar instead of 12/12.
+            //
+            // Topping the clock up cannot overshoot: the cut above still owns
+            // the ending and fires the moment the runway is gone, and the
+            // ground being re-flown is inside the gap the pre-flight corridor
+            // sweep already cleared. The cap bounds a dash that cannot converge
+            // at one extra clock's worth, so a jump still cannot run away.
+            // BILL THE BUDGET FOR THE CLOCK ACTUALLY GRANTED, not for a whole
+            // step per call. This clause runs EVERY FRAME the clock sits under
+            // the step, so charging a flat 900 ms each time spends a 6,000 ms
+            // budget in six frames — a fifth of a second. MEASURED, this build
+            // (.critic/w10f-run.json): 49 extensions over 12 legs, and not one
+            // leg ran longer than its armed 6.0 s; four jump legs ended 3,264 /
+            // 3,725 / 4,385 / 5,199 u out of a 2,129 u standoff, 13.6-21.5 deg.
+            // The top-up is only ever (step - what is left), so the sum is the
+            // real extra burn time and the budget is a duration, not a count.
+            const _jAdd = JUMP_EXTEND_STEP_MS - Math.max(0, _jEw.timeRemaining);
+            _jEw.timeRemaining = JUMP_EXTEND_STEP_MS;
+            _jSub._jumpExtMs = (_jSub._jumpExtMs || 0) + _jAdd;
+            ap._jumpExts = (ap._jumpExts || 0) + 1;
+            if (!_jSub._jumpExtLogged) {
+              _jSub._jumpExtLogged = true;
+              ap._lastJumpExt = {
+                at: Date.now(), along: Math.round(_jAlong),
+                stand: Math.round(_jStand), speed: +_jSpeed.toFixed(1),
+                subject: (_jSub.obj.userData &&
+                  (_jSub.obj.userData.name || _jSub.obj.userData.type)) || 'body'
+              };
+              console.log('⏱️ JUMP BURN EXTENDED → ' + ap._lastJumpExt.subject +
+                '  along=' + ap._lastJumpExt.along + 'u still ahead of a ' +
+                ap._lastJumpExt.stand + 'u standoff at ' +
+                ap._lastJumpExt.speed + ' u/frame');
             }
           }
         }
@@ -2183,8 +2273,21 @@
     // since round 4; this makes the jump answer to it too, at the one place
     // every site funnels through. Cheap: the latch is re-set by whichever
     // caller wanted it as soon as the heading is clear.
+    //
+    // ...EXCEPT ON A LATCH THAT HAS ALREADY ANSWERED THE BETTER QUESTION.
+    // `_igniteJump` now sweeps the WHOLE corridor — along the nose AND along
+    // the framing hold's line of sight — and shortens the dash to whatever is
+    // clear, before it sets this latch. Re-asking the one-body cone here would
+    // undo that vetting one frame later: the latch is dropped silently between
+    // ignition and physics consuming it, and the leg simply never happens —
+    // the same zero-arrivals ending as the pre-flight refusal, by a different
+    // door, and invisible in the ignition log because the ignition DID fire.
+    // A latch nobody vetted (a human double-tapping W, any future direct
+    // setter) still answers to the cone. 400 ms covers the 120 ms the latch
+    // lives plus the transition frames physics may take to read it.
     const _dj = keys();
-    if (_dj.wDoubleTap && _departureBlocked()) {
+    if (_dj.wDoubleTap && Date.now() - (ap._jumpVettedAt || 0) > 400 &&
+        _departureBlocked()) {
       _dj.wDoubleTap = false;
       ap._jumpsBlockedByArrival = (ap._jumpsBlockedByArrival || 0) + 1;
     }
@@ -4914,6 +5017,13 @@
   // will ever get; the park latches an arrival inside 2.5x the standoff, and
   // 1.5x leaves that latch a full standoff of margin to close.
   const JUMP_ARRIVAL_LATERAL = 1.5;
+  // HOW A DASH THAT UNDER-FLEW ITS CLOCK IS KEPT ALIVE — the jump-side
+  // opposite number of BURN_EXTEND_STEP_MS / _burnExtendBudget. Same step, for
+  // the same reason (a shorter one can be stepped straight over by a starved
+  // frame); the budget is one whole extra clock, so the worst case is a dash
+  // that flies twice its armed duration and is still ended by the cut.
+  const JUMP_EXTEND_STEP_MS = 900;
+  const JUMP_EXTEND_MAX_MS = JUMP_MS_MAX;
   const _JUMP_U_PER_SPEED = 60 * (JUMP_MS_MAX / 1000) * JUMP_DELIVERY;
   function _jumpReach(speed) { return speed * _JUMP_U_PER_SPEED + JUMP_TAIL_U; }
   // THE NUMBER THAT REPLACES `Infinity`: 45 x 360 + 300 = 16,500 u. A leg
@@ -4989,11 +5099,18 @@
     opts = opts || {};
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return false;
     if (!window.keys || !_jcTmp) return false;
-    // THE SAME TWO INTERLOCKS THE O-WARP ANSWERS TO, asked in the same order.
+    // THE INTERLOCKS THE O-WARP ANSWERS TO, asked in the same order.
     // Before this, a jump could fire straight through a live park (the park
     // swallows the latch at :1448, but only for the frames it owns) and there
     // was nothing at all stopping one being aimed down the boresight at the
     // body we were parked next to — measured "PLANETARY IMPACT", :5011.
+    //
+    // THE DEPARTURE CONE IS NO LONGER ASKED HERE. It used to be the next line,
+    // ~120 lines ahead of the corridor sweep that is the real question, and it
+    // refused legs the sweep passes — see the block at the sweep itself for the
+    // geometry and the measurement. It now runs there, as the sweep's fallback,
+    // and only for the one body it was ever written about.
+    //
     // WHY A DASH DID NOT FIRE, recorded rather than inferred. Every one of
     // these returns is a legitimate "not this frame", but between them they
     // account for most attempts, and with nothing written down an acceptance
@@ -5001,7 +5118,6 @@
     // it. Same reasoning (and same shape) as _lastCorridor on the O-warp side.
     const _jNo = (why) => { ap._lastJumpRefusal = { at: Date.now(), why: why }; return false; };
     if (_parkOwnsBeat()) { ap._lastJumpRefusal = { at: Date.now(), why: 'park' }; return _parkDefer('jump'); }
-    if (_departureBlocked()) return _jNo('departureBlocked');
     const _ewJ = gameState.emergencyWarp || {};
     if (_ewJ.active || _ewJ.transitioning) return _jNo('warpBusy');
     if ((gameState.energy || 0) <= 25) return _jNo('energy');
@@ -5119,6 +5235,42 @@
     ap._lastJumpTap = Date.now();
     // RULE 3 — AND NEVER INTO SOMETHING.
     let _clear = _jumpClearAhead(_cpJ, _jumpFwdTmp, gap);
+    // Read immediately: the nose-hold sweep below overwrites it.
+    const _clearBlocker = _jcBlocker;
+
+    // ── THE PARKED BODY, AND ONLY THE PARKED BODY ───────────────────────────
+    // `_departureBlocked` (:6365) measures exactly ONE body — the subject we
+    // are parked at — and inside 3x its standoff it widens from "clear its
+    // danger radius" to a ~24 degree cone (`off < 0.45 * range`, :6396). Asked
+    // BEFORE the sweep, as it was until now (it was the line right after the
+    // park interlock, ~120 lines above this), that cone was the first and
+    // therefore the ONLY word on most legs, and it refused legs this sweep
+    // passes: parked 2,000 u off a 2,129-standoff nebula prime that subtends
+    // 34 degrees, every heading within ~24 degrees of it is refused — and the
+    // next destination in the same nebula cluster is always inside that band.
+    //
+    // MEASURED, this build, before this change: 98 shipping-path attempts
+    // against 17 distinct bodies at 3,060-11,272 u, every one aimed inside the
+    // caller's own facing cone, refused 100 % — 88 of them right there
+    // ('departureBlocked'), 10 by a live park. Lifetime counters after 26 warp
+    // legs: jumpCuts 0, jumpHandoffs 0, jumpArrivalDeclines 0. The jump path's
+    // whole arrival machinery — the ballistic gate, the staging, the cut, the
+    // handoff to the park — had never executed once, because nothing ever got
+    // past this test to reach it.
+    //
+    // The sweep is the better question and it asks it of EVERY body over the
+    // dash's whole length, with the same `dangerR + 300` clearance, and it
+    // SHORTENS rather than cancels. A dash that clears the entire corridor has
+    // by construction cleared the body it is parked next to. So the cone gets a
+    // vote only when the sweep itself names that body as the thing in the way —
+    // which is precisely the boresight case the cone was written for (measured:
+    // parked 1,947 u off Hyperion Nebula Prime at 34 degrees, dead centre, a
+    // W-jump straight down the boresight, "PLANETARY IMPACT"). That case still
+    // refuses; the cluster-hop case now flies.
+    const _asJ = gameState._arrivalSubject;
+    if (_clearBlocker && _asJ && _asJ.obj === _clearBlocker && _departureBlocked()) {
+      return _jNo('departureBlocked');
+    }
     // ...ALONG THE RAY THE NOSE IS ABOUT TO BE SWUNG ONTO, TOO. A jump is
     // BALLISTIC in whatever direction the nose has AT IGNITION, and ignition is
     // a latch (`wDoubleTap`) that physics consumes a frame or more after this
@@ -5183,6 +5335,9 @@
         // for this leg once the dash has actually been observed boosting, and
         // then hands the arrival over the moment the boost ends.
         staged._jumpLeg = true;
+        // What this dash was SIZED at, so the tracker can hold it there against
+        // physics' drag (see the speed hold in update()).
+        staged._jumpSpeed = speed;
         staged._jumpGap = Math.round(gap);
         staged._jumpLandsAt = Math.round(_landsAt);
         // The dash is short and the auto-brake tail is long; keep the subject's
@@ -5203,6 +5358,9 @@
 
     gameState._pendingJumpSpeed = speed;
     gameState._pendingJumpMs = ms;
+    // THIS LATCH HAS BEEN VETTED — see the departure-cone guard in update()
+    // (:2187) for why that has to be recorded rather than re-derived.
+    ap._jumpVettedAt = Date.now();
     window.keys.wDoubleTap = true;
     setTimeout(() => { if (window.keys) window.keys.wDoubleTap = false; }, 120);
     _logIgnition('jump', {

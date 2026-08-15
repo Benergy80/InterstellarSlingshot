@@ -5478,7 +5478,8 @@ let _hudGeoYieldLast = false;
 function _hudSpectacleActive() {
     if (typeof gameState === 'undefined') return false;
     return !!((gameState.slingshot && gameState.slingshot.active) ||
-               (gameState.emergencyWarp && gameState.emergencyWarp.active));
+               (gameState.emergencyWarp && gameState.emergencyWarp.active) ||
+               nearestHostileDistance() < 600);
 }
 if (typeof window !== 'undefined') {
     window._hudSpectacleActive = _hudSpectacleActive;
@@ -5509,6 +5510,13 @@ function _hudComputeSpectacleTarget() {
     if (typeof keys !== 'undefined' && keys.b) {
         target = Math.max(target, 0.2);
     }
+
+    // Combat is a spectacle too: ramp yield 0->1 across 900u->400u so the
+    // opacity fade actually engages in a dogfight instead of being driven
+    // purely by speed, which is near-zero while circling a target at the
+    // 50-400u combat band (see biggestGap in .critic/wave9 critic pass).
+    const _n = nearestHostileDistance();
+    if (_n < 900) target = Math.max(target, Math.min(1, (900 - _n) / 500));
 
     return target;
 }
@@ -5559,6 +5567,7 @@ function updateHudSpectacleDim() {
     _updateFlightControlsCollapse();
     _updateShipStatusCollapse();
     _updateMapLegendCollapse();
+    _updateNavCollapse();
 }
 if (typeof window !== 'undefined') {
     window.updateHudSpectacleDim = updateHudSpectacleDim;
@@ -5742,6 +5751,64 @@ function _updateMapLegendCollapse() {
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     if (now - _mapLegendLaunchT >= 8000) {
         _mapLegendPanel.classList.add('legend-collapsed');
+    }
+}
+
+// Navigation System (top-right) is the single largest chrome block in the
+// frame (367x274px = 6.98% geometric, 9.04% measured by pixel ablation) and,
+// unlike the other three panels, shipped with no collapse state of its own —
+// same 8s-after-launch fold as Flight Controls / Ship Status / the map
+// legend above. The header row (title + Orbits toggle) stays put since
+// Orbits is a live control; the black-hole warning, target list and the
+// Auto-Navigate/Slingshot-Status buttons fold behind a one-line hint.
+// Nothing is removed — every button and the target list are one click away,
+// exactly like the other three folds.
+let _navPanel = null;
+let _navHintEl = null;
+let _navLaunchT = null;
+let _navManual = false;
+
+function _updateNavCollapse() {
+    if (!_navPanel) {
+        _navPanel = document.querySelector('.ui-panel.top-right');
+        if (!_navPanel) return;
+
+        const header = _navPanel.querySelector('.flex.justify-between.items-center.mb-3');
+        Array.prototype.forEach.call(_navPanel.children, (child) => {
+            if (child !== header) child.classList.add('nav-detail');
+        });
+
+        _navHintEl = document.createElement('div');
+        _navHintEl.className = 'nav-hint';
+        _navHintEl.textContent = '▾ targets & navigate';
+        _navHintEl.title = 'Click to show navigation targets';
+        _navPanel.appendChild(_navHintEl);
+
+        const toggle = () => {
+            _navManual = true;
+            _navPanel.classList.toggle('nav-collapsed');
+        };
+        _navHintEl.addEventListener('click', toggle);
+        const title = header && header.querySelector('h3');
+        if (title) {
+            title.style.cursor = 'pointer';
+            title.addEventListener('click', toggle);
+        }
+    }
+
+    if (typeof gameState === 'undefined' || !gameState.gameStarted) {
+        _navLaunchT = null;
+        return;
+    }
+    if (_navLaunchT === null) {
+        _navLaunchT = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+        return;
+    }
+    if (_navManual) return;
+
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (now - _navLaunchT >= 8000) {
+        _navPanel.classList.add('nav-collapsed');
     }
 }
 
