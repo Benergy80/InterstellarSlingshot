@@ -192,10 +192,17 @@ function startGameWithIntro() {
         setTimeout(() => {
             initializeThreeJSForIntro();
 
-            // Fade the loading screen out and start the reveal in the SAME
-            // beat — see ivFadeOutLoadingScreen().
-            ivFadeOutLoadingScreen(loadingScreen);
-            startControlledFadeSequence();
+            // Pay the shader-compile bill HERE, behind the loading screen, but
+            // in slices spread over animation frames instead of one synchronous
+            // full-scene render — see ivWarmFirstFrameSliced(). The reveal is
+            // armed from its callback, so the loading screen only dissolves and
+            // the reveal clock only starts once there is a lit vista to reveal.
+            ivWarmFirstFrameSliced(() => {
+                // Fade the loading screen out and start the reveal in the SAME
+                // beat — see ivFadeOutLoadingScreen().
+                ivFadeOutLoadingScreen(loadingScreen);
+                startControlledFadeSequence();
+            });
         }, IV_BOOT.loadHold);
         
     } catch (error) {
@@ -332,9 +339,10 @@ function initializeThreeJSForIntro() {
 
     console.log('⚫ Black overlay created immediately to prevent flash');
 
-    // Pay the shader-compile stall HERE, behind the loading screen.
-    ivWarmFirstFrame();
-    ivPerf('warmDone');
+    // The shader-compile bill is NOT paid here any more: it is sliced across
+    // animation frames by ivWarmFirstFrameSliced(), which startGameWithIntro()
+    // kicks off once this function returns (so the camera system's own objects
+    // are in the warm set too).
 
     // Initialize camera system with player ship
     console.log('========================================');
@@ -353,33 +361,213 @@ function initializeThreeJSForIntro() {
     }
 }
 
-// Draw the vista once while the loading screen is still opaque over it.
+// =============================================================================
+// FIRST-FRAME WARM, SLICED
 //
 // Every shader in the scene — photosphere, corona, chromosphere, the two
-// planet-presence materials, the rings, the sky shell — compiles on the frame
-// it is first drawn, and that frame was measured at 2532 ms. It used to fall
-// AFTER startBackgroundColorFade() had armed the overlay transition and the
-// button timer, so the browser could not run either until the stall ended: the
-// reveal and the menu both arrived ~2.5 s late, on top of their own durations.
-// Paying it here costs the player nothing (the loading bar is still up) and
-// hands the reveal a thread that is actually free, which is the difference
-// between a menu at t=14.8 s and a menu at t=5-6 s.
+// planet-presence materials, the rings, the sky shell, the nebula — compiles on
+// the frame it is first drawn. That used to be ONE synchronous full-scene
+// render taken inside initializeThreeJSForIntro(); it measured 2532 ms and grew
+// to 4103-4350 ms when the nebula shader landed. Being synchronous AND ahead of
+// the reveal timers, it blocked everything behind it: the vista was renderable
+// at 6.25 s and the lit title arrived at 13.02 s — 6.8 s of black on finished
+// art, with the t=8 s frame measuring 19-31 luminance std (pure black on four
+// boots in seven, a half-faded wash on the rest) against a bar of 35.
 //
-// renderer.compile() is deliberately NOT used: in r128 it walks the whole
-// scene, so it would also compile the launch-pad sky dome and its three cloud
-// planes — hidden objects that a real render skips. One render compiles exactly
-// what is on screen and nothing else.
-function ivWarmFirstFrame() {
+// The compile bill itself is not reducible on r128: getProgram() links a
+// program and immediately reads its uniform locations, so the driver cannot
+// overlap two programs however they are issued — renderer.compile() is exactly
+// as serial as a render. What changes is who has to wait for it:
+//
+//   * SLICED — a step admits as many objects as fit a millisecond budget (one,
+//     on a machine where a program costs a quarter of a second), so no single
+//     main-thread block is longer than a frame's worth of work and the loading
+//     screen, the fades and the button timers all keep their thread.
+//   * CUMULATIVE — a step draws objects 0..i, which both compiles the ones it
+//     just admitted and leaves the canvas holding a valid, if partial, vista
+//     that fills in in traversal order — sky, star, worlds — rather than a
+//     one-object flash.
+//   * OFF THE CRITICAL PATH — the reveal is armed as soon as the warm finishes
+//     OR after IV_WARM.readyMs, whichever comes first. Any slices still
+//     outstanding at that point ride inside the intro's own animation loop
+//     (ivIntroRender()) at a smaller per-frame budget, so the first frames
+//     after the reveal still cannot carry a multi-second stall. A machine that
+//     compiles inside the budget never reaches that second case at all, and
+//     its boot is timed exactly as before.
+//
+// The r128 caveat that shaped the original warm is unchanged and still
+// respected: renderer.compile() walks the WHOLE scene, hidden objects included,
+// so it would compile the launch-pad sky dome and its three cloud planes —
+// objects a real render skips. The warm therefore stays render-based, and it
+// collects its work list with traverseVisible(), which skips exactly what a
+// render skips, so no hidden pad-sky object is ever compiled.
+//
+// The per-step subset is selected with a spare LAYER rather than .visible:
+// r128's projectObject() layer-tests each object but still descends into its
+// children, so a layer can exclude the star without also excluding the corona
+// parented to it. Lights carry the layer throughout, so each program compiles
+// against the same lights state the real frame uses (a program compiled with no
+// lights would be discarded and recompiled on the first lit frame, which would
+// defeat the whole exercise). Object masks are only ever WIDENED — bit 0 is
+// never cleared — so a stray normal render landing mid-warm still draws the
+// scene correctly, and the camera's own mask is saved and restored inside every
+// step, including on error.
+const IV_WARM = {
+    active: false,      // slices still outstanding
+    done: false,
+    owned: false,       // the intro animation loop has taken over the stepping
+    items: [],
+    lights: [],
+    i: 0,
+    layer: 31,          // "compiled so far" — the cumulative frame
+    batch: 1,           // objects added per step; measured, see ivWarmStep()
+    t0: 0,
+    steps: 0,
+    readyMs: 900,       // the reveal waits no longer than this for the warm
+    stepBudget: 10,     // ms of compiling per warm-loop tick
+    frameBudget: 6,     // ms of compiling per intro-animation frame
+    onReady: null
+};
+
+function ivWarmFirstFrameSliced(onReady) {
+    IV_WARM.onReady = typeof onReady === 'function' ? onReady : null;
     try {
-        if (!renderer || !scene || !camera) return;
-        const t0 = performance.now();
-        if (typeof gameRender === 'function') gameRender(scene, camera);
-        else renderer.render(scene, camera);
-        ivPerf('warmMs', performance.now() - t0);
-        console.log('🔥 Intro first frame warmed in ' + Math.round(performance.now() - t0) + 'ms');
+        if (!renderer || !scene || !camera) { ivWarmFinish(); return; }
+        ivPerf('warmStart');
+        IV_WARM.t0 = performance.now();
+        IV_WARM.items = [];
+        IV_WARM.lights = [];
+        IV_WARM.i = 0;
+        IV_WARM.steps = 0;
+        IV_WARM.batch = 1;
+        IV_WARM.done = false;
+        IV_WARM.owned = false;
+        // traverseVisible() skips invisible subtrees, which is precisely the
+        // launch-pad sky buildIntroVista() hid — it must not be compiled.
+        scene.traverseVisible((o) => {
+            if (o.isLight) { IV_WARM.lights.push(o); return; }
+            if (o.material && (o.isMesh || o.isLine || o.isPoints || o.isSprite)) IV_WARM.items.push(o);
+        });
+        IV_WARM.lights.forEach((l) => l.layers.enable(IV_WARM.layer));
+        ivPerf('warmItems', IV_WARM.items.length);
+        IV_WARM.active = IV_WARM.items.length > 0;
+        if (!IV_WARM.active) { ivWarmFinish(); return; }
+        ivWarmSchedule();
     } catch (e) {
-        console.warn('Intro warm frame skipped:', e);
+        console.warn('Intro warm setup failed:', e);
+        ivWarmFinish();
     }
+}
+
+// rAF drives the slices, but a backgrounded tab never fires one and the boot
+// must not hang there, so each tick is raced against a timer.
+function ivWarmSchedule() {
+    let fired = false;
+    const go = () => { if (fired) return; fired = true; ivWarmTick(); };
+    try { requestAnimationFrame(go); } catch (e) {}
+    setTimeout(go, 50);
+}
+
+function ivWarmTick() {
+    if (!IV_WARM.active || IV_WARM.owned) return;
+    if (ivWarmStep(IV_WARM.stepBudget)) { ivWarmFinish(); return; }
+    // Slow compiler: hand the reveal its thread now and finish the remaining
+    // slices inside the animation loop.
+    if (IV_WARM.onReady && performance.now() - IV_WARM.t0 >= IV_WARM.readyMs) ivWarmReady();
+    ivWarmSchedule();
+}
+
+// Widen the compiled set, then draw it: ONE render per step both compiles the
+// newly admitted materials and leaves a coherent (if partial) frame on the
+// canvas, so nothing is drawn twice. Steps continue until the budget is spent.
+// Returns true when the whole work list is done.
+//
+// How many objects a step admits is measured, not guessed, because the two
+// machines this has to serve want opposite things. Where a program links in
+// microseconds the slicing is pure overhead — a render costs more than the
+// compiles it carries — so the batch doubles until a step fills its budget and
+// the whole warm lands in a handful of frames. Where a program costs a quarter
+// of a second the batch stays at one object, which is the finest slice
+// available, and each step blocks for exactly one compile instead of all of
+// them. Growth is capped at 2x per step so no single step can overshoot by
+// more than a factor of two.
+function ivWarmStep(budgetMs) {
+    if (!IV_WARM.active) return true;
+    const t0 = performance.now();
+    const mask = camera.layers.mask;
+    try {
+        do {
+            const tStep = performance.now();
+            const from = IV_WARM.i;
+            for (let k = 0; k < IV_WARM.batch && IV_WARM.i < IV_WARM.items.length; k++) {
+                IV_WARM.items[IV_WARM.i++].layers.enable(IV_WARM.layer);
+            }
+            camera.layers.set(IV_WARM.layer);
+            renderer.render(scene, camera);
+            camera.layers.mask = mask;
+            IV_WARM.steps++;
+
+            const per = (performance.now() - tStep) / Math.max(1, IV_WARM.i - from);
+            const fits = per > 0 ? Math.floor(budgetMs / per) : 64;
+            IV_WARM.batch = Math.max(1, Math.min(fits, IV_WARM.batch * 2, 64));
+        } while (IV_WARM.i < IV_WARM.items.length && performance.now() - t0 < budgetMs);
+    } catch (e) {
+        console.warn('Intro warm step failed:', e);
+        IV_WARM.i = IV_WARM.items.length;
+    } finally {
+        camera.layers.mask = mask;
+    }
+    return IV_WARM.i >= IV_WARM.items.length;
+}
+
+function ivWarmFinish() {
+    if (IV_WARM.done) { ivWarmReady(); return; }
+    IV_WARM.done = true;
+    IV_WARM.active = false;
+    try {
+        IV_WARM.items.forEach((o) => o.layers.disable(IV_WARM.layer));
+        IV_WARM.lights.forEach((l) => l.layers.disable(IV_WARM.layer));
+        if (renderer && scene && camera && IV_WARM.t0) {
+            // The real first frame, whole and unmasked. It is also the
+            // regression sentinel: if warmFinalMs is ever seconds again, the
+            // slices stopped compiling what the frame actually draws.
+            const t = performance.now();
+            renderer.render(scene, camera);
+            ivPerf('warmFinalMs', performance.now() - t);
+        }
+    } catch (e) {
+        console.warn('Intro warm restore failed:', e);
+    }
+    if (IV_WARM.t0) {
+        ivPerf('warmMs', performance.now() - IV_WARM.t0);
+        ivPerf('warmSteps', IV_WARM.steps);
+        console.log('🔥 Intro first frame warmed in ' + Math.round(performance.now() - IV_WARM.t0) +
+                    'ms over ' + IV_WARM.steps + ' slices');
+    }
+    ivPerf('warmDone');
+    ivWarmReady();
+}
+
+function ivWarmReady() {
+    const cb = IV_WARM.onReady;
+    IV_WARM.onReady = null;
+    if (!cb) return;
+    ivPerf('warmReadyAt');
+    try { cb(); } catch (e) { console.warn('Intro reveal arm failed:', e); }
+}
+
+// The intro loop's render call. While slices are outstanding it IS the warm
+// step — one budgeted batch of compiles followed by the cumulative frame — so
+// the loop never double-renders and no frame after the reveal can carry the
+// whole remaining compile bill.
+function ivIntroRender(s, c) {
+    if (IV_WARM.active) {
+        IV_WARM.owned = true;
+        if (ivWarmStep(IV_WARM.frameBudget)) ivWarmFinish();
+        return;
+    }
+    if (typeof gameRender === 'function') gameRender(s, c);
+    else if (renderer) renderer.render(s, c);
 }
 
 function initializeMinimalThreeJS() {
@@ -639,6 +827,7 @@ function startBackgroundColorFade() {
     
     // Fade the black overlay to transparent, revealing the hero vista
     setTimeout(() => {
+        ivPerf('revealAt');
         blackOverlay.style.transition = 'opacity ' + (IV_BOOT.overlayFade / 1000) + 's ease-out';
         blackOverlay.style.opacity = '0';
 
@@ -858,6 +1047,7 @@ function _ivTitleChrome(trim) {
 }
 
 function showStartButton() {
+    ivPerf('buttonAt');
     // Create and show the start button with fade-in
     createStartButton();
     createDemoButton();
@@ -2497,8 +2687,8 @@ function animateIntroSequence() {
         updateCameraView(camera);
     }
 
-    // Render the scene
-    gameRender(scene, camera);
+    // Render the scene (this also finishes any outstanding warm slices)
+    ivIntroRender(scene, camera);
 
     // Continue animation loop
     requestAnimationFrame(animateIntroSequence);
