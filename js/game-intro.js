@@ -609,6 +609,7 @@ function setupIntroContentFirst() {
                 panel.style.zIndex = '600';
             }
         });
+
     }, 1000);
     
     console.log('📋 Intro content setup complete, ready for Three.js init');
@@ -758,10 +759,111 @@ function revealIntroScene() {
     console.log('🌅 Intro scene revealed with persistent UI');
 }
 
+// ---------------------------------------------------------------------------
+// TITLE-SCREEN CHROME
+// The four HUD panels are the flight cockpit, and on the boot frame they
+// measured 458,433 px of a 1600x900 viewport — 31.8% of the vista covered
+// before the player has pressed anything: a 17-line wall of key mappings for
+// controls that are not live yet (309x325), a SHIP STATUS column reading
+// 0.0 km/s / 0.0 ly / Weapons STANDBY / Galaxies Cleared 0/8 (266x525), and a
+// galaxy map of a galaxy nobody has entered (253x304). No shipping game opens
+// on its own keybind list, and the vista this piece exists to show was being
+// framed by three panels of zeroes.
+//
+// So the menu gets a TITLE-SCREEN dress: the game title, the mission card — the
+// one panel that is about to matter, and the one the countdown writes its
+// status into — and the audio / 3D / pause strip all stay. The keybind wall,
+// the zeroed ship readout and the map go.
+//
+// Nothing is destroyed, nothing is restyled and no content is rewritten: the
+// same nodes are faded and folded, and the restore puts them back in the exact
+// state the boot reveal leaves them in (display:block / visibility:visible /
+// opacity:1), so the countdown, LIFTOFF, the ascent and gameplay see the DOM
+// they have always seen. Every exit from the menu — PRESS TO LAUNCH, DEMO MODE,
+// Skip Intro, Enter/Space — restores first and acts second.
+//
+// The trim lands DURING the boot reveal, not after it: IV_BOOT now runs the
+// whole opening in ~1.3 s, while setupIntroContentFirst's fade-in loop is still
+// on its 1 s timer, so that loop's `opacity = '1'` frequently arrives after the
+// fold. Rather than race it, the trim keeps a MutationObserver on its own nodes
+// and re-asserts while the menu is up. Every write in _ivTitleChromeApply is
+// guarded by a value check, so the observer settles after one pass instead of
+// feeding itself.
+// ---------------------------------------------------------------------------
+const IV_TITLE_CHROME = { trimmed: false, faded: [], folded: [], mo: null };
+
+function _ivTitleChromeApply() {
+    IV_TITLE_CHROME.faded.forEach((el) => {
+        // setProperty(..., 'important'), not `style.opacity = 0`: the HUD yield
+        // system pins `:root.hud-geo-yield .ui-panel { opacity: 1 !important }`
+        // (css/styles.css), and that beats a plain inline declaration — measured,
+        // the panels stayed at computed opacity 1 with inline opacity 0 on them.
+        // An inline !important is the one thing above it.
+        if (el.style.opacity !== '0' || el.style.getPropertyPriority('opacity') !== 'important') {
+            el.style.transition = 'opacity 0.7s ease-out';
+            el.style.setProperty('opacity', '0', 'important');
+        }
+        if (el.style.pointerEvents !== 'none') el.style.pointerEvents = 'none';
+    });
+    IV_TITLE_CHROME.folded.forEach((el) => {
+        if (el.style.display !== 'none') el.style.display = 'none';
+    });
+}
+
+function _ivTitleChrome(trim) {
+    try {
+        if (!!trim === IV_TITLE_CHROME.trimmed) return;
+        if (trim) {
+            IV_TITLE_CHROME.faded = ['.ui-panel.bottom-left',    // SHIP STATUS
+                                     '.ui-panel.bottom-right']   // Map
+                .map((s) => document.querySelector(s)).filter(Boolean);
+            // Only the heading and the key list of FLIGHT CONTROLS. The button
+            // row below them (Music / SFX / Skip / 3D / Pause) is a live control
+            // a player may want on the title screen, so the panel itself
+            // survives — it just shrinks to that strip.
+            const tl = document.querySelector('.ui-panel.top-left');
+            IV_TITLE_CHROME.folded = tl
+                ? Array.from(tl.children).filter((el) =>
+                    el.tagName === 'H3' || (el.textContent || '').indexOf('W/S:') !== -1)
+                : [];
+            IV_TITLE_CHROME.trimmed = true;
+            _ivTitleChromeApply();
+            if (!IV_TITLE_CHROME.mo && typeof MutationObserver === 'function') {
+                IV_TITLE_CHROME.mo = new MutationObserver(() => {
+                    if (IV_TITLE_CHROME.trimmed) _ivTitleChromeApply();
+                });
+                IV_TITLE_CHROME.faded.concat(IV_TITLE_CHROME.folded).forEach((el) => {
+                    IV_TITLE_CHROME.mo.observe(el, { attributes: true, attributeFilter: ['style'] });
+                });
+            }
+        } else {
+            IV_TITLE_CHROME.trimmed = false;
+            if (IV_TITLE_CHROME.mo) { IV_TITLE_CHROME.mo.disconnect(); IV_TITLE_CHROME.mo = null; }
+            IV_TITLE_CHROME.faded.forEach((el) => {
+                el.style.transition = 'opacity 0.4s ease-in';
+                el.style.display = 'block';
+                el.style.visibility = 'visible';
+                el.style.removeProperty('opacity');   // drop the inline !important
+                el.style.opacity = '1';
+                el.style.pointerEvents = '';
+            });
+            IV_TITLE_CHROME.folded.forEach((el) => { el.style.display = ''; });
+            IV_TITLE_CHROME.faded = [];
+            IV_TITLE_CHROME.folded = [];
+        }
+    } catch (e) {
+        // Chrome is decoration; the menu must never fail to appear over it.
+        console.warn('title chrome trim skipped:', e);
+    }
+}
+
 function showStartButton() {
     // Create and show the start button with fade-in
     createStartButton();
     createDemoButton();
+
+    // Dress the frame down to a title screen while the buttons come up.
+    _ivTitleChrome(true);
 
     const fadeS = (IV_BOOT.buttonFade / 1000) + 's ease-in-out';
 
@@ -1332,15 +1434,74 @@ function _ivBlazeStar(sun, radius) {
         [0.42, 'rgba(255,124,48,0.07)']
     ]), radius * 6.4, 0.72, 68);
     // Blown-out core. Sized so the star's own limb sits at ~0.59 of this
-    // sprite's radius: the disc reads overexposed all the way out, the
-    // photosphere's granulation survives only as texture through the falloff,
-    // and the hard chromosphere hoop stops reading as a marble's rim.
+    // sprite's radius: the disc reads overexposed all the way out and the
+    // photosphere's granulation survives as texture through the falloff.
+    //
+    // 0.62, not the 0.95 this shipped at. At 0.95 the sprite was opaque over
+    // the inner disc and the star came out a white lightbulb: measured on the
+    // boot frame, 36.7% of the disc clipped at 255 and high-frequency detail
+    // (mean |Laplacian| over the disc) sat at 1.30. At 0.62 the same frame
+    // clips 28.2% and details 1.54 — +19% surface structure, convection cells
+    // legible across the whole disc — while disc mean luminance only moves
+    // 192.6 -> 189.4, so nothing about the star's apparent size or its blinding
+    // core is given up. (0.42 was tested too: detail 1.70 but mean 175.8 and
+    // the star starts reading as a yellow ball rather than something you have
+    // to look away from.)
     add(_ivStarGlowTexture([
         [0.00, 'rgba(255,255,253,1.00)'],
         [0.30, 'rgba(255,250,232,0.92)'],
         [0.50, 'rgba(255,228,168,0.62)'],
         [0.72, 'rgba(255,168,74,0.22)']
-    ]), radius * 3.4, 0.95, 69);
+    ]), radius * 3.4, 0.62, 69);
+}
+
+// The soft limb that replaces addStarCorona's two fixed-radius backside shells
+// on the vista star (see buildIntroVista). Those shells are SPHERES, so they
+// terminate at their own silhouette: at 4.4 solar radii they draw two hard
+// concentric circles around the disc — a cream hoop at 1.04 R and a salmon
+// annulus with a razor outer edge at 1.16 R — which is the single strongest
+// "that is a decal, not a star" tell in the boot frame (see .critic/crop-sun2x
+// lineage). A sprite can carry the same H-alpha colour with a gradient instead
+// of an edge, so the atmosphere fades out over half a radius the way one does.
+//
+// The peak sits at 0.68 of the sprite's radius. A sphere of radius R seen from
+// d silhouettes at R*d/sqrt(d*d - R*R) — 1.027 R at IV_CAM_DIST — and this
+// sprite is 3.0 R wide, so 0.68 * 1.5 R = 1.02 R: the ring lands ON the limb,
+// not beside it, at the vista's framing.
+function _ivStarLimb(sun, radius) {
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const g = cv.getContext('2d');
+    const c = size / 2;
+    const grd = g.createRadialGradient(c, c, 0, c, c, c);
+    // Transparent across the whole disc: this layer is the ATMOSPHERE, and any
+    // alpha inside the silhouette just re-flattens the photosphere granulation
+    // the blaze core is already fighting to keep.
+    grd.addColorStop(0.00, 'rgba(255,120,70,0)');
+    grd.addColorStop(0.58, 'rgba(255,120,70,0)');
+    grd.addColorStop(0.68, 'rgba(255,140,80,0.55)');
+    grd.addColorStop(0.78, 'rgba(255,96,52,0.26)');
+    grd.addColorStop(1.00, 'rgba(255,80,40,0)');
+    g.fillStyle = grd;
+    g.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    tex.userData = { ivOwned: true };
+    tex.needsUpdate = true;
+
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: tex, color: 0xffffff, transparent: true,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+        // Same reason as _ivBlazeStar: depth-testing a sprite centred on the
+        // star's centre clips it away exactly where the star is.
+        depthTest: false, opacity: 1.0
+    }));
+    s.scale.set(radius * 3.0, radius * 3.0, 1);
+    s.frustumCulled = false;
+    s.renderOrder = 67.5;   // over the spikes, under the blaze pair
+    sun.add(s);
+    return s;
 }
 
 // ---------------------------------------------------------------------------
@@ -1486,7 +1647,20 @@ function buildIntroVista() {
         if (_cd._coronaSpikes) _cd._coronaSpikes.material.color.setScalar(0.34);
         if (_cd._coronaSprite) _cd._coronaSprite.material.color.setScalar(0.72);
         if (_cd._coronaChromo) _cd._coronaChromo.color.multiplyScalar(0.55);
+        // Drop the two backside SHELLS (rim 1.04 R, chromosphere 1.16 R) on this
+        // star and hand their job to a painted limb. Measured on the boot frame:
+        // the shells put a 3 px cream hoop and a 13 px salmon annulus around the
+        // disc, both ending on a hard circle, because a sphere's additive glow
+        // cannot fall off past its own silhouette. visible=false is enough —
+        // updateStarCoronas() only ever writes opacity/scale, never visibility,
+        // so the shared ticker cannot bring them back — and only THIS star is
+        // touched: every gameplay sun still gets the full shipped treatment.
+        if (_cd._coronaRim) _cd._coronaRim.visible = false;
+        if (_cd._coronaChromo) {
+            sun.children.forEach((ch) => { if (ch.material === _cd._coronaChromo) ch.visible = false; });
+        }
         _ivBlazeStar(sun, IV_SUN_R);
+        _ivStarLimb(sun, IV_SUN_R);
         introVista.sun = sun;
 
         // Composition pass: place the worlds where the solved camera will see
@@ -2044,6 +2218,10 @@ function cleanupIntroHandlers() {
 function beginLaunchSequence() {
     console.log('🚀 Player initiated launch sequence');
 
+    // Cockpit back, first thing: the countdown writes into SHIP STATUS and the
+    // mission card, and the ascent shakes every panel.
+    _ivTitleChrome(false);
+
     // NOTE: the countdown deliberately does NOT cut back to the launch-pad sky
     // dome. That dome's fragment shader is a two-stop blue ramp plus one sun
     // lobe (see createEarthAtmosphere) and cannot exceed luminance std ~5, so
@@ -2441,7 +2619,10 @@ function transitionToTransition() {
 
 function completeIntroSequence() {
     console.log('✅ Intro sequence complete - starting normal game');
-    
+
+    // Belt and braces: no path may reach gameplay with the title dress still on.
+    _ivTitleChrome(false);
+
     // Clear intro UI protection flags
     if (typeof window !== 'undefined') {
         window.introUIActive = false;
@@ -3220,6 +3401,10 @@ function fadeOutIntroElements(progress) {
 
 function skipIntroSequence() {
     console.log('⏭️ Skipping intro sequence with proper game transition');
+
+    // Skip and DEMO both land in live flight — the cockpit goes back exactly as
+    // it was before the title screen borrowed the frame.
+    _ivTitleChrome(false);
 
     // IMMEDIATELY remove skip button to prevent double-clicks/glitches
     if (introSequence.skipButton) {

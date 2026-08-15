@@ -5500,8 +5500,90 @@ function addAtmosphereShell(planet, radius, opts) {
     shell.userData.isNightShell = true;
     planet.add(shell);
     _atmoShells.push(mat);
+    _installApSunLock(planet, mat);
     return shell;
 }
+
+// =============================================================================
+// SUN-LOCK FOR THE OUTER HALO ON STOCK-MATERIAL WORLDS
+// =============================================================================
+// This shell is not the only air a hero world wears. js/atmospheric-perspective
+// hangs a SECOND, wider shell on every close body (Earth's sits at 1.115R against
+// this one's 1.015R) and weights it around the ring with
+//
+//     lit = mix(1.0, smoothstep(-0.62, 0.28, dot(surfaceNormal, uSunDir)), uSunLock)
+//
+// It only sets uSunLock = 1 for bodies whose material exposes uRim AND uSunDir —
+// the procedural worlds. Every Sol hero world (Earth, Venus, Mars, Jupiter,
+// Saturn, Mercury) is a stock MeshPhong/MeshLambert, so all six took the
+// else-branch, uSunLock collapsed to 0, `lit` collapsed to 1.0, and the halo came
+// out at EQUAL brightness the whole way round. Measured on Earth at 300u, paused,
+// same-frame readback: that halo landed +67/255 over the local sky on the day limb
+// and +67/255 over the local sky on the NIGHT limb — but the day surface under it
+// sits at L=137 and the night surface at L=8, so the identical ring read as a
+// faint sheen on one side and a chrome hoop on the other. That hoop is the single
+// cue that makes a lit world read as a 2-tone ball with a decal outline: the eye
+// gets a hard, closed, constant-width circle that no lit sphere ever produces.
+//
+// The halo module is sealed this wave, so the fix goes in from this side: hand
+// the body's own material the two uniforms that module looks for. uRim shares the
+// material's LIVE colour object (not a copy) so the halo's tint stays byte-identical
+// to what the else-branch was already computing — the only thing that changes is
+// that uSunLock flips to 1 and the ring finally knows where the sun is.
+//
+// Both uniforms are defined NON-ENUMERABLE on purpose. Two passes in this file
+// (_impostorNodeColor and _impFadeAssembly) walk `material.uniforms` with for..in
+// to find colours; a visible uRim there would put the impostor cross-fade on the
+// "scale a shader colour" branch instead of the "fade the opacity" branch, and it
+// would multiply the shared colour object — i.e. dim the planet's own albedo. A
+// non-enumerable property is invisible to for..in and Object.keys while staying a
+// normal property lookup for the halo module.
+const _apSunLocks = [];
+const _apSunBodyPos = new THREE.Vector3();
+
+function _installApSunLock(body, shellMat) {
+    if (!body || !shellMat || typeof THREE === 'undefined') return;
+    const m = body.material;
+    // Arrays and real ShaderMaterials are left alone: a procedural world already
+    // carries these uniforms and drives them from js/proc-galaxies.js.
+    if (!m || Array.isArray(m) || m.uniforms || !m.color) return;
+    const uni = {};
+    Object.defineProperty(uni, 'uRim', {
+        value: { value: m.color }, enumerable: false, configurable: true, writable: true
+    });
+    Object.defineProperty(uni, 'uSunDir', {
+        value: { value: new THREE.Vector3(1, 0, 0) }, enumerable: false, configurable: true, writable: true
+    });
+    Object.defineProperty(m, 'uniforms', {
+        value: uni, enumerable: false, configurable: true, writable: true
+    });
+    const entry = { body: body, shell: shellMat, dir: uni.uSunDir.value };
+    _apSunLocks.push(entry);
+    _apSunLockTick(entry);
+}
+
+// The sun position is read back out of the night shell's own uSun uniform rather
+// than re-derived, because that value is already kept honest across floating-origin
+// rebases by the __worldShiftHandlers hook above. Bodies orbit, so the direction
+// has to be refreshed; it is a subtract + normalize for the handful of worlds that
+// carry an atmosphere (nine in Sol), which is why it can live in the per-frame pass.
+function _apSunLockTick(e) {
+    const su = e.shell && e.shell.uniforms && e.shell.uniforms.uSun;
+    if (!su || !su.value || !su.value.isVector3) return;
+    const el = e.body.matrixWorld.elements;
+    _apSunBodyPos.set(su.value.x - el[12], su.value.y - el[13], su.value.z - el[14]);
+    if (_apSunBodyPos.lengthSq() < 1e-8) return;
+    e.dir.copy(_apSunBodyPos).normalize();
+}
+
+function updateAtmoSunLocks() {
+    for (let i = 0; i < _apSunLocks.length; i++) {
+        const e = _apSunLocks[i];
+        if (!e.body.parent || !e.body.visible) continue;
+        _apSunLockTick(e);
+    }
+}
+if (typeof window !== 'undefined') window.updateAtmoSunLocks = updateAtmoSunLocks;
 
 // FLOATING ORIGIN. uSun holds an ABSOLUTE world position and was cloned once at
 // build time, so after the first world rebase every shell in the game was
@@ -5726,6 +5808,7 @@ function updateEarthClouds() {
     // ring planes have to cancel their parent's spin.
     updatePlanetRingTilts();
     updateStarPhotospheres();
+    updateAtmoSunLocks();
     updatePresenceBodyLod(typeof camera !== 'undefined' ? camera : null);
 }
 if (typeof window !== 'undefined') window.updateEarthClouds = updateEarthClouds;

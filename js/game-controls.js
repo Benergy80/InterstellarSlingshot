@@ -7106,7 +7106,7 @@ const PIRATE_EXPLOSION_VARIANTS = {
     flare:  { core: 0xffcc33, particles: 0xffee88, count: 38, secondary: 0xffaa00 },
     plasma: { core: 0x33ddff, particles: 0x88eeff, count: 24, secondary: 0x00aaff }
 };
-function createPirateExplosionVariant(position, variant) {
+function createPirateExplosionVariant(position, variant, victim) {
     const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
     // Layered burst in the variant's loot colors (see _fxLayeredBurst) —
     // the old version was an OPAQUE growing sphere plus opaque points,
@@ -7114,7 +7114,8 @@ function createPirateExplosionVariant(position, variant) {
     // disc pasted on the sky instead of a detonation.
     _fxLayeredBurst(position, {
         core: 0xfff3d0, flash: cfg.core, ring: cfg.secondary,
-        spark: cfg.particles, sparkCount: cfg.count, scale: 1.0
+        spark: cfg.particles, sparkCount: cfg.count, scale: 1.0,
+        victim: victim
     });
 
     // Delayed secondary pop — a SMALLER burst, thrown clear of the first.
@@ -7141,7 +7142,8 @@ function createPirateExplosionVariant(position, variant) {
     setTimeout(() => {
         _fxLayeredBurst(offset, {
             core: 0xfff3d0, flash: cfg.core, ring: cfg.secondary,
-            spark: cfg.particles, sparkCount: Math.round(cfg.count * 0.45), scale: 0.42
+            spark: cfg.particles, sparkCount: Math.round(cfg.count * 0.45), scale: 0.42,
+            noChunks: true
         });
     }, variant === 'plasma' ? 200 : 130);
 }
@@ -7738,6 +7740,14 @@ function _fxLayeredBurst(position, o) {
     // the debris layers hidden), because the old thin full-opacity streak is
     // also the slow one that never leaves the flash.
     _fxShards(center, 18, o.spark || 0xffd0a0, 0.100 * K, 0.30 * K, 24, 'octa', 0.78);
+    // ...and the pieces of the pirate itself (see _fxHullChunks). Only on the
+    // FIRST beat: the delayed secondary pop fires from a random offset
+    // ~130 ms later, by which time the hull is out of the scene — and
+    // _fxHullChunks' proximity backstop would then resolve to whatever
+    // hostile is nearest, i.e. tear plates off a SHIP THAT IS STILL ALIVE.
+    // A magazine cooking off does not shed a second set of hull plates
+    // anyway, so the second beat opts out explicitly.
+    if (!o.noChunks) _fxHullChunks(o.victim, center, K, o.spark || 0xffd0a0);
 }
 
 // ── KILL SPECTACLE: size the detonation off the thing that died ──────────
@@ -8593,7 +8603,13 @@ function _fxTintHueLumSafe(base, tint, amt) {
     return m.getHex();
 }
 
-function _fxKillBurst(center, S, cfg) {
+// `victim` is the object that DIED — still in `enemies` and still in the
+// scene at this instant, because every death path removes it after firing
+// its explosion. It is optional and only the wreckage layer uses it (see
+// _fxHullChunks); a call site that has only a point still gets the burst,
+// and the chunk layer falls back to the same proximity scan the hull
+// measurement already does.
+function _fxKillBurst(center, S, cfg, victim) {
     const K = S * _FX_KILL_GAIN;
     const c = cfg || {};
     // THE WHITE CORE, first and brightest — a near-static saturated disc that
@@ -8755,6 +8771,11 @@ function _fxKillBurst(center, S, cfg) {
     // peak: the burst measured a worst 1-px step of 23/255 at peak 0.60.
     _fxShards(center, 18, _fxTintHueLumSafe(0xffd2e8, c.ember, 0.55),
               0.100 * K, 0.30 * K, 24, 'octa', 0.78);
+    // AND THE PIECES OF THE SHIP ITSELF. Everything above this line is an
+    // additive sprite on the same centre, which is why the kill could only
+    // ever be a disc — see the long note at _fxHullChunks. This is the layer
+    // that puts the victim's own geometry outside the fireball.
+    _fxHullChunks(victim, center, K, c.ember || 0xffb070);
 }
 
 function createExplosionEffect(targetObject) {
@@ -8772,7 +8793,8 @@ function createExplosionEffect(targetObject) {
 
     const center = position.clone ? position.clone()
                  : new THREE.Vector3(position.x, position.y, position.z);
-    _fxKillBurst(center, _fxVictimWorldLen(targetObject, position));
+    _fxKillBurst(center, _fxVictimWorldLen(targetObject, position), null,
+                 (targetObject && targetObject.isObject3D) ? targetObject : null);
 
     // Play explosion sound
     playSound('explosion');
@@ -9251,6 +9273,352 @@ function _fxShards(center, count, color, size, speed, life, kind, opa) {
     });
 }
 
+// ── HULL WRECKAGE — the only part of a kill that is not a sprite ─────────
+//
+// THE BUG THIS FIXES. Every layer above is an additive camera-facing sprite
+// centred on the same point, so however the fill, the fronts and the streaks
+// are tuned the burst can only ever be a filled disc with a disc-shaped
+// silhouette: measured on a paused world at 250 u, only 9.9-15.0% of the
+// kill's lit pixels ever landed outside the fireball body's own R99 while
+// the ball existed, against a 20% bar, and the >= 97% readings only arrive
+// at t >= 750 ms once the body has collapsed — i.e. after the thing that was
+// supposed to be broken open is already gone. Read blind the kill went
+// "clipped white disc -> hollow cyan ring -> pale fog donut": a firework in
+// a jar, with ~18 identical grey lozenges around it.
+//
+// The reason no amount of sprite tuning could fix that is upstream of the
+// FX: the death path threw the VICTIM away and passed only a point
+// (`createFactionExplosion(enemy.position, ...)`), so nothing downstream
+// could ever make debris out of the ship that died. The victim is now
+// threaded through — death path -> createFactionExplosion /
+// createPirateExplosionVariant -> _fxKillBurst / _fxLayeredBurst -> here —
+// and the hull is still in `enemies` and still in the scene at this instant
+// (scene.remove / enemies.splice run after the explosion call), so its real
+// meshes are available to clone.
+//
+// WHY OPAQUE MESHES AND NOT MORE SPRITES. The escape bar is about PIXELS
+// outside the ball, and a 10 px additive sliver on a bright field
+// contributes almost none: the 96-ember Points cloud carries under 6% of the
+// burst's lit pixels and the 18 streaks are thin by construction (they have
+// to be — a thin dim sprite is how the < 40/255 scanline-step bar is met out
+// on black sky). A chunk of the actual hull is large, solid and irregular,
+// so it buys the silhouette with geometry instead of with brightness: it
+// adds no fill to the ball, no radius to the fronts and no area inside the
+// 0.35-viewport cap (the re-scoped acceptance exempts debris from that cap
+// precisely because this is the layer meant to leave).
+//
+// COOLING, NOT FADING. Each chunk is born white-hot, cools to orange across
+// ~900 ms and goes to ember-dark before it fades out, which is both what
+// burning metal does and what keeps the chunk from turning into a black
+// hole punched in the fireball while the fireball is still bright: for the
+// whole time a chunk can overlap the ball it is brighter than the ball, so
+// the additive stack under it is never subtracted from. Each carries a soft
+// additive halo on the blast profile, sized ~2.2x the chunk, which feathers
+// the polygon rim the same way the streaks' texture feathers theirs.
+const _FX_CHUNK_MIN  = 6;         // fragments per kill, low end
+const _FX_CHUNK_MAX  = 9;         // ... and high end (critic's 6-10 window)
+const _FX_CHUNK_LIFE = 1150;      // ms total; the colour ramp finishes at 900
+const _FX_CHUNK_COOL = 900;       // ms white -> orange -> dark
+const _FX_CHUNK_LEAD = 240;       // ms fade-in: visible as it leaves the flash
+// PEAK ALPHA OF THE SOLID PART. A chunk out on black sky is the one element
+// in the kill whose edge is a real silhouette rather than a texture roll-off,
+// so its one-pixel scanline step IS its own luminance — at full opacity that
+// measured up to 152/255 on the centre row (the fireball alone runs 26-43,
+// and the bar the FX layers answer to is < 40). It cannot go under that bar
+// and still be a solid object: the same measurement on a LIVE HOSTILE at the
+// same range reads 78-229/255, because a ship has a silhouette too. What it
+// can do is stop being the hardest edge in the frame, and 0.55 peak with the
+// halo carrying the glow puts the wreckage under the hull it came off while
+// leaving it plainly solid against the sky.
+const _FX_CHUNK_OPA  = 0.55;
+// THE HALO IS A RIM FEATHER, NOT A SECOND FIREBALL. At 0.70 peak and 4.4x
+// the chunk's diameter it was a bright enough smooth field to BRIDGE the gap
+// between a chunk and the ball it had just left: measured on the Sith (the
+// widest hull in the roster, so the widest halo), the >= 40/255 connected
+// component then swallowed the wreckage and the "fireball body" box read
+// 0.398-0.476 of the viewport against its own 0.324-0.344 with the layer
+// hidden — the debris is exempt from that cap, but only for as long as a
+// measurement can tell the two apart. 0.42 at 3.2x keeps the feather and
+// gives the ball its edge back.
+const _FX_CHUNK_HALO_OPA = 0.42;
+const _FX_CHUNK_HALO_K = 3.2;
+// Debris allowance, as on the streak cloud (see _FX_DEBRIS_CAP_MULT): the
+// wreckage is exempt from the fireball's 35% screen rule, but not from
+// physical sanity at point-blank range.
+const _FX_CHUNK_CAP_MULT = 3.2;
+// Chunk radius as a fraction of the victim's measured hull length. Big
+// enough to read as a piece of ship at 250-400 u, small enough that nobody
+// mistakes it for a second ship.
+const _FX_CHUNK_R_LO = 0.085;
+const _FX_CHUNK_R_HI = 0.155;
+const _fxCkP = new THREE.Vector3();
+const _fxCkS = new THREE.Vector3();
+const _fxCkC = new THREE.Color();
+
+// Resolve the object that died. Most call sites now hand it over directly;
+// the proximity scan is the same backstop _fxVictimWorldLen already uses for
+// the paths that only ever had a position (the burst's `center` is a clone,
+// so identity misses and distance-0 hits).
+function _fxResolveVictim(target, pos) {
+    if (target && target.isObject3D) return target;
+    if (!pos) return null;
+    const pool = (typeof enemies !== 'undefined' && enemies) ? enemies
+               : (typeof window !== 'undefined' ? window.enemies : null);
+    if (!pool || !pool.length) return null;
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < pool.length; i++) {
+        const e = pool[i];
+        if (!e || !e.position) continue;
+        if (e.position === pos) return e;
+        const d = e.position.distanceToSquared(pos);
+        if (d < bestD) { bestD = d; best = e; }
+    }
+    return (best && bestD <= 220 * 220) ? best : null;
+}
+
+// A PIECE, NOT A MINIATURE. Cloning a hull mesh whole and scaling it to a
+// tenth of the ship produces a tiny intact SHIP — measured on screen at 250 u
+// the first version of this layer threw eight recognisable little fighters
+// out of every Federation kill. So a fragment is built from a contiguous run
+// of 25-60% of the source triangles: contiguous, because in every geometry
+// this game uses (lathes, boxes, cylinders, spheres) neighbouring triangles
+// are neighbouring surface, so a run of them is a torn-off panel rather than
+// a scatter of loose faces. Positions only — the chunk is drawn unlit, so
+// normals and UVs would be carried for nothing.
+function _fxFragGeo(g) {
+    try {
+        if (!g || !g.attributes || !g.attributes.position) return null;
+        const pos = g.attributes.position, idx = g.index;
+        const triCount = Math.floor((idx ? idx.count : pos.count) / 3);
+        if (triCount < 8) return g.clone();
+        const keep = Math.max(4, Math.round(triCount * (0.25 + Math.random() * 0.35)));
+        const start = Math.floor(Math.random() * Math.max(1, triCount - keep));
+        const P = new Float32Array(keep * 9);
+        for (let t = 0; t < keep; t++) {
+            for (let v = 0; v < 3; v++) {
+                const src = (start + t) * 3 + v;
+                const vi = idx ? idx.getX(src) : src;
+                P[t * 9 + v * 3]     = pos.getX(vi);
+                P[t * 9 + v * 3 + 1] = pos.getY(vi);
+                P[t * 9 + v * 3 + 2] = pos.getZ(vi);
+            }
+        }
+        const out = new THREE.BufferGeometry();
+        out.setAttribute('position', new THREE.BufferAttribute(P, 3));
+        return out;
+    } catch (e) {
+        try { return g.clone(); } catch (e2) { return null; }
+    }
+}
+
+function _fxHullChunks(victim, center, K, tint) {
+    if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    victim = _fxResolveVictim(victim, center);
+    if (!victim) return;
+    // Real hull meshes only — the same exclusion list the hull box and the
+    // plume rig use. A chunk cloned from the 40 u collision hitbox is a
+    // sphere the size of the whole fight; a chunk cloned from a glow quad is
+    // a flat additive card that reads as a bug.
+    const parts = [];
+    try {
+        victim.updateWorldMatrix(true, true);
+        victim.traverse(n => {
+            if (!n.isMesh || !n.geometry || n.visible === false) return;
+            const u = n.userData || {};
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone ||
+                u._isHullRead || u.isEnemyShield) return;
+            parts.push(n);
+        });
+    } catch (e) { return; }
+    if (!parts.length) return;
+
+    const L = K / _FX_KILL_GAIN;                 // victim hull length, world units
+    const N = _FX_CHUNK_MIN +
+              Math.floor(Math.random() * (_FX_CHUNK_MAX - _FX_CHUNK_MIN + 1));
+    _fxCkC.set(tint || 0xffb070);
+    const tintR = _fxCkC.r, tintG = _fxCkC.g, tintB = _fxCkC.b;
+    const chunks = [];
+    for (let i = 0; i < N; i++) {
+        const src = parts[Math.floor(Math.random() * parts.length)];
+        let geo = null, spawn = null, srcR = 1;
+        try {
+            geo = _fxFragGeo(src.geometry);
+            if (!geo) continue;
+            geo.computeBoundingSphere();
+            const bs = geo.boundingSphere;
+            if (!bs || !(bs.radius > 0)) { geo.dispose(); continue; }
+            srcR = bs.radius;
+            // Re-centre the clone on its own bounding sphere so the chunk
+            // tumbles about ITSELF. A part whose geometry is authored 20 u
+            // off its own origin (nacelles, pylons, wing tips) would
+            // otherwise swing around a point 20 u away and read as orbiting
+            // debris, not as a fragment.
+            spawn = src.localToWorld(bs.center.clone());
+            geo.translate(-bs.center.x, -bs.center.y, -bs.center.z);
+        } catch (e) { if (geo) { try { geo.dispose(); } catch (e2) {} } continue; }
+        try { src.getWorldScale(_fxCkS); } catch (e) { _fxCkS.set(1, 1, 1); }
+        const ws = Math.max(1e-4, Math.max(Math.abs(_fxCkS.x),
+                            Math.max(Math.abs(_fxCkS.y), Math.abs(_fxCkS.z))));
+        const wantR = L * (_FX_CHUNK_R_LO +
+                          Math.random() * (_FX_CHUNK_R_HI - _FX_CHUNK_R_LO));
+        // Fit the piece to the wanted size, then squash it on one axis so
+        // two chunks cloned from the same part are not the same object twice.
+        const fit = Math.min(3.0, Math.max(0.10, wantR / (srcR * ws)));
+        // depthWrite FALSE, deliberately. A chunk is the only opaque thing in
+        // the kill, and at renderOrder 72 it is drawn before every additive
+        // layer above it — so if it wrote depth it would DELETE the fireball
+        // wherever it passed in front of it, and a solid rim with a bright
+        // ball on one side and a cooled fragment on the other is the worst
+        // edge this effect could possibly contain (measured: it put a
+        // 52-165/255 one-pixel step on the centre scanline through the whole
+        // first 200 ms, against a < 40 bar the burst itself passes at 27-35).
+        // Without it the chunk is simply painted first and the flash sums on
+        // top, so wreckage can only ever ADD light, never subtract it.
+        const mat = new THREE.MeshBasicMaterial({
+            color: 0xffffff, transparent: true, opacity: 0,
+            depthWrite: false, depthTest: true, fog: false,
+            side: THREE.DoubleSide
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.scale.set(_fxCkS.x * fit * (0.75 + Math.random() * 0.5),
+                       _fxCkS.y * fit * (0.75 + Math.random() * 0.5),
+                       _fxCkS.z * fit * (0.75 + Math.random() * 0.5));
+        try { src.getWorldQuaternion(mesh.quaternion); } catch (e) {}
+        mesh.frustumCulled = false;
+        mesh.renderOrder = 72;                  // under the streaks (73)
+        mesh.userData.__dbTris = Infinity;      // never a draw-budget candidate
+        // Tagged like the thruster cone (see userData._isThrusterCone) so a
+        // measurement pass can hide this layer alone and read what it is
+        // actually contributing. Every claim made for it is an ablation.
+        mesh.userData._fxChunk = true;
+        scene.add(mesh);
+        // Thrown from where the piece actually was on the hull, outward.
+        const off = spawn.sub(center);
+        if (off.lengthSq() < (0.06 * L) * (0.06 * L)) {
+            off.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5)
+               .normalize().multiplyScalar(0.18 * L);
+        }
+        _fxCkP.copy(off).normalize();
+        // 30% jitter on the heading so the cloud is not a perfect starburst
+        // out of the hull's own layout.
+        _fxCkP.x += (Math.random() - 0.5) * 0.6;
+        _fxCkP.y += (Math.random() - 0.5) * 0.6;
+        _fxCkP.z += (Math.random() - 0.5) * 0.6;
+        _fxCkP.normalize();
+        // Same speed the tuned streaks travel at (0.30 K per 50 ms, see
+        // _fxKillBurst), a touch slower on average because these are the
+        // heavy pieces: at 300 ms they are past the body (1.03 K) and by
+        // 500 ms they are outside the outer front.
+        // The spread is 0.60-1.25x rather than the streaks' 0.5-1.5x: the
+        // slowest chunk has to be OUT of the body (1.03 K) by the time the
+        // lead-in has faded it up, or it emerges sitting on the fireball and
+        // joins the fireball's own connected component.
+        const vel = _fxCkP.clone().multiplyScalar(0.30 * K * (0.60 + Math.random() * 0.65));
+        // HEAD START, same idea as the streaks' (see _fxShards): a piece is
+        // born already moving. Here it also keeps the cloud from being
+        // switched on while it still overlaps the fireball — a chunk that
+        // emerges touching the ball joins the ball's own >= 40/255 connected
+        // component and is then measured AS the ball, which is the one way
+        // this layer could push the fireball's size box over the 35% rule it
+        // is otherwise exempt from.
+        off.addScaledVector(_fxCkP, 0.30 * L);
+        mesh.position.copy(center).add(off);
+        // The halo: a soft additive sprite riding with the chunk on the same
+        // blast profile the streaks use, ~1.6x its radius (see
+        // _FX_CHUNK_HALO_OPA for why it is not wider). It is what makes the
+        // fragment read as BURNING rather than as a lit polygon, and its
+        // falloff feathers the rim.
+        const hmat = new THREE.SpriteMaterial({
+            map: _fxBlastTex(), color: 0xffffff, transparent: true, opacity: 0,
+            blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true
+        });
+        const halo = new THREE.Sprite(hmat);
+        halo.scale.set(wantR * _FX_CHUNK_HALO_K, wantR * _FX_CHUNK_HALO_K, 1);
+        halo.position.copy(mesh.position);
+        halo.frustumCulled = false;
+        halo.renderOrder = 73;
+        halo.userData.__dbTris = Infinity;
+        halo.userData._fxChunk = true;
+        scene.add(halo);
+        chunks.push({
+            mesh: mesh, mat: mat, geo: geo, halo: halo, hmat: hmat,
+            off: off, vel: vel,
+            spin: new THREE.Vector3((Math.random() - 0.5) * 0.30,
+                                    (Math.random() - 0.5) * 0.30,
+                                    (Math.random() - 0.5) * 0.30)
+        });
+    }
+    if (!chunks.length) return;
+    let et = 0;
+    explosionManager.addExplosion({
+        update(dt) {
+            et += dt;
+            const f = dt / 50;
+            const maxR = _fxMaxScale(center, 1 / _FX_CHUNK_CAP_MULT);
+            let curR = 0;
+            for (let i = 0; i < chunks.length; i++) {
+                chunks[i].off.addScaledVector(chunks[i].vel, f);
+                const q = chunks[i].off.lengthSq(); if (q > curR) curR = q;
+            }
+            curR = Math.sqrt(curR);
+            const shrink = (maxR !== Infinity && curR > maxR) ? maxR / curR : 1;
+            // WHITE -> ORANGE -> DARK. The first third of the ramp is where
+            // the chunk can still be inside the ball, and it is white there
+            // on purpose (see the note above): a cooling fragment must never
+            // be the darkest thing in a detonation while the detonation is
+            // still lit.
+            const u = Math.min(1, et / _FX_CHUNK_COOL);
+            // Three stops: white -> the faction-tinted ember -> dark slag.
+            const wr = 1.00, wg = 0.42 + 0.30 * tintG, wb = 0.10 + 0.30 * tintB;
+            const dr = 0.11 + 0.08 * tintR, dg = 0.035, db = 0.028;
+            let r, g, b;
+            if (u < 0.34) {
+                const k = u / 0.34;
+                r = 1 + (wr - 1) * k; g = 1 + (wg - 1) * k; b = 1 + (wb - 1) * k;
+            } else {
+                const k = (u - 0.34) / 0.66;
+                r = wr + (dr - wr) * k; g = wg + (dg - wg) * k; b = wb + (db - wb) * k;
+            }
+            // Fade out only at the very end — the chunk should still be a
+            // solid dark shape against the sky after it has stopped glowing.
+            const fade = (et > 820) ? Math.max(0, 1 - (et - 820) / (_FX_CHUNK_LIFE - 820)) : 1;
+            // LEADING-EDGE RAMP, exactly as on the fronts, the ember tail and
+            // the streaks: the wreckage becomes visible as it LEAVES the
+            // flash. Inside the first ~200 ms a chunk is buried in a bang
+            // that is already clipping to white, so it can add nothing there
+            // — but its rim can, and did: every over-bar scanline step this
+            // layer produced was in that window and every one of them is gone
+            // once the piece emerges instead of being switched on inside the
+            // fireball. At 0.30 K per 50 ms a chunk is past the body by the
+            // time it is fully opaque.
+            const lead = Math.min(1, et / _FX_CHUNK_LEAD);
+            const leadE = lead * lead * (3 - 2 * lead);
+            for (let i = 0; i < chunks.length; i++) {
+                const c = chunks[i];
+                c.mesh.position.copy(center).addScaledVector(c.off, shrink);
+                c.mesh.rotation.x += c.spin.x * f;
+                c.mesh.rotation.y += c.spin.y * f;
+                c.mesh.rotation.z += c.spin.z * f;
+                c.mat.color.setRGB(r, g, b);
+                c.mat.opacity = _FX_CHUNK_OPA * fade * leadE;
+                c.halo.position.copy(c.mesh.position);
+                c.hmat.color.setRGB(r, g, b);
+                c.hmat.opacity = _FX_CHUNK_HALO_OPA * (1 - u * 0.75) * fade * leadE;
+            }
+            return et < _FX_CHUNK_LIFE;
+        },
+        cleanup() {
+            for (let i = 0; i < chunks.length; i++) {
+                scene.remove(chunks[i].mesh);
+                scene.remove(chunks[i].halo);
+                try { chunks[i].geo.dispose(); } catch (e) {}
+                chunks[i].mat.dispose();
+                chunks[i].hmat.dispose();
+            }
+        }
+    });
+}
+
 // Low-segment ring = a polygon outline (3 = triangle, 5 = pentagon,
 // 6 = hexagon). A crisp geometric alternative to the round shockwave.
 function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
@@ -9550,7 +9918,12 @@ function _fxTintBlob(center, radius, color, opacity, life, growth) {
 // measured hull exactly as the generic kill is, tinted with the faction's
 // three colours, and the recipe adds only what makes that faction
 // recognisable — its shard shape, its ring shape, its particle swirl.
-function createFactionExplosion(position, galaxyId, scale) {
+// `victim` — the hostile that died, passed straight through from the death
+// path. It is what lets the burst throw pieces of THAT SHIP (see
+// _fxHullChunks); without it this function has only a point, and a point
+// cannot be broken into wreckage. Optional: the proximity backstop still
+// finds a hull for the callers that do not pass one.
+function createFactionExplosion(position, galaxyId, scale, victim) {
     if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const center = position.clone ? position.clone()
                  : new THREE.Vector3(position.x, position.y, position.z);
@@ -9559,8 +9932,13 @@ function createFactionExplosion(position, galaxyId, scale) {
 
     // THE KILL ITSELF — same burst, same cap, same hull-relative sizing as
     // every other death in the game, wearing this faction's colours.
-    _fxKillBurst(center, _fxVictimWorldLen(null, center) * S,
-                 { core: cfg.core, front: cfg.accent, ember: cfg.spark });
+    // The hull length is measured ONCE here and reused below: the faction
+    // garnishes that throw debris have to be sized in the same hull-relative
+    // K the burst is, not in raw world units (see the Sith branch).
+    const HULL = _fxVictimWorldLen(victim || null, center) * S;
+    const K = HULL * _FX_KILL_GAIN;
+    _fxKillBurst(center, HULL,
+                 { core: cfg.core, front: cfg.accent, ember: cfg.spark }, victim);
 
     switch (cfg.style) {
         case 'electric': // Federation — white core + crisp TRIANGULAR ring + blue sparks
@@ -9609,7 +9987,31 @@ function createFactionExplosion(position, galaxyId, scale) {
         case 'darkenergy': // Sith — red core + OCTAHEDRON shards + lightning + smoke
             _fxTintBlob(center, 7 * S, cfg.core, 1.0, 14, 2.4);
             _fxLightning(center, 8, cfg.spark, 80 * S);
-            _fxShards(center, 16, cfg.accent, 4 * S, 8 * S, 18, 'octa');
+            // THE HARDEST EDGE LEFT IN ANY DEATH IN THE GAME, and it was this
+            // one line. `4 * S` is a raw world-unit size with no relation to
+            // what died, and the omitted 8th argument defaults the streak's
+            // peak opacity to 1.0 — a thin sprite at full peak, which is the
+            // steepest thing a sprite can be (its gradient is peak /
+            // half-width). Measured on a paused Sith kill at 250 u it carried
+            // a 105.8/255 one-pixel scanline step (bar: < 40) at r = 54-87 px,
+            // sustained from 150 ms to 550 ms — 2.1x the next worst faction —
+            // and at 8*S it was also too slow to ever leave the flash, so the
+            // step sat on top of the fireball for the whole bright half of the
+            // kill. Round 12 tuned exactly this trade on the generic burst
+            // (0.100 K wide at peak 0.78: 3.1x the light at 0.55x the slope,
+            // travelling at 0.30 K so it is outside the front by 500 ms) and
+            // this copy was left behind. Same numbers now; the octahedral
+            // aspect and the accent colour — the parts that make it a Sith
+            // kill — are untouched.
+            // (Size and peak only. The 8 u/50 ms throw and the 18-tick life
+            // are this recipe's own and they stay: measured, giving these the
+            // generic cloud's 0.30 K speed as well made them bright enough
+            // and fast enough to MERGE with the fireball's >= 40/255
+            // connected component on their way out, which inflated the
+            // measured body box from 0.31 to 0.43 of the viewport — the
+            // debris is exempt from that cap, but only while a measurement
+            // can still tell the two apart.)
+            _fxShards(center, 16, cfg.accent, 0.100 * K, 8 * S, 18, 'octa', 0.78);
             _fxTintBlob(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
             break;
         case 'goldrings': // Vulcan — small concentric CIRCULAR gold rings
@@ -12310,9 +12712,9 @@ if (enemy.userData.health <= 0) {
         const _variant = _roll < 0.55 ? 'ember' : (_roll < 0.85 ? 'flare' : 'plasma');
         _enemyUD._pirateLootVariant = _variant;
         if (typeof createPirateExplosionVariant === 'function') {
-            createPirateExplosionVariant(enemy.position, _variant);
+            createPirateExplosionVariant(enemy.position, _variant, enemy);
         } else {
-            createExplosionEffect(enemy.position, 0xff4444, 15);
+            createExplosionEffect(enemy);
         }
         playSound('explosion');
     } else if (typeof createFactionExplosion === 'function' &&
@@ -12320,10 +12722,17 @@ if (enemy.userData.health <= 0) {
         // Regular hostile: faction-flavoured death effect. Hostiles in
         // the black-hole (distant, non-local) galaxies detonate at half
         // diameter; the local-galaxy fights keep full size.
+        //
+        // THE VICTIM GOES WITH IT. This line used to pass `enemy.position`
+        // and nothing else, which meant the death effect knew WHERE a ship
+        // died but not WHAT died — so no layer downstream could ever make
+        // debris out of it, and every kill in the game was a filled sprite
+        // disc (see _fxHullChunks). The hull is still in `enemies` and still
+        // in the scene here; scene.remove/enemies.splice run further down.
         createFactionExplosion(enemy.position, _enemyUD.galaxyId,
-            isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5);
+            isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5, enemy);
     } else {
-        createExplosionEffect(enemy.position, 0xff4444, 15);
+        createExplosionEffect(enemy);
         playSound('explosion');
     }
     
@@ -13104,15 +13513,17 @@ function handleMissileHit(missile, enemy) {
                 scale: _missUD.isBoss ? 1.8 : 1.3
             });
         } else if (_missPirate) {
-            createExplosionEffect(enemy.position, 0xff4444, 15);
+            createExplosionEffect(enemy);
             playSound('explosion');
         } else if (typeof createFactionExplosion === 'function' &&
                    typeof _missUD.galaxyId === 'number') {
             // Half diameter for black-hole (distant) galaxy hostiles.
+            // The victim rides along so the burst can shed its hull — same
+            // reason as the gun-kill path above.
             createFactionExplosion(enemy.position, _missUD.galaxyId,
-                isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5);
+                isEnemyInLocalGalaxy(enemy) ? 1.0 : 0.5, enemy);
         } else {
-            createExplosionEffect(enemy.position, 0xff4444, 15);
+            createExplosionEffect(enemy);
             playSound('explosion');
         }
 
@@ -15624,7 +16035,7 @@ function _handleWingmanKill(enemy) {
 
     // Visual + sound
     if (typeof createExplosionEffect === 'function') {
-        createExplosionEffect(enemy.position);
+        createExplosionEffect(enemy);
     }
     if (typeof playSound === 'function') {
         playSound('explosion');

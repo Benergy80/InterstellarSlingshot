@@ -105,6 +105,17 @@
     // Jumps refused because the corridor ahead was not clear or the gap was
     // too small to be worth a beat.
     get jumpsRefused() { return ap._jumpsRefused || 0; },
+    // Destination-bearing jumps that declined to CLAIM an arrival because the
+    // subject sat too far off the nose for a ballistic dash to ever reach its
+    // standoff (see the ballistic gate in _igniteJump). The leg still flies as
+    // a repositioning dash; what it no longer does is promise an arrival it
+    // cannot deliver, which is how six measured probe legs ended 3-4.5
+    // standoffs out with the subject framed and nothing parked.
+    get jumpArrivalDeclines() { return ap._jumpArrivalDeclines || 0; },
+    get lastJumpDecline() { return ap._lastJumpDecline || null; },
+    // Which interlock held the last dash back (park / departureBlocked /
+    // warpBusy / energy / corridorBlocked / gapTooSmall).
+    get lastJumpRefusal() { return ap._lastJumpRefusal || null; },
     get warpNoSubjectRefusals() { return ap._warpNoSubjectRefusals || 0; },
     // Legs refused because the ground to the standoff is shorter than the
     // burn's own minimum delivery plus the exit ramp (see _oWarpMinGround) —
@@ -4897,6 +4908,12 @@
   // the destination on the very path this piece is about. At 1.0 the error can
   // only ever be an UNDERSHOOT, which the park then closes.
   const JUMP_DELIVERY = 1.0;
+  // HOW FAR OFF THE NOSE A SUBJECT MAY SIT AND STILL BE CLAIMABLE, as a
+  // multiple of its own standoff. A jump cannot steer (see the ballistic gate
+  // in _igniteJump), so the perpendicular miss it starts with is the closest it
+  // will ever get; the park latches an arrival inside 2.5x the standoff, and
+  // 1.5x leaves that latch a full standoff of margin to close.
+  const JUMP_ARRIVAL_LATERAL = 1.5;
   const _JUMP_U_PER_SPEED = 60 * (JUMP_MS_MAX / 1000) * JUMP_DELIVERY;
   function _jumpReach(speed) { return speed * _JUMP_U_PER_SPEED + JUMP_TAIL_U; }
   // THE NUMBER THAT REPLACES `Infinity`: 45 x 360 + 300 = 16,500 u. A leg
@@ -4977,11 +4994,17 @@
     // swallows the latch at :1448, but only for the frames it owns) and there
     // was nothing at all stopping one being aimed down the boresight at the
     // body we were parked next to — measured "PLANETARY IMPACT", :5011.
-    if (_parkOwnsBeat()) return _parkDefer('jump');
-    if (_departureBlocked()) return false;
+    // WHY A DASH DID NOT FIRE, recorded rather than inferred. Every one of
+    // these returns is a legitimate "not this frame", but between them they
+    // account for most attempts, and with nothing written down an acceptance
+    // run can only report that the leg is missing — not which interlock held
+    // it. Same reasoning (and same shape) as _lastCorridor on the O-warp side.
+    const _jNo = (why) => { ap._lastJumpRefusal = { at: Date.now(), why: why }; return false; };
+    if (_parkOwnsBeat()) { ap._lastJumpRefusal = { at: Date.now(), why: 'park' }; return _parkDefer('jump'); }
+    if (_departureBlocked()) return _jNo('departureBlocked');
     const _ewJ = gameState.emergencyWarp || {};
-    if (_ewJ.active || _ewJ.transitioning) return false;
-    if ((gameState.energy || 0) <= 25) return false;
+    if (_ewJ.active || _ewJ.transitioning) return _jNo('warpBusy');
+    if ((gameState.energy || 0) <= 25) return _jNo('energy');
 
     camera.getWorldDirection(_jumpFwdTmp);
     const _cpJ = camPos();
@@ -5023,8 +5046,66 @@
         } else { cand = null; }
       }
     }
+    // ── A BALLISTIC DASH ARRIVES WHERE ITS NOSE POINTS, NOT WHERE IT LOOKS ───
+    // Everything below used to measure this leg RADIALLY — gap against
+    // `candRange`, the landing test against `candRange - gap` — which is only
+    // true if the dash flies straight AT the subject. It cannot: physics
+    // captures `forwardDirection` at the frame it consumes `wDoubleTap`
+    // (game-physics.js:3220) and writes `velocityVector = forward * speed`
+    // ONCE; a jump is excluded from warp guidance (:2910), so whatever angle
+    // sits between the nose and the subject at that instant is frozen into the
+    // whole leg. The O-warp survives the same error because guidance closes it
+    // (see _arrivalTurnFits, which is this test's opposite number on that
+    // path); the jump has nothing to close it with.
+    //
+    // MEASURED, this build (.critic/r3-run2.json, six destination-bearing jump
+    // legs fired through demoPilot.igniteJumpProbe): every one staged a subject
+    // on the radial estimate and none of them parked. Leg 16 staged Atlantis
+    // Nebula Prime with the nose 137 deg AWAY (facing -0.728) and ended 9,574 u
+    // out with the subject BEHIND the camera; legs 4 and 10 staged at 26 deg and
+    // 44 deg off and ended 6,412 u and 6,598 u out against a 2,129 u standoff —
+    // 3x the standoff, subject 10.7-11.1 deg, no cut, no park. Leg 25 staged
+    // ~30 deg off, and its own anti-overshoot cut (:1532, which measures ALONG
+    // THE VELOCITY) fired with `along` at 2,429 u while the subject was still
+    // 4,384 u away: the dash was flying 56 deg off the line of sight.
+    //
+    // So resolve the leg on the ray it will actually fly. `along` is the ground
+    // this dash can spend closing; `off` is the perpendicular miss it can never
+    // spend anything on, and therefore the closest it can ever come.
+    let _candAlong = 0, _candOff = 0;
+    if (cand) {
+      _jcTmp.subVectors(cand.obj.position, _cpJ);
+      _candAlong = _jcTmp.dot(_jumpFwdTmp);
+      _candOff = Math.sqrt(Math.max(0, _jcTmp.lengthSq() - _candAlong * _candAlong));
+      // The park latches an arrival inside 2.5x its standoff (:1840). A dash
+      // whose closest approach is already outside that band cannot end in an
+      // arrival however long it burns, so it must not CLAIM one — the same
+      // "claimed and not delivered" refusal the staging test below makes,
+      // moved ahead of the sizing so the gap is not built on a fiction either.
+      // 1.5x leaves the park a whole standoff of room to close and still
+      // rejects everything measured above (26 deg at 8,664 u is 3,850 u of
+      // miss against a 3,194 u budget).
+      if (!(_candAlong > 0) || _candOff > candSo.stand * JUMP_ARRIVAL_LATERAL) {
+        ap._jumpArrivalDeclines = (ap._jumpArrivalDeclines || 0) + 1;
+        ap._lastJumpDecline = {
+          at: Date.now(), subject: (cand.obj.userData &&
+            (cand.obj.userData.name || cand.obj.userData.type)) || 'body',
+          range: Math.round(candRange), along: Math.round(_candAlong),
+          off: Math.round(_candOff), budget: Math.round(candSo.stand * JUMP_ARRIVAL_LATERAL)
+        };
+        cand = null; candSo = null;
+      }
+    }
     // THE STANDOFF IS THE LANDING SITE, not a number the arrival hopes for.
-    if (cand) gap = Math.min(gap, Math.max(0, candRange - candSo.stand));
+    // Sized ALONG THE RAY: stop where the flight path crosses the standoff
+    // sphere, which is `along` minus the half-chord that sphere cuts out of it.
+    // With `off` at zero this is exactly the old `candRange - stand`; with a
+    // real miss it is the honest, shorter number.
+    if (cand) {
+      const _chordIn = Math.sqrt(Math.max(0,
+        candSo.stand * candSo.stand - _candOff * _candOff));
+      gap = Math.min(gap, Math.max(0, _candAlong - _chordIn));
+    }
 
     // RULE 1 — NEVER CLAIM MORE GROUND THAN THE DASH DELIVERS.
     const _reachClamped = gap > _reach;
@@ -5066,7 +5147,7 @@
     // would overshoot it anyway).
     if (gap < 400) {
       ap._jumpsRefused = (ap._jumpsRefused || 0) + 1;
-      return false;
+      return _jNo(_corridorClamped ? 'corridorBlocked' : 'gapTooSmall');
     }
 
     const speed = _jumpSpeedFor(gap);
@@ -5089,7 +5170,12 @@
     // the live subject then would hand this leg a DIFFERENT body's standoff.
     let staged = null;
     if (cand) {
-      const _landsAt = Math.max(0, candRange - gap);
+      // WHERE THIS DASH ACTUALLY STOPS, in the plane it actually flies in:
+      // `along - gap` of runway still ahead, `off` of miss beside. The old
+      // `candRange - gap` assumed the miss was zero and so passed legs that
+      // ended three standoffs out (see the ballistic gate above).
+      const _landAhead = _candAlong - gap;
+      const _landsAt = Math.sqrt(_landAhead * _landAhead + _candOff * _candOff);
       if (_landsAt <= candSo.stand * 2.5 && _setArrivalSubject(cand.obj, cand.radius)) {
         staged = gameState._arrivalSubject;
         // THE JUMP LEG DECLARES ITSELF. The park gates on `_flown`, which only
@@ -5134,7 +5220,13 @@
       subject: staged ? ((staged.obj.userData &&
         (staged.obj.userData.name || staged.obj.userData.type)) || 'body') : null,
       stand: staged ? Math.round(staged.stand) : null,
-      landsAt: staged ? staged._jumpLandsAt : null
+      landsAt: staged ? staged._jumpLandsAt : null,
+      // The geometry the ballistic gate judged this leg on, so a run can prove
+      // which legs were claimable and which were declined, rather than
+      // inferring it from where they ended.
+      along: Math.round(_candAlong), off: Math.round(_candOff),
+      declined: ap._lastJumpDecline && Date.now() - ap._lastJumpDecline.at < 50
+        ? ap._lastJumpDecline.subject : null
     });
     return true;
   }
