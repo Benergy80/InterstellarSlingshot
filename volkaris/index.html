@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>INTERSTELLAR SLINGSHOT — VOLKARIS // ESCAPE VELOCITY</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🪐</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+    "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.8.3/build/index.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+<!-- ══════════ LAUNCH SCREEN ══════════ -->
+<div id="launch">
+  <div class="launch-inner">
+    <div class="launch-kicker">INTERSTELLAR SLINGSHOT // SPECIAL LEVEL</div>
+    <h1 class="launch-title">VOLKARIS</h1>
+    <div class="launch-sub">ESCAPE VELOCITY &middot; A FORTRESS WORLD &middot; ONE WAY HOME</div>
+    <p class="launch-brief">
+      Shot down over the Overlord's fortress world. Your ship is impounded at a
+      hidden spaceport somewhere past the maze of markets, neon districts and
+      the black pyramid. The horizon curves away fast out here — the world only
+      shows you what's just ahead. Find the port. Take back your ship. Blast off.
+    </p>
+    <div class="launch-status" id="launch-status">CALIBRATING DROP POD<span class="dots"></span></div>
+    <div class="launch-buttons">
+      <button id="btn-enter" class="launch-btn" disabled>PRESS TO DEPLOY</button>
+    </div>
+    <div class="launch-controls">
+      <table>
+        <tr><td>W / S</td><td>Move &middot; W-W = jump &middot; W-W in air = FLIP</td><td>A / D</td><td>Strafe (banks)</td></tr>
+        <tr><td>SPACE</td><td>Toggle run/walk &middot; hold in air = jets</td><td>B</td><td>Boost sprint</td></tr>
+        <tr><td>Q</td><td>JETPACK — hold to burn (lifts off the deck)</td><td>X</td><td>Brake / stop</td></tr>
+        <tr><td>ARROWS</td><td>Look &middot; up/down springs back on release</td><td></td><td></td></tr>
+        <tr><td>MOUSE</td><td>Aim crosshair</td><td>CLICK</td><td>Fire blaster (auto lock-on frames fights)</td></tr>
+        <tr><td>C</td><td>Combat roll</td><td></td><td></td></tr>
+        <tr><td>L-SHIFT</td><td>Punch (alternating combo)</td><td>R-SHIFT</td><td>Kick</td></tr>
+        <tr><td>E / ENTER</td><td>Board ship / interact</td><td>AUTO</td><td>Wall-run along walls at speed</td></tr>
+        <tr><td>V</td><td>Camera distance</td><td>P</td><td>Pause</td></tr>
+        <tr><td>T</td><td>Demo pilot (AI plays &middot; T again = take over)</td><td>Z</td><td>Z-target lock / release</td></tr>
+      </table>
+    </div>
+    <div class="launch-foot">SPHERICAL GRAVITY PROTOCOL &middot; THE SUN ORBITS &middot; TRUST THE NEON</div>
+  </div>
+</div>
+
+<!-- ══════════ HUD ══════════ -->
+<div id="hud" class="hidden">
+  <div class="hud-top">
+    <div class="hud-brand">VOLKARIS <span>// ESCAPE VELOCITY</span></div>
+    <div class="hud-objective" id="objective">OBJECTIVE: FIND THE SPACEPORT</div>
+    <div class="hud-clock" id="clock">☀ 09:00</div>
+  </div>
+  <div class="hud-sector" id="sector">CRASH SITE</div>
+  <div class="hud-bars">
+    <div class="bar"><label>SUIT</label><div class="track"><div id="bar-hp" class="fill hp"></div></div></div>
+    <div class="bar"><label>CELL</label><div class="track"><div id="bar-energy" class="fill energy"></div></div></div>
+    <div class="bar"><label>JETS</label><div class="track"><div id="bar-hover" class="fill hover"></div></div></div>
+  </div>
+  <div id="crosshair">◈</div>
+  <div id="prompt" class="hidden"></div>
+</div>
+
+<div id="toast" class="hidden"><div id="toast-title"></div><div id="toast-sub"></div></div>
+<div id="vignette"></div>
+
+<div id="pause" class="overlay hidden">
+  <div class="overlay-title">PAUSED</div>
+  <div class="overlay-sub">PRESS P TO RESUME</div>
+</div>
+
+<div id="win" class="overlay hidden">
+  <div class="overlay-kicker">ESCAPE VELOCITY ACHIEVED</div>
+  <div class="overlay-title">VOLKARIS FALLS AWAY BENEATH YOU</div>
+  <div class="overlay-sub">The Captain is going home.</div>
+  <div class="overlay-buttons">
+    <a class="launch-btn" href="../index.html">RETURN TO INTERSTELLAR SLINGSHOT</a>
+    <a class="launch-btn alt" href="">FLY VOLKARIS AGAIN</a>
+  </div>
+</div>
+
+<canvas id="scene"></canvas>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
