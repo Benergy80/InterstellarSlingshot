@@ -54,6 +54,13 @@ const borgSystemNames = window.borgSystemNames;
 // MAIN CREATION FUNCTION - Creates BOTH system sets
 // =============================================================================
 
+// HYBRID (solScale:big): outer systems join the size ladder (HY_LADDER in
+// game-objects.js): stars, planets and orbits x HY_LADDER.OUTER_K, then placed
+// by the HY_SCALE spacing rule. 1 under ?hy=solScale:overhaul.
+function _hyOuterK() {
+    return (typeof _hyScaleOn === 'function' && _hyScaleOn() && window.HY_LADDER) ? window.HY_LADDER.OUTER_K : 1;
+}
+
 function createOuterInterstellarSystems() {
     console.log('🌌 Creating outer interstellar systems in deep space...');
 
@@ -66,6 +73,9 @@ function createOuterInterstellarSystems() {
     createBorgPatrolSystems();
 
     console.log(`✅ Created ${outerInterstellarSystems.length} total outer interstellar systems`);
+    if (typeof window._hyPlaceOuterSystems === 'function') {
+        try { window._hyPlaceOuterSystems(); } catch (e) { console.warn('HYBRID scale (outer systems):', e); }
+    }
 }
 
 // =============================================================================
@@ -100,7 +110,7 @@ function createExoticCoreSystems() {
         const centerTypes = ['supernova', 'plasma_storm', 'solar_storm'];
         const centerType = centerTypes[Math.floor(Math.random() * centerTypes.length)];
 
-        const scale = largeSet.has(i) ? 2 : 1;
+        const scale = (largeSet.has(i) ? 2 : 1) * _hyOuterK();
         createExoticSystem(systemCenter, outerSystemNames[i], centerType, i, scale);
     }
 }
@@ -171,6 +181,8 @@ function createExoticSystem(center, name, centerType, systemId, scale) {
     const maxOrbitRadius = (1500 + 1500) * s;
     const starfieldRadius = maxOrbitRadius * 0.5;
     createSystemStarfield(starfieldRadius, systemGroup);
+    systemGroup.userData._hyEdge = maxOrbitRadius + 60 * s;   // HYBRID: placement edge
+    systemGroup.userData._hyR = 80 * s;
 
     // CREATE 1 COSMIC FEATURE in orbit (for gravitational slingshots and map visibility)
     createCosmicFeature(systemGroup, maxOrbitRadius);
@@ -253,7 +265,7 @@ function createBorgSystem(center, systemId) {
 
     for (let i = 0; i < planetCount; i++) {
         // Original orbit radii
-        const orbitRadius = 800 + (i * 600) + Math.random() * 400;
+        const orbitRadius = (800 + (i * 600) + Math.random() * 400) * _hyOuterK();
         maxOrbitRadius = Math.max(maxOrbitRadius, orbitRadius);
         createOrbitingPlanet(systemGroup, orbitRadius, i);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
@@ -264,6 +276,7 @@ function createBorgSystem(center, systemId) {
     createSystemStarfield(starfieldRadius, systemGroup);
 
     // Create 1 BORG Cube (100HP boss) patrolling the system
+    systemGroup.userData._hyEdge = maxOrbitRadius + 60 * _hyOuterK();   // HYBRID: placement edge
     createBorgCubeForSystem(systemGroup, maxOrbitRadius);
 
     // Create 1 cosmic feature in orbit
@@ -576,7 +589,11 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
 
 function createBrightStar(systemGroup, starType) {
     // Central star — original size.
-    const starRadius = 100 + Math.random() * 50;
+    // (stars get their own factor: the 2.5x glow shell below must stay under
+    // the self-test's 900 u bubble limit)
+    const starRadius = (100 + Math.random() * 50) *
+        (_hyOuterK() > 1 ? window.HY_LADDER.OUTER_STAR_K : 1);
+    systemGroup.userData._hyR = starRadius;
 
     const starGeo = new THREE.SphereGeometry(starRadius, 32, 32);
     const starMat = new THREE.MeshStandardMaterial({
@@ -633,7 +650,7 @@ function createBrightStar(systemGroup, starType) {
 // =============================================================================
 
 function createOrbitingPlanet(systemGroup, orbitRadius, index) {
-    const planetRadius = 20 + Math.random() * 40;
+    const planetRadius = (20 + Math.random() * 40) * _hyOuterK();
 
     const planetColors = [
         0x8B7355, 0x4A90E2, 0xE86A17, 0x9B59B6,

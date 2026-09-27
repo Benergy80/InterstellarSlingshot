@@ -3807,7 +3807,11 @@ function fadeCountdownTextForGameTransition() {
 function resetCameraToGamePosition() {
     // Position the player near Earth, looking at it, with an orbital
     // velocity so the game opens with a slow orbit around the home planet.
-    const localSystemOffset = { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin) — keep in sync with game-objects.js
+    // HYBRID (solScale:big): Sol is placed by the spacing rule (HY_SCALE in
+    // game-objects.js), so read where it actually is. Same start point
+    // RELATIVE to Sol (+720, +120, +80), same heading (Sgr A*).
+    const localSystemOffset = (typeof window !== 'undefined' && window.localSystemOffset) ||
+        { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin) — keep in sync with game-objects.js
     if (typeof window !== 'undefined' && !window.localSystemOffset) window.localSystemOffset = localSystemOffset;
     const earthDistance = 640;    // Earth's orbit radius from sun (4x scaled)
     const earthOrbitOffset = 80;  // camera offset from Earth for a close fly-by

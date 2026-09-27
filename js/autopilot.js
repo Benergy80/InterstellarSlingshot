@@ -7577,6 +7577,16 @@
       if (d < bestDist) { bestDist = d; bestCenter = center; bestPair = pair; }
     }
     if (!bestCenter) return null;
+    // HYBRID (solScale:big): the spacing rule (HY_SCALE, game-objects.js) keeps
+    // a formation's nebulae ~20,000 u apart, so its centroid is empty space
+    // with nothing to arrive at. Fly to the member nearest us instead — its
+    // heart world is the arrival subject, as a centroid used to be when the
+    // formation was a 5,000 u clump.
+    if (typeof _hyScaleOn === 'function' && _hyScaleOn()) {
+      let near = null, nd = Infinity;
+      bestPair.forEach(n => { const d = cp.distanceTo(n.position); if (d >= _min && d < nd) { nd = d; near = n; } });
+      if (near) bestCenter = near.position.clone();
+    }
     // Synthesize a target object the rest of the autopilot can consume.
     return {
       position: bestCenter,

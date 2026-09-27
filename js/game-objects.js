@@ -783,6 +783,11 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
     // ~20% is a 1.5x on contribution (it goes as 1/d^2) and puts the near
     // cloud at 4,500-6,000u from the camera for most of the run.
     const bands = [[4200, 5600], [13000, 18000], [24000, 32000], [34000, 45000]];
+    // HYBRID (solScale:big): the same clusters (so the twin campaign and the
+    // demo's twin legs still group them the same way), back out at
+    // ORIGINAL-like distances (HY_SCALE.NEBULA_BANDS): the near five, the twin
+    // pair, the far one. _hySpaceNebulae() then enforces the spacing rule.
+    const _hyNeb = (typeof _hyScaleOn === 'function') && _hyScaleOn();
 
     // Golden-angle azimuth + stratified elevation instead of two raw
     // Math.random()s: four independent random directions bunch often enough
@@ -791,7 +796,8 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
     const GOLDEN = Math.PI * (3 - Math.sqrt(5));
 
     for (let i = 0; i < clusterCount; i++) {
-        const band = bands[Math.min(i, bands.length - 1)];
+        const band = _hyNeb ? HY_SCALE.NEBULA_BANDS[Math.min(i, 2)]
+            : bands[Math.min(i, bands.length - 1)];
         const radius = band[0] + Math.random() * (band[1] - band[0]);
 
         const theta = i * GOLDEN + (Math.random() - 0.5) * 0.6;
@@ -839,14 +845,14 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
             // sky. That is what the local system being ON the rim of a nebula
             // looks like, and it is why the near cloud is now in frame on most
             // headings instead of one in six.
-            spread: radius * (i === 0 ? 0.9 : 0.26),
+            spread: radius * (i === 0 ? (_hyNeb ? 0.45 : 0.9) : 0.26),
             anchor: new THREE.Vector3(_sol.x, _sol.y, _sol.z),
             // Hard floor on how close a near cloud's CENTRE may land to the
             // local system: the wash measured at <=1,000u is not a look, it is
             // a whiteout. 4,000 + the 3,500u camera roam is a 500u worst case,
             // which is deep inside the volume — that case is what
             // updateVolumetricNebulaProximity() exists to survive.
-            minAnchorDistance: i === 0 ? 4000 : 0
+            minAnchorDistance: (i === 0 && !_hyNeb) ? 4000 : 0
         });
     }
 
@@ -7104,6 +7110,717 @@ function createGalaxyEnvironmentalEffects(galaxyBlackHole, galaxyType) {
     galaxyBlackHole.add(effects);
 }
 
+// =============================================================================
+// HYBRID (solScale:big) — ONE SPACING RULE FOR EVERY LARGE BODY   (package G)
+//
+// Ben: "Shouldn't those giant planets be further away from SOL and each other.
+// There placement needs to scale with their size." The overhaul pulled five
+// nebulae (each with a radius-620 heart world) in to 4,000-5,300 from Sol —
+// between Jupiter's and Saturn's orbits, ~4 of their own radii from each other —
+// parked cluster stars 1.5-2 radii from the heart worlds, and Sol's own
+// Saturn / Uranus / Neptune orbits swept through Sgr A*'s disc.
+//
+// THE RULE — in radii, so it survives any rescale. Ben: tune the numbers here.
+//   1. BODIES   two large bodies of different systems keep their centres at
+//               least PLACE_K x (R1 + R2) apart. At 8 two heart worlds sit
+//               9,920 apart and each is ~7 degrees across seen from the other:
+//               a distant world, not a wall.
+//   2. SYSTEMS  a system's EDGE is its outermost orbit plus that body's reach
+//               (moons, rings). Nothing foreign sits inside EDGE x (1 +
+//               EDGE_MARGIN). A black hole's edge is HY_BH.CLEAR_RADII radii,
+//               and a galaxy's own systems keep clear of its core by that edge.
+//   3. ORBITS   (used when a system is re-laid, see the size ladder below) the
+//               first orbit is at least STAR_CLEAR star radii out and
+//               neighbouring orbits differ by at least ORBIT_K x (reach1 + reach2).
+// Sol moves out along its old bearing from Sgr A* until rule 2 holds against
+// the core; the nebulae go back to ORIGINAL-like distances; every other star
+// system is pushed (as a unit) until rules 1 and 2 hold.
+// ?hy=solScale:overhaul skips all of it and gives back today's layout.
+// =============================================================================
+function _hyScaleOn() {
+    return !(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('solScale', 'overhaul'));
+}
+const HY_SCALE = {
+    PLACE_K: 8,              // rule 1: centre gap >= PLACE_K x (R1 + R2)
+    EDGE_MARGIN: 0.15,       // rule 2: keep-clear = EDGE x (1 + EDGE_MARGIN)
+    ORBIT_K: 1.5,            // rule 3: orbit gap >= ORBIT_K x (reach1 + reach2) (1.0 = moon systems touch at conjunction)
+    STAR_CLEAR: 2.6,         // rule 3: first orbit >= STAR_CLEAR x star radius (+ its reach)
+    SOL_BEARING: { x: 0.4157, z: 0.9095 },  // Sol's direction from Sgr A* (was (8000,0,4800)-ish)
+    SOL_SGR_GAP: 1000,       // extra clear space between Sol's keep-clear and Sgr A*'s
+    // The eight named nebulae, from Sol: the near five / the twin pair / the far
+    // one. ORIGINAL kept them 20,000-45,000 from the core (28-41k from Sol).
+    NEBULA_BANDS: [[28000, 41000], [42000, 50000], [52000, 60000]],
+    NEBULA_REACH: 9000,      // a nebula's footprint for spacing: cloud + heart world + inner systems
+    SOLVE_ITERS: 120,
+};
+if (typeof window !== 'undefined') window.HY_SCALE = HY_SCALE;
+
+// Sol's EDGE (outermost orbit + reach). The size ladder (Part 1) supplies the
+// scaled layout; without it this is today's Neptune + Triton.
+function _hySolEdge() {
+    if (_hyScaleOn() && typeof _hySolLayout === 'function') return _hySolLayout().edge;
+    return 19238 + 176 + 10;
+}
+function _hySolCenter() {
+    const sgrR = (typeof HY_BH !== 'undefined') ? HY_BH.SIZE * HY_BH.REL.sgr : 900;
+    const clear = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
+    const d = _hySolEdge() * (1 + HY_SCALE.EDGE_MARGIN) + clear * sgrR + HY_SCALE.SOL_SGR_GAP;
+    return { x: Math.round(HY_SCALE.SOL_BEARING.x * d), y: 0, z: Math.round(HY_SCALE.SOL_BEARING.z * d) };
+}
+function _hySunR() {
+    return (_hyScaleOn() && typeof _hySolLayout === 'function') ? _hySolLayout().sun : 80;
+}
+if (typeof window !== 'undefined') {
+    window._hySolEdge = _hySolEdge;
+    // Sol's keep-clear radius under solScale:big, else null (music 'home' zone)
+    window._hySolAreaRadius = function () { return _hyScaleOn() ? _hySolEdge() * (1 + HY_SCALE.EDGE_MARGIN) : null; };
+}
+
+function _hyBodyR(p) {
+    return (p && p.geometry && p.geometry.parameters && p.geometry.parameters.radius) ||
+        (p && p.userData && p.userData.radius) || 0;
+}
+function _hyKey(c) { return Math.round(c.x) + ',' + Math.round(c.y) + ',' + Math.round(c.z); }
+
+// Every star system registered in `planets` except Sol and procedural galaxies:
+// { key, center, star, members[], R, edge, own (its galaxy core / gateway), placed }
+function _hyCollectSystems() {
+    const groups = new Map();
+    const stars = [];
+    const holes = [];
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        const u = p && p.userData;
+        if (!u || u.type === 'asteroid' || u.isProcedural) continue;
+        if (u.type === 'blackhole') { holes.push(p); continue; }
+        if (u.isLocalStar || u.heartWorld || u.parentPlanet) continue;
+        if (u.type !== 'star' && u.type !== 'planet' && u.type !== 'moon') continue;
+        const sc = u.systemCenter;
+        if (sc && typeof window !== 'undefined' && sc === window.localSystemOffset) continue;  // Sol
+        if (u.type === 'star' && (!sc || !(u.orbitRadius > 0))) { stars.push(p); if (!sc) continue; }
+        // a free-floating world is a one-body system
+        const key = _hyKey(sc || p.position);
+        if (!sc && p.parent && p.parent !== scene) continue;
+        if (!groups.has(key)) groups.set(key, { key: key, center: sc ? new THREE.Vector3(sc.x, sc.y, sc.z) : p.position.clone(), star: null, members: [] });
+        const g = groups.get(key);
+        if (g.members.indexOf(p) < 0) g.members.push(p);
+    }
+    // Attach each star to its group: by its own systemCenter, by position, then
+    // by name ("Kaitain Star" <-> "Kaitain-1") for stars that carry neither.
+    stars.forEach(function (s) {
+        const u = s.userData;
+        let g = u.systemCenter ? groups.get(_hyKey(u.systemCenter)) : null;
+        if (!g) g = groups.get(_hyKey(s.position));
+        if (!g && u.name) {
+            const stem = String(u.name).replace(/ Star$/, '');
+            groups.forEach(function (gg) {
+                if (!g && gg.members.some(function (m) { return m.userData.name && m.userData.name.indexOf(stem + '-') === 0; })) g = gg;
+            });
+            // a star left behind by an earlier move: put it back at its system's centre
+            if (g && s.position.distanceTo(g.center) > 1) { s.position.copy(g.center); s.updateMatrixWorld(true); }
+        }
+        if (!g) {
+            const key = _hyKey(s.position);
+            g = { key: key, center: s.position.clone(), star: null, members: [] };
+            groups.set(key, g);
+        }
+        if (!g.star) g.star = s;
+        if (g.members.indexOf(s) < 0) g.members.push(s);
+    });
+    // Moons: members that are not children of their planet move with the system too.
+    const out = [];
+    groups.forEach(function (g) {
+        const set = new Set(g.members);
+        for (let i = 0; i < planets.length; i++) {
+            const m = planets[i], mu = m && m.userData;
+            if (mu && mu.parentPlanet && set.has(mu.parentPlanet) && m.parent !== mu.parentPlanet) g.members.push(m);
+        }
+        const probe = g.star || g.members[0];
+        const pu = probe.userData;
+        g.own = null;
+        for (let i = 0; i < holes.length; i++) {
+            const hu = holes[i].userData;
+            if ((pu.isLocalGateway && hu.isLocalGateway) ||
+                (typeof pu.galaxyId === 'number' && hu.isGalacticCore && !hu.isCompanionCore && hu.galaxyId === pu.galaxyId)) { g.own = holes[i]; break; }
+        }
+        g.placed = !!(probe.userData._hyPlaced);
+        _hyMeasureSystem(g);
+        out.push(g);
+    });
+    return { systems: out, holes: holes };
+}
+
+// R = the system's main body, edge = outermost orbit + reach (rule 2).
+function _hyMeasureSystem(g) {
+    g.R = g.star ? _hyBodyR(g.star) : 0;
+    let edge = g.R;
+    g.members.forEach(function (p) {
+        const u = p.userData;
+        if (u.parentPlanet) return;
+        const r = _hyBodyR(p);
+        g.R = Math.max(g.R, g.star ? 0 : r);
+        edge = Math.max(edge, (u.orbitRadius > 0 ? u.orbitRadius : p.position.distanceTo(g.center)) + _hyReach(p));
+    });
+    g.edge = edge;
+}
+// A body's reach: its radius, its ring plane, its moons' orbits.
+function _hyReach(p) {
+    let reach = _hyBodyR(p);
+    for (let i = 0; i < planets.length; i++) {
+        const m = planets[i], mu = m && m.userData;
+        if (mu && mu.parentPlanet === p) reach = Math.max(reach, (mu.orbitRadius || 0) + _hyBodyR(m));
+    }
+    p.children.forEach(function (ch) {
+        const gp = ch.geometry && ch.geometry.parameters;
+        if (gp && gp.outerRadius) reach = Math.max(reach, gp.outerRadius * Math.max(ch.scale.x, 1));
+    });
+    return reach;
+}
+
+// Rules 1 + 2 between two nodes { c, R, edge, own, body }.
+function _hyReq(a, b) {
+    const m = 1 + HY_SCALE.EDGE_MARGIN;
+    if (a.own && a.own === b.body) return b.edge + a.edge * m;
+    if (b.own && b.own === a.body) return a.edge + b.edge * m;
+    return Math.max(HY_SCALE.PLACE_K * (a.R + b.R), (a.edge + b.edge) * m);
+}
+function _hySolve(nodes) {
+    const d = new THREE.Vector3();
+    for (let it = 0; it < HY_SCALE.SOLVE_ITERS; it++) {
+        let moved = 0;
+        for (let i = 0; i < nodes.length; i++) {
+            for (let j = i + 1; j < nodes.length; j++) {
+                const a = nodes[i], b = nodes[j];
+                if (a.fixed && b.fixed) continue;
+                const req = _hyReq(a, b);
+                d.subVectors(a.c, b.c);
+                let dist = d.length();
+                if (dist >= req) continue;
+                if (dist < 1e-3) { d.set(Math.random() - 0.5, 0, Math.random() - 0.5); dist = d.length(); }
+                d.multiplyScalar(1 / dist);
+                const push = (req - dist) * 1.02 + 1;
+                if (a.fixed) b.c.addScaledVector(d, -push);
+                else if (b.fixed) a.c.addScaledVector(d, push);
+                else { a.c.addScaledVector(d, push / 2); b.c.addScaledVector(d, -push / 2); }
+                moved++;
+            }
+        }
+        if (!moved) return it;
+    }
+    return HY_SCALE.SOLVE_ITERS;
+}
+
+// Move a star system as a unit: centre, bodies, its light and every shader
+// that was told where its sun is.
+function _hyMoveSystem(g, delta) {
+    const old = g.center.clone();
+    const seen = new Set();
+    g.members.forEach(function (p) {
+        const u = p.userData;
+        if (u.systemCenter && !seen.has(u.systemCenter)) {
+            seen.add(u.systemCenter);
+            u.systemCenter.x += delta.x; u.systemCenter.y += delta.y; u.systemCenter.z += delta.z;
+        }
+        if (u.position3D && u.position3D.isVector3) u.position3D.add(delta);
+        if (!u.parentPlanet || p.parent !== u.parentPlanet) p.position.add(delta);
+        p.updateMatrix();
+        p.updateMatrixWorld(true);
+        p.traverse(function (o) {
+            const mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+            mats.forEach(function (mt) {
+                const un = mt.uniforms || (mt.userData && mt.userData._ringShadow);
+                if (!un) return;
+                ['uSun', 'uRingSun'].forEach(function (k) {
+                    const v = un[k] && un[k].value;
+                    if (v && v.isVector3 && !seen.has(v) && v.distanceTo(old) < 5) { seen.add(v); v.add(delta); }
+                });
+            });
+        });
+    });
+    if (typeof scene !== 'undefined' && scene) scene.children.forEach(function (o) {
+        if (o.isPointLight && o.position.distanceTo(old) < 2) o.position.add(delta);
+    });
+    g.center.add(delta);
+}
+
+// Place every not-yet-placed system (rules 1 + 2) against Sol, the black
+// holes, the heart worlds and everything placed before it. Returns moves.
+function _hyPlaceSystems(tag) {
+    if (!_hyScaleOn() || typeof planets === 'undefined' || typeof THREE === 'undefined') return 0;
+    const col = _hyCollectSystems();
+    const nodes = [];
+    const sol = (typeof window !== 'undefined' && window.localSystemOffset) || _hySolCenter();
+    nodes.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), R: _hySunR(), edge: _hySolEdge(), fixed: true });
+    // Black holes by the same rule. Only the Companion Core is close enough to
+    // another hole to need it (it rode 0.9 x CLEAR_RADII x (R1 + R2) above
+    // Sgr A*): it moves straight out along the same line, dressing and all.
+    const _clr = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
+    const _sgr = col.holes.find(function (h) { return h.userData.isSagittariusA; });
+    col.holes.forEach(function (h) {
+        if (!_sgr || h === _sgr || !h.userData.isCompanionCore || h.userData._hyPlaced) return;
+        const a = { c: _sgr.position, R: _hyBodyR(_sgr), edge: _clr * _hyBodyR(_sgr) };
+        const b = { c: h.position, R: _hyBodyR(h), edge: _clr * _hyBodyR(h) };
+        const want = _hyReq(a, b), d = h.position.distanceTo(_sgr.position);
+        if (d > 1 && d < want) {
+            h.position.sub(_sgr.position).multiplyScalar(want / d).add(_sgr.position);
+            h.updateMatrixWorld(true);
+        }
+        h.userData._hyPlaced = true;
+    });
+    col.holes.forEach(function (h) {
+        const R = _hyBodyR(h);
+        const clear = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
+        nodes.push({ c: h.position.clone(), R: R, edge: clear * R, fixed: true, body: h });
+    });
+    planets.forEach(function (p) {
+        if (p && p.userData && p.userData.heartWorld) {
+            nodes.push({ c: p.position.clone(), R: _hyBodyR(p), edge: _hyReach(p), fixed: true, body: p });
+        }
+    });
+    const mov = [];
+    col.systems.forEach(function (g) {
+        const n = { c: g.center.clone(), R: g.R, edge: g.edge, own: g.own, fixed: g.placed, g: g };
+        nodes.push(n);
+        if (!g.placed) mov.push(n);
+    });
+    const iters = _hySolve(nodes);
+    let moves = 0;
+    const delta = new THREE.Vector3();
+    mov.forEach(function (n) {
+        delta.subVectors(n.c, n.g.center);
+        if (delta.length() > 1) { _hyMoveSystem(n.g, delta); moves++; }
+        n.g.members.forEach(function (p) { p.userData._hyPlaced = true; });
+    });
+    console.log('HYBRID scale: placed ' + mov.length + ' systems (' + tag + '), moved ' + moves + ', solver passes ' + iters);
+    return moves;
+}
+
+// The named/distant/exotic nebulae, spaced as whole places before anything is
+// spawned in them (rule 2 with a nebula's footprint as its edge).
+function _hySpaceNebulae() {
+    if (!_hyScaleOn() || typeof nebulaClouds === 'undefined' || !nebulaClouds || typeof THREE === 'undefined') return 0;
+    const nodes = [];
+    const sol = window.localSystemOffset || _hySolCenter();
+    nodes.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), R: 0, edge: _hySolEdge(), fixed: true });
+    if (typeof planets !== 'undefined') planets.forEach(function (p) {
+        const u = p && p.userData;
+        if (!u) return;
+        if (u.type === 'blackhole') {
+            const R = _hyBodyR(p), clear = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
+            nodes.push({ c: p.position.clone(), R: 0, edge: clear * R, fixed: true });
+        }
+    });
+    // every star system placed so far, by its edge (rule 2)
+    if (typeof planets !== 'undefined') _hyCollectSystems().systems.forEach(function (g) {
+        if (g.placed) nodes.push({ c: g.center.clone(), R: 0, edge: g.edge, fixed: true });
+    });
+    ((typeof window !== 'undefined' && window.outerInterstellarSystems) || []).forEach(function (o) {
+        if (o && o.position) nodes.push({ c: o.position.clone(), R: 0, edge: (o.userData && o.userData._hyEdge) || 4000, fixed: true });
+    });
+    const mov = [];
+    nebulaClouds.forEach(function (n) {
+        if (!n || !n.position || (n.userData && n.userData._hySpaced)) return;
+        // the escort set only travels with the camera under nebulae:overhaul
+        if (n.userData && n.userData.isEscort && window.HYBRID && window.HYBRID.is('nebulae', 'overhaul')) return;
+        const node = { c: n.position.clone(), R: 0, edge: HY_SCALE.NEBULA_REACH, fixed: false, n: n };
+        nodes.push(node); mov.push(node);
+    });
+    // nebulae already spaced by an earlier call stay put
+    nebulaClouds.forEach(function (n) {
+        if (n && n.position && n.userData && n.userData._hySpaced) {
+            nodes.push({ c: n.position.clone(), R: 0, edge: HY_SCALE.NEBULA_REACH, fixed: true });
+        }
+    });
+    _hySolve(nodes);
+    let moves = 0;
+    mov.forEach(function (node) {
+        const n = node.n, d = node.c.clone().sub(n.position);
+        if (d.length() > 1) {
+            n.position.copy(node.c);
+            if (n.userData && n.userData.position3D && n.userData.position3D.isVector3) n.userData.position3D.copy(node.c);
+            n.updateMatrixWorld(true);
+            moves++;
+        }
+        if (n.userData) n.userData._hySpaced = true;
+    });
+    console.log('HYBRID scale: spaced ' + mov.length + ' nebulae, moved ' + moves);
+    return moves;
+}
+if (typeof window !== 'undefined') {
+    window._hyPlaceSystems = _hyPlaceSystems;
+    window._hySpaceNebulae = _hySpaceNebulae;
+}
+
+// Heart worlds are lit by their nebula's nearest cluster star (uSun); after
+// the systems move, point every heart world (and its rings) at the new one.
+function _hyRelightHeartWorlds() {
+    if (typeof planets === 'undefined') return;
+    planets.forEach(function (w) {
+        if (!w || !w.userData || !w.userData.heartWorld) return;
+        let sun = null, best = Infinity;
+        planets.forEach(function (s) {
+            if (!s || !s.userData || !s.userData.clusterCenter || s.userData.nebulaId !== w.userData.nebulaId) return;
+            const d = s.position.distanceToSquared(w.position);
+            if (d < best) { best = d; sun = s.position; }
+        });
+        if (!sun) return;
+        w.traverse(function (o) {
+            const un = o.material && o.material.uniforms;
+            if (un && un.uSun && un.uSun.value && un.uSun.value.isVector3) un.uSun.value.copy(sun);
+        });
+    });
+}
+
+// Hooks: after the core universe is built (and the black holes scaled), place
+// its systems; space the nebulae once all three nebula builders have run;
+// place the nebula star systems once they and the heart worlds exist.
+// Installed at the END of this file, after its window.* exports (which would
+// otherwise overwrite the wrappers).
+function _hyInstallScaleHooks() {
+    if (typeof window === 'undefined' || window.__hyScaleHooks) return;
+    window.__hyScaleHooks = true;
+    const _wrapAfter = function (name, after, before) {
+        const f = window[name];
+        if (typeof f !== 'function') return;
+        window[name] = function () {
+            if (before) { try { before(); } catch (e) { console.warn('HYBRID scale (' + name + '):', e); } }
+            const r = f.apply(this, arguments);
+            try { after(); } catch (e) { console.warn('HYBRID scale (' + name + '):', e); }
+            return r;
+        };
+    };
+    _wrapAfter('createOptimizedPlanets3D', function () {
+        if (typeof _hyLadderSystems === 'function') _hyLadderSystems('core');
+        _hyPlaceSystems('core');
+    });
+    _wrapAfter('createExoticCoreNebulas', function () { _hySpaceNebulae(); });
+    _wrapAfter('createEnhancedPlanetClustersInNebulas', function () {
+        if (typeof _hyLadderSystems === 'function') _hyLadderSystems('nebula');
+        _hyPlaceSystems('nebula');
+        _hyRelightHeartWorlds();
+    }, function () { _hySpaceNebulae(); });
+}
+
+// =============================================================================
+// HYBRID (solScale:big) — SOL AT FULL SCALE   (package G, Part 1)
+//
+// Ben: "I want the Sol System planets and Sun to be as big as the other ones in
+// the game." Radii put Sol's worlds in the same classes as the rest of the game
+// (field planets 70-200, giants to 330 beside the 620 heart worlds, stars
+// 300-560): Earth 64 -> 130, Jupiter 120 -> 280, Saturn 96 -> 240, Sun 80 ->
+// 300. The Sun is held at 300 by the player's start point (resetCameraTo-
+// GamePosition, Sol + (720, 120, 80)): the start is 2.45 Sun radii out, clear
+// of the demo pilot's 1.8-radii keep-out, and the opening dogfight gets
+// START_GAP of room before Mercury's orbit. Moons keep their planet's
+// proportions. ORBITS ARE NOT TYPED IN: _hySolLayout() lays them with rule 3
+// of HY_SCALE (first orbit STAR_CLEAR Sun radii out and clear of the start
+// point, then each gap ORBIT_K x (reach1 + reach2)), with the asteroid belt as
+// a lane between Mars and Jupiter. Mass and gravity stay at today's values, so
+// the slingshot pulls exactly as hard at the same distance.
+// =============================================================================
+const HY_SOL = {
+    SUN: 300,
+    START: { x: 720, y: 120, z: 80 },   // the player's start, relative to Sol
+    START_GAP: 600,                     // clear space between the start point and the first orbit's inner edge
+    BELT_WIDTH: 500,                    // the asteroid lane between Mars and Jupiter
+    // name: [radius, rings?, { moon: [radius, orbit from the planet's centre] }]
+    planets: [
+        ['Mercury', 70,  false, {}],
+        ['Venus',   120, false, {}],
+        ['Earth',   130, false, { Luna: [40, 520] }],
+        ['Mars',    85,  false, { Phobos: [16, 220], Deimos: [14, 320] }],
+        ['Jupiter', 280, false, { Io: [32, 460], Europa: [28, 580], Ganymede: [42, 760], Callisto: [38, 960] }],
+        ['Saturn',  240, true,  { Enceladus: [20, 660], Titan: [48, 1080] }],
+        ['Uranus',  170, true,  { Titania: [28, 720] }],
+        ['Neptune', 160, false, { Triton: [28, 480] }],
+    ],
+    RING_K: 2.45,                       // Sol ring planes reach 2.45 radii (addPlanetRings outerK)
+};
+let _hySolLayoutCache = null;
+function _hySolLayout() {
+    if (_hySolLayoutCache) return _hySolLayoutCache;
+    const K = HY_SCALE.ORBIT_K, sun = HY_SOL.SUN, st = HY_SOL.START;
+    const out = { sun: sun, planets: {}, moons: {}, belt: null, edge: 0 };
+    const startR = Math.hypot(st.x, st.z);
+    let prevOrbit = 0, prevReach = 0;
+    HY_SOL.planets.forEach(function (row, i) {
+        const name = row[0], r = row[1], moons = row[3];
+        let reach = r * (row[2] ? HY_SOL.RING_K : 1);
+        Object.keys(moons).forEach(function (m) {
+            reach = Math.max(reach, moons[m][1] + moons[m][0]);
+            out.moons[m] = { r: moons[m][0], orbit: moons[m][1] };
+        });
+        let orbit;
+        if (i === 0) {
+            // clear of the Sun (rule 3) and of the start point: the opening
+            // dogfight happens here, so it gets START_GAP of elbow room
+            orbit = Math.max(HY_SCALE.STAR_CLEAR * sun + reach, startR + HY_SOL.START_GAP + reach);
+        } else {
+            orbit = prevOrbit + K * (prevReach + reach);
+        }
+        if (name === 'Jupiter') {
+            // the belt lane sits between Mars and Jupiter
+            const half = HY_SOL.BELT_WIDTH / 2;
+            const beltC = prevOrbit + K * (prevReach + half);
+            out.belt = [beltC - half, beltC + half];
+            orbit = beltC + K * (half + reach);
+        }
+        out.planets[name] = { r: r, orbit: Math.round(orbit), reach: Math.round(reach) };
+        out.edge = Math.max(out.edge, Math.round(orbit + reach));
+        prevOrbit = orbit; prevReach = reach;
+    });
+    _hySolLayoutCache = out;
+    return out;
+}
+if (typeof window !== 'undefined') window._hySolLayout = _hySolLayout;
+
+// Apply the layout to the builder's own table (keeps today's numbers in
+// physSize / physDistance for mass, gravity and orbital speed).
+function _hyApplySolLayout(localPlanets) {
+    if (!_hyScaleOn()) return;
+    const L = _hySolLayout();
+    localPlanets.forEach(function (pd) {
+        const p = L.planets[pd.name];
+        if (!p) return;
+        pd.physSize = pd.size; pd.physDistance = pd.distance;
+        pd.size = p.r; pd.distance = p.orbit;
+        (pd.moons || []).forEach(function (md) {
+            const m = L.moons[md.name];
+            if (!m) return;
+            md.physSize = md.size; md.physDistance = md.distance;
+            md.size = m.r; md.distance = m.orbit;
+        });
+    });
+}
+
+// =============================================================================
+// HYBRID (solScale:big) — ONE SIZE LADDER FOR EVERY STAR AND PLANET   (Part 2)
+//
+// Ben: "Outer system planets and stars should be increased in scale as well."
+// The Alpha / Beta / Gamma stars were radius 10-14 with 4-9 u planets, the
+// galaxy systems' stars 5-13 with 2-14 u planets, the Dune stars 30-44 and the
+// nebula cluster stars 30-70 — specks beside a 620 heart world. Every such
+// system is re-sized onto one ladder (moons < planets < giants < stars <
+// black holes) and re-laid by HY_SCALE rule 3, then placed by rules 1-2:
+//
+//   class    radius (world units)    who
+//   moon     16 - 60                 every moon (keeps its planet's proportion)
+//   planet   70 - 200                field worlds, Sol's rocky planets
+//   giant    220 - 620               field giants top out at FIELD_MAX (330);
+//                                    Jupiter 280, Saturn 240; heart worlds 620
+//   star     300 - 560               every star (Sol 300, held by the start point)
+//   hole     405 - 1215 (shadow)     HY_BH; disc to 5.6 radii (2,268 - 6,804)
+//
+// Within a family (nebula / galaxy / gateway / local) sizes keep their order:
+// the smallest star of a family maps to the bottom of the star class, the
+// largest to the top; planets likewise onto 70-FIELD_MAX. Procedural galaxies
+// (already 200-700 stars, 100-450 planets) are the reference and untouched.
+// Mass and gravity stay as they were (the slingshot is tuned on them).
+// =============================================================================
+const HY_LADDER = {
+    moon:   [16, 60],
+    planet: [70, 200],
+    giant:  [220, 620],
+    star:   [300, 560],
+    FIELD:  [70, 330],       // where a re-sized system's planets land (planet + lower giant)
+    MOON_MAX_OF_PLANET: 0.4, // a moon is never more than this fraction of its planet
+    MOON_ORBIT_MIN: 1.8,     // moon orbits, in planet radii (Sol's moons sit at 3.4-4.5)
+    MOON_ORBIT_MAX: 4.5,
+    OUTER_K: 3.5,            // outer interstellar systems (outer-systems.js): sizes and orbits x this
+    OUTER_STAR_K: 2.25,      // ...their bright stars (225-338; the 2.5x glow shell stays < 900 u)
+};
+if (typeof window !== 'undefined') window.HY_LADDER = HY_LADDER;
+
+function _hyLerpClass(cls, t) { return cls[0] + (cls[1] - cls[0]) * Math.max(0, Math.min(1, t)); }
+
+// Re-size one body to radius newR: new geometry (so every reader of
+// geometry.parameters.radius — collision, slingshot range, keep-out, arrival
+// standoff, culling — follows), non-moon children scaled with it, and the few
+// shader lengths kept in world units. Returns the factor.
+function _hyResizeBody(p, newR) {
+    const g = p && p.geometry, gp = g && g.parameters;
+    if (!gp || !gp.radius || !(newR > 0)) return 1;
+    const k = newR / gp.radius;
+    if (Math.abs(k - 1) < 1e-3) return 1;
+    let ng;
+    if (g.type === 'SphereGeometry') {
+        const ws = Math.max(gp.widthSegments || 16, newR >= 200 ? 64 : (newR >= 80 ? 40 : 24));
+        const hs = Math.max(gp.heightSegments || 12, Math.round(ws * 0.75));
+        ng = new THREE.SphereGeometry(newR, ws, hs);
+    } else {
+        ng = g.clone();
+        ng.scale(k, k, k);
+        ng.parameters = Object.assign({}, gp, { radius: newR });
+    }
+    p.geometry = ng;   // the old one may be shared: not disposed
+    const scaleUni = function (un, names) {
+        if (!un) return;
+        names.forEach(function (n) { if (un[n] && typeof un[n].value === 'number') un[n].value *= k; });
+    };
+    p.children.forEach(function (c) {
+        if (c.userData && c.userData.parentPlanet === p) return;   // moons are re-sized on their own
+        c.scale.multiplyScalar(k);
+        c.position.multiplyScalar(k);
+        c.traverse(function (o) { if (o.material && o.material.uniforms) scaleUni(o.material.uniforms, ['uPlanetR']); });
+    });
+    if (p.material) {
+        scaleUni(p.material.uniforms, ['uRingOuter']);
+        if (p.material.userData) scaleUni(p.material.userData._ringShadow, ['uRingOuter']);
+    }
+    const u = p.userData;
+    ['radius', 'size', '_coronaBaseScale', '_coronaBloomScale', '_coronaSpikeScale'].forEach(function (key) {
+        if (typeof u[key] === 'number') u[key] *= k;
+    });
+    return k;
+}
+
+function _hyFamily(p) {
+    const u = p.userData;
+    if (u.nebulaId !== undefined) return 'nebula';
+    if (u.isLocalGateway) return 'gateway';
+    if (typeof u.galaxyId === 'number') return 'galaxy';
+    return 'local';
+}
+
+// Keep a body's LINEAR orbital speed when its orbit radius changes
+// (game-core boosts orbits under 500 u by 500 / r).
+function _hySpeedK(r0, r1) {
+    return (Math.max(1, 500 / r0) * r0) / (Math.max(1, 500 / r1) * r1);
+}
+
+function _hyLadderSystems(tag) {
+    if (!_hyScaleOn() || typeof planets === 'undefined' || typeof THREE === 'undefined') return 0;
+    const col = _hyCollectSystems();
+    const todo = col.systems.filter(function (g) {
+        return !g.placed && !g.members.some(function (m) { return m.userData._hyLadder; });
+    });
+    if (!todo.length) return 0;
+    // family ranges (radius, before any change)
+    const fam = {};
+    const span = function (f, kind, r) {
+        const F = fam[f] = fam[f] || {};
+        const s = F[kind] = F[kind] || [Infinity, -Infinity];
+        s[0] = Math.min(s[0], r); s[1] = Math.max(s[1], r);
+    };
+    todo.forEach(function (g) {
+        const f = _hyFamily(g.star || g.members[0]);
+        g.family = f;
+        if (g.star) span(f, 'star', _hyBodyR(g.star));
+        g.members.forEach(function (m) {
+            if (m !== g.star && !m.userData.parentPlanet) span(f, 'planet', _hyBodyR(m));
+        });
+    });
+    const tOf = function (s, r) { return s[1] > s[0] ? (r - s[0]) / (s[1] - s[0]) : 0.5; };
+    const lights = [];
+    if (typeof scene !== 'undefined' && scene) scene.children.forEach(function (o) { if (o.isPointLight) lights.push(o); });
+    let bodies = 0;
+    todo.forEach(function (g) {
+        const F = fam[g.family];
+        const oldEdge = g.edge;
+        let starR = 0;
+        if (g.star) {
+            starR = _hyLerpClass(HY_LADDER.star, tOf(F.star, _hyBodyR(g.star)));
+            _hyResizeBody(g.star, starR);
+            bodies++;
+        }
+        // planets, with their moons
+        const orbiters = [];
+        g.members.forEach(function (m) {
+            if (m === g.star || m.userData.parentPlanet) return;
+            const r0 = _hyBodyR(m);
+            const r1 = _hyLerpClass(HY_LADDER.FIELD, tOf(F.planet, r0));
+            const kp = _hyResizeBody(m, r1);
+            bodies++;
+            // Moons: size by the planet's factor (clamped to the moon class);
+            // orbits in PLANET RADII, soft-compressed so the outermost sits at
+            // most MOON_ORBIT_MAX radii out (Sol's moons sit at 3.4-4.5) — the
+            // specks' moons were 7-20 of their tiny planet's radii, which at
+            // ladder size would make every moon system a solar system.
+            const moons = [];
+            for (let i = 0; i < planets.length; i++) {
+                const mo = planets[i], mu = mo && mo.userData;
+                if (mu && mu.parentPlanet === m) moons.push(mo);
+            }
+            let maxRatio = 0;
+            moons.forEach(function (mo) { maxRatio = Math.max(maxRatio, (mo.userData.orbitRadius || 0) / r0); });
+            const M0 = HY_LADDER.MOON_ORBIT_MIN, M1 = HY_LADDER.MOON_ORBIT_MAX;
+            const squeeze = maxRatio > M1 ? (M1 - M0) / Math.max(1e-3, maxRatio - M0) : 1;
+            moons.forEach(function (mo) {
+                const mu = mo.userData;
+                const mr1 = Math.max(HY_LADDER.moon[0],
+                    Math.min(HY_LADDER.moon[1], r1 * HY_LADDER.MOON_MAX_OF_PLANET, _hyBodyR(mo) * kp));
+                _hyResizeBody(mo, mr1);
+                if (mu.orbitRadius > 0) {
+                    const ratio = mu.orbitRadius / r0;
+                    const o1 = r1 * Math.max(M0, ratio > M0 ? M0 + (ratio - M0) * squeeze : ratio);
+                    const km = o1 / mu.orbitRadius;
+                    mu.orbitRadius = o1;
+                    if (mo.parent === m) mo.position.multiplyScalar(km);
+                }
+                mu._hyLadder = true;
+                bodies++;
+            });
+            if (m.userData.orbitRadius > 0) orbiters.push(m);
+            m.userData._hyLadder = true;
+        });
+        if (g.star) g.star.userData._hyLadder = true;
+        // rule 3: re-lay the orbits, innermost first
+        orbiters.sort(function (a, b) { return a.userData.orbitRadius - b.userData.orbitRadius; });
+        let prevO = 0, prevReach = 0;
+        orbiters.forEach(function (m, i) {
+            const u = m.userData, reach = _hyReach(m), r0 = u.orbitRadius;
+            const r1 = i === 0 ? Math.max(HY_SCALE.STAR_CLEAR * starR, 1) + reach
+                               : prevO + HY_SCALE.ORBIT_K * (prevReach + reach);
+            u.orbitRadius = Math.round(r1);
+            if (u.orbitSpeed) u.orbitSpeed *= _hySpeedK(r0, r1);
+            const sc = u.systemCenter, ph = u.orbitPhase || 0;
+            if (sc) m.position.set(sc.x + Math.cos(ph) * r1, m.position.y, sc.z + Math.sin(ph) * r1);
+            m.updateMatrixWorld(true);
+            prevO = r1; prevReach = reach;
+        });
+        _hyMeasureSystem(g);
+        // a system light reaches the new edge
+        lights.forEach(function (l) {
+            if (l.distance > 0 && l.position.distanceTo(g.center) < 2 && oldEdge > 0) l.distance *= Math.max(1, g.edge / oldEdge);
+        });
+    });
+    console.log('HYBRID scale: ladder re-sized ' + bodies + ' bodies in ' + todo.length + ' systems (' + tag + ')');
+    return bodies;
+}
+if (typeof window !== 'undefined') window._hyLadderSystems = _hyLadderSystems;
+
+// Outer interstellar systems (outer-systems.js) are self-contained groups at
+// 40-100k: sized there with HY_LADDER.OUTER_K; here they are placed by rules
+// 1-2 against everything built before them (moved as whole groups).
+function _hyPlaceOuterSystems() {
+    if (!_hyScaleOn() || typeof THREE === 'undefined') return 0;
+    const O = (typeof window !== 'undefined' && window.outerInterstellarSystems) || [];
+    if (!O.length) return 0;
+    const nodes = [];
+    const sol = window.localSystemOffset || _hySolCenter();
+    nodes.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), R: _hySunR(), edge: _hySolEdge(), fixed: true });
+    const col = _hyCollectSystems();
+    col.holes.forEach(function (h) {
+        nodes.push({ c: h.position.clone(), R: _hyBodyR(h), edge: HY_BH.CLEAR_RADII * _hyBodyR(h), fixed: true });
+    });
+    col.systems.forEach(function (g) { nodes.push({ c: g.center.clone(), R: g.R, edge: g.edge, fixed: true }); });
+    const mov = [];
+    O.forEach(function (s) {
+        if (!s || !s.position || s.userData._hyPlaced) return;
+        const n = { c: s.position.clone(), R: s.userData._hyR || 0, edge: s.userData._hyEdge || 4000, fixed: false, s: s };
+        nodes.push(n); mov.push(n);
+    });
+    _hySolve(nodes);
+    let moves = 0;
+    mov.forEach(function (n) {
+        if (n.c.distanceTo(n.s.position) > 1) { n.s.position.copy(n.c); n.s.updateMatrixWorld(true); moves++; }
+        n.s.userData._hyPlaced = true;
+    });
+    console.log('HYBRID scale: placed ' + mov.length + ' outer systems, moved ' + moves);
+    return moves;
+}
+if (typeof window !== 'undefined') window._hyPlaceOuterSystems = _hyPlaceOuterSystems;
+
 function createOptimizedPlanets3D() {
     console.log('Creating comprehensive 3D universe with full local solar system...');
     
@@ -7126,7 +7843,9 @@ function createOptimizedPlanets3D() {
     
     console.log('✅ All required globals found. Proceeding with universe creation...');
     
-    const localSystemOffset = { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin)
+    // HYBRID (solScale:big): Sol sits where the spacing rule puts it — its
+    // keep-clear sphere just outside Sgr A*'s (see HY_SCALE).
+    const localSystemOffset = _hyScaleOn() ? _hySolCenter() : { x: 8000, y: 0, z: 4800 }; // 4x further from Sgr A* (origin)
     // Single source of truth for everything that needs the Sol-system
     // centre outside this function's scope (enemy spawns, music regions).
     if (typeof window !== 'undefined') window.localSystemOffset = localSystemOffset;
@@ -7140,7 +7859,9 @@ function createOptimizedPlanets3D() {
         // it reads as a proper star without dominating the system; mass
         // / gravity (userData below) deliberately unchanged so slingshot
         // physics stay the same.
-        const sunGeometry = new THREE.SphereGeometry(80, 32, 32);
+        // HYBRID (solScale:big): the Sun's radius comes from HY_SOL (300).
+        const _sunR = _hySunR();
+        const sunGeometry = new THREE.SphereGeometry(_sunR, _sunR > 80 ? 64 : 32, _sunR > 80 ? 48 : 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
         const sun = new THREE.Mesh(sunGeometry, sunMaterial);
         sun.position.set(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
@@ -7190,7 +7911,7 @@ function createOptimizedPlanets3D() {
         // Replaces the old tiny 12-unit inner glow sphere which read as
         // a flat dim yellow halo and didn't sell "star".
         if (typeof addStarCorona === 'function') {
-            addStarCorona(sun, 80, 0xff8833);
+            addStarCorona(sun, _sunR, 0xff8833);
         }
 
         console.log('✅ Sun created successfully');
@@ -7305,6 +8026,8 @@ function createOptimizedPlanets3D() {
             { name: 'Triton', distance: 176, size: 10, color: 0x99ccff }
         ], atmo: { scatter: 0.90, rimColor: 0x9fd8ff, rim: 0.78, city: 0, termWidth: 0.13 } }
     ];
+    // HYBRID (solScale:big): sizes and orbits from HY_SOL / _hySolLayout().
+    _hyApplySolLayout(localPlanets);
     
 // =============================================================================
 // ADDITIONAL LOCAL GALAXY STAR SYSTEMS
@@ -7577,7 +8300,7 @@ try {
             // 64-unit hero planet that fills half the frame — and it was
             // already mismatched against Earth's 40-segment cloud shell, so
             // the surface poked through the clouds along the facets.
-            const _seg = planetData.size >= 56 ? 56 : (planetData.size >= 30 ? 36 : 24);
+            const _seg = planetData.size >= 120 ? 80 : (planetData.size >= 56 ? 56 : (planetData.size >= 30 ? 36 : 24));
             const planetGeometry = new THREE.SphereGeometry(planetData.size, _seg, Math.round(_seg * 0.75));
             const planetMaterial = new THREE.MeshLambertMaterial({ 
                 color: planetData.color,
@@ -7598,11 +8321,15 @@ try {
                 type: 'planet',
                 isStart: planetData.name === 'Earth',
                 orbitRadius: planetData.distance,
-                orbitSpeed: 0.04 - index * 0.002,
+                // HYBRID (solScale:big): same LINEAR speed as today on the wider
+                // orbit (game-core boosts orbits under 500 u by 500/r).
+                orbitSpeed: (0.04 - index * 0.002) * (planetData.physDistance
+                    ? Math.max(1, 500 / planetData.physDistance) * planetData.physDistance /
+                      (Math.max(1, 500 / planetData.distance) * planetData.distance) : 1),
                 orbitPhase: index * Math.PI * 0.3,
                 systemCenter: localSystemOffset,
-                mass: planetData.size * 2,
-                gravity: planetData.size * 0.8,
+                mass: (planetData.physSize || planetData.size) * 2,
+                gravity: (planetData.physSize || planetData.size) * 0.8,
                 isLocal: true
             };
             
@@ -7669,7 +8396,9 @@ try {
             // Add moons
             planetData.moons.forEach((moonData, moonIndex) => {
                 try {
-                    const moonGeometry = new THREE.SphereGeometry(moonData.size, 12, 12);
+                    const moonGeometry = moonData.physSize
+                        ? new THREE.SphereGeometry(moonData.size, 32, 24)
+                        : new THREE.SphereGeometry(moonData.size, 12, 12);
                     const moonMaterial = new THREE.MeshLambertMaterial({ 
                         color: moonData.color,
                         emissive: new THREE.Color(moonData.color).multiplyScalar(0.02)
@@ -7687,11 +8416,11 @@ try {
                         name: moonData.name,
                         type: 'moon',
                         orbitRadius: moonData.distance,
-                        orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
+                        orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.physDistance || moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
                         orbitPhase: moonIndex * Math.PI * 0.5,
                         parentPlanet: planet,
-                        mass: moonData.size * 2,
-                        gravity: moonData.size * 0.6,
+                        mass: (moonData.physSize || moonData.size) * 2,
+                        gravity: (moonData.physSize || moonData.size) * 0.6,
                         isLocal: true
                     };
                     
@@ -10286,7 +11015,11 @@ if (Math.random() < moonProbability) {
     
     if (typeof camera !== 'undefined' && camera) {
         try {
-            const earthInitialPosition = new THREE.Vector3(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
+            // HYBRID (solScale:big): 160 u out is inside the scaled Sun; use the
+            // start point resetCameraToGamePosition() sets (Sol + 720, 120, 80).
+            const earthInitialPosition = _hyScaleOn()
+                ? new THREE.Vector3(localSystemOffset.x + 720, localSystemOffset.y + 120, localSystemOffset.z + 80)
+                : new THREE.Vector3(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
             camera.position.copy(earthInitialPosition);
             camera.lookAt(new THREE.Vector3(0, 0, 0));
             
@@ -20146,6 +20879,32 @@ function createEnhancedWormholes() {
         }
     }
 
+    // HYBRID (solScale:big): no mouth inside a system's keep-clear sphere (Sol
+    // moved; Gold A would sit on Uranus's orbit) or a black hole's. Push it
+    // straight out from that body until it clears.
+    if (_hyScaleOn() && typeof planets !== 'undefined' && typeof THREE !== 'undefined') {
+        const _keep = [];
+        const _sol = window.localSystemOffset;
+        if (_sol) _keep.push({ c: new THREE.Vector3(_sol.x, _sol.y, _sol.z), r: _hySolEdge() * (1 + HY_SCALE.EDGE_MARGIN) + 1500 });
+        planets.forEach(function (p) {
+            if (p && p.userData && p.userData.type === 'blackhole') {
+                _keep.push({ c: p.position.clone(), r: _hyBodyR(p) * ((typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6) + 1500 });
+            }
+        });
+        WORMHOLE_NETWORK.forEach(function (spec) {
+            ['a', 'b'].forEach(function (k) {
+                const m = spec[k];
+                if (!m || m._hyPlaced) return;
+                const v = new THREE.Vector3(m.x, m.y, m.z);
+                _keep.forEach(function (z) {
+                    const d = v.distanceTo(z.c);
+                    if (d < z.r) v.sub(z.c).multiplyScalar(z.r / Math.max(d, 1)).add(z.c);
+                });
+                m.x = Math.round(v.x); m.y = Math.round(v.y); m.z = Math.round(v.z); m._hyPlaced = true;
+            });
+        });
+    }
+
     WORMHOLE_NETWORK.forEach(spec => {
         const mouthA = _createWormholeMouth(spec.a, spec.color);
         const mouthB = _createWormholeMouth(spec.b, spec.color);
@@ -21529,6 +22288,22 @@ function createAsteroidBelts() {
             if (galaxyIndex === 7) {
                 beltRadius = 5000 + Math.random() * 2000; // ~5000-7000
                 beltWidth = 1000 + Math.random() * 1200;  // fuller band at the larger radius
+                // HYBRID (solScale:big): the lane _hySolLayout() leaves between
+                // Mars and Jupiter (5-7k is Saturn's neighbourhood at this scale).
+                if (_hyScaleOn()) {
+                    const _lane = _hySolLayout().belt;
+                    beltRadius = (_lane[0] + _lane[1]) / 2;
+                    beltWidth = _lane[1] - _lane[0];
+                }
+            }
+            // HYBRID (solScale:big): 1,600-2,600 u is inside a scaled core's
+            // accretion disc (5.6 radii). Ring the core just outside its
+            // keep-clear sphere instead, in the hole's own radii.
+            if (galaxyIndex !== 7 && _hyScaleOn() && blackHole.userData._hyBHK) {
+                const _bhR = _hyBodyR(blackHole);
+                const _clr = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
+                beltRadius = _bhR * (_clr + 0.4 + Math.random() * 1.2);
+                beltWidth = _bhR * (0.45 + Math.random() * 0.9);
             }
             
             for (let j = 0; j < asteroidCount; j++) {
@@ -23352,3 +24127,7 @@ if (typeof window !== 'undefined') {
         }
     });
 }
+
+// HYBRID (solScale:big): wrap the world builders with the placement passes
+// (see HY_SCALE). Last statement in the file, after every window.* export.
+_hyInstallScaleHooks();

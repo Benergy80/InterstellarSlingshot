@@ -172,12 +172,22 @@ const HELPERS = `(() => {
     Object.assign(gs.emergencyWarp, { active: false, transitioning: false, postWarp: false, exitRamp: null, isJump: false, autoBraking: false });
     gs.emergencyWarp.available = Math.max(5, gs.emergencyWarp.available || 0);
     gs.energy = 100; gs.hull = gs.maxHull || 100; gs.gameOver = false;
+    // Shields left up by the demo's last fight eat the O key ("Warp Blocked").
+    try { if (window.deactivateShields && ie('shieldSystem').active) window.deactivateShields(); } catch (e) { /* optional */ }
   };
   // open space: 12000u outward of the first nebula planet, facing outward
+  // (hybrid solScale:big spreads systems over the 40-90k shell, so the first
+  // guess can land inside one: step outward until nothing is within 8,000 u of
+  // its surface — "open space" is the point of the staging)
+  K.isOpen = (p) => !ie('planets').some((b) => b && b.userData && b.userData.type !== 'asteroid' && b.geometry &&
+      b.geometry.parameters && b.getWorldPosition(new THREE.Vector3()).distanceTo(p) - (b.geometry.parameters.radius || 0) < 8000) &&
+      !(K.stash || []).concat(ie('enemies')).some((e) => e && e.position && e.userData && e.userData.health > 0 && e.position.distanceTo(p) < 6000);
   K.openSpace = () => {
     const cam = ie('camera'); const a = K.nebPlanets()[0].getWorldPosition(new THREE.Vector3());
     const dir = a.clone().normalize();
-    cam.position.copy(a).addScaledVector(dir, 12000 + Math.random() * 50);
+    let far = 12000;
+    for (let i = 0; i < 20 && !K.isOpen(a.clone().addScaledVector(dir, far)); i++) far += 4000;
+    cam.position.copy(a).addScaledVector(dir, far + Math.random() * 50);
     cam.lookAt(cam.position.clone().addScaledVector(dir, 1000));
     ie('gameState').velocityVector.copy(dir).multiplyScalar(1);
     return dir;
@@ -310,10 +320,17 @@ check('park', async () => {
     K.openSpace(); gs.velocityVector.set(0, 0, 0);
     const parks0 = dp.arrivalParks; D.unlockWarp(); D.goPhase('warpToNebulaCluster');
     const t0 = Date.now(); let warped = false;
-    while (Date.now() - t0 < 45000) { await sleep(250); if (gs.emergencyWarp.active) warped = true; if (dp.arrivalParks > parks0) break; }
+    const trace = [];
+    while (Date.now() - t0 < 45000) {
+        await sleep(250); if (gs.emergencyWarp.active) warped = true; if (dp.arrivalParks > parks0) break;
+        if (!trace.length || trace[trace.length - 1][1] !== dp.phase) trace.push([Math.round((Date.now() - t0) / 100) / 10, dp.phase, ie('enemies').length]);
+        // A post-kill timer from the demo's last fight (mine / findLocalEnemies)
+        // can overwrite the staged phase a beat later; hold the leg for 6 s.
+        if (!warped && Date.now() - t0 < 6000 && dp.phase !== 'warpToNebulaCluster' && dp.phase !== 'coastToNebulaCluster') D.goPhase('warpToNebulaCluster');
+    }
     const parkMs = dp.arrivalParks > parks0 ? Date.now() - t0 : null;
     await sleep(600);   // let the park settle a beat, as a viewer would see it
-    const out = { parked: parkMs !== null, parkMs, warped, park: dp.lastArrivalPark, phase: dp.phase };
+    const out = { parked: parkMs !== null, parkMs, warped, park: dp.lastArrivalPark, phase: dp.phase, trace: trace.slice(0, 20) };
     const as = gs._arrivalSubject;
     if (as && as.obj) {
         const wp = as.obj.getWorldPosition(new THREE.Vector3()); const fwd = cam.getWorldDirection(new THREE.Vector3());
