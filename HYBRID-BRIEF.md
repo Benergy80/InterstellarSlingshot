@@ -196,8 +196,11 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927b | Wave 2 — B enemies, D effects and audio |
 | 20260927c | Orbit lines steady; giant planets keep their colour (`farPlanetFade`) |
 | 20260927d | Asteroids drawn again (`asteroids`); enemies wear original flat exhaust cones (`enemyThrusters`) |
+| 20260927e | Explosions combined: ORIGINAL burst + overhaul detonation (`explosions: combined`) |
 | in progress | Wave 3 — C deep space, F intro; package I enemy flight |
-| next | Wave 4 — G scale, placement (giants and black holes) and opening vista |
+| then | Wave 4 — J black holes, K demo pilot safety |
+| then | Wave 5 — G scale and placement (Sol, outer systems, giants, stars) |
+| last | Wave 6 — G2 the opening view |
 
 Play the hybrid: `node scripts/serve.mjs 8803` → http://localhost:8803/
 
@@ -232,7 +235,23 @@ radii for every large body.
 > should not have textures at this time and should look like they originally did.
 
 Asteroids and enemy textures resolved in 20260927d (`asteroids`, `enemyThrusters`). Black-hole
-look: package C. Black-hole scale: package G, Part 0.
+look: package C, then J.
+
+> we should combine the old explosions with the new ones
+
+Resolved in 20260927e: `explosions: combined` is the default.
+
+> demo player keeps colliding with planets. Outer system planets and stars should be increased in
+> scale as well. Black holes should be increased in scale and should get more intense aurora and
+> accretion disc effect as the player approaches them
+
+With two reference images, kept at `.critic/refs/blackhole-ref-gargantua.jpg` (the Interstellar
+look: shadow, photon ring, disc across the front, lensed arch above and below) and
+`.critic/refs/blackhole-ref-stylised.png` (hot inner ring, swirling disc, sparks, warped grid).
+Package K: demo pilot keep-out spheres in radii, legs validated before committing, on-rails
+manoeuvres that look ahead. Package J: black holes bigger, ORIGINAL effects kept, lensed disc
+added, intensity ramping with proximity. Package G, Part 2: outer systems and every star join one
+size ladder.
 
 ## Open questions for Ben
 
