@@ -195,8 +195,9 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927a | Wave 1 — A craft, E UI, H keep guard |
 | 20260927b | Wave 2 — B enemies, D effects and audio |
 | 20260927c | Orbit lines steady; giant planets keep their colour (`farPlanetFade`) |
+| 20260927d | Asteroids drawn again (`asteroids`); enemies wear original flat exhaust cones (`enemyThrusters`) |
 | in progress | Wave 3 — C deep space, F intro; package I enemy flight |
-| next | Wave 4 — G Sol scale and opening vista |
+| next | Wave 4 — G scale, placement (giants and black holes) and opening vista |
 
 Play the hybrid: `node scripts/serve.mjs 8803` → http://localhost:8803/
 
@@ -218,6 +219,21 @@ fades by apparent size.
 Package I. Keep what the AI decides; replace how it moves: persistent velocity, thrust along the
 nose, rate- and acceleration-limited turns, velocity lagging the nose, banking. Switch `enemyFlight`.
 
+> Shouldn't those giant planets be further away from SOL and each other. There placement needs to
+> scale with their size
+
+Package G, Part 0. Measured: ORIGINAL keeps its nebulae 28,000-41,000 from Sol; the overhaul
+pulled five in to 4,000-5,300, so five radius-620 giants sit between Jupiter's and Saturn's
+orbits, 6-10 of their own radii from Sol and ~4 radii from each other. One placement rule in
+radii for every large body.
+
+> Where are the asteroids? Black holes need more of the original event horizon effects and the
+> original color influence. They need to scale along with all the other giant planets. Enemies
+> should not have textures at this time and should look like they originally did.
+
+Asteroids and enemy textures resolved in 20260927d (`asteroids`, `enemyThrusters`). Black-hole
+look: package C. Black-hole scale: package G, Part 0.
+
 ## Open questions for Ben
 
 1. **Invisible messages.** In ORIGINAL, `showAchievement` messages (wingman comms, "Target Hit!",
@@ -225,7 +241,9 @@ nose, rate- and acceleration-limited turns, velocity lagging the nose, banking. 
    wants them visible, where?
 2. **Slingshot steering** turns the camera but not the flight path (warp steering bends the path
    by 100+ degrees). Is bending the path during a slingshot wanted?
-3. **Enemy engine plumes** are kept on the ORIGINAL hulls (`thrusters`). Do they suit the old look?
+3. ~~Enemy engine plumes~~ — answered 2026-09-27: no textures on enemies; ORIGINAL cones restored.
+   Side effect: the AI's attack wind-up flare was drawn by the plume system, so it is not visible
+   now. A flat, vector-style telegraph (a glow-shell flash) would bring it back if he wants it.
 4. **Heart-world colours** are saturated now that they are lit. Too candy-coloured?
 5. **Music** reverted to ORIGINAL by the integrator's default, not his word (`music`).
 
