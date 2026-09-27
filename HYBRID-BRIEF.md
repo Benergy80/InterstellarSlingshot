@@ -201,8 +201,16 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927g | Wave 3 — C deep space: ORIGINAL black holes visible, nebulae combined and thinned; orbit rings exempt from the draw budget; asteroids lit (`HY_ROCK_ALBEDO`) |
 | 20260927h | K demo pilot safety: keep-out spheres in radii (`KEEPOUT_K`), 0 deaths in 11 soak runs |
 | 20260927i | Wave 4 — F ORIGINAL intro; J black holes bigger (`HY_BH.SIZE` 900) with lensed disc ramping on approach |
+| 20260927j | Black holes: no outer circle, no grid (`HY_BH.OUTER_RING`, `HY_BH.GRID` off); ORIGINAL glow, disk and hoop stay on approach (`HY_BH.ORIG_YIELD` 0) |
 | in progress | Wave 5 — G scale and placement (Sol, outer systems, giants, stars) |
-| last | Wave 6 — G2 the opening view |
+| last | Wave 6 — G2 the opening view; L asteroids |
+
+Ben, 2026-09-27, on build i: "The big circles around the black holes are not necessary. Probably
+inspired by one of the images I uploaded. Can the other black hole effects come back alongside the
+current ones. Can asteroids come back?" and "get rid of the grid lines around black holes too."
+Asteroids asked for a third time → package L. Measured: belt rocks drawn 784 (ORIGINAL) vs 411;
+roaming asteroids within 30,000 of the player 262-280 vs 3-4; ORIGINAL belts sit 1,600-2,600 from a
+hole, now inside the radius-900 holes' discs.
 
 Guard on 20260927i: `node scripts/keep-check.mjs --root . --out .critic/keepcheck` → 9/9 PASS, 60 fps.
 Demo soak: `node scripts/demo-soak.mjs --root . --out .critic/soak --runs 5 --secs 180`.
