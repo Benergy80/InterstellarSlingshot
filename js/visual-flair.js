@@ -262,6 +262,7 @@ function createHitSparks(position, colorHex) {
         color: colorHex || 0xffcc66, size: 2.2, transparent: true,
         opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false
     });
+    if (typeof _hyFlat === 'function') _hyFlat(mat); // HYBRID: ORIGINAL brightness
     const pts = new THREE.Points(geo, mat);
     pts.position.copy(position);
     scene.add(pts);
@@ -900,6 +901,7 @@ function wingmanTracerPush(ship, colorHex) {
             color: colorHex || 0x88ffee, transparent: true, opacity: 0.8,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
+        if (typeof _hyFlat === 'function') _hyFlat(mat, 'weaponFx'); // HYBRID: ORIGINAL brightness
         tr = { points: [], line: new THREE.Line(new THREE.BufferGeometry(), mat), mat };
         tr.line.frustumCulled = false;
         scene.add(tr.line);

@@ -568,6 +568,7 @@ function createAsteroidExplosion(position, radius = 1) {
         transparent: true,
         opacity: 0.8
     });
+    if (typeof _hyFlat === 'function') _hyFlat(mainExplosionMaterial); // HYBRID: ORIGINAL brightness
     const mainExplosion = new THREE.Mesh(mainExplosionGeometry, mainExplosionMaterial);
     explosionGroup.add(mainExplosion);
 
@@ -583,6 +584,7 @@ function createAsteroidExplosion(position, radius = 1) {
             transparent: true,
             opacity: 0.9
         });
+        if (typeof _hyFlat === 'function') _hyFlat(particleMaterial); // HYBRID: ORIGINAL brightness
         const particle = new THREE.Mesh(particleGeometry, particleMaterial);
 
         // Much larger velocity spread
@@ -605,6 +607,7 @@ function createAsteroidExplosion(position, radius = 1) {
         opacity: 0.5,
         side: THREE.DoubleSide
     });
+    if (typeof _hyFlat === 'function') _hyFlat(shockwaveMaterial); // HYBRID: ORIGINAL brightness
     const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
     shockwave.rotation.x = Math.PI / 2;
     explosionGroup.add(shockwave);
@@ -680,6 +683,7 @@ function createPlayerExplosion() {
         transparent: true,
         opacity: 1.0
     });
+    if (typeof _hyFlat === 'function') _hyFlat(mainExplosionMaterial); // HYBRID: ORIGINAL brightness
     const mainExplosion = new THREE.Mesh(mainExplosionGeometry, mainExplosionMaterial);
     explosionGroup.add(mainExplosion);
 
@@ -695,6 +699,7 @@ function createPlayerExplosion() {
             transparent: true,
             opacity: 1.0
         });
+        if (typeof _hyFlat === 'function') _hyFlat(particleMaterial); // HYBRID: ORIGINAL brightness
         const particle = new THREE.Mesh(particleGeometry, particleMaterial);
 
         const velocity = new THREE.Vector3(
@@ -767,6 +772,7 @@ function createPlayerExplosion() {
                             opacity: 0.8,
                             side: THREE.DoubleSide
                         });
+                        if (typeof _hyFlat === 'function') _hyFlat(shockwaveMaterial); // HYBRID: ORIGINAL brightness
                         const shockwave = new THREE.Mesh(shockwaveGeometry, shockwaveMaterial);
                         shockwave.rotation.x = Math.PI / 2;
                         explosionGroup.add(shockwave);
@@ -2823,7 +2829,8 @@ function _fireWarpExitBeat(blackHole, refSpeed) {
         if (typeof window !== 'undefined' && typeof window.warpExitBeat === 'function') {
             window.warpExitBeat(!!blackHole, refSpeed || 0);
         }
-        if (typeof playSound === 'function') { try { playSound('warp'); } catch (e) {} }
+        // HYBRID sfx: the warp-exit whoosh is an overhaul-added cue.
+        if ((!window.HYBRID || window.HYBRID.is('sfx', 'overhaul')) && typeof playSound === 'function') { try { playSound('warp'); } catch (e) {} }
     } catch (e) {}
 }
 
