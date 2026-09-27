@@ -40,8 +40,46 @@ function createInterstellarAsteroidFields() {
     // console.log(`✅ Created ${INTERSTELLAR_ASTEROID_CONFIG.fieldCount} interstellar asteroid fields with ${interstellarAsteroids.length} total asteroids`);
 }
 
+// HYBRID (asteroids: original). ORIGINAL scattered these fields 25,000-55,000
+// from the origin with the player starting ~10,000 from it, so the nearest field
+// was typically 7-18k away. The hybrid starts ~24,000 from the origin at Sol,
+// so the fields are laid out round Sol instead, in the band below, flattened
+// toward the plane you fly in, and placed by the hybrid rule (edge clear of
+// every hole by HY_ROCKS.HOLE_CLEAR radii and every other body by BODY_CLEAR_K).
+const HY_ROAM = {
+    FROM_SOL: [17000, 46000],  // field centre distance from Sol (Sol's edge is ~15,200)
+    NEAR_BIAS: 1.6,            // >1 pulls fields toward the near end of the band
+    FLATTEN: 0.35,             // vertical squash of the placement sphere
+    REACH: 2600,               // a field's half-diagonal (fieldSpread 3000 cube)
+    DENSE_FROM_RADII: 6.4,     // dense fields start this many core radii out (ORIGINAL 800 u)
+};
+function _hyRoamOn() {
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('asteroids', 'original'));
+}
+function _hyRoamFieldPositions(count) {
+    const sol = window.localSystemOffset || { x: 0, y: 0, z: 0 };
+    const bodies = typeof window._hyRockBodies === 'function' ? window._hyRockBodies() : null;
+    const out = [];
+    for (let i = 0; i < count; i++) {
+        let p = null;
+        for (let tries = 0; tries < 30 && !p; tries++) {
+            const u = Math.pow(Math.random(), HY_ROAM.NEAR_BIAS);
+            const radius = HY_ROAM.FROM_SOL[0] + u * (HY_ROAM.FROM_SOL[1] - HY_ROAM.FROM_SOL[0]);
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(1 - 2 * Math.random());
+            const c = new THREE.Vector3(sol.x + radius * Math.sin(phi) * Math.cos(theta),
+                sol.y + radius * Math.cos(phi) * HY_ROAM.FLATTEN,
+                sol.z + radius * Math.sin(phi) * Math.sin(theta));
+            if (!bodies || window._hyRockClear(c, HY_ROAM.REACH, bodies)) p = { x: c.x, y: c.y, z: c.z, radius: radius };
+        }
+        if (p) out.push(p);
+    }
+    return out;
+}
+
 // Generate positions for asteroid fields (between galaxies)
 function generateAsteroidFieldPositions(count) {
+    if (_hyRoamOn()) return _hyRoamFieldPositions(count);
     const positions = [];
     const { minDistance, maxDistance } = INTERSTELLAR_ASTEROID_CONFIG;
 
@@ -166,6 +204,14 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
         denseField: cheap,  // dense-galaxy-field asteroid → tighter cull range
     };
     asteroid.frustumCulled = true; // off-screen ones skip drawing
+    if (_hyRoamOn()) {
+        // HYBRID: each rock owns its material and has 80 triangles, so the
+        // overhaul's draw budget hid every one beyond 450 u; and its tone curve
+        // turned ORIGINAL's pale rock into dull brown. Neither, for rocks.
+        asteroid.userData.__dbTris = Infinity;
+        material.toneMapped = false;
+        if (!cheap) material.color.multiplyScalar(0.6);   // lit + emissive clipped to flat without the curve
+    }
 
     scene.add(asteroid);
     interstellarAsteroids.push(asteroid);
@@ -188,15 +234,17 @@ function createDenseGalaxyAsteroidFields() {
     // ~3 of them get the giant field (every other core, deterministic order).
     const chosen = cores.filter((c, i) => i % 2 === 0).slice(0, 3);
     chosen.forEach((core, idx) => {
-        createDenseAsteroidField(core.position, 100 + idx);
+        const _g = core.geometry && core.geometry.parameters;
+        createDenseAsteroidField(core.position, 100 + idx, _g && _g.radius ? _g.radius * core.scale.x : 0);
         core.userData.hasDenseAsteroidField = true;
     });
     console.log('🪨 Dense asteroid fields created in ' + chosen.length + ' galaxies');
 }
 
-function createDenseAsteroidField(center, fieldIndex) {
+function createDenseAsteroidField(center, fieldIndex, coreR) {
     const COUNT = 140;          // packed but perf-aware (cheap material)
-    const CORE_CLEAR = 800;     // keep the very center flyable
+    // HYBRID: 800 u is inside a radius-900 core's shadow; start past its disc.
+    const CORE_CLEAR = (_hyRoamOn() && coreR) ? coreR * HY_ROAM.DENSE_FROM_RADII : 800;     // keep the very center flyable
     const REACH = 5000;         // field radius
     for (let i = 0; i < COUNT; i++) {
         // Bias inward (pow<1) so it's DENSE near the core/combat zone, and
@@ -209,6 +257,13 @@ function createDenseAsteroidField(center, fieldIndex) {
             y: center.y + (r * Math.cos(phi)) * 0.45,
             z: center.z + r * Math.sin(phi) * Math.sin(theta)
         };
+        if (_hyRoamOn() && coreR) {
+            // The vertical squash pulls polar rocks back toward the core; push
+            // each one out along its own line so none sits inside CORE_CLEAR.
+            const dx = pos.x - center.x, dy = pos.y - center.y, dz = pos.z - center.z;
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
+            if (d < CORE_CLEAR) { const k = CORE_CLEAR / d; pos.x = center.x + dx * k; pos.y = center.y + dy * k; pos.z = center.z + dz * k; }
+        }
         const size = 16 + Math.random() * 64; // 16-80, varied — big ones break into a cloud
         const vel = new THREE.Vector3(
             (Math.random() - 0.5) * 0.22,
