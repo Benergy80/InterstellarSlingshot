@@ -2211,9 +2211,16 @@ function _runPlayerHullUpgradeLoop() {
     if (!mesh.userData._hullUpgraded) {
         const hullUniforms = [];
         const bloomSprites = [];
+        // HYBRID: the original vector hull keeps its own materials; only the
+        // overhaul hull swaps in the rim-lit panel shader.
+        const swapHull = !window.HYBRID || window.HYBRID.is('playerShip', 'overhaul');
+        const wantBloom = !window.HYBRID || window.HYBRID.is('thrusters', 'overhaul');
+        let hullMeshes = 0;
 
         mesh.traverse((child) => {
             if (child.isMesh && child.material && child.material.blending !== THREE.AdditiveBlending) {
+                hullMeshes++;
+                if (!swapHull) return;
                 if (child.material.dispose) child.material.dispose();
                 const built = createPlayerHullMaterial();
                 child.material = built.material;
@@ -2222,11 +2229,11 @@ function _runPlayerHullUpgradeLoop() {
             }
         });
 
-        if (hullUniforms.length > 0) {
-            [
+        if (hullMeshes > 0) {
+            (wantBloom ? [
                 new THREE.Vector3(-0.024, 0, -0.14),
                 new THREE.Vector3(0.024, 0, -0.14)
-            ].forEach((pos) => {
+            ] : []).forEach((pos) => {
                 const sprite = _createEngineBloomSprite();
                 sprite.position.copy(pos);
                 mesh.add(sprite);

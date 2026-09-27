@@ -109,9 +109,50 @@ Vector craft flying through a gorgeous universe.
    report the conflict.
 7. One focused commit per logical change. Commit only the files you changed — never `git add -A`.
 
+## How the overhaul is built — read this before you explore
+
+Measured with `scripts/fn-map.mjs`: the overhaul **changed only 163 of the original's units in
+place** and **added ~1,300 new ones**. The original builders (player ship, most enemy spawning, the
+HUD functions) are largely untouched; the new look is bolted on afterwards by add-on code that
+hooks itself in at load time:
+
+- self-driving loops — e.g. `_runPlayerHullUpgradeLoop` swaps the ship's materials after the
+  original builder has run;
+- installers and wrappers — `_install…`, `_wrap…`, `const _orig = window.f; window.f = …`;
+- top-level `if (typeof window !== 'undefined') …` statements that start them.
+
+So a restore is usually one of two small moves, not a rewrite:
+
+1. **Gate the hook** on the switchboard: `if (!window.HYBRID || HYBRID.is('playerShip','overhaul'))`.
+   Preferred wherever the overhaul feature is an add-on with a clear entry point. The overhaul code
+   stays in the file, dormant, and Ben can flip it back on to compare.
+2. **Restore the unit** with `scripts/fn-restore.mjs` where the overhaul rewrote an original
+   function in place. Byte-exact, no retyping.
+
+## The switchboard — `js/hybrid-config.js`
+
+One entry per restored system (`playerShip`, `shields`, `enemyLook`, `nebulaDensity`, `hud`, …),
+defaults set to Ben's decisions. **Every switch already exists — read them, do not add or rename
+them** (parallel packages would collide). If you need a new one, say so in your report.
+`HYBRID.is(key, value)`, `HYBRID.num(key)`. Test the other side with `?hy=key:value`.
+
 ## Tools
 
 ```bash
+# WHAT did the overhaul change?  (parser-based, exact)
+node scripts/fn-map.mjs                        # every file: counts
+node scripts/fn-map.mjs js/game-models.js      # one file: every CHANGED / ADDED / REMOVED unit
+node scripts/fn-map.mjs js/x.js --grep ship    # filter by name
+
+# PUT ORIGINAL CODE BACK, byte-exact
+node scripts/fn-restore.mjs js/x.js --show  fnName          # read both versions side by side
+node scripts/fn-restore.mjs js/x.js fnA fnB                 # restore units from ORIGINAL
+node scripts/fn-restore.mjs js/x.js --keep-as _overhaul fn  # restore, keep overhaul copy for a switch
+node scripts/fn-restore.mjs js/x.js --insert fn --after g   # bring back a deleted unit
+
+# DID I BREAK A REFERENCE?  run after every restore — exits 1 on a new unguarded dangling name
+node scripts/fn-undef.mjs --new
+
 # screenshot any build, staged, on the real GPU
 node scripts/shot.mjs --root <build dir> --out .critic/<pkg> --name <label> \
      --mode demo --shots 8,30,60 [--eval stage.js] [--canvas]
