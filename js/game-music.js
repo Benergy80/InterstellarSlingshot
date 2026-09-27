@@ -470,7 +470,8 @@
     // (heading out toward another galaxy). The radii overlap along the
     // direct Sol↔Sgr A* route, so that whole corridor stays "home".
     if (typeof camera !== 'undefined' && typeof THREE !== 'undefined') {
-      const SOL_AREA_RADIUS = 6000;
+      // HYBRID (solScale:big): 'home' is Sol's whole keep-clear sphere.
+      const SOL_AREA_RADIUS = (typeof window !== 'undefined' && window._hySolAreaRadius && window._hySolAreaRadius()) || 6000;
       const SGRA_AREA_RADIUS = 6000;
       const lso = (typeof window !== 'undefined' && window.localSystemOffset)
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
@@ -3687,7 +3688,8 @@
     // (heading out toward another galaxy). The radii overlap along the
     // direct Sol↔Sgr A* route, so that whole corridor stays "home".
     if (typeof camera !== 'undefined' && typeof THREE !== 'undefined') {
-      const SOL_AREA_RADIUS = 6000;
+      // HYBRID (solScale:big): 'home' is Sol's whole keep-clear sphere.
+      const SOL_AREA_RADIUS = (typeof window !== 'undefined' && window._hySolAreaRadius && window._hySolAreaRadius()) || 6000;
       const SGRA_AREA_RADIUS = 6000;
       const lso = (typeof window !== 'undefined' && window.localSystemOffset)
         ? window.localSystemOffset : { x: 8000, y: 0, z: 4800 };
