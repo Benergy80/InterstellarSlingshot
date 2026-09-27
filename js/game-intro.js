@@ -4684,7 +4684,8 @@ document.head.appendChild(introStyles);
 
     if (typeof window !== 'undefined') {
         window._updateGameplayLiveChrome = tick;
-        setInterval(tick, 400);
+        // HYBRID: ORIGINAL keeps the INTERSTELLAR SLINGSHOT banner up in play.
+        if (!window.HYBRID || HYBRID.is('hud', 'overhaul')) setInterval(tick, 400);
     }
 })();
 

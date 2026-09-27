@@ -11819,6 +11819,38 @@ function _pulseDamageVignette(edge, intensity) {
 
 // ENHANCED: Directional damage effect system with attacker position
 function createScreenDamageEffect(attackerPosition = null) {
+    // HYBRID: ORIGINAL red damage flash; `?hy=notifications:overhaul` = rim vignette
+    if (!window.HYBRID || HYBRID.is('notifications', 'overhaul')) return createScreenDamageEffect_overhaul(attackerPosition);
+    if (!attackerPosition) {
+        // Fallback to old full-screen effect if no attacker position provided
+        const damageOverlay = document.createElement('div');
+        damageOverlay.className = 'absolute inset-0 bg-red-500 pointer-events-none z-30 combat-damage-fx';
+        damageOverlay.style.opacity = '0';
+        damageOverlay.style.animation = 'damageFlash 0.5s ease-out forwards';
+        document.body.appendChild(damageOverlay);
+        
+        setTimeout(() => damageOverlay.remove(), 500);
+        return;
+    }
+    
+    // NEW: Directional damage effect based on attacker position
+    const attackDirection = getAttackDirection(attackerPosition);
+    createDirectionalDamageEffect(attackDirection);
+    
+    // Enhanced screen shake effect
+    const gameContainer = document.getElementById('gameContainer');
+    if (gameContainer) {
+        gameContainer.style.animation = 'screenShake 0.8s ease-out';
+        setTimeout(() => {
+            if (gameContainer) {
+                gameContainer.style.animation = '';
+            }
+        }, 800);
+    }
+}
+
+// ── overhaul version of createScreenDamageEffect, kept for flag-gated comparison ──
+function createScreenDamageEffect_overhaul(attackerPosition = null) {
     if (!attackerPosition) {
         // No attacker known — omnidirectional rim pulse (was: solid red frame).
         _pulseDamageVignette('all', 0.85);
@@ -11892,6 +11924,69 @@ function getAttackDirection(attackerPosition) {
 }
 
 function createDirectionalDamageEffect(attackDirection) {
+    if (!window.HYBRID || HYBRID.is('notifications', 'overhaul')) return createDirectionalDamageEffect_overhaul(attackDirection);
+    const direction = attackDirection.primary;
+    let overlayStyle = '';
+    let extraStyle = '';
+
+    // Each direction just uses a full-viewport gradient; the gradient
+    // itself fades to transparent so the colored band only shows on the
+    // correct side.  We deliberately do NOT restrict the element to a
+    // partial area — combining `top:0;bottom:0` from the base with
+    // `height:40%` was over-constrained and browsers resolved it by
+    // placing the "bottom" flash at the top of the screen (and "right"
+    // on the left).
+    switch (direction) {
+        case 'left':
+            overlayStyle = 'background: linear-gradient(to right, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
+            break;
+        case 'right':
+            overlayStyle = 'background: linear-gradient(to left, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
+            break;
+        case 'top':
+            overlayStyle = 'background: linear-gradient(to bottom, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
+            break;
+        case 'bottom':
+            overlayStyle = 'background: linear-gradient(to top, rgba(255,0,0,0.8) 0%, rgba(255,0,0,0.3) 30%, transparent 60%);';
+            break;
+        case 'behind':
+            overlayStyle = 'background: radial-gradient(circle at center, transparent 0%, rgba(255,0,0,0.4) 40%, rgba(255,0,0,0.8) 100%);';
+            extraStyle = 'box-shadow: inset 0 0 0 8px rgba(255,0,0,0.6);';
+            break;
+        case 'front':
+        default:
+            overlayStyle = 'background: radial-gradient(circle at center, rgba(255,0,0,0.6) 0%, rgba(255,0,0,0.3) 50%, transparent 80%);';
+            break;
+    }
+
+    // Z-index sits ABOVE the mission command alert (z-50) and incoming-
+    // transmission prompt (1000) so the player always sees incoming-fire
+    // warnings even during a transmission.
+    const damageOverlay = document.createElement('div');
+    damageOverlay.className = 'fixed pointer-events-none combat-damage-fx';
+    damageOverlay.style.cssText =
+        'top:0;left:0;right:0;bottom:0;' +   // full viewport, always
+        overlayStyle + extraStyle +
+        'opacity: 0; transition: opacity 0.15s ease-out; z-index: 2000;';
+    document.body.appendChild(damageOverlay);
+
+    // Extended visibility so the flash actually registers during fast
+    // combat — appears in 15 ms, holds for 500 ms, fades out over 250 ms.
+    setTimeout(() => { damageOverlay.style.opacity = '1'; }, 15);
+    setTimeout(() => { damageOverlay.style.opacity = '0'; }, 500);
+    setTimeout(() => { damageOverlay.remove(); }, 800);
+
+    // Add directional damage indicator text for every non-center
+    // direction (including FRONT — previously suppressed, but the
+    // player deserves a "FRONT" warning when an enemy ahead of them
+    // lands a hit).
+    if (direction !== 'center') {
+        createDamageDirectionIndicator(direction);
+    }
+}
+
+// ── overhaul version of createDirectionalDamageEffect, kept for flag-gated comparison ──
+function createDirectionalDamageEffect_overhaul(attackDirection) {
     const direction = attackDirection.primary;
 
     // Map the incoming direction onto which EDGE of the frame lights up.
@@ -14402,6 +14497,161 @@ function _scheduleAchievementDrain() {
 }
 
 function showAchievement(title, description, playAchievementSound = true) {
+    // HYBRID: ORIGINAL retires #achievementPopup — #missionCommandAlert is always
+    // in the DOM, so every call defers (see HYBRID-BRIEF ledger "Notification
+    // panel ... REMOVE"). `?hy=notifications:overhaul` brings the popup back.
+    if (!window.HYBRID || HYBRID.is('notifications', 'overhaul')) return showAchievement_overhaul(title, description, playAchievementSound);
+    // Defer achievements while an incoming transmission popup is on screen
+    // so they don't visually overlap. Re-fires when the transmission closes.
+    if (document.getElementById('incomingTransmissionPrompt') ||
+        document.getElementById('missionCommandAlert')) {
+        if (!window._deferredAchievements) window._deferredAchievements = [];
+        // Avoid queueing duplicates
+        const dup = window._deferredAchievements.some(a => a.title === title && a.description === description);
+        if (!dup) {
+            window._deferredAchievements.push({ title, description, playAchievementSound });
+        }
+        return;
+    }
+
+    // Check if tutorial is active and suppress non-critical achievements
+    const tutorialActive = (typeof tutorialSystem !== 'undefined' && tutorialSystem.active && !tutorialSystem.completed);
+    
+    // List of achievements that should be suppressed during tutorial
+    const suppressDuringTutorial = [
+        'Slingshot Ready',
+        'Target Acquired', 
+        'Target Cycled',
+        'Asteroid Hit!',
+        'Target Hit!',
+        'Gravitational Slingshot'
+    ];
+    
+    // List of critical achievements that should ALWAYS show (even during tutorial)
+    const alwaysCritical = [
+        'Training Complete',
+        'BOSS DEFEATED!',
+        'Galaxy Cleared!',
+        'Galaxy Liberated!',  // ⭐ Added
+        'Victory!',
+        'Enemy Destroyed!',
+        'Galaxy Discovery!',  // ⭐ Added
+    ];
+    
+    // If tutorial is active and this achievement should be suppressed, just log it
+    if (tutorialActive && suppressDuringTutorial.includes(title) && !alwaysCritical.includes(title)) {
+        console.log(`Achievement suppressed during tutorial: ${title} - ${description}`);
+        return;
+    }
+    
+    // Display achievement
+    const popup = document.getElementById('achievementPopup');
+    const achievementText = document.getElementById('achievementText');
+    const titleElement = popup && popup.querySelector('h4');
+    
+    if (popup && achievementText && titleElement) {
+        achievementText.textContent = description;
+        titleElement.textContent = title;
+
+        // ⭐ CRITICAL: Force clear any inline styles that might block visibility
+        popup.style.display = '';  // Clear inline display style
+        popup.style.visibility = ''; // Clear inline visibility style
+        popup.style.opacity = '';   // Clear inline opacity style
+        popup.style.zIndex = '999'; // Maximum priority
+        popup.style.position = 'fixed'; // Ensure it's always fixed
+
+        // ⭐ BORG STYLING: green ORBITRON for BORG messages. Glow dampened
+        // ~85% from the original (0.8/0.6 alpha, 10px blur) — the full
+        // bloom washed the letters out to an unreadable green smear.
+        if (title.includes('BORG')) {
+            popup.classList.add('borg-message');
+            titleElement.style.fontFamily = "'Orbitron', monospace";
+            titleElement.style.color = '#66ff66';
+            titleElement.style.textShadow = '0 0 2px rgba(0, 255, 0, 0.12)';
+            achievementText.style.fontFamily = "'Orbitron', monospace";
+            achievementText.style.color = '#66ff66';
+            achievementText.style.textShadow = '0 0 2px rgba(0, 255, 0, 0.09)';
+        } else {
+            popup.classList.remove('borg-message');
+            titleElement.style.fontFamily = '';
+            titleElement.style.color = '';
+            titleElement.style.textShadow = '';
+            achievementText.style.fontFamily = '';
+            achievementText.style.color = '';
+            achievementText.style.textShadow = '';
+        }
+
+        popup.classList.remove('hidden');
+
+        // Add click handler for "Slingshot Ready" on mobile
+        if (title === 'Slingshot Ready') {
+            popup.classList.add('interactive'); // Enable pointer events
+            popup.style.cursor = 'pointer';
+
+            // Remove any existing handlers to prevent duplicates
+            const oldHandler = popup._slingshotClickHandler;
+            if (oldHandler) {
+                popup.removeEventListener('click', oldHandler);
+                popup.removeEventListener('touchstart', oldHandler);
+            }
+
+            // Create new handler
+            const slingshotHandler = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('📱 Slingshot Ready notification tapped');
+
+                if (typeof executeSlingshot === 'function') {
+                    executeSlingshot();
+                    popup.classList.add('hidden');
+                    popup.classList.remove('interactive');
+                }
+            };
+
+            // Store handler reference for cleanup
+            popup._slingshotClickHandler = slingshotHandler;
+
+            // Add listeners
+            popup.addEventListener('click', slingshotHandler);
+            popup.addEventListener('touchstart', slingshotHandler, { passive: false });
+        } else {
+            popup.classList.remove('interactive'); // Disable pointer events
+            popup.style.cursor = 'default';
+
+            // Remove slingshot handler if exists
+            const oldHandler = popup._slingshotClickHandler;
+            if (oldHandler) {
+                popup.removeEventListener('click', oldHandler);
+                popup.removeEventListener('touchstart', oldHandler);
+                popup._slingshotClickHandler = null;
+            }
+        }
+
+        console.log(`✨ Achievement displaying: ${title}`);
+
+        // Longer display time for important achievements.
+        // 3x the old 4s — congratulations/victory toasts need time
+        // to be read and savoured.
+        const displayTime = 12000;
+
+        // Play sound if requested
+        if (playAchievementSound && typeof playSound === 'function') {
+            playSound('achievement');
+        }
+
+        // Auto-hide after display time
+        setTimeout(() => {
+            popup.classList.add('hidden');
+            popup.classList.remove('interactive'); // Remove pointer events when hidden
+            console.log(`✅ Achievement hidden: ${title}`);
+        }, displayTime);
+    } else {
+        console.warn('Achievement popup elements not found:', { popup, achievementText, titleElement });
+    }
+}
+
+// ── overhaul version of showAchievement, kept for flag-gated comparison ──
+function showAchievement_overhaul(title, description, playAchievementSound = true) {
     // Defer achievements while an incoming transmission popup is on screen
     // so they don't visually overlap. Re-fires when the transmission closes.
     if (_achievementsBlocked()) {

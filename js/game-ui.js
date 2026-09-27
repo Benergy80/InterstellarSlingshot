@@ -117,6 +117,8 @@ const _uiTweens = Object.create(null);
 let _updateUI_lastHullPct = null;
 let _lastHullFxTime = 0;
 function _tweenTowards(key, target, rate) {
+    // HYBRID: ORIGINAL HUD shows the raw value (no odometer roll).
+    if (window.HYBRID && !HYBRID.is('hud', 'overhaul')) return target;
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     let t = _uiTweens[key];
     if (!t) {
@@ -157,6 +159,7 @@ function _restartAnimation(el) {
 
 function _flashStatWell(el, kind) {
     if (!el) return;
+    if (window.HYBRID && !HYBRID.is('hud', 'overhaul')) return;   // HYBRID: ORIGINAL HUD has no stat-well flash
     el.classList.add('stat-well');
     el.classList.remove('stat-hit', 'stat-boost');
     _restartAnimation(el);
@@ -168,9 +171,18 @@ function _flashStatWell(el, kind) {
 // beyond the number itself changing.
 function _tickValue(el) {
     if (!el) return;
+    if (window.HYBRID && !HYBRID.is('hud', 'overhaul')) return;   // HYBRID: ORIGINAL HUD has no value tick
     el.classList.remove('value-tick');
     _restartAnimation(el);
     el.classList.add('value-tick');
+}
+
+// HYBRID: css/styles.css is ORIGINAL's stylesheet. `?hy=hud:overhaul` swaps in
+// the overhaul's (kept verbatim as css/styles-overhaul.css) so its collapsed /
+// yielding HUD can still be compared. The galaxy map stays ORIGINAL either way.
+if (typeof window !== 'undefined' && window.HYBRID && HYBRID.is('hud', 'overhaul') && typeof document !== 'undefined') {
+    const _hyCss = document.querySelector('link[href*="css/styles.css"]');
+    if (_hyCss) _hyCss.href = 'css/styles-overhaul.css';
 }
 
 // Mirror reputation + shield state into the SHIP STATUS panel. Replaces
@@ -649,6 +661,394 @@ function updateMobileFloatingStatus() {
 // =============================================================================
 
 function populateTargets() {
+    // HYBRID: the overhaul drops hostiles from this list in favour of its
+    // canvas target layer; ORIGINAL lists them here.
+    if (!window.HYBRID || HYBRID.is('notifications', 'overhaul')) return populateTargets_overhaul();
+    const container = document.getElementById('availableTargets');
+    if (!container || typeof camera === 'undefined') return;
+    
+    container.innerHTML = '';
+
+    // Enhanced targeting with better filtering - NO ASTEROIDS IN NAVIGATION (doubled ranges)
+    const detectedWormholes = (typeof wormholes !== 'undefined') ? wormholes.filter(w => w.userData && w.userData.detected) : [];
+    
+    // FIXED: ADD COSMIC FEATURES TO TARGETING - Use world position for outer system features
+    const cosmicTargets = [];
+    if (typeof cosmicFeatures !== 'undefined') {
+        // Helper function to get distance accounting for nested outer system objects
+        const getCosmicDistance = (obj) => {
+            if (obj.userData.isOuterSystem && obj.parent) {
+                const worldPos = new THREE.Vector3();
+                obj.getWorldPosition(worldPos);
+                return camera.position.distanceTo(worldPos);
+            }
+            return camera.position.distanceTo(obj.position);
+        };
+
+        // Add nearby cosmic features within detection range (using world positions for outer systems)
+        cosmicTargets.push(...cosmicFeatures.pulsars.filter(p => getCosmicDistance(p) < 2000));
+        cosmicTargets.push(...cosmicFeatures.supernovas.filter(s => getCosmicDistance(s) < 3000));
+        cosmicTargets.push(...cosmicFeatures.dysonSpheres.filter(d => getCosmicDistance(d) < 4000));
+        cosmicTargets.push(...cosmicFeatures.ringworlds.filter(r => getCosmicDistance(r) < 4000));
+        cosmicTargets.push(...cosmicFeatures.spaceWhales.filter(w => getCosmicDistance(w) < 2000));
+        cosmicTargets.push(...cosmicFeatures.brownDwarfs.filter(bd => getCosmicDistance(bd) < 1500));
+        cosmicTargets.push(...cosmicFeatures.solarStorms.filter(ss => getCosmicDistance(ss) < 2500));
+        cosmicTargets.push(...cosmicFeatures.crystalFormations.filter(cf => getCosmicDistance(cf) < 1800));
+        cosmicTargets.push(...cosmicFeatures.plasmaStorms.filter(ps => getCosmicDistance(ps) < 2200));
+        cosmicTargets.push(...cosmicFeatures.roguePlanets.filter(rp => getCosmicDistance(rp) < 1600));
+
+        // Dark matter nodes only show when very close (they're hard to detect)
+        cosmicTargets.push(...cosmicFeatures.darkMatterNodes.filter(dm => getCosmicDistance(dm) < 400));
+
+    }
+
+    // ADD OUTER INTERSTELLAR SYSTEMS TO TARGETING
+    const outerSystemTargets = [];
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        outerInterstellarSystems.forEach(system => {
+            if (!system || !system.userData) return;
+
+            // Get system's world position
+            const systemPos = new THREE.Vector3();
+            system.getWorldPosition(systemPos);
+            const systemDistance = camera.position.distanceTo(systemPos);
+
+            // Add center object (always show if within 10,000 units)
+            if (system.userData.centerObject && systemDistance < 10000) {
+                const centerPos = new THREE.Vector3();
+                system.userData.centerObject.getWorldPosition(centerPos);
+                const centerDistance = camera.position.distanceTo(centerPos);
+
+                if (centerDistance < 10000) {
+                    outerSystemTargets.push(system.userData.centerObject);
+                }
+            }
+
+            // Add planets and cosmic features from orbiters (show if within 8,000 units of system)
+            if (system.userData.orbiters && systemDistance < 8000) {
+                system.userData.orbiters.forEach(orbiter => {
+                    // Skip asteroids and BORG drones from navigation
+                    if (orbiter.userData.type === 'outer_asteroid' || orbiter.userData.type === 'borg_drone') return;
+
+                    const orbiterPos = new THREE.Vector3();
+                    orbiter.getWorldPosition(orbiterPos);
+                    const distance = camera.position.distanceTo(orbiterPos);
+
+                    if (distance < 8000) {
+                        outerSystemTargets.push(orbiter);
+                    }
+                });
+            }
+        });
+    }
+
+    const allTargetableObjects = [
+        ...(typeof planets !== 'undefined' ? planets.filter(p => p.userData && p.userData.type !== 'asteroid') : []),
+        ...detectedWormholes,
+        ...(typeof comets !== 'undefined' ? comets.filter(c => camera.position.distanceTo(c.position) < 4000) : []), // Doubled range
+        ...(typeof enemies !== 'undefined' ? enemies.filter(e => {
+            if (!e.userData || e.userData.health <= 0) return false;
+            const distance = camera.position.distanceTo(e.position);
+            // ⭐ CRITICAL: Guardians have extended detection range
+            const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
+            return distance < maxRange;
+        }) : []),
+        ...cosmicTargets, // ADD COSMIC FEATURES HERE!
+        ...outerSystemTargets // ADD OUTER SYSTEM OBJECTS HERE!
+    ];
+
+    // Helper to get distance for any object (handles nested outer system objects)
+    const getObjectDistance = (obj) => {
+        if (obj.userData.isOuterSystem && obj.parent) {
+            const worldPos = new THREE.Vector3();
+            obj.getWorldPosition(worldPos);
+            return camera.position.distanceTo(worldPos);
+        }
+        return camera.position.distanceTo(obj.position);
+    };
+
+    const nearbyObjects = allTargetableObjects.filter(obj => {
+        const distance = getObjectDistance(obj);
+        return distance < 6000; // Doubled range
+    }).sort((a, b) => {
+        const distA = getObjectDistance(a);
+        const distB = getObjectDistance(b);
+        return distA - distB;
+    });
+
+    const targetObjects = nearbyObjects.slice(0, 15);
+
+    targetObjects.forEach((obj, index) => {
+        const distance = camera.position.distanceTo(obj.position);
+        const energyCost = Math.ceil(distance / 50); // Adjusted for doubled scale
+        
+        let typeDisplay = obj.userData.type;
+        let typeColor = 'text-gray-400';
+        
+        // Enhanced type display logic - INCLUDING COSMIC FEATURES
+        if (obj.userData.type === 'blackhole') {
+            typeDisplay = obj.userData.isGalacticCore ? 'Galactic Core' : 'Black Hole';
+            typeColor = 'text-red-400';
+        } else if (obj.userData.type === 'star') {
+            typeColor = 'text-yellow-400';
+        } else if (obj.userData.type === 'planet') {
+            typeColor = 'text-blue-400';
+        } else if (obj.userData.type === 'outer_planet') {
+            typeDisplay = 'Outer Planet';
+            typeColor = 'text-indigo-400';
+        } else if (obj.userData.type === 'moon') {
+            typeDisplay = 'Moon';
+            typeColor = 'text-gray-300';
+        } else if (obj.userData.type === 'enemy') {
+            typeDisplay = `Hostile (${obj.userData.health}/${obj.userData.maxHealth} HP)`;
+            typeColor = obj.userData.isBoss ? 'text-red-600' : 'text-red-500';
+        } else if (obj.userData.type === 'comet') {
+            typeDisplay = 'Comet';
+            typeColor = 'text-cyan-400';
+        } else if (obj.userData.type === 'wormhole') {
+            typeDisplay = 'Spatial Whirlpool';
+            typeColor = 'text-pink-400';
+        } else if (obj.userData.type === 'asteroid') {
+            typeDisplay = 'Asteroid';
+            typeColor = 'text-yellow-600';
+        }
+        // NEW: Add cosmic feature type displays
+        else if (obj.userData.type === 'pulsar') {
+            typeDisplay = 'Pulsar';
+            typeColor = 'text-cyan-300';
+        } else if (obj.userData.type === 'supernova') {
+            typeDisplay = 'Supernova Remnant';
+            typeColor = 'text-orange-400';
+        } else if (obj.userData.type === 'dyson_sphere') {
+            typeDisplay = 'Dyson Sphere';
+            typeColor = 'text-purple-400';
+        } else if (obj.userData.type === 'ringworld') {
+            typeDisplay = 'Ringworld';
+            typeColor = 'text-purple-300';
+        } else if (obj.userData.type === 'space_whale') {
+            typeDisplay = 'Space Whale';
+            typeColor = 'text-blue-300';
+        } else if (obj.userData.type === 'brown_dwarf') {
+            typeDisplay = 'Brown Dwarf';
+            typeColor = 'text-amber-600';
+        } else if (obj.userData.type === 'dark_matter') {
+            typeDisplay = 'Dark Matter Node';
+            typeColor = 'text-purple-600';
+        } else if (obj.userData.type === 'solar_storm') {
+            typeDisplay = 'Solar Storm';
+            typeColor = 'text-red-300';
+        } else if (obj.userData.type === 'crystal_formation') {
+            typeDisplay = 'Crystal Formation';
+            typeColor = 'text-emerald-400';
+        } else if (obj.userData.type === 'plasma_storm') {
+            typeDisplay = 'Plasma Storm';
+            typeColor = 'text-fuchsia-400';
+        } else if (obj.userData.type === 'rogue_planet') {
+            typeDisplay = 'Rogue Planet';
+            typeColor = 'text-slate-400';
+        } else if (obj.userData.type === 'dust_cloud') {
+            typeDisplay = 'Dust Cloud';
+            typeColor = 'text-yellow-700';
+        }
+        
+        // Enhanced faction display
+        let factionIndicator = '';
+        if (obj.userData.faction) {
+            factionIndicator = ` (${obj.userData.faction})`;
+        } else if (obj.userData.galaxyId !== undefined && obj.userData.galaxyId >= 0 && typeof galaxyTypes !== 'undefined') {
+            const galaxyType = galaxyTypes[obj.userData.galaxyId];
+            factionIndicator = ` (${galaxyType ? galaxyType.faction : 'G' + (obj.userData.galaxyId + 1)})`;
+        } else if (obj.userData.isLocal) {
+            factionIndicator = ' (Sol System)';
+        }
+        // NEW: Add cosmic feature specific indicators
+        else if (obj.userData.type === 'dyson_sphere' || obj.userData.type === 'ringworld') {
+            factionIndicator = ` (${obj.userData.ancientCivilization || obj.userData.species || 'Ancient'})`;
+        } else if (obj.userData.type === 'space_whale') {
+            factionIndicator = ' (Peaceful)';
+        }
+        // Outer system objects indicator
+        else if (obj.userData.isOuterSystem || obj.userData.type === 'outer_planet' ||
+                 obj.userData.type === 'supernova' || obj.userData.type === 'plasma_storm' ||
+                 obj.userData.type === 'solar_storm') {
+            factionIndicator = ' (Outer Systems)';
+        }
+        
+        // Enhanced status indicators - INCLUDING COSMIC FEATURES (NO ICONS)
+        let statusIndicator = '';
+        if (obj.userData.type === 'wormhole' && obj.userData.isTemporary) {
+            const timeLeft = ((obj.userData.lifeTime - obj.userData.age) / 1000).toFixed(0);
+            statusIndicator = ` T-${timeLeft}s ◈`;
+        } else if (obj.userData.type === 'enemy') {
+            statusIndicator = obj.userData.isActive ? ' ◄' : ' ◄';
+            if (obj.userData.isBoss) statusIndicator += ' 👑';
+        } else if (obj.userData.type === 'comet') {
+            statusIndicator = ' ◆';
+        } else if (obj.userData.type === 'asteroid') {
+            statusIndicator = ' ◇';
+        }
+        // NEW: Cosmic feature status indicators (no icons)
+        else if (obj.userData.type === 'pulsar') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'supernova') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'dyson_sphere') {
+            statusIndicator = obj.userData.operationalStatus === 'Active' ? ' (Active)' : ' (Dormant)';
+        } else if (obj.userData.type === 'ringworld') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'space_whale') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'brown_dwarf') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'dark_matter') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'solar_storm') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'crystal_formation') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'plasma_storm') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'rogue_planet') {
+            statusIndicator = '';
+        } else if (obj.userData.type === 'dust_cloud') {
+            statusIndicator = '';
+        }
+        
+        // Add target lock indicator
+        if (gameState.targetLock && gameState.targetLock.target === obj) {
+            statusIndicator += ' 🎯';
+        }
+        
+        const div = document.createElement('div');
+        div.className = 'planet-card rounded-lg p-3 cursor-auto transition-all duration-300';
+        if (gameState.currentTarget === obj) {
+            div.classList.add('selected');
+        }
+        
+        div.innerHTML = `
+            <div class="flex justify-between items-start">
+                <div>
+                    <h4 class="font-bold text-cyan-300 text-sm">${obj.userData.name}${factionIndicator}${statusIndicator}</h4>
+                    <p class="text-xs ${typeColor}">${typeDisplay}</p>
+                </div>
+                <div class="text-right">
+                    <div class="text-sm text-yellow-400">${distance.toFixed(0)} units</div>
+                    <div class="text-xs text-gray-400">${energyCost} energy</div>
+                </div>
+            </div>
+        `;
+
+        // FIXED: Enhanced click handler with proper event handling
+        div.addEventListener('click', (e) => {
+            console.log('Planet card clicked:', obj.userData.name);
+            
+            // CRITICAL: Prevent event bubbling to global handler
+            e.preventDefault();
+            e.stopPropagation();
+            e.stopImmediatePropagation();
+            
+            // Ensure this element can receive focus
+            div.style.cursor = 'auto';
+            
+            // Use the selectTarget function from game-controls.js if available
+            if (typeof selectTarget === 'function') {
+                console.log('Calling selectTarget with:', obj.userData.name);
+                selectTarget(obj);
+            } else {
+                // Fallback implementation
+                console.log('Using fallback selectTargetUI');
+                selectTargetUI(obj);
+            }
+            
+            console.log('After selection, currentTarget:', gameState.currentTarget?.userData?.name);
+            
+            // Force UI update
+            if (typeof updateUI === 'function') {
+                setTimeout(updateUI, 10);
+            }
+            if (typeof populateTargets === 'function') {
+                setTimeout(populateTargets, 20); // Refresh the planet cards to show selection
+            }
+        });
+        
+        container.appendChild(div);
+    });
+    
+    if (targetObjects.length === 0) {
+        const div = document.createElement('div');
+        div.className = 'text-center text-gray-400 text-sm p-3';
+        div.textContent = 'No nearby objects detected...';
+        container.appendChild(div);
+    }
+
+    // ── DESTINATIONS — far systems for gravity-whip aiming ──────────────
+    // The nearby list caps at 6,000u, so galaxies and nebula clusters
+    // (20k-45k+) could never be locked — which made the slingshot
+    // unaimable at the places it exists to reach. These are listed
+    // ALWAYS, sorted by distance: lock one, fly into any gravity well,
+    // and the whip launches you toward it.
+    try {
+        const destinations = [];
+        if (typeof planets !== 'undefined') {
+            for (let i = 0; i < planets.length; i++) {
+                const p = planets[i];
+                if (p && p.userData && p.userData.type === 'blackhole' &&
+                    p.userData.isGalacticCore && !p.userData.isCompanionCore &&
+                    typeof p.userData.galaxyId === 'number' && p.userData.galaxyId !== 7) {
+                    destinations.push(p);
+                }
+            }
+        }
+        // Nearest twin nebula cluster (stable synthetic target object)
+        if (typeof findNearestTwinNebulaCenter === 'function' && typeof camera !== 'undefined') {
+            const c = findNearestTwinNebulaCenter(camera.position);
+            if (c) {
+                if (!window._navTwinNebulaDest) {
+                    window._navTwinNebulaDest = {
+                        position: new THREE.Vector3(),
+                        userData: { name: 'Twin Nebula Cluster', type: 'nebula_cluster' }
+                    };
+                }
+                window._navTwinNebulaDest.position.copy(c);
+                destinations.push(window._navTwinNebulaDest);
+            }
+        }
+        if (destinations.length) {
+            destinations.sort((a, b) =>
+                camera.position.distanceTo(a.position) - camera.position.distanceTo(b.position));
+            const header = document.createElement('div');
+            header.className = 'text-xs text-purple-300 font-bold mt-2 mb-1 px-1';
+            header.style.letterSpacing = '2px';
+            header.textContent = '— DESTINATIONS · WHIP / WARP —';
+            container.appendChild(header);
+            destinations.slice(0, 9).forEach(obj => {
+                const dist = camera.position.distanceTo(obj.position);
+                const div = document.createElement('div');
+                div.className = 'planet-card rounded-lg p-2 cursor-auto transition-all duration-300';
+                if (gameState.currentTarget === obj) div.classList.add('selected');
+                const label = obj.userData.type === 'nebula_cluster'
+                    ? 'Nebula Cluster' : 'Galaxy Core';
+                div.innerHTML =
+                    '<div class="flex justify-between items-center">' +
+                    '<div><h4 class="font-bold text-purple-300 text-xs">' + (obj.userData.name || 'Destination') + '</h4>' +
+                    '<p class="text-xs text-gray-400">' + label + '</p></div>' +
+                    '<div class="text-xs text-yellow-400">' + (dist / 1000).toFixed(1) + 'k u</div>' +
+                    '</div>';
+                div.addEventListener('click', (e) => {
+                    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
+                    if (typeof selectTarget === 'function') selectTarget(obj);
+                    else selectTargetUI(obj);
+                    if (typeof updateUI === 'function') updateUI();
+                    setTimeout(populateTargets, 20);
+                });
+                container.appendChild(div);
+            });
+        }
+    } catch (e) {}
+}
+
+// ── overhaul version of populateTargets, kept for flag-gated comparison ──
+function populateTargets_overhaul() {
     const container = document.getElementById('availableTargets');
     if (!container || typeof camera === 'undefined') return;
     
@@ -1809,6 +2209,9 @@ function _tlDrawEdgeChevron(ctx, proj, w, h, scheme, distance) {
 }
 
 function updateTargetLayer() {
+    // HYBRID: the world-anchored bracket/tag canvas is overhaul-only; ORIGINAL
+    // marks targets with its crosshair + target list. The canvas is never built.
+    if (window.HYBRID && !HYBRID.is('notifications', 'overhaul')) return;
     if (typeof camera === 'undefined' || typeof gameState === 'undefined' || typeof THREE === 'undefined') return;
     _ensureTargetLayer();
     const ctx = _targetLayerCtx;
@@ -2161,9 +2564,6 @@ function setupGalaxyMap() {
     // Clear existing galaxy indicators
     const existingGalaxies = galaxyMap.querySelectorAll('.galaxy-indicator');
     existingGalaxies.forEach(el => el.remove());
-    // Fresh indicators default to visible — re-arm the galactic view's
-    // one-shot hide so the radar mode still suppresses them.
-    _galacticChromeHidden = false;
 
     // Create enhanced galaxy indicators with boss system integration
     galaxyTypes.forEach((galaxy, index) => {
@@ -2211,31 +2611,18 @@ function setupGalaxyMap() {
         }
 
         // Build the galaxy indicator
-        // Slightly larger footprint (w-4 vs the old w-3) plus the CSS
-        // ::after hit-area pad in styles.css — bigger mouse/touch target
-        // without the dot itself looking oversized on the round map.
         const galaxyEl = document.createElement('div');
-        galaxyEl.className = 'galaxy-indicator absolute w-4 h-4 rounded-full opacity-80 flex items-center justify-center text-xs text-white font-bold';
-        const galaxyHex = `#${galaxy.color.toString(16).padStart(6, '0')}`;
-        galaxyEl.style.backgroundColor = galaxyHex;
-        // Drives the CSS glow (box-shadow: var(--dot-color)) so each
-        // faction's minimap dot reads clearly in its own neon color,
-        // including on :hover, without hardcoding colors in CSS.
-        galaxyEl.style.setProperty('--dot-color', galaxyHex);
+        galaxyEl.className = 'galaxy-indicator absolute w-3 h-3 rounded-full opacity-80 flex items-center justify-center text-xs text-white font-bold';
+        galaxyEl.style.backgroundColor = `#${galaxy.color.toString(16).padStart(6, '0')}`;
         galaxyEl.style.left = `${mapPos.x * 100}%`;
         galaxyEl.style.top = `${mapPos.y * 100}%`;
-        // NOTE: no inline transform here — .galaxy-indicator owns the
-        // translate(-50%,-50%) centering in CSS so :hover can layer a
-        // scale() on top of it. Setting it inline here used to fight the
-        // :hover rule (inline style always wins ties over a stylesheet
-        // selector), silently killing the hover scale-up.
+        galaxyEl.style.transform = 'translate(-50%, -50%)';
         galaxyEl.textContent = (index + 1).toString();
         galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction})`;
-
+        
         // Mark cleared galaxies with green dot
 		if (bossDefeated || (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies && gameState.currentGalaxyEnemies[index] === 0)) {
 		galaxyEl.style.backgroundColor = '#22c55e'; // Green for cleared
-		galaxyEl.style.setProperty('--dot-color', '#22c55e');
     	galaxyEl.style.border = '2px solid #86efac';
     	galaxyEl.textContent = '';
     	galaxyEl.title = `${galaxy.name} Galaxy (${galaxy.faction}) - LIBERATED`;
@@ -2315,209 +2702,48 @@ function updateCompass() {
     }
 }
 
-// ── Radar dot pool (persistent, never detached) ──────────────────────
-// PERF CONTRACT — the radar refreshes at 20 Hz with up to ~350 blips in a
-// dense fight. The old pool tore the whole minimap down every refresh:
-// remove() + className='' + style.cssText='' + innerHTML='' on every dot,
-// then 10 individual style writes and an appendChild() back into the LIVE
-// #galaxyMap. That measured ~356 DOM mutations per refresh (~3,000/sec)
-// and was the dominant source of forced style recalculation.
-//
-// The pool below fixes that shape:
-//   • dots are created ONCE and stay attached to #galaxyMap forever,
-//   • a refresh CLAIMS dots by identity instead of allocating,
-//   • look (class, position:absolute, border-radius…) lives in CSS, so
-//     className / cssText / innerHTML are never touched again,
-//   • position is a single compositor-friendly `transform: translate()`
-//     instead of left/top percentages,
-//   • every write is guarded by a per-dot cache (`dot._s`), so a dot that
-//     did not visually change costs ZERO mutations,
-//   • surplus dots are hidden with `visibility`, then recycled.
-// Arrows (ally ▲ markers) get their own sub-pool so a dot never has to
-// morph between "round blip" and "glyph" shapes.
-//
-// IDENTITY (the reason this pool is keyed and not a cursor):
-// the earlier version handed out slots positionally — dots[cursor++] — so
-// the DOM element a contact owned depended on where it happened to land in
-// the scan order. The instant that order changed (a fighter dies, a rock
-// crosses the 3000u rim) every contact after the gap shifted down one slot
-// and its blip JUMPED across the radar — up to 72% of the map width — or
-// silently repainted in place, turning a red hostile into a beige planet
-// without moving. Roughly once a second in a fight the radar lied about
-// which contact was which.
-// Now each contact owns a dot keyed by its object id: `claimed` holds the
-// slots this refresh took, `prev` the ones last refresh held. A contact
-// that is still there gets the SAME element back, so its blip only ever
-// moves the distance the ship actually moved. Slots left in `prev` at
-// end() are genuinely dead contacts; they go to a `free` LIFO for reuse,
-// which also caps the pool at the peak concurrent contact count instead
-// of letting it creep (it used to reach 636 nodes to show 15 blips).
+// DOM element pool for map dots
 const mapDotPool = {
-    dots: [],            // every live element, for re-parenting only
-    claimed: new Map(),  // key -> dot, taken during THIS refresh
-    prev: new Map(),     // key -> dot, held by the PREVIOUS refresh
-    free: [],            // released dots, oldest first (LIFO reuse, FIFO retire)
-    arrows: [],
-    arrowsClaimed: new Map(),
-    arrowsPrev: new Map(),
-    arrowsFree: [],
-    container: null,
-    // Radar box size in px, used to turn 0-100 map coords into translate()
-    // pixels. Re-measured at most once a second — never per dot.
-    w: 220,
-    h: 220,
-    _measuredAt: 0,
-    _overSince: 0,       // when the free list first went over budget
-
-    _fresh(cls) {
-        const el = document.createElement('div');
-        el.className = cls;
-        // Mirrors the CSS defaults so the cache and the element agree.
-        el._s = { size: '', bg: '', shadow: '', tf: '', vis: 'hidden',
-                  color: '', title: '', distress: false, glyph: false,
-                  z: '', aggregate: false, opacity: '', outline: '', stalk: '',
-                  // chevron: non-empty while this pooled node is wearing the
-                  // off-scale-hostile hollow-chevron shape (see
-                  // _syncChevronMode) — lets a recycled node that USED to be
-                  // a chevron reliably shed its border/border-radius before
-                  // being reused as a normal circular blip.
-                  // elev: which off-scale elevation caret class ('',
-                  // 'map-dot-elev-up', 'map-dot-elev-down') is on this node.
-                  chevron: '', elev: '' };
-        // Permanent elevation "drop-line" child — ONE per dot, created once
-        // and only ever restyled (height/position/colour), never
-        // added/removed. Ally arrows don't get one: they render as a
-        // glyph, not a dot, and el.textContent below would wipe it anyway.
-        if (cls === 'galactic-target-dot') {
-            const stalk = document.createElement('i');
-            stalk.className = 'map-dot-stalk';
-            el.appendChild(stalk);
+    available: [],
+    inUse: new Set(),
+    
+    get(type) {
+        let dot = this.available.pop();
+        if (!dot) {
+            dot = document.createElement('div');
         }
-        if (this.container) this.container.appendChild(el);
-        return el;
-    },
-
-    // Start a refresh: last refresh's claims become the lookup table, and
-    // (rarely) re-measure the box.
-    begin(container) {
-        // Swap, don't allocate: claimed becomes prev, and the old prev map
-        // (already drained by end()) is reused as the new claimed map.
-        let t = this.prev; this.prev = this.claimed; this.claimed = t; t.clear();
-        t = this.arrowsPrev; this.arrowsPrev = this.arrowsClaimed; this.arrowsClaimed = t; t.clear();
-        if (container && container !== this.container) {
-            this.container = container;
-            // Only happens if the map element itself was replaced.
-            for (let i = 0; i < this.dots.length; i++) container.appendChild(this.dots[i]);
-            for (let i = 0; i < this.arrows.length; i++) container.appendChild(this.arrows[i]);
-            this._measuredAt = 0;
-        }
-        if (this.container) {
-            const now = Date.now();
-            if (now - this._measuredAt > 1000) {
-                this._measuredAt = now;
-                const w = this.container.clientWidth, h = this.container.clientHeight;
-                if (w > 0 && h > 0) { this.w = w; this.h = h; }
-            }
-        }
-    },
-
-    // Claim the dot belonging to `key` (a stable per-world-object id).
-    // Same key next refresh ⇒ same element ⇒ the blip cannot teleport.
-    get(key) {
-        // Two contacts resolving to the same key (only possible on the
-        // name fallback) get suffixed deterministically, so the pairing
-        // still repeats frame to frame.
-        while (this.claimed.has(key)) key = key + '~';
-        let dot = this.prev.get(key);
-        if (dot !== undefined) {
-            this.prev.delete(key);
-        } else {
-            // A retired slot, or a brand-new one. pop() takes the most
-            // recently freed dot; the stale tail ages out via _trim().
-            dot = this.free.pop();
-            if (dot === undefined) {
-                dot = this._fresh('galactic-target-dot');
-                this.dots.push(dot);
-            }
-        }
-        this.claimed.set(key, dot);
+        this.inUse.add(dot);
         return dot;
     },
-
-    getArrow(key) {
-        while (this.arrowsClaimed.has(key)) key = key + '~';
-        let a = this.arrowsPrev.get(key);
-        if (a !== undefined) {
-            this.arrowsPrev.delete(key);
-        } else {
-            a = this.arrowsFree.pop();
-            if (a === undefined) {
-                a = this._fresh('galactic-ally-marker');
-                a.textContent = '▲';
-                a._s.glyph = true;
-                this.arrows.push(a);
-            }
+    
+    release(dot) {
+        if (this.inUse.has(dot)) {
+            this.inUse.delete(dot);
+            dot.remove();
+            
+            // CLEAR ALL STYLES AND ATTRIBUTES
+            dot.className = '';
+            dot.style.cssText = '';
+            dot.innerHTML = '';
+            dot.title = '';
+            
+            this.available.push(dot);
         }
-        this.arrowsClaimed.set(key, a);
-        return a;
     },
-
-    // Hide whatever this refresh did not claim and hand those slots back.
-    // No detaching here, and a dot that was already hidden is untouched.
-    end() {
-        const f = this.free;
-        this.prev.forEach(function (d) {
-            const s = d._s;
-            if (s.vis !== 'hidden') { d.style.visibility = 'hidden'; s.vis = 'hidden'; }
-            f.push(d);
-        });
-        this.prev.clear();
-        const af = this.arrowsFree;
-        this.arrowsPrev.forEach(function (a) {
-            const s = a._s;
-            if (s.vis !== 'hidden') { a.style.visibility = 'hidden'; s.vis = 'hidden'; }
-            af.push(a);
-        });
-        this.arrowsPrev.clear();
-        this._trim();
-    },
-
-    // A hidden node still costs style-recalc time, so a pool that ballooned
-    // during one dense dogfight must not stay ballooned. Keep a cushion of
-    // spares, and only after the surplus has sat unused for 3 s retire the
-    // oldest of them — hysteresis so normal contact churn never detaches
-    // anything (steady state = zero added/removed nodes).
-    _trim() {
-        const keep = Math.max(24, this.claimed.size);
-        if (this.free.length <= keep) { this._overSince = 0; return; }
-        const now = Date.now();
-        if (!this._overSince) { this._overSince = now; return; }
-        if (now - this._overSince < 3000) return;
-        let n = Math.min(48, this.free.length - keep);
-        while (n-- > 0) {
-            const d = this.free.shift();   // front = least recently used
-            if (d.parentNode) d.parentNode.removeChild(d);
-            const i = this.dots.indexOf(d);
-            if (i >= 0) this.dots.splice(i, 1);
-        }
-        if (this.free.length <= keep) this._overSince = 0;
-    },
-
-    // Legacy entry point (universal view): hide every blip and hand the
-    // whole pool back, so a long stay on the galaxy map lets _trim() give
-    // the nodes up entirely. Identities are deliberately NOT preserved
-    // across the excursion: coming back re-pairs contacts to slots once,
-    // on a frame where the player just repainted the entire map anyway.
+    
     releaseAll() {
-        this.prev.forEach((d, k) => { this.claimed.set(k, d); });
-        this.prev.clear();
-        this.arrowsPrev.forEach((a, k) => { this.arrowsClaimed.set(k, a); });
-        this.arrowsPrev.clear();
-        // Everything currently claimed is now stale: flip it into prev and
-        // let end() hide + recycle the lot.
-        let t = this.prev; this.prev = this.claimed; this.claimed = t; t.clear();
-        t = this.arrowsPrev; this.arrowsPrev = this.arrowsClaimed; this.arrowsClaimed = t; t.clear();
-        this.end();
+        this.inUse.forEach(dot => {
+            dot.remove();
+            
+            // CLEAR ALL STYLES AND ATTRIBUTES
+            dot.className = '';
+            dot.style.cssText = '';
+            dot.innerHTML = '';
+            dot.title = '';
+            
+            this.available.push(dot);
+        });
+        this.inUse.clear();
     }
 };
 
@@ -3742,54 +3968,21 @@ function updateGalaxyMap() {
     
     // Hide player and ally triangles (allies show as dots in galactic view)
     playerMapPos.style.display = 'none';
+    const _depthBar = document.getElementById('mapDepthBar');
+    if (_depthBar) _depthBar.style.display = 'none';
     const _zoneLabel = document.getElementById('mapZoneLabel');
     if (_zoneLabel) _zoneLabel.style.display = 'none';
     const _galaxyMap = document.getElementById('galaxyMap');
-    // Re-mount the elevation depth bar in THIS view too — it used to only
-    // ever get created/shown on the universal (galaxy-scale) branch, so it
-    // was permanently absent while flying the radar you actually fly in.
-    // Here it's a static px-to-units scale reference (every contact's own
-    // elevation is already on the dot via its stalk — see
-    // _applyMapDotStalk), so the tick just pins to the centre/"0" line.
-    const _depthBar = _ensureMapDepthBar(_galaxyMap);
-    if (_depthBar) {
-        _depthBar.style.display = 'block';
-        const _dTick = document.getElementById('mapDepthTick');
-        if (_dTick && _dTick.style.top !== '50%') _dTick.style.top = '50%';
-    }
-    let _rimLabel = document.getElementById('mapRadarRimLabel');
-    if (!_rimLabel && _galaxyMap) {
-        _rimLabel = document.createElement('div');
-        _rimLabel.id = 'mapRadarRimLabel';
-        _rimLabel.style.cssText = 'position:absolute;left:50%;bottom:4%;transform:translateX(-50%);font-size:8px;color:#88ccff;background:rgba(0,0,40,0.7);padding:1px 6px;border-radius:3px;border:1px solid rgba(100,180,255,0.4);pointer-events:none;z-index:10;white-space:nowrap;';
-        // Text is set below, every refresh, from the live (auto-ranging)
-        // radarRange — compare-and-set so a steady range writes nothing.
-        _galaxyMap.appendChild(_rimLabel);
-    }
-    if (_rimLabel) _rimLabel.style.display = 'block';
-    if (_galaxyMap && _universeDecorLive) {
+    if (_galaxyMap) {
         // NOTE: .galactic-path-dot is intentionally NOT purged here — those
         // dots are POOLED (created once, repositioned/hidden) and refreshed
         // on a throttle, not rebuilt every frame. Destroying them per-frame
         // was ~2-3k DOM create/remove ops per second in demo mode.
-        // The nebula dots / path lines only exist while the UNIVERSAL view
-        // is up, so this purge runs once on the switch back — not 20x/sec.
         _galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
-        _universeDecorLive = false;
     }
-    // The per-ally ▲ markers and galaxy indicators belong to the universal
-    // view. Hiding them is a one-shot on the view switch — re-writing
-    // display:none onto elements that are already hidden, every refresh,
-    // was ~40 pointless style invalidations a second.
-    if (!_galacticChromeHidden) {
-        _galacticChromeHidden = true;
-        for (let _i = 0; _i < 10; _i++) {
-            const m = document.getElementById('allyMapMarker' + _i);
-            if (m) m.style.display = 'none';
-        }
-        document.querySelectorAll('.galaxy-indicator').forEach(el => el.style.display = 'none');
-        const _sgrHide = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
-        if (_sgrHide) _sgrHide.style.display = 'none';
+    for (let _i = 0; _i < 10; _i++) {
+        const m = document.getElementById('allyMapMarker' + _i);
+        if (m) m.style.display = 'none';
     }
     if (mapDirectionArrow) {
         mapDirectionArrow.style.display = 'block';
@@ -3799,30 +3992,20 @@ function updateGalaxyMap() {
         mapDirectionArrow.style.setProperty('--direction', `${angle}rad`);
     }
     
+    // Hide galaxy indicators and Sagittarius A* in radar view (allies stay visible)
+    const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
+    galaxyIndicators.forEach(el => el.style.display = 'none');
+
+    const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
+    if (sgrAEl) sgrAEl.style.display = 'none';
+    
+    // NEW - ADD THIS:
+	mapDotPool.releaseAll();
+    
     // Show nearby objects as dots (enemies, planets, etc.)
     const galaxyMap = document.getElementById('galaxyMap');
-    // Auto-ranging (round 2 fix): contracts toward the nearest hostile so
-    // the 200-400u dogfight band isn't crushed into a sliver around the
-    // player glyph, snapped to a ladder + dwell so it steps, not breathes.
-    // See _currentRadarRange / nearestHostileDistance above.
-    const radarRange = _currentRadarRange(Date.now());
-    if (_rimLabel) {
-        // Label reads the TARGET rung (st.value), not the eased render
-        // scale (st.shown) — so it snaps straight to a clean "500u" /
-        // "750u" instead of crawling through fractional values while the
-        // disc eases toward it.
-        const _rimTarget = Math.round(_currentRadarRange._state.value);
-        const _rimText = _rimTarget + 'u / ±ELEV';
-        if (_rimLabel.textContent !== _rimText) _rimLabel.textContent = _rimText;
-    }
-
-    // Rewind the persistent blip pool for this refresh (no teardown).
-    mapDotPool.begin(galaxyMap);
-    // Tooltips refresh at ~3 Hz instead of 20 Hz — see _mapTitleTick.
-    const _nowTitle = Date.now();
-    _mapTitleTick = (_nowTitle - _mapTitleStamp) > 300;
-    if (_mapTitleTick) _mapTitleStamp = _nowTitle;
-
+    const radarRange = 3000; // Detection range for galactic view (6000u diameter)
+    
     if (galaxyMap && typeof planets !== 'undefined' && typeof enemies !== 'undefined') {
         // Collect all nearby targetable objects
         const nearbyObjects = [];
@@ -3838,32 +4021,30 @@ planets.forEach(planet => {
         
         // Quick check: Is the entire belt too far?
         const beltDistance = camera.position.distanceTo(planet.userData.beltGroup.position);
-        if (beltDistance > RADAR_SCAN_RADIUS + 2000) return; // Belt + radius buffer
+        if (beltDistance > radarRange + 2000) return; // Belt + radius buffer
         
         // Belt is nearby, now get asteroid's world position
         const worldPos = new THREE.Vector3();
         planet.getWorldPosition(worldPos);
         const distance = camera.position.distanceTo(worldPos);
         
-        if (distance < RADAR_SCAN_RADIUS && distance > 10) {
+        if (distance < radarRange && distance > 10) {
             nearbyObjects.push({
                 position: worldPos,
                 type: planet.userData.type,
                 name: planet.userData.name,
-                distance: distance,
-                src: planet
+                distance: distance
             });
         }
     } else {
         // Non-asteroids use direct position (fast)
         const distance = camera.position.distanceTo(planet.position);
-        if (distance < RADAR_SCAN_RADIUS && distance > 10) {
+        if (distance < radarRange && distance > 10) {
             nearbyObjects.push({
                 position: planet.position,
                 type: planet.userData.type,
                 name: planet.userData.name,
-                distance: distance,
-                src: planet
+                distance: distance
             });
         }
     }
@@ -3876,7 +4057,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
 
         // Check if system is in radar range
         const systemDistance = camera.position.distanceTo(system.position);
-        if (systemDistance < RADAR_SCAN_RADIUS + 2000) {
+        if (systemDistance < radarRange + 2000) {
 
             // Add all orbiters from this system
             system.userData.orbiters.forEach(orbiter => {
@@ -3885,14 +4066,13 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 orbiter.getWorldPosition(orbiterWorldPos);
 
                 const distance = camera.position.distanceTo(orbiterWorldPos);
-                if (distance < RADAR_SCAN_RADIUS) {
+                if (distance < radarRange) {
                     nearbyObjects.push({
                         position: orbiterWorldPos,
                         type: orbiter.userData.type,
                         name: orbiter.userData.name,
                         distance: distance,
-                        isOuterSystem: true,
-                        src: orbiter
+                        isOuterSystem: true
                     });
                 }
             });
@@ -3904,14 +4084,13 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 system.userData.centerObject.getWorldPosition(centerWorldPos);
 
                 const centerDist = camera.position.distanceTo(centerWorldPos);
-                if (centerDist < RADAR_SCAN_RADIUS) {
+                if (centerDist < radarRange) {
                     nearbyObjects.push({
                         position: centerWorldPos,
                         type: system.userData.centerType,
                         name: system.userData.name + ' Core',
                         distance: centerDist,
-                        isOuterSystem: true,
-                        src: system.userData.centerObject
+                        isOuterSystem: true
                     });
                 }
             }
@@ -3924,13 +4103,12 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             interstellarAsteroids.forEach(asteroid => {
                 if (!asteroid || !asteroid.position) return;
                 const distance = camera.position.distanceTo(asteroid.position);
-                if (distance < RADAR_SCAN_RADIUS) {
+                if (distance < radarRange) {
                     nearbyObjects.push({
                         position: asteroid.position,
                         type: 'interstellar_asteroid',
                         name: asteroid.userData.name,
-                        distance: distance,
-                        src: asteroid
+                        distance: distance
                     });
                 }
             });
@@ -3940,14 +4118,13 @@ if (typeof outerInterstellarSystems !== 'undefined') {
         enemies.forEach(enemy => {
             if (!enemy || !enemy.position || !enemy.userData || enemy.userData.health <= 0) return;
             const distance = camera.position.distanceTo(enemy.position);
-            if (distance < RADAR_SCAN_RADIUS) {
+            if (distance < radarRange) {
                 nearbyObjects.push({
                     position: enemy.position,
                     type: 'enemy',
                     name: enemy.userData.name,
                     distance: distance,
-                    isBoss: enemy.userData.isBoss,
-                    src: enemy
+                    isBoss: enemy.userData.isBoss
                 });
             }
         });
@@ -3957,7 +4134,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             allyShips.forEach((ally, idx) => {
                 if (!ally || !ally.position || !ally.userData || ally.userData.health <= 0) return;
                 const distance = camera.position.distanceTo(ally.position);
-                if (distance < RADAR_SCAN_RADIUS) {
+                if (distance < radarRange) {
                     nearbyObjects.push({
                         position: ally.position,
                         type: 'ally',
@@ -3982,8 +4159,7 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                         type: 'civilian_ship',
                         name: ship.userData.name || 'Civilian Vessel',
                         distance: distance,
-                        underAttack: ship.userData.distressActive || false,
-                        src: ship
+                        underAttack: ship.userData.distressActive || false
                     });
                 }
             });
@@ -3996,13 +4172,12 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.dysonSpheres.forEach(sphere => {
                     if (!sphere || !sphere.position || sphere.userData.destroyed) return;
                     const distance = camera.position.distanceTo(sphere.position);
-                    if (distance < RADAR_SCAN_RADIUS) {
+                    if (distance < radarRange) {
                         nearbyObjects.push({
                             position: sphere.position,
                             type: 'dyson_sphere',
                             name: 'Dyson Sphere',
-                            distance: distance,
-                            src: sphere
+                            distance: distance
                         });
                     }
                 });
@@ -4013,13 +4188,12 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.crystalStructures.forEach(crystal => {
                     if (!crystal || !crystal.position || crystal.userData.destroyed) return;
                     const distance = camera.position.distanceTo(crystal.position);
-                    if (distance < RADAR_SCAN_RADIUS) {
+                    if (distance < radarRange) {
                         nearbyObjects.push({
                             position: crystal.position,
                             type: 'crystal_structure',
                             name: 'Crystal Structure',
-                            distance: distance,
-                            src: crystal
+                            distance: distance
                         });
                     }
                 });
@@ -4030,13 +4204,12 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.spaceWhales.forEach(whale => {
                     if (!whale || !whale.position || whale.userData.destroyed) return;
                     const distance = camera.position.distanceTo(whale.position);
-                    if (distance < RADAR_SCAN_RADIUS) {
+                    if (distance < radarRange) {
                         nearbyObjects.push({
                             position: whale.position,
                             type: 'space_whale',
                             name: 'Space Whale',
-                            distance: distance,
-                            src: whale
+                            distance: distance
                         });
                     }
                 });
@@ -4047,13 +4220,12 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                 cosmicFeatures.ringworlds.forEach(ringworld => {
                     if (!ringworld || !ringworld.position) return;
                     const distance = camera.position.distanceTo(ringworld.position);
-                    if (distance < RADAR_SCAN_RADIUS) {
+                    if (distance < radarRange) {
                         nearbyObjects.push({
                             position: ringworld.position,
                             type: 'ringworld',
                             name: 'Ringworld',
-                            distance: distance,
-                            src: ringworld
+                            distance: distance
                         });
                     }
                 });
@@ -4061,248 +4233,123 @@ if (typeof outerInterstellarSystems !== 'undefined') {
         }
 
         // Display objects as dots on map
-        // Candidates collected here, THEN bucketed/rendered below — see
-        // renderClusteredMapDots(). Allies are collected into their own
-        // array (they never dot-cluster — no aggregate form for a glyph —
-        // but still spend from the same shared radar budget).
-        const _clusterCandidates = [];
-        const _allyCandidates = [];
         nearbyObjects.forEach(obj => {
-            // The blip's identity. THREE.Object3D.id is unique and stable
-            // for the object's whole life, so the same ship keeps the same
-            // DOM element every refresh no matter how the scan order shifts
-            // around it. Anything without a mesh falls back to type+name.
-            const _src = obj.src || obj.ship;
-            const _key = (_src && _src.id !== undefined)
-                ? _src.id
-                : (obj.type + '|' + obj.name);
             const relativeX = (obj.position.x - camera.position.x) / radarRange;
             const relativeZ = (obj.position.z - camera.position.z) / radarRange;
-            // Elevation relative to the player, normalized to the radar
-            // range and clamped so a contact far above/below still just
-            // pins to a max-length stalk instead of an absurd offset.
-            const relativeY = (obj.position.y - camera.position.y) / radarRange;
-
-            let screenX = 50 + relativeX * 50; // Scale to fit map
-            let screenZ = 50 + relativeZ * 50;
-
-            // Color based on type. Classified here, BEFORE the rim
-            // clamp/compression below, because that step now needs to know
-            // a contact's dotPriority to decide whether an off-scale
-            // contact still earns an edge ring or gets dropped outright
-            // (see the round-2 gap: low-value scenery pinned to the rim was
-            // outnumbering and outshining the real contacts in the middle
-            // of the disc).
+            
+            const screenX = 50 + relativeX * 50; // Scale to fit map
+            const screenZ = 50 + relativeZ * 50;
+            
+            // Only show if within map bounds
+            if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
+                const dot = mapDotPool.get('cosmic-feature');
+                dot.className = 'galactic-target-dot absolute';
+                
+                // Color based on type
 let dotColor = '#4488ff'; // Default blue for planets
 let dotSize = '4px';
-// Radar-cell aggregation (below): when a crowded cell collapses to one
-// blip, the highest-priority member supplies its colour/size — hostiles
-// outrank neutral traffic outranks scenery, so a firefight buried inside
-// a debris field still reads red, not beige.
-let dotPriority = 20;
-let _allyAng = 0;
 
 if (obj.type === 'ally') {
-    // Allies render as arrow markers, not dots — but rendering is deferred
-    // to renderClusteredMapDots() now (see _allyCandidates below), so they
-    // count against the SAME shared radar budget as everything else
-    // instead of claiming a node unconditionally, with no cap, every frame
-    // regardless of how much budget hostiles/objectives had already spent.
+    // Render allies as arrow markers like the player, not dots
     // Use the wingman's stored color (Greek-named recruits have distinct hues)
     dotColor = (obj.colorStr) || (obj.name === 'Wingman Alpha' ? '#00ff88' : (obj.name === 'Wingman Beta' ? '#88aaff' : '#ffaa44'));
+    dot.textContent = '▲';
     // Point the ▲ along the wingman's NOSE (they're clones of the
     // +Z-forward player model) — same screen convention as the player
     // marker: angle = atan2(fwd.x, -fwd.z). Untransformed, the glyph
     // always pointed "north" regardless of heading (read as backwards).
+    let _allyAng = 0;
     if (obj.ship && obj.ship.quaternion && _allyMarkerFwd) {
         _allyMarkerFwd.set(0, 0, 1).applyQuaternion(obj.ship.quaternion);
-        _allyAng = Math.round(Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z) * 100) / 100;
+        _allyAng = Math.atan2(_allyMarkerFwd.x, -_allyMarkerFwd.z);
     }
-    // The actual push to _allyCandidates + return happens further below,
-    // once px/py exist (position now depends on the rim clamp/compression
-    // that runs after this block).
+    dot.style.cssText = 'position:absolute;font-size:10px;font-weight:bold;color:' + dotColor + ';transform:translate(-50%,-50%) rotate(' + _allyAng + 'rad);pointer-events:none;z-index:3;filter:drop-shadow(0 0 3px ' + dotColor + ');';
+    dot.style.left = screenX + '%';
+    dot.style.top = screenZ + '%';
+    dot.style.display = 'block';
+    dot.title = (obj.name || 'Wingman') + ' (' + obj.distance.toFixed(0) + 'u)';
+    galaxyMap.appendChild(dot);
+    return; // skip normal dot styling below
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';
-    dotPriority = obj.isBoss ? 110 : 100;
 } else if (obj.type === 'civilian_ship') {
     dotColor = obj.underAttack ? '#ffaa00' : '#00ff88';  // Orange if under attack, green otherwise
     dotSize = '5px';
-    dotPriority = obj.underAttack ? 90 : 60;
 } else if (obj.type === 'blackhole') {
     dotColor = '#000000';
     dotSize = '6px';
-    dotPriority = 45;
 } else if (obj.type === 'star') {
     dotColor = '#ffff44';
     dotSize = '5px';
-    dotPriority = 35;
 } else if (obj.type === 'brown_dwarf') {
     dotColor = '#8b4513';
     dotSize = '5px';
-    dotPriority = 30;
 } else if (obj.type === 'pulsar') {
     dotColor = '#44eeff';
     dotSize = '6px';
-    dotPriority = 40;
 } else if (obj.type === 'supernova') {
     dotColor = '#ff6600';
     dotSize = '7px';
-    dotPriority = 42;
 } else if (obj.type === 'plasma_storm') {
     dotColor = '#aa44ff';
     dotSize = '7px';
-    dotPriority = 42;
 } else if (obj.type === 'solar_storm') {
     dotColor = '#ffff00';
     dotSize = '7px';
-    dotPriority = 42;
 } else if (obj.type === 'dyson_sphere') {
     dotColor = '#00ffaa';
     dotSize = '8px';
-    dotPriority = 50;
 } else if (obj.type === 'crystal_structure') {
     dotColor = '#aa00ff';
     dotSize = '7px';
-    dotPriority = 50;
 } else if (obj.type === 'space_whale') {
     dotColor = '#0088ff';
     dotSize = '9px';
-    dotPriority = 50;
 } else if (obj.type === 'ringworld') {
     dotColor = '#ffaa00';
     dotSize = '8px';
-    dotPriority = 50;
 } else if (obj.type === 'interstellar_asteroid') {
     dotColor = '#998877';
     dotSize = '5px';
-    dotPriority = 15;
 } else if (obj.type === 'asteroid') {
     dotColor = '#887766';
     dotSize = '3px';
-    dotPriority = 10;
 } else if (obj.type === 'outer_asteroid') {
     dotColor = '#887766';
     dotSize = '3px';
-    dotPriority = 10;
 } else if (obj.type === 'outer_planet') {
     dotColor = '#6688ff';
     dotSize = '5px';
-    dotPriority = 22;
 } else if (obj.type === 'borg_drone') {
     dotColor = '#00ff00';
     dotSize = '5px';
-    dotPriority = 95;
 }
 
-            // ── Rim clamp / off-scale compression (decouple draw scale
-            // from visibility) ────────────────────────────────────────────
-            // `obj` already survived the RADAR_SCAN_RADIUS cull above — it
-            // is a real, in-range contact — so a position that falls
-            // outside the disc at the current (possibly auto-contracted)
-            // draw scale must NOT be dropped here too; that was the bug
-            // (the same radarRange number was both the zoom and the
-            // visibility cull, so contracting for a close fight deleted
-            // every farther contact instead of compressing it onto the
-            // disc). #galaxyMap is a circle, so this works in the RADIAL
-            // distance from centre while leaving the ANGLE untouched —
-            // that keeps the contact's bearing exact (0° error) and reads
-            // as a standard aviation-RWR "off-scale" edge blip.
-            const _dx = screenX - 50, _dz = screenZ - 50;
-            const _rad0 = Math.sqrt(_dx * _dx + _dz * _dz);
-            let rimClamped = false;
-            if (_rad0 > RADAR_RIM_RADIUS) {
-                // Round-2 gap (critic-caught): a flat clamp pins EVERY
-                // off-scale contact to the identical rim radius, so the
-                // interior of the disc — where the actual dogfight lives —
-                // sits empty while the rim carries zero range information
-                // (measured: 82.2% of rendered blips hard-clamped to the
-                // rim, median blip radius = 0.95 of rim). Low-value scenery
-                // (dotPriority <= 20: asteroids, and anything left on the
-                // unclassified default) is the worst offender — there can
-                // be hundreds of them — so once one goes off-scale it's
-                // dropped outright instead of ringing the rim; it was never
-                // combat-relevant. Allies are never dropped (a wingman must
-                // always stay trackable).
-                if (dotPriority <= 20 && obj.type !== 'ally') {
-                    return;
-                }
-            }
-            // Everything else — in-range or off-scale — goes through the
-            // shared compression so a locked target's reticle (see the
-            // targetMapPos block below) always lands exactly on its own
-            // blip. See _radarCompress for the round-3 inversion fix.
-            const _rc = _radarCompress(_dx, _dz, radarRange);
-            screenX = _rc.x;
-            screenZ = _rc.z;
-            rimClamped = _rc.clamped;
-
-            // Only show if within map bounds (the rim clamp/compression
-            // above already guarantees this — it only ever pulls a point
-            // INWARD, capped at RADAR_RIM_RADIUS <= 45 — but a contact that
-            // lands inside the disc at the CURRENT draw scale without
-            // clamping still needs this — unchanged from before).
-            if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
-                // 0-100 map coords → pixels inside the radar disc, snapped to
-                // 0.1px. Position is ONE transform (no left/top layout pass),
-                // and a blip that hasn't visibly moved writes nothing at all.
-                const px = Math.round(screenX * mapDotPool.w / 10) / 10;
-                const py = Math.round(screenZ * mapDotPool.h / 10) / 10;
-
-                if (obj.type === 'ally') {
-                    _allyCandidates.push({ key: _key, px, py, angle: _allyAng, dotColor, name: obj.name, distance: obj.distance, rimClamped });
-                    return; // skip normal dot styling below
-                }
-
+                dot.style.width = dotSize;
+                dot.style.height = dotSize;
+                dot.style.backgroundColor = dotColor;
+                dot.style.borderRadius = '50%';
+                dot.style.left = `${screenX}%`;
+                dot.style.top = `${screenZ}%`;
+                dot.style.transform = 'translate(-50%, -50%)';
+                dot.style.boxShadow = `0 0 4px ${dotColor}`;
+                dot.style.pointerEvents = 'none';
+                dot.title = `${obj.name} (${obj.distance.toFixed(0)} units)`;
                 // Pulse civilians under attack so the distress signal reads
                 // distinctly from regular civilian traffic on the map.
-                const distress = (obj.type === 'civilian_ship' && obj.underAttack);
-
-                // A contact the player is actively locked onto or has
-                // selected as the current target must never disappear into
-                // an aggregate — it's the one blip combat depends on
-                // reading correctly every single frame.
-                const mustIndividual = !!(_src && (
-                    _src === gameState.currentTarget ||
-                    (gameState.targetLock && gameState.targetLock.active && _src === gameState.targetLock.target)
-                ));
-
-                // Defer claiming a dot: bucket first, then render, so a
-                // crowded radar cell can collapse to one aggregate blip
-                // instead of stacking dozens of nodes on top of each other.
-                const relY = Math.max(-1, Math.min(1, relativeY));
-                _clusterCandidates.push({
-                    // wx/wz: raw world-space position, carried alongside the
-                    // screen-space px/py so aggregate bucketing can key cells
-                    // in WORLD space (see _bucketWithBudget) instead of on a
-                    // screen grid that slides under every contact as the
-                    // player flies — the dominant source of aggregate-blip
-                    // churn (a clump's screen position moves even though the
-                    // clump itself hasn't).
-                    key: _key, px, py, wx: obj.position.x, wz: obj.position.z, relY, dotColor, dotSize, dotPriority, distress,
-                    name: obj.name, distance: obj.distance, mustIndividual, rimClamped
-                });
+                if (obj.type === 'civilian_ship' && obj.underAttack) {
+                    dot.classList.add('distress-map-dot');
+                    dot.style.boxShadow = '0 0 8px ' + dotColor + ', 0 0 14px rgba(255,170,0,0.6)';
+                } else {
+                    dot.classList.remove('distress-map-dot');
+                }
+                
+                galaxyMap.appendChild(dot);
             }
         });
-
-        // ── Radar-space decluttering ─────────────────────────────────────
-        // A dense clump (asteroid field, debris ring, wreckage after a
-        // fight) can drop hundreds of contacts inside a handful of 4-6px
-        // cells — that many overlapping DOM nodes reads as one fuzzy smear
-        // anyway, and claiming a node per contact was the dominant cost of
-        // this function. Bucket candidates by screen-space cell instead: a
-        // lightly-occupied cell still renders its members individually
-        // (today's look, unchanged); a crowded one collapses to ONE
-        // aggregate blip sized/coloured by its contents. The aggregate's
-        // pool key is the CELL's coordinates, not its membership, so a
-        // contact drifting in or out of an otherwise-stable cell just
-        // restyles the same DOM element — no churn, no flicker.
-        renderClusteredMapDots(_clusterCandidates, _allyCandidates);
     }
-    // Park every blip this refresh didn't claim (visibility only) — also
-    // covers the case where the world arrays aren't loaded yet.
-    mapDotPool.end();
-
+    
     // ── Unlocked nebula mission (dotted-line) paths ──────────────────
     // Each discovery path is an UNLOCKED objective and shows on the
     // radar. The in-world line spans tens of thousands of units (far
@@ -4349,58 +4396,39 @@ if (obj.type === 'ally') {
                     let d = pool[used];
                     if (!d) {
                         d = document.createElement('div');
-                        // Shape/position rules live in CSS (.galactic-path-dot)
-                        // so a path dot never needs className or cssText again.
                         d.className = 'galactic-path-dot';
-                        d._s = { size: '', bg: '', tf: '', op: '', vis: 'hidden' };
+                        d.style.position = 'absolute';
+                        d.style.borderRadius = '50%';
+                        d.style.transform = 'translate(-50%,-50%)';
+                        d.style.pointerEvents = 'none';
+                        d.style.zIndex = '2';
                         galaxyMap.appendChild(d);
                         pool[used] = d;
                     }
-                    // Same compare-and-set discipline as the blips: one
-                    // transform for position, and nothing at all when a
-                    // sample landed on the pixel it already occupied.
-                    const ps = d._s;
-                    const pw = sizePx + 'px';
-                    if (ps.size !== pw) { d.style.width = pw; d.style.height = pw; ps.size = pw; }
-                    if (ps.bg !== colHex) {
-                        d.style.background = colHex;
-                        d.style.boxShadow = '0 0 3px ' + colHex;
-                        ps.bg = colHex;
-                    }
-                    const ptf = 'translate(' + (Math.round(sx * mapDotPool.w / 10) / 10) + 'px,' +
-                                (Math.round(sz * mapDotPool.h / 10) / 10) + 'px) translate(-50%,-50%)';
-                    if (ps.tf !== ptf) { d.style.transform = ptf; ps.tf = ptf; }
-                    if (ps.op !== op) { d.style.opacity = op; ps.op = op; }
-                    if (ps.vis !== 'visible') { d.style.visibility = 'visible'; ps.vis = 'visible'; }
+                    d.style.width = sizePx + 'px';
+                    d.style.height = sizePx + 'px';
+                    d.style.background = colHex;
+                    d.style.boxShadow = '0 0 3px ' + colHex;
+                    d.style.left = sx + '%';
+                    d.style.top = sz + '%';
+                    d.style.opacity = op;
+                    d.style.display = 'block';
                     used++;
                 }
             }
             for (let k = used; k < pool.length; k++) {
-                const pd = pool[k];
-                if (pd && pd._s.vis !== 'hidden') { pd.style.visibility = 'hidden'; pd._s.vis = 'hidden'; }
+                if (pool[k]) pool[k].style.display = 'none';
             }
         }
     }
 
     // Update current target indicator
-    if (gameState.currentTarget && targetMapPos &&
-        camera.position.distanceTo(gameState.currentTarget.position) <= RADAR_SCAN_RADIUS) {
+    if (gameState.currentTarget && targetMapPos) {
         const targetRelativeX = (gameState.currentTarget.position.x - camera.position.x) / radarRange;
         const targetRelativeZ = (gameState.currentTarget.position.z - camera.position.z) / radarRange;
-        const _tdx0 = targetRelativeX * 50, _tdz0 = targetRelativeZ * 50;
-
-        // Same compression as the pooled blips (see _radarCompress and the
-        // nearbyObjects loop above): the current target is the one contact
-        // combat depends on reading correctly, so its reticle must land on
-        // the exact same point as its own blip — including staying in
-        // lockstep, range-order-wise, when the draw scale auto-contracted
-        // for a different, closer engagement. Bounded to RADAR_SCAN_RADIUS
-        // above so this stays in step with what the pooled dot for the
-        // same object actually shows.
-        const _trc = _radarCompress(_tdx0, _tdz0, radarRange);
-        let targetScreenX = _trc.x;
-        let targetScreenZ = _trc.z;
-
+        const targetScreenX = 50 + targetRelativeX * 50;
+        const targetScreenZ = 50 + targetRelativeZ * 50;
+        
         if (targetScreenX >= 0 && targetScreenX <= 100 && targetScreenZ >= 0 && targetScreenZ <= 100) {
             targetMapPos.style.left = `${targetScreenX}%`;
             targetMapPos.style.top = `${targetScreenZ}%`;
@@ -4415,19 +4443,11 @@ if (obj.type === 'ally') {
     } else {
     // ========== UNIVERSAL VIEW ==========
 
-    // Re-arm the galactic view's one-shot chrome hide for the next switch.
-    _galacticChromeHidden = false;
-    // The radar-range rim label is galactic-view-only chrome (the
-    // universal view has its own live mapZoneLabel further down).
-    const _rimLabelHide = document.getElementById('mapRadarRimLabel');
-    if (_rimLabelHide) _rimLabelHide.style.display = 'none';
-
     // Hide the pooled galactic-view mission-path dots so they don't
     // linger on the universal map (they're radar-relative).
     if (updateGalaxyMap._pathDots) {
         for (let k = 0; k < updateGalaxyMap._pathDots.length; k++) {
-            const pd = updateGalaxyMap._pathDots[k];
-            if (pd && pd._s.vis !== 'hidden') { pd.style.visibility = 'hidden'; pd._s.vis = 'hidden'; }
+            if (updateGalaxyMap._pathDots[k]) updateGalaxyMap._pathDots[k].style.display = 'none';
         }
     }
 
@@ -4634,8 +4654,32 @@ mapDotPool.releaseAll();
 
     // Vertical depth bar on the right edge of the galaxy map container
     if (galaxyMap) {
-        const depthBar = _ensureMapDepthBar(galaxyMap);
-        if (depthBar) depthBar.style.display = 'block';
+        let depthBar = document.getElementById('mapDepthBar');
+        if (!depthBar) {
+            depthBar = document.createElement('div');
+            depthBar.id = 'mapDepthBar';
+            // Depth bar placed inside the round-map clip area (circle has
+            // ~85% inner radius at the edges) — keep it short and inset so it
+            // doesn't get clipped by border-radius:50%.
+            depthBar.style.cssText = 'position:absolute;right:18%;top:30%;width:4px;height:40%;background:linear-gradient(to bottom,rgba(100,180,255,0.15),rgba(40,40,80,0.25),rgba(100,180,255,0.15));border:1px solid rgba(100,180,255,0.4);border-radius:3px;pointer-events:none;z-index:9;';
+            const tick = document.createElement('div');
+            tick.id = 'mapDepthTick';
+            tick.style.cssText = 'position:absolute;left:-4px;width:14px;height:3px;background:#00ff96;box-shadow:0 0 4px #00ff96;border-radius:2px;';
+            depthBar.appendChild(tick);
+            const lblTop = document.createElement('div');
+            lblTop.textContent = '+Y';
+            lblTop.style.cssText = 'position:absolute;left:-22px;top:-12px;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblTop);
+            const lblMid = document.createElement('div');
+            lblMid.textContent = '0';
+            lblMid.style.cssText = 'position:absolute;left:-12px;top:50%;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblMid);
+            const lblBot = document.createElement('div');
+            lblBot.textContent = '−Y';
+            lblBot.style.cssText = 'position:absolute;left:-22px;bottom:-12px;font-size:8px;color:#88ccff;';
+            depthBar.appendChild(lblBot);
+            galaxyMap.appendChild(depthBar);
+        }
         const tick = document.getElementById('mapDepthTick');
         if (tick) {
             // Tick at 50% = on plane; lower = above plane (positive Y)
@@ -4712,7 +4756,6 @@ mapDotPool.releaseAll();
             dot.style.top = nz + '%';
             dot.title = (nebula.userData && (nebula.userData.mythicalName || nebula.userData.name)) || 'Nebula';
             galaxyMap.appendChild(dot);
-            _universeDecorLive = true;
         });
     }
 
@@ -4741,7 +4784,6 @@ mapDotPool.releaseAll();
             line.style.width = len + '%';
             line.style.transform = 'rotate(' + angle + 'deg)';
             galaxyMap.appendChild(line);
-            _universeDecorLive = true;
         });
     }
 
@@ -5529,6 +5571,9 @@ function _hudComputeSpectacleTarget() {
 // binary — it settles in ~0.3-0.4s but tracks a moving target the whole
 // time, so it keeps easing for as long as velocity keeps climbing.
 function updateHudSpectacleDim() {
+    // HYBRID: ORIGINAL HUD never yields or collapses — no spectacle dim, no
+    // geometric yield, no collapsed panel stubs.
+    if (window.HYBRID && !HYBRID.is('hud', 'overhaul')) return;
     if (typeof gameState === 'undefined') return;
 
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
