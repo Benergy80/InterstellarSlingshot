@@ -27,7 +27,8 @@
         // — enemies —
         enemyLook:       'original',   // hostile + neutral ship models, glows, shells
         enemyPopulation: 'original',   // how many enemies you can see and fight
-        enemyAI:         'overhaul',   // advanced behaviours
+        enemyAI:         'overhaul',   // advanced behaviours (what enemies decide to do)
+        enemyFlight:     'physical',   // how they move: momentum + nose + thrust  'physical' | 'overhaul'
         // — deep space —
         blackHoles:      'original',   // black hole + galaxy-core look
         nebulae:         'combined',   // 'combined' | 'overhaul' | 'original'
