@@ -7133,7 +7133,7 @@ function _hyScaleOn() {
 const HY_SCALE = {
     PLACE_K: 8,              // rule 1: centre gap >= PLACE_K x (R1 + R2)
     EDGE_MARGIN: 0.15,       // rule 2: keep-clear = EDGE x (1 + EDGE_MARGIN)
-    ORBIT_K: 1.0,            // rule 3: orbit gap >= ORBIT_K x (reach1 + reach2)
+    ORBIT_K: 1.5,            // rule 3: orbit gap >= ORBIT_K x (reach1 + reach2) (1.0 = moon systems touch at conjunction)
     STAR_CLEAR: 2.6,         // rule 3: first orbit >= STAR_CLEAR x star radius (+ its reach)
     SOL_BEARING: { x: 0.4157, z: 0.9095 },  // Sol's direction from Sgr A* (was (8000,0,4800)-ish)
     SOL_SGR_GAP: 1000,       // extra clear space between Sol's keep-clear and Sgr A*'s
@@ -7470,6 +7470,95 @@ function _hyInstallScaleHooks() {
     }, function () { _hySpaceNebulae(); });
 }
 
+// =============================================================================
+// HYBRID (solScale:big) — SOL AT FULL SCALE   (package G, Part 1)
+//
+// Ben: "I want the Sol System planets and Sun to be as big as the other ones in
+// the game." Radii put Sol's worlds in the same classes as the rest of the game
+// (field planets 70-200, giants to 330 beside the 620 heart worlds, stars
+// 300-560): Earth 64 -> 130, Jupiter 120 -> 280, Saturn 96 -> 240, Sun 80 ->
+// 340. The Sun is held at 340 by the player's start point (resetCameraTo-
+// GamePosition, Sol + (720, 120, 80)): at 340 the start is 2.2 Sun radii out,
+// outside the demo pilot's 1.8-radii keep-out. Moons keep their planet's
+// proportions. ORBITS ARE NOT TYPED IN: _hySolLayout() lays them with rule 3
+// of HY_SCALE (first orbit STAR_CLEAR Sun radii out and clear of the start
+// point, then each gap ORBIT_K x (reach1 + reach2)), with the asteroid belt as
+// a lane between Mars and Jupiter. Mass and gravity stay at today's values, so
+// the slingshot pulls exactly as hard at the same distance.
+// =============================================================================
+const HY_SOL = {
+    SUN: 340,
+    START: { x: 720, y: 120, z: 80 },   // the player's start, relative to Sol
+    BELT_WIDTH: 500,                    // the asteroid lane between Mars and Jupiter
+    // name: [radius, rings?, { moon: [radius, orbit from the planet's centre] }]
+    planets: [
+        ['Mercury', 70,  false, {}],
+        ['Venus',   120, false, {}],
+        ['Earth',   130, false, { Luna: [40, 520] }],
+        ['Mars',    85,  false, { Phobos: [16, 220], Deimos: [14, 320] }],
+        ['Jupiter', 280, false, { Io: [32, 460], Europa: [28, 580], Ganymede: [42, 760], Callisto: [38, 960] }],
+        ['Saturn',  240, true,  { Enceladus: [20, 660], Titan: [48, 1080] }],
+        ['Uranus',  170, true,  { Titania: [28, 720] }],
+        ['Neptune', 160, false, { Triton: [28, 480] }],
+    ],
+    RING_K: 2.45,                       // Sol ring planes reach 2.45 radii (addPlanetRings outerK)
+};
+let _hySolLayoutCache = null;
+function _hySolLayout() {
+    if (_hySolLayoutCache) return _hySolLayoutCache;
+    const K = HY_SCALE.ORBIT_K, sun = HY_SOL.SUN, st = HY_SOL.START;
+    const out = { sun: sun, planets: {}, moons: {}, belt: null, edge: 0 };
+    const startR = Math.hypot(st.x, st.z);
+    let prevOrbit = 0, prevReach = 0;
+    HY_SOL.planets.forEach(function (row, i) {
+        const name = row[0], r = row[1], moons = row[3];
+        let reach = r * (row[2] ? HY_SOL.RING_K : 1);
+        Object.keys(moons).forEach(function (m) {
+            reach = Math.max(reach, moons[m][1] + moons[m][0]);
+            out.moons[m] = { r: moons[m][0], orbit: moons[m][1] };
+        });
+        let orbit;
+        if (i === 0) {
+            // clear of the Sun (rule 3) and of the start point (demo keep-out 1.8 R + a body)
+            orbit = Math.max(HY_SCALE.STAR_CLEAR * sun + reach, startR + 1.8 * r + reach);
+        } else {
+            orbit = prevOrbit + K * (prevReach + reach);
+        }
+        if (name === 'Jupiter') {
+            // the belt lane sits between Mars and Jupiter
+            const half = HY_SOL.BELT_WIDTH / 2;
+            const beltC = prevOrbit + K * (prevReach + half);
+            out.belt = [beltC - half, beltC + half];
+            orbit = beltC + K * (half + reach);
+        }
+        out.planets[name] = { r: r, orbit: Math.round(orbit), reach: Math.round(reach) };
+        out.edge = Math.max(out.edge, Math.round(orbit + reach));
+        prevOrbit = orbit; prevReach = reach;
+    });
+    _hySolLayoutCache = out;
+    return out;
+}
+if (typeof window !== 'undefined') window._hySolLayout = _hySolLayout;
+
+// Apply the layout to the builder's own table (keeps today's numbers in
+// physSize / physDistance for mass, gravity and orbital speed).
+function _hyApplySolLayout(localPlanets) {
+    if (!_hyScaleOn()) return;
+    const L = _hySolLayout();
+    localPlanets.forEach(function (pd) {
+        const p = L.planets[pd.name];
+        if (!p) return;
+        pd.physSize = pd.size; pd.physDistance = pd.distance;
+        pd.size = p.r; pd.distance = p.orbit;
+        (pd.moons || []).forEach(function (md) {
+            const m = L.moons[md.name];
+            if (!m) return;
+            md.physSize = md.size; md.physDistance = md.distance;
+            md.size = m.r; md.distance = m.orbit;
+        });
+    });
+}
+
 function createOptimizedPlanets3D() {
     console.log('Creating comprehensive 3D universe with full local solar system...');
     
@@ -7508,7 +7597,9 @@ function createOptimizedPlanets3D() {
         // it reads as a proper star without dominating the system; mass
         // / gravity (userData below) deliberately unchanged so slingshot
         // physics stay the same.
-        const sunGeometry = new THREE.SphereGeometry(80, 32, 32);
+        // HYBRID (solScale:big): the Sun's radius comes from HY_SOL (340).
+        const _sunR = _hySunR();
+        const sunGeometry = new THREE.SphereGeometry(_sunR, _sunR > 80 ? 64 : 32, _sunR > 80 ? 48 : 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
         const sun = new THREE.Mesh(sunGeometry, sunMaterial);
         sun.position.set(localSystemOffset.x, localSystemOffset.y, localSystemOffset.z);
@@ -7558,7 +7649,7 @@ function createOptimizedPlanets3D() {
         // Replaces the old tiny 12-unit inner glow sphere which read as
         // a flat dim yellow halo and didn't sell "star".
         if (typeof addStarCorona === 'function') {
-            addStarCorona(sun, 80, 0xff8833);
+            addStarCorona(sun, _sunR, 0xff8833);
         }
 
         console.log('✅ Sun created successfully');
@@ -7673,6 +7764,8 @@ function createOptimizedPlanets3D() {
             { name: 'Triton', distance: 176, size: 10, color: 0x99ccff }
         ], atmo: { scatter: 0.90, rimColor: 0x9fd8ff, rim: 0.78, city: 0, termWidth: 0.13 } }
     ];
+    // HYBRID (solScale:big): sizes and orbits from HY_SOL / _hySolLayout().
+    _hyApplySolLayout(localPlanets);
     
 // =============================================================================
 // ADDITIONAL LOCAL GALAXY STAR SYSTEMS
@@ -7945,7 +8038,7 @@ try {
             // 64-unit hero planet that fills half the frame — and it was
             // already mismatched against Earth's 40-segment cloud shell, so
             // the surface poked through the clouds along the facets.
-            const _seg = planetData.size >= 56 ? 56 : (planetData.size >= 30 ? 36 : 24);
+            const _seg = planetData.size >= 120 ? 80 : (planetData.size >= 56 ? 56 : (planetData.size >= 30 ? 36 : 24));
             const planetGeometry = new THREE.SphereGeometry(planetData.size, _seg, Math.round(_seg * 0.75));
             const planetMaterial = new THREE.MeshLambertMaterial({ 
                 color: planetData.color,
@@ -7966,11 +8059,15 @@ try {
                 type: 'planet',
                 isStart: planetData.name === 'Earth',
                 orbitRadius: planetData.distance,
-                orbitSpeed: 0.04 - index * 0.002,
+                // HYBRID (solScale:big): same LINEAR speed as today on the wider
+                // orbit (game-core boosts orbits under 500 u by 500/r).
+                orbitSpeed: (0.04 - index * 0.002) * (planetData.physDistance
+                    ? Math.max(1, 500 / planetData.physDistance) * planetData.physDistance /
+                      (Math.max(1, 500 / planetData.distance) * planetData.distance) : 1),
                 orbitPhase: index * Math.PI * 0.3,
                 systemCenter: localSystemOffset,
-                mass: planetData.size * 2,
-                gravity: planetData.size * 0.8,
+                mass: (planetData.physSize || planetData.size) * 2,
+                gravity: (planetData.physSize || planetData.size) * 0.8,
                 isLocal: true
             };
             
@@ -8037,7 +8134,9 @@ try {
             // Add moons
             planetData.moons.forEach((moonData, moonIndex) => {
                 try {
-                    const moonGeometry = new THREE.SphereGeometry(moonData.size, 12, 12);
+                    const moonGeometry = moonData.physSize
+                        ? new THREE.SphereGeometry(moonData.size, 32, 24)
+                        : new THREE.SphereGeometry(moonData.size, 12, 12);
                     const moonMaterial = new THREE.MeshLambertMaterial({ 
                         color: moonData.color,
                         emissive: new THREE.Color(moonData.color).multiplyScalar(0.02)
@@ -8055,11 +8154,11 @@ try {
                         name: moonData.name,
                         type: 'moon',
                         orbitRadius: moonData.distance,
-                        orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
+                        orbitSpeed: Math.max(0.04, Math.min(0.45, 0.14 * Math.pow(160 / (moonData.physDistance || moonData.distance || 160), 1.3))), // inner moons orbit FASTER (Kepler-like) — was 0.1+index*0.02 which made outer moons fastest
                         orbitPhase: moonIndex * Math.PI * 0.5,
                         parentPlanet: planet,
-                        mass: moonData.size * 2,
-                        gravity: moonData.size * 0.6,
+                        mass: (moonData.physSize || moonData.size) * 2,
+                        gravity: (moonData.physSize || moonData.size) * 0.6,
                         isLocal: true
                     };
                     
@@ -21927,6 +22026,13 @@ function createAsteroidBelts() {
             if (galaxyIndex === 7) {
                 beltRadius = 5000 + Math.random() * 2000; // ~5000-7000
                 beltWidth = 1000 + Math.random() * 1200;  // fuller band at the larger radius
+                // HYBRID (solScale:big): the lane _hySolLayout() leaves between
+                // Mars and Jupiter (5-7k is Saturn's neighbourhood at this scale).
+                if (_hyScaleOn()) {
+                    const _lane = _hySolLayout().belt;
+                    beltRadius = (_lane[0] + _lane[1]) / 2;
+                    beltWidth = _lane[1] - _lane[0];
+                }
             }
             // HYBRID (solScale:big): 1,600-2,600 u is inside a scaled core's
             // accretion disc (5.6 radii). Ring the core just outside its
