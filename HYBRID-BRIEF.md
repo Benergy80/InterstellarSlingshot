@@ -197,10 +197,15 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927c | Orbit lines steady; giant planets keep their colour (`farPlanetFade`) |
 | 20260927d | Asteroids drawn again (`asteroids`); enemies wear original flat exhaust cones (`enemyThrusters`) |
 | 20260927e | Explosions combined: ORIGINAL burst + overhaul detonation (`explosions: combined`) |
-| in progress | Wave 3 — C deep space, F intro; package I enemy flight |
-| then | Wave 4 — J black holes, K demo pilot safety |
-| then | Wave 5 — G scale and placement (Sol, outer systems, giants, stars) |
+| 20260927f | I enemy flight model (`enemyFlight: physical`, table `ENEMY_FLIGHT`); enemy cones follow throttle |
+| 20260927g | Wave 3 — C deep space: ORIGINAL black holes visible, nebulae combined and thinned; orbit rings exempt from the draw budget; asteroids lit (`HY_ROCK_ALBEDO`) |
+| 20260927h | K demo pilot safety: keep-out spheres in radii (`KEEPOUT_K`), 0 deaths in 11 soak runs |
+| 20260927i | Wave 4 — F ORIGINAL intro; J black holes bigger (`HY_BH.SIZE` 900) with lensed disc ramping on approach |
+| in progress | Wave 5 — G scale and placement (Sol, outer systems, giants, stars) |
 | last | Wave 6 — G2 the opening view |
+
+Guard on 20260927i: `node scripts/keep-check.mjs --root . --out .critic/keepcheck` → 9/9 PASS, 60 fps.
+Demo soak: `node scripts/demo-soak.mjs --root . --out .critic/soak --runs 5 --secs 180`.
 
 Play the hybrid: `node scripts/serve.mjs 8803` → http://localhost:8803/
 
