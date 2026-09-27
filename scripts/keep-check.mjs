@@ -466,6 +466,32 @@ try {
     await page.click('#introDemoBtn');
     await page.waitForFunction(() => typeof gameState !== 'undefined' && gameState.gameStarted && gameState.frameCount > 60, null, { timeout: 120000 });
     await page.evaluate(HELPERS);
+    // Name the culprit: when a draw call throws, record WHICH object and material
+    // (three.min.js stack traces alone say nothing). First 6 distinct offenders.
+    await page.evaluate(() => {
+        const r = (0, eval)('typeof renderer !== "undefined" ? renderer : null');
+        if (!r || r.__kcWrapped) return;
+        r.__kcWrapped = true;
+        window.__kcBadDraws = [];
+        const orig = r.renderBufferDirect;
+        r.renderBufferDirect = function (camera, scene, geometry, material, object, group) {
+            try { return orig.call(this, camera, scene, geometry, material, object, group); } catch (e) {
+                const seen = window.__kcBadDraws;
+                if (seen.length < 6 && !seen.some((s) => s.matUuid === material.uuid)) {
+                    const chain = []; let p = object; while (p && chain.length < 5) { chain.push(`${p.type}:${p.name || ''}`); p = p.parent; }
+                    seen.push({
+                        msg: String(e.message).slice(0, 120), frame: window.gameState && gameState.frameCount,
+                        matUuid: material.uuid, matType: material.type, matName: material.name,
+                        flags: { basic: !!material.isMeshBasicMaterial, shader: !!material.isShaderMaterial, sprite: !!material.isSpriteMaterial,
+                            points: !!material.isPointsMaterial, toneMapped: material.toneMapped, fog: material.fog, transparent: material.transparent },
+                        uniforms: material.uniforms ? Object.keys(material.uniforms).slice(0, 12) : null,
+                        chain, userData: Object.keys(object.userData || {}).slice(0, 12),
+                    });
+                }
+                throw e;
+            }
+        };
+    });
     booted = true;
     console.log(`keep-check: ${ROOT}  BUILD_TAG ${results.build}${HY ? '  hy=' + HY : ''}  (booted in ${((Date.now() - T_START) / 1000).toFixed(0)}s)`);
 } catch (e) {
@@ -486,6 +512,8 @@ if (booted) {
         if (SHOT_AFTER[c.name]) await shot(SHOT_AFTER[c.name]);
         results.raw = raw; await saveJson();
     }
+    try { results.badDraws = await page.evaluate(() => window.__kcBadDraws || []); } catch (e) { /* page may be gone */ }
+    if (results.badDraws && results.badDraws.length) console.log('keep-check: draw calls that threw →', JSON.stringify(results.badDraws, null, 1));
     try { await page.evaluate(() => { window.__kc.restoreEnemies(); window.__kc.reset(); }); } catch (e) { /* page may be gone */ }
 }
 
