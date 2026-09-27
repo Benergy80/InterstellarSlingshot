@@ -7498,9 +7498,10 @@ function _hyInstallScaleHooks() {
 // the game." Radii put Sol's worlds in the same classes as the rest of the game
 // (field planets 70-200, giants to 330 beside the 620 heart worlds, stars
 // 300-560): Earth 64 -> 130, Jupiter 120 -> 280, Saturn 96 -> 240, Sun 80 ->
-// 340. The Sun is held at 340 by the player's start point (resetCameraTo-
-// GamePosition, Sol + (720, 120, 80)): at 340 the start is 2.2 Sun radii out,
-// outside the demo pilot's 1.8-radii keep-out. Moons keep their planet's
+// 300. The Sun is held at 300 by the player's start point (resetCameraTo-
+// GamePosition, Sol + (720, 120, 80)): the start is 2.45 Sun radii out, clear
+// of the demo pilot's 1.8-radii keep-out, and the opening dogfight gets
+// START_GAP of room before Mercury's orbit. Moons keep their planet's
 // proportions. ORBITS ARE NOT TYPED IN: _hySolLayout() lays them with rule 3
 // of HY_SCALE (first orbit STAR_CLEAR Sun radii out and clear of the start
 // point, then each gap ORBIT_K x (reach1 + reach2)), with the asteroid belt as
@@ -7508,8 +7509,9 @@ function _hyInstallScaleHooks() {
 // the slingshot pulls exactly as hard at the same distance.
 // =============================================================================
 const HY_SOL = {
-    SUN: 340,
+    SUN: 300,
     START: { x: 720, y: 120, z: 80 },   // the player's start, relative to Sol
+    START_GAP: 600,                     // clear space between the start point and the first orbit's inner edge
     BELT_WIDTH: 500,                    // the asteroid lane between Mars and Jupiter
     // name: [radius, rings?, { moon: [radius, orbit from the planet's centre] }]
     planets: [
@@ -7540,8 +7542,9 @@ function _hySolLayout() {
         });
         let orbit;
         if (i === 0) {
-            // clear of the Sun (rule 3) and of the start point (demo keep-out 1.8 R + a body)
-            orbit = Math.max(HY_SCALE.STAR_CLEAR * sun + reach, startR + 1.8 * r + reach);
+            // clear of the Sun (rule 3) and of the start point: the opening
+            // dogfight happens here, so it gets START_GAP of elbow room
+            orbit = Math.max(HY_SCALE.STAR_CLEAR * sun + reach, startR + HY_SOL.START_GAP + reach);
         } else {
             orbit = prevOrbit + K * (prevReach + reach);
         }
@@ -7595,7 +7598,7 @@ function _hyApplySolLayout(localPlanets) {
 //   planet   70 - 200                field worlds, Sol's rocky planets
 //   giant    220 - 620               field giants top out at FIELD_MAX (330);
 //                                    Jupiter 280, Saturn 240; heart worlds 620
-//   star     300 - 560               every star (Sol 340, held by the start point)
+//   star     300 - 560               every star (Sol 300, held by the start point)
 //   hole     405 - 1215 (shadow)     HY_BH; disc to 5.6 radii (2,268 - 6,804)
 //
 // Within a family (nebula / galaxy / gateway / local) sizes keep their order:
@@ -7846,7 +7849,7 @@ function createOptimizedPlanets3D() {
         // it reads as a proper star without dominating the system; mass
         // / gravity (userData below) deliberately unchanged so slingshot
         // physics stay the same.
-        // HYBRID (solScale:big): the Sun's radius comes from HY_SOL (340).
+        // HYBRID (solScale:big): the Sun's radius comes from HY_SOL (300).
         const _sunR = _hySunR();
         const sunGeometry = new THREE.SphereGeometry(_sunR, _sunR > 80 ? 64 : 32, _sunR > 80 ? 48 : 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
