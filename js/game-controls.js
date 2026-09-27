@@ -15480,6 +15480,8 @@ function _makeWingman(roleKey, name, primaryColor) {
                     opacity: 0.85,
                     side: THREE.FrontSide
                 });
+                // HYBRID: original flat neon, outside the ACES tone curve.
+                if (window.HYBRID && window.HYBRID.is('playerShip', 'original')) child.material.toneMapped = false;
                 child.visible = true;
                 child.frustumCulled = false;
             }
@@ -15632,6 +15634,8 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
                         opacity: 0.85,
                         side: THREE.FrontSide
                     });
+                    // HYBRID: original flat neon, outside the ACES tone curve.
+                    if (window.HYBRID && window.HYBRID.is('playerShip', 'original')) child.material.toneMapped = false;
                     child.visible = true;
                     child.frustumCulled = false;
                 }
@@ -16675,6 +16679,8 @@ function _updateAllyShield(ally, active) {
             blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
             depthWrite: false, wireframe: false
         });
+        // HYBRID: original wingman shield glow, outside the ACES tone curve.
+        if (window.HYBRID && window.HYBRID.is('playerShip', 'original')) mat.toneMapped = false;
         const mesh = new THREE.Mesh(geo, mat);
         mesh.renderOrder = 49;
         ally.add(mesh);

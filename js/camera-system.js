@@ -1165,6 +1165,12 @@ function createThrusterGlowsForModel(model) {
         glows.push(outerGlow);
     });
 
+    // HYBRID: the original vector craft (player + wingmen) draws its flat
+    // neon outside the overhaul's ACES tone curve, as it did in ORIGINAL.
+    if (window.HYBRID && window.HYBRID.is('playerShip', 'original')) {
+        glows.forEach((g) => { g.material.toneMapped = false; });
+    }
+
     return glows;
 }
 

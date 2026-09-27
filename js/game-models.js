@@ -2220,7 +2220,13 @@ function _runPlayerHullUpgradeLoop() {
         mesh.traverse((child) => {
             if (child.isMesh && child.material && child.material.blending !== THREE.AdditiveBlending) {
                 hullMeshes++;
-                if (!swapHull) return;
+                if (!swapHull) {
+                    // ORIGINAL rendered with no tone mapping; the overhaul's
+                    // ACES curve turns the flat 0x00ffff hull teal-grey.
+                    child.material.toneMapped = false;
+                    child.material.needsUpdate = true;
+                    return;
+                }
                 if (child.material.dispose) child.material.dispose();
                 const built = createPlayerHullMaterial();
                 child.material = built.material;
