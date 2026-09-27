@@ -579,7 +579,147 @@ function _regradeFieldStars() {
     }, 250);
 })();
 
+// =============================================================================
+// SHIP THRUSTER GLOW (enemies + wingmen)
+// Attaches two additive-blended cones to the rear of a ship the first
+// time it thrusts, then fades them in/out per-frame based on whether
+// the ship is currently accelerating. Mirrors the player's exhaust look
+// (orange-yellow inner + deeper orange outer) so combat reads as a
+// proper ballet of thruster trails.
+// =============================================================================
+// HYBRID: enemies wear ORIGINAL flat-colour exhaust cones. The overhaul's
+// textured plume sprites stay selectable with ?hy=enemyThrusters:overhaul.
+function _hyEnemyPlumesOverhaul() {
+    return !!(window.HYBRID && window.HYBRID.is('enemyThrusters', 'overhaul'));
+}
 function _ensureShipThrusterCones(ship, color) {
+    if (_hyEnemyPlumesOverhaul()) return _ensureShipThrusterCones_overhaul(ship, color);
+    if (!ship || ship.userData._thrusters) return;
+    if (typeof THREE === 'undefined') return;
+    // Don't measure mid-materialization (hull is at 12% scale; cones baked
+    // now would be permanently undersized). Retried every tick.
+    if (ship.userData._materializing) return;
+
+    // Cone size & placement are derived from the model's ACTUAL visible
+    // world bounding box, NOT from scale buckets — those broke the
+    // moment enemy/boss scale changed (e.g. halving 96→48). This is
+    // fully scale-agnostic: it works at any ship scale (48, 72, 96, 1
+    // wingmen, the Vulcan wrapper, etc.).
+    //
+    // The box is built MANUALLY over real hull meshes only, skipping
+    // the invisible 40u collision-hitbox sphere, the additive glow
+    // layers, and any previously-attached cones — Box3.setFromObject
+    // would otherwise be dominated by the giant hitbox and place the
+    // cones far off the model.
+    const worldScale = new THREE.Vector3();
+    try { ship.getWorldScale(worldScale); } catch (e) { worldScale.set(1,1,1); }
+    const sx = Math.max(0.001, Math.abs(worldScale.x || 1));
+    const sz = Math.max(0.001, Math.abs(worldScale.z || 1));
+
+    let coneLen = null, coneRad = null, localBack = null;
+    try {
+        ship.updateWorldMatrix(true, true);
+        const _box = new THREE.Box3();
+        _box.makeEmpty();
+        const _mb = new THREE.Box3();
+        let any = false;
+        ship.traverse(node => {
+            if (!node.isMesh || !node.geometry) return;
+            const ud = node.userData || {};
+            if (ud.isHitbox || ud.isGlowLayer || ud._isThrusterCone) return;
+            if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+            if (!node.geometry.boundingBox) return;
+            _mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            _box.union(_mb);
+            any = true;
+        });
+        if (any && isFinite(_box.min.x) && _box.max.x > _box.min.x) {
+            const size = _box.getSize(new THREE.Vector3());
+            const worldLen = Math.max(size.x, size.y, size.z);
+            // Guard against the not-yet-loaded case: _makeWingman (and the
+            // enemy builders) fall back to a tiny ~16u placeholder mesh when
+            // the GLB isn't cached yet. Measuring that bakes permanent
+            // micro-cones (invisible). The old guard required >40u, but the
+            // 50%-enemy-scale change left REAL GLB hulls at ~12-16u world
+            // (Enemy*.glb natives are ~0.3u × scale 48), so the guard
+            // rejected every standard enemy and cones silently vanished.
+            // GLB ships are Groups / multi-child, placeholders are a single
+            // Mesh + glow child — use structure + a lower floor instead.
+            const _isGLBStruct = ship.isGroup || (ship.children && ship.children.length > 1);
+            if (worldLen > 40 || (_isGLBStruct && worldLen > 8)) {
+                const wpos = ship.getWorldPosition(new THREE.Vector3());
+                // Rear of the hull behind ship centre, WORLD units →
+                // converted to the ship's LOCAL frame (cone is a child).
+                // +Z-nosed models (Enemy1/Enemy8) are now corrected at
+                // model build time (_applyNoseFlip in game-models.js), so
+                // the uniform +Z rear mount is right for every ship again.
+                ship.userData._thrusterApexSign = 1;
+                localBack = (_box.max.z - wpos.z) / sz;
+                // Cone ≈ 22% of the visible ship length, base ≈ 6% — with
+                // absolute floors (5u / 1.4u world) so the small 12-16u
+                // hulls still get a readable plume instead of a 3u speck.
+                coneLen = Math.max(worldLen * 0.22, 5) / sx;
+                coneRad = Math.max(worldLen * 0.06, 1.4) / sx;
+            }
+        }
+    } catch (e) {}
+    // Not hydrated yet (no hull meshes / too small) — bail; this runs every
+    // frame so it retries next tick. The _thrusters early-out means once
+    // attached we never re-measure, so we must wait for a real size first.
+    if (coneLen === null || localBack === null ||
+        !isFinite(localBack) || !isFinite(coneLen)) return;
+
+    const innerCol = color || 0xffaa00;
+    const outerCol = (color === 0x00ff88) ? 0x00aa55
+                  : (color === 0x88aaff) ? 0x4466cc
+                  : 0xff5500;
+
+    function _makeCone(rad, len, col, zOff) {
+        const geo = new THREE.ConeGeometry(rad, len, 10);
+        const mat = new THREE.MeshBasicMaterial({
+            color: col, transparent: true, opacity: 0,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        const cone = new THREE.Mesh(geo, mat);
+        // Cone's default apex is +Y. Rotate so apex points along the
+        // ship's rear axis (+Z for the standard -Z-forward models,
+        // -Z for the flipped Vulcan Enemy8.glb — see _thrusterApexSign).
+        cone.rotation.x = (ship.userData._thrusterApexSign || 1) * Math.PI / 2;
+        cone.position.set(0, 0, zOff);
+        // Frustum-cull cones: when the ship is off-screen the cones are
+        // invisible anyway, so skip the additive overdraw. (Was false —
+        // pure cost for off-screen enemies in big battles.)
+        cone.frustumCulled = true;
+        cone.renderOrder = 80;
+        cone.userData._isThrusterCone = true; // excluded from hull box
+        return { mesh: cone, mat: mat, geo: geo };
+    }
+
+    // Two side-by-side engine plumes. Anchor the cone BASE at the
+    // model's actual rear edge (localBack), then push it forward by
+    // coneLen/2 so the center sits at the base + apex protrudes
+    // behind. The cone is now glued to the ship instead of floating
+    // off the assumed half-length back.
+    const _apex = ship.userData._thrusterApexSign || 1;
+    const back = localBack + _apex * coneLen * 0.5;
+    const cones = [];
+    const sideOff = coneRad * 1.2;
+    [-sideOff, sideOff].forEach(xOff => {
+        const inner = _makeCone(coneRad * 0.55, coneLen,        innerCol, back);
+        inner.mesh.position.x = xOff;
+        ship.add(inner.mesh);
+        cones.push(inner);
+        const outer = _makeCone(coneRad * 0.85, coneLen * 1.3,  outerCol, back + _apex * coneLen * 0.15);
+        outer.mesh.position.x = xOff;
+        ship.add(outer.mesh);
+        cones.push(outer);
+    });
+    ship.userData._thrusters = cones;
+    ship.userData._thrusterIntensity = 0;
+}
+
+// ── overhaul version of _ensureShipThrusterCones, kept for flag-gated comparison ──
+function _ensureShipThrusterCones_overhaul(ship, color) {
     if (!ship || ship.userData._thrusters) return;
     if (typeof THREE === 'undefined') return;
     // Don't measure mid-materialization (hull is at 12% scale; cones baked
@@ -2475,6 +2615,33 @@ const _PLUME_NOSE_ASPECT_HI = -0.92;
 const _PLUME_NOSE_ASPECT_LO = -0.40;
 
 function _updateShipThrusterCones(ship, thrusting, dist, charge) {
+    if (_hyEnemyPlumesOverhaul()) return _updateShipThrusterCones_overhaul(ship, thrusting, dist, charge);
+    if (!ship || !ship.userData || !ship.userData._thrusters) return;
+    const target = thrusting ? 1.0 : 0.0;
+    const cur = ship.userData._thrusterIntensity || 0;
+    const speed = thrusting ? 0.22 : 0.15;
+    const next = cur + (target - cur) * speed;
+    ship.userData._thrusterIntensity = next;
+    const flicker = thrusting ? (0.85 + Math.sin(Date.now() * 0.04 + (ship.id || 0)) * 0.15) : 1.0;
+    const cones = ship.userData._thrusters;
+    for (let i = 0; i < cones.length; i++) {
+        const c = cones[i];
+        // Inner core (i even) and outer halo (i odd). 0.85 / 0.45 so the
+        // plume clearly reads on the smaller wingmen and far enemies.
+        // Additive blending still keeps formation-stacked cones from
+        // saturating to white — each cone tops out under 1.0 alpha.
+        const base = (i % 2 === 0) ? 0.85 : 0.45;
+        c.mat.opacity = next * base * flicker;
+        // Almost no bloom — keep cones a tight engine flame.
+        const sX = 0.9 + next * 0.15;
+        const sY = 0.8 + next * 0.35;
+        const sZ = 0.9 + next * 0.15;
+        c.mesh.scale.set(sX, sY, sZ);
+    }
+}
+
+// ── overhaul version of _updateShipThrusterCones, kept for flag-gated comparison ──
+function _updateShipThrusterCones_overhaul(ship, thrusting, dist, charge) {
     if (!ship || !ship.userData || !ship.userData._thrusters) return;
     const target = thrusting ? 1.0 : _PLUME_IDLE;
     const cur = ship.userData._thrusterIntensity;

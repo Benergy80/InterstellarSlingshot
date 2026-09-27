@@ -26,6 +26,7 @@
         shields:         'original',   // 'original' | 'blend' | 'overhaul'
         // — enemies —
         enemyLook:       'original',   // hostile + neutral ship models, glows, shells
+        enemyThrusters:  'original',   // flat-colour exhaust cones, no textures  'original' | 'overhaul' (plume sprites)
         enemyPopulation: 'original',   // how many enemies you can see and fight
         enemyAI:         'overhaul',   // advanced behaviours (what enemies decide to do)
         enemyFlight:     'physical',   // how they move: momentum + nose + thrust  'physical' | 'overhaul'
@@ -35,6 +36,7 @@
         nebulaDensity:   0.45,         // 0 = none … 1 = overhaul's full density
         skyWash:         'off',        // the overhaul's full-frame colour wash  'off' | 'on'
         farPlanetFade:   'bySize',     // far planets dim by apparent size, so giants stay lit  'bySize' | 'overhaul'
+        asteroids:       'original',   // belts drawn rock by rock, as sparks  'original' | 'overhaul' (culled to dots)
         // — effects and audio —
         explosions:      'original',
         weaponFx:        'original',

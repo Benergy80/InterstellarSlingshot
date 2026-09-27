@@ -13561,6 +13561,7 @@ function updateDistanceCulling() {
     _impPassBegin(cx, cy, cz);   // eye + light table for the illumination term
     _litReset();     // rebuilt by this pass, read by _lightBudgetPass at the end
 
+    const _hyRocks = !!(window.HYBRID && window.HYBRID.is('asteroids', 'original'));
     const cullArray = (arr, range, angular) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
         range *= _cullScale;
@@ -13571,7 +13572,13 @@ function updateDistanceCulling() {
             _cullWorldPos(o);
             const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
             const d2 = dx * dx + dy * dy + dz * dz;
-            const br = angular ? _cullBodyRadius(o) : 0;
+            // HYBRID: asteroid rocks live in `planets`, so the angular rule culled
+            // every one of them as a sub-pixel "world". ORIGINAL draws them by
+            // range: a belt reads as a band of sparks precisely BECAUSE each rock
+            // is a pixel or two. Rocks skip the angular rule, the impostor tier
+            // and the aerial fade, and fall through to the authored range.
+            const br = (angular && !(_hyRocks && o.userData && o.userData.type === 'asteroid'))
+                ? _cullBodyRadius(o) : 0;
             // AERIAL PERSPECTIVE — the depth term (see the note above the
             // constants). One sqrt per body per pass, and zero for everything
             // inside AERIAL_NEAR, which is everything the player is near.
