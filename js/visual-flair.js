@@ -262,6 +262,7 @@ function createHitSparks(position, colorHex) {
         color: colorHex || 0xffcc66, size: 2.2, transparent: true,
         opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false
     });
+    if (typeof _hyFlat === 'function') _hyFlat(mat); // HYBRID: ORIGINAL brightness
     const pts = new THREE.Points(geo, mat);
     pts.position.copy(position);
     scene.add(pts);

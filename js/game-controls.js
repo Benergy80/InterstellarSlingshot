@@ -67,6 +67,28 @@ function adjustMinimumSpeed(speed) {
 // Replaces setInterval-based explosions with game-loop integrated animations
 // Fixes memory leaks, performance issues, and timing inconsistencies
 
+// HYBRID explosions switch: 'original' (default) = the ORIGINAL flat neon
+// kill/faction/pirate bursts; 'overhaul' = the layered sprite bursts
+// (*_overhaul). Each restored builder dispatches on this. The ORIGINAL
+// materials opt out of the overhaul's ACES tone curve (toneMapped = false)
+// so they render at the ORIGINAL's saturated brightness.
+function _hyFxOverhaul() {
+    return !window.HYBRID || window.HYBRID.is('explosions', 'overhaul');
+}
+// Opt a material (or every material under an object) out of ACES — only
+// while explosions are 'original'. Used by the ORIGINAL death/impact builders
+// the overhaul never rewrote (boss, Borg, missile, wingman, asteroid, player,
+// hit sparks), which otherwise render ACES-dulled in this build.
+function _hyFlat(x) {
+    if (!x || _hyFxOverhaul()) return x;
+    if (x.isMaterial) { x.toneMapped = false; return x; }
+    if (x.traverse) x.traverse(function (o) {
+        if (!o.material) return;
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) { m.toneMapped = false; });
+    });
+    return x;
+}
+
 const explosionManager = {
     activeExplosions: [],
 
@@ -7106,7 +7128,65 @@ const PIRATE_EXPLOSION_VARIANTS = {
     flare:  { core: 0xffcc33, particles: 0xffee88, count: 38, secondary: 0xffaa00 },
     plasma: { core: 0x33ddff, particles: 0x88eeff, count: 24, secondary: 0x00aaff }
 };
-function createPirateExplosionVariant(position, variant, victim) {
+function createPirateExplosionVariant(position, variant) {
+    if (_hyFxOverhaul()) return createPirateExplosionVariant_overhaul.apply(this, arguments);
+    const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
+    const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
+    const explosionMaterial = new THREE.MeshBasicMaterial({ color: cfg.core, transparent: true });
+    explosionMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    const particles = new THREE.BufferGeometry();
+    const positions = new Float32Array(cfg.count * 3);
+    for (let i = 0; i < cfg.count; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 22;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 22;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 22;
+    }
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+        color: cfg.particles, size: 1.1, transparent: true, opacity: 1
+    });
+    particleMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const particleSystem = new THREE.Points(particles, particleMaterial);
+    particleSystem.position.copy(position);
+    scene.add(particleSystem);
+
+    // IMPORTANT: scene removal/disposal must live in cleanup(), not inline
+    // in update() — explosionManager.clearAll() drops entries by calling
+    // cleanup(), so an entry without one gets orphaned in the scene,
+    // frozen mid-fade (that was the "explosions not cleaning up" bug).
+    let scale = 1, opacity = 1;
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            scale += 0.5 * (deltaTime / 60);
+            opacity -= 0.05 * (deltaTime / 60);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+            particleSystem.scale.set(scale * 1.2, scale * 1.2, scale * 1.2);
+            particleMaterial.opacity = Math.max(0, opacity);
+            return opacity > 0;
+        },
+        cleanup() {
+            scene.remove(explosion); scene.remove(particleSystem);
+            explosionGeometry.dispose(); explosionMaterial.dispose();
+            particles.dispose(); particleMaterial.dispose();
+        }
+    });
+
+    // Delayed secondary pop — small offset burst so each variant reads as
+    // a two-beat detonation rather than a single flash.
+    const offset = position.clone().add(new THREE.Vector3(
+        (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10));
+    setTimeout(() => {
+        if (typeof createExplosionEffect === 'function') createExplosionEffect(offset);
+    }, variant === 'plasma' ? 200 : 130);
+}
+
+// ── overhaul version of createPirateExplosionVariant, kept for flag-gated comparison ──
+function createPirateExplosionVariant_overhaul(position, variant, victim) {
     const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
     // Layered burst in the variant's loot colors (see _fxLayeredBurst) —
     // the old version was an OPAQUE growing sphere plus opaque points,
@@ -8779,6 +8859,92 @@ function _fxKillBurst(center, S, cfg, victim) {
 }
 
 function createExplosionEffect(targetObject) {
+    if (_hyFxOverhaul()) return createExplosionEffect_overhaul.apply(this, arguments);
+    // Support both object with position property and direct position vector
+    let position;
+    if (targetObject && targetObject.position) {
+        position = targetObject.position;
+    } else if (targetObject && typeof targetObject.x !== 'undefined') {
+        position = targetObject;
+    } else {
+        console.warn('Invalid target object for explosion');
+        return;
+    }
+
+    // Create explosion sphere
+    const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
+    const explosionMaterial = new THREE.MeshBasicMaterial({
+        color: 0xff6600,
+        transparent: true
+    });
+    explosionMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
+    explosion.position.copy(position);
+    scene.add(explosion);
+
+    // Create particle burst
+    const particles = new THREE.BufferGeometry();
+    const particleCount = 30;
+    const positions = new Float32Array(particleCount * 3);
+
+    for (let i = 0; i < particleCount; i++) {
+        positions[i * 3] = (Math.random() - 0.5) * 20;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 20;
+        positions[i * 3 + 2] = (Math.random() - 0.5) * 20;
+    }
+
+    particles.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const particleMaterial = new THREE.PointsMaterial({
+        color: 0xff8800,
+        size: 1.0,
+        transparent: true,
+        opacity: 1
+    });
+    particleMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const particleSystem = new THREE.Points(particles, particleMaterial);
+    particleSystem.position.copy(position);
+    scene.add(particleSystem);
+
+    // Add to explosion manager for frame-based animation
+    let scale = 1;
+    let opacity = 1;
+    let particleLife = 1.0;
+    let elapsed = 0;
+
+    explosionManager.addExplosion({
+        update(deltaTime) {
+            elapsed += deltaTime;
+
+            // Update explosion sphere (slower growth and fade)
+            scale += 0.5 * (deltaTime / 60);  // Normalized to 60fps
+            opacity -= 0.05 * (deltaTime / 60);
+            explosion.scale.set(scale, scale, scale);
+            explosionMaterial.opacity = Math.max(0, opacity);
+
+            // Update particles
+            particleLife -= 0.02 * (deltaTime / 60);
+            particleMaterial.opacity = Math.max(0, particleLife);
+
+            // Return false when animation is complete
+            return opacity > 0 || particleLife > 0;
+        },
+
+        cleanup() {
+            scene.remove(explosion);
+            scene.remove(particleSystem);
+            explosionGeometry.dispose();
+            explosionMaterial.dispose();
+            particles.dispose();
+            particleMaterial.dispose();
+        }
+    });
+
+    // Play explosion sound
+    playSound('explosion');
+}
+
+// ── overhaul version of createExplosionEffect, kept for flag-gated comparison ──
+function createExplosionEffect_overhaul(targetObject) {
     // Support both object with position property and direct position vector
     let position;
     if (targetObject && targetObject.position) {
@@ -9003,7 +9169,7 @@ const _FX_BLOB_HOLD = 0.42;
 // Signature is unchanged — every faction recipe below calls this — and so
 // are the `life`/`opacity` timings. What changed is the shape, the cooling
 // colour ramp, the opacity hold, the cap, and the growth budget.
-function _fxSphere(center, radius, color, opacity, life, growth) {
+function _fxSphere_overhaul(center, radius, color, opacity, life, growth) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const hue = new THREE.Color(color);
     const hot = hue.clone().lerp(new THREE.Color(0xffffff), _FX_BLOB_WHITE);
@@ -9040,46 +9206,59 @@ function _fxSphere(center, radius, color, opacity, life, growth) {
     });
 }
 
-// THE EXPANDING FRONT. This is now the layer that carries SIZE — the blob
-// above holds still and stays hot, this one sweeps outward and stays thin.
-// Three changes beyond the cap: the annulus is 9% of the radius instead of
-// 18% (a fat band sweeping outward additively is an area machine, which is
-// the exact failure the blob was just taken off), it is re-aimed at the
-// camera every frame instead of only at spawn, so strafing past a kill does
-// not turn the front into an ellipse, and the expansion is EASED.
-//
-// WHY EASED. The growth was linear and, at the rates the recipes ask for,
-// it spent its whole travel almost immediately: measured at 250u, the
-// Romulan front (4u seed, growth 9) went from 113 px to its capped 315 px
-// diameter in 80 ms and then sat perfectly still for the remaining ~600 ms
-// of its life while only its opacity changed. A shock front that stops
-// moving and then dissolves in place is not a front, it is a decal.
-//
-// So the travel is spread across the whole life on the same decelerating
-// curve `_fxShockwave` already uses — fast out of the gate, slowing as it
-// goes, which is what a real pressure front does.
-//
-// The important part is WHAT IT EXPANDS TOWARD. Easing alone did not fix
-// the freeze, it moved it earlier (an ease-OUT is fastest at the start, so
-// it reached the cap at 50 ms instead of 80). The front has to aim at the
-// limit that actually applies: `min(natural end scale, current cap scale)`,
-// re-evaluated each frame. Then the ring spends its entire life expanding
-// no matter the range — out where the cap is inert it arrives at exactly
-// the old endpoint (1 + growth*life, unchanged), and up close it arrives
-// gently at the cap instead of slamming into it in three frames. A front
-// that stops moving reads as a decal; one that decelerates into its limit
-// reads as a front running out of energy, which is what it is.
-//
-// AND IT IS PAINTED, NOT OUTLINED. A 9%-wide RingGeometry on an untextured
-// MeshBasicMaterial is a constant-brightness annulus with a vertical edge at
-// each rim: measured on the Martian Pirate kill — the most common death in
-// the game — that was a 113/255 scanline step, and read blind the frame was
-// "a perfect uniform-width brown circle that reads as a HUD reticle". The
-// band is now painted by the same radial alpha ramp `_fxShockwave` uses
-// (which measures a 20/255 step), on the same shared unit geometry, so the
-// front glows brightest in the middle of the band and reaches zero at both
-// rims. Geometry is SHARED and must not be disposed here.
+function _fxSphere(center, radius, color, opacity, life, growth) {
+    if (_hyFxOverhaul()) return _fxSphere_overhaul.apply(this, arguments);
+    const geo = new THREE.SphereGeometry(radius, 16, 12);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(center);
+    m.frustumCulled = false;
+    scene.add(m);
+    let s = 1, op = opacity;
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= (opacity / life) * (dt / 50);
+            m.scale.set(s, s, s);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(m); geo.dispose(); mat.dispose(); }
+    });
+}
+
 function _fxRing(center, radius, color, growth, life, opacity) {
+    if (_hyFxOverhaul()) return _fxRing_overhaul.apply(this, arguments);
+    const geo = new THREE.RingGeometry(radius, radius * 1.18, 40);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity || 0.85,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.copy(center);
+    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+    ring.frustumCulled = false;
+    scene.add(ring);
+    let s = 1, op = (opacity || 0.85);
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= ((opacity || 0.85) / life) * (dt / 50);
+            ring.scale.set(s, s, 1);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
+    });
+}
+
+// ── overhaul version of _fxRing, kept for flag-gated comparison ──
+function _fxRing_overhaul(center, radius, color, growth, life, opacity) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const geo = _fxShockGeo();          // unit outer radius, band painted by the map
     const mat = new THREE.MeshBasicMaterial({
@@ -9149,13 +9328,64 @@ function _fxRing(center, radius, color, growth, life, opacity) {
 // Cost: one Sprite each, no per-shard geometry to build or dispose.
 const _FX_STREAK_AXES = { tetra: [3.1, 1.25], octa: [4.4, 0.95] };
 const _fxStreakV = new THREE.Vector3();
-// `opa` is the streak's PEAK opacity, default 1. It exists because a streak
-// that has left the fireball is no longer sitting on top of a bright field:
-// out on the sky it is a thin bright sprite against black, and a sprite's
-// steepest gradient is peak/half-width. The generic kill pairs a lower peak
-// with a larger sprite (see the call site) — same light, gentler slope — which
-// is the same trade the ember cloud's own size/opacity note records.
-function _fxShards(center, count, color, size, speed, life, kind, opa) {
+// Flying angular SHARDS — tetrahedra / octahedra that burst outward
+// and tumble. Gives factions a sharp, non-circular signature.
+function _fxShards(center, count, color, size, speed, life, kind) {
+    if (_hyFxOverhaul()) return _fxShards_overhaul.apply(this, arguments);
+    const shards = [];
+    for (let i = 0; i < count; i++) {
+        const s = size * (0.6 + Math.random() * 0.8);
+        let g;
+        if (kind === 'octa')      g = new THREE.OctahedronGeometry(s, 0);
+        else if (kind === 'tetra')g = new THREE.TetrahedronGeometry(s, 0);
+        else                      g = new THREE.TetrahedronGeometry(s, 0);
+        const m = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        m.toneMapped = false; // HYBRID: ORIGINAL brightness
+        const mesh = new THREE.Mesh(g, m);
+        mesh.position.copy(center);
+        mesh.frustumCulled = false;
+        scene.add(mesh);
+        shards.push({
+            mesh: mesh, geo: g, mat: m,
+            vel: new THREE.Vector3(
+                Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5
+            ).normalize().multiplyScalar(speed * (0.5 + Math.random())),
+            spin: new THREE.Vector3(
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.5,
+                (Math.random() - 0.5) * 0.5)
+        });
+    }
+    let l = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            l -= (1 / life) * (dt / 50);
+            const f = dt / 50;
+            for (let i = 0; i < shards.length; i++) {
+                const c = shards[i];
+                c.mesh.position.addScaledVector(c.vel, f);
+                c.mesh.rotation.x += c.spin.x * f;
+                c.mesh.rotation.y += c.spin.y * f;
+                c.mesh.rotation.z += c.spin.z * f;
+                c.mat.opacity = Math.max(0, l);
+            }
+            return l > 0;
+        },
+        cleanup() {
+            for (let i = 0; i < shards.length; i++) {
+                scene.remove(shards[i].mesh);
+                shards[i].geo.dispose();
+                shards[i].mat.dispose();
+            }
+        }
+    });
+}
+
+// ── overhaul version of _fxShards, kept for flag-gated comparison ──
+function _fxShards_overhaul(center, count, color, size, speed, life, kind, opa) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const AX = _FX_STREAK_AXES[kind] || _FX_STREAK_AXES.tetra;
     const PK = (opa > 0) ? opa : 1;
@@ -9776,6 +10006,35 @@ function _fxHullChunks(victim, center, K, tint) {
 // Low-segment ring = a polygon outline (3 = triangle, 5 = pentagon,
 // 6 = hexagon). A crisp geometric alternative to the round shockwave.
 function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
+    if (_hyFxOverhaul()) return _fxPolyRing_overhaul.apply(this, arguments);
+    const geo = new THREE.RingGeometry(radius, radius * 1.22, Math.max(3, sides), 1);
+    const mat = new THREE.MeshBasicMaterial({
+        color: color, transparent: true, opacity: opacity || 0.85,
+        side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const ring = new THREE.Mesh(geo, mat);
+    ring.position.copy(center);
+    if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+    ring.rotation.z = Math.random() * Math.PI;
+    ring.frustumCulled = false;
+    scene.add(ring);
+    let s = 1, op = (opacity || 0.85);
+    explosionManager.addExplosion({
+        update(dt) {
+            s += growth * (dt / 50);
+            op -= ((opacity || 0.85) / life) * (dt / 50);
+            ring.scale.set(s, s, 1);
+            ring.rotation.z += 0.03 * (dt / 50);
+            mat.opacity = Math.max(0, op);
+            return op > 0;
+        },
+        cleanup() { scene.remove(ring); geo.dispose(); mat.dispose(); }
+    });
+}
+
+// ── overhaul version of _fxPolyRing, kept for flag-gated comparison ──
+function _fxPolyRing_overhaul(center, radius, color, sides, growth, life, opacity) {
     if (typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     // Same 18% -> 10% thinning, the same screen cap and the same eased
     // travel as _fxRing: this is Federation's and Imperial's expanding
@@ -9882,6 +10141,52 @@ function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
 // brightest small thing in the frame.
 const _FX_PARTICLE_OPA = 0.54;
 function _fxParticles(center, count, color, size, speed, life, swirl) {
+    if (_hyFxOverhaul()) return _fxParticles_overhaul.apply(this, arguments);
+    const geo = new THREE.BufferGeometry();
+    const pos = new Float32Array(count * 3);
+    const vel = [];
+    for (let i = 0; i < count; i++) {
+        pos[i*3] = center.x; pos[i*3+1] = center.y; pos[i*3+2] = center.z;
+        const dir = new THREE.Vector3(
+            (Math.random() - 0.5), (Math.random() - 0.5), (Math.random() - 0.5)
+        ).normalize().multiplyScalar(speed * (0.5 + Math.random()));
+        if (swirl) {
+            // Add a tangential component for a spiral look
+            const tang = new THREE.Vector3(-dir.z, dir.y * 0.3, dir.x).multiplyScalar(swirl);
+            dir.add(tang);
+        }
+        vel.push(dir);
+    }
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+        color: color, size: size, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false
+    });
+    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    scene.add(pts);
+    let l = 1.0;
+    explosionManager.addExplosion({
+        update(dt) {
+            l -= (1 / life) * (dt / 50);
+            mat.opacity = Math.max(0, l);
+            const arr = geo.attributes.position.array;
+            const f = dt / 50;
+            for (let i = 0; i < count; i++) {
+                arr[i*3]   += vel[i].x * f;
+                arr[i*3+1] += vel[i].y * f;
+                arr[i*3+2] += vel[i].z * f;
+            }
+            geo.attributes.position.needsUpdate = true;
+            return l > 0;
+        },
+        cleanup() { scene.remove(pts); geo.dispose(); mat.dispose(); }
+    });
+}
+
+// ── overhaul version of _fxParticles, kept for flag-gated comparison ──
+function _fxParticles_overhaul(center, count, color, size, speed, life, swirl) {
     const geo = new THREE.BufferGeometry();
     const pos = new Float32Array(count * 3);
     const vel = [];
@@ -9986,6 +10291,41 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
 }
 
 function _fxLightning(center, count, color, len) {
+    if (_hyFxOverhaul()) return _fxLightning_overhaul.apply(this, arguments);
+    for (let i = 0; i < count; i++) {
+        const geo = new THREE.CylinderGeometry(0.6, 0.1, len, 5);
+        const mat = new THREE.MeshBasicMaterial({
+            color: color, transparent: true, opacity: 0.9,
+            blending: THREE.AdditiveBlending, depthWrite: false
+        });
+        mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+        const bolt = new THREE.Mesh(geo, mat);
+        bolt.position.copy(center);
+        const dir = new THREE.Vector3(
+            Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        const up = new THREE.Vector3(0, 1, 0);
+        const axis = new THREE.Vector3().crossVectors(up, dir);
+        if (axis.length() > 0.001) {
+            axis.normalize();
+            bolt.setRotationFromAxisAngle(axis, Math.acos(up.dot(dir)));
+        }
+        bolt.position.add(dir.clone().multiplyScalar(len * 0.5));
+        bolt.frustumCulled = false;
+        scene.add(bolt);
+        let op = 0.9;
+        explosionManager.addExplosion({
+            update(dt) {
+                op -= 0.12 * (dt / 50);
+                mat.opacity = Math.max(0, op);
+                return op > 0;
+            },
+            cleanup() { scene.remove(bolt); geo.dispose(); mat.dispose(); }
+        });
+    }
+}
+
+// ── overhaul version of _fxLightning, kept for flag-gated comparison ──
+function _fxLightning_overhaul(center, count, color, len) {
     // A bolt runs from the centre out to `len`, so `len` IS its radius on
     // screen. The Sith recipe asks for 80 units, which at 250u is ~300 px
     // against a 250 px cap. Bolts are struck once and do not expand, so the
@@ -10077,7 +10417,7 @@ function _fxTintBlob(center, radius, color, opacity, life, growth) {
 // _fxHullChunks); without it this function has only a point, and a point
 // cannot be broken into wreckage. Optional: the proximity backstop still
 // finds a hull for the callers that do not pass one.
-function createFactionExplosion(position, galaxyId, scale, victim) {
+function createFactionExplosion_overhaul(position, galaxyId, scale, victim) {
     if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const center = position.clone ? position.clone()
                  : new THREE.Vector3(position.x, position.y, position.z);
@@ -10188,6 +10528,73 @@ function createFactionExplosion(position, galaxyId, scale, victim) {
     // faction path costs one draw call less than it did.
     try { playSound('explosion'); } catch (e) {}
 }
+
+// Public: faction-flavored regular-kill explosion. galaxyId picks the
+// recipe; scale multiplies all sizes (defaults to 1).
+function createFactionExplosion(position, galaxyId, scale) {
+    if (_hyFxOverhaul()) return createFactionExplosion_overhaul.apply(this, arguments);
+    if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
+    const center = position.clone ? position.clone()
+                 : new THREE.Vector3(position.x, position.y, position.z);
+    const S = scale || 1;
+    const cfg = FACTION_EXPLOSION[galaxyId] || FACTION_EXPLOSION[0];
+
+    switch (cfg.style) {
+        case 'electric': // Federation — white core + crisp TRIANGULAR ring + blue sparks
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.6);
+            _fxPolyRing(center, 5 * S, cfg.accent, 3, 7, 14, 0.9);  // triangle
+            _fxParticles(center, 26, cfg.spark, 2.4 * S, 7 * S, 16, 0);
+            break;
+        case 'shrapnel': // Klingon — jagged TETRAHEDRON shrapnel double-burst
+            _fxSphere(center, 8 * S, cfg.core, 0.95, 12, 2.2);
+            _fxShards(center, 26, cfg.spark, 4 * S, 12 * S, 16, 'tetra');
+            setTimeout(() => {
+                _fxSphere(center, 11 * S, cfg.accent, 0.8, 14, 2.8);
+                _fxShards(center, 18, cfg.core, 3 * S, 9 * S, 14, 'tetra');
+            }, 140);
+            break;
+        case 'ionbloom': // Rebel — slow green bloom + lingering haze
+            _fxSphere(center, 9 * S, cfg.accent, 0.75, 26, 1.6);
+            _fxSphere(center, 5 * S, cfg.core, 0.9, 18, 2.0);
+            _fxParticles(center, 30, cfg.spark, 3.0 * S, 4 * S, 28, 0);
+            break;
+        case 'singularity': // Romulan — implode then green outward flash
+            _fxParticles(center, 30, cfg.accent, 2.4 * S, -6 * S, 10, 0); // inward
+            setTimeout(() => {
+                _fxSphere(center, 6 * S, cfg.core, 1.0, 12, 3.4);
+                _fxRing(center, 4 * S, cfg.spark, 9, 14, 0.85);
+            }, 220);
+            break;
+        case 'tieblast': // Imperial — white flash + HEXAGONAL twin rings
+            _fxSphere(center, 9 * S, cfg.core, 1.0, 9, 3.0);
+            _fxPolyRing(center, 6 * S, cfg.accent, 6, 11, 16, 0.8);  // hexagon
+            _fxPolyRing(center, 6 * S, cfg.spark, 6, 6, 16, 0.5);
+            break;
+        case 'spiral': // Cardassian — swirling orange particles + spinning shards
+            _fxSphere(center, 6 * S, cfg.core, 0.9, 14, 2.2);
+            _fxParticles(center, 36, cfg.accent, 2.6 * S, 6 * S, 22, 3.2);
+            _fxShards(center, 12, cfg.spark, 3 * S, 5 * S, 20, 'tetra');
+            break;
+        case 'darkenergy': // Sith — red core + OCTAHEDRON shards + lightning + smoke
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.4);
+            _fxLightning(center, 8, cfg.spark, 80 * S);
+            _fxShards(center, 16, cfg.accent, 4 * S, 8 * S, 18, 'octa');
+            _fxSphere(center, 12 * S, cfg.accent, 0.45, 30, 2.0);
+            break;
+        case 'goldrings': // Vulcan — small concentric CIRCULAR gold rings
+            // Halved per request: Vulcan kills are a compact pop, not a
+            // big bloom. Initial radius AND expansion growth both x0.5.
+            _fxSphere(center, 1.75 * S, cfg.core, 0.9, 14, 0.8);
+            _fxRing(center, 1.5 * S, cfg.accent, 2, 16, 0.75);
+            setTimeout(() => _fxRing(center, 1.5 * S, cfg.spark, 2.5, 16, 0.6), 130);
+            setTimeout(() => _fxRing(center, 1.5 * S, cfg.accent, 3, 16, 0.5), 280);
+            break;
+        default:
+            _fxSphere(center, 7 * S, cfg.core, 1.0, 14, 2.5);
+            _fxParticles(center, 24, cfg.spark, 2.4 * S, 7 * S, 14, 0);
+    }
+    try { playSound('explosion'); } catch (e) {}
+}
 if (typeof window !== 'undefined') window.createFactionExplosion = createFactionExplosion;
 
 // =============================================================================
@@ -10209,6 +10616,7 @@ function createHitSparks(worldPos, tint, scale) {
         color: 0xffffcc, transparent: true, opacity: 0.95,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    _hyFlat(flashMat); // HYBRID: ORIGINAL brightness
     const flash = new THREE.Mesh(flashGeo, flashMat);
     flash.position.copy(center);
     flash.frustumCulled = false;
@@ -10241,6 +10649,7 @@ function createHitSparks(worldPos, tint, scale) {
         color: tint || 0xffaa33, size: 2.4 * S, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    _hyFlat(mat); // HYBRID: ORIGINAL brightness
     const pts = new THREE.Points(geo, mat);
     pts.frustumCulled = false;
     scene.add(pts);
@@ -10287,6 +10696,7 @@ function createBossExplosion(position, options) {
             color: color, transparent: true, opacity: opacity,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
+        _hyFlat(mat); // HYBRID: ORIGINAL brightness
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.copy(center);
         mesh.frustumCulled = false;
@@ -10316,6 +10726,7 @@ function createBossExplosion(position, options) {
             side: THREE.DoubleSide,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
+        _hyFlat(mat); // HYBRID: ORIGINAL brightness
         const ring = new THREE.Mesh(geo, mat);
         ring.position.copy(center);
         if (typeof camera !== 'undefined') ring.lookAt(camera.position);
@@ -10350,6 +10761,7 @@ function createBossExplosion(position, options) {
                 color: color, transparent: true, opacity: 1,
                 blending: THREE.AdditiveBlending, depthWrite: false
             });
+            _hyFlat(mat); // HYBRID: ORIGINAL brightness
             const m = new THREE.Mesh(geo, mat);
             m.position.copy(center);
             m.frustumCulled = false;
@@ -10445,6 +10857,7 @@ function createBossExplosion(position, options) {
             color: 0xffcc66, size: 7 * scaleMul, transparent: true, opacity: 1,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
+        _hyFlat(partMat); // HYBRID: ORIGINAL brightness
         const particles = new THREE.Points(partGeo, partMat);
         particles.frustumCulled = false;
         scene.add(particles);
@@ -10515,6 +10928,7 @@ function createMassiveBorgExplosion(position, cubeSize = 30) {
         opacity: 0.9,
         blending: THREE.AdditiveBlending
     });
+    _hyFlat(explosionMat); // HYBRID: ORIGINAL brightness
     const explosion = new THREE.Mesh(explosionGeo, explosionMat);
     explosion.position.copy(position);
     scene.add(explosion);
@@ -10527,6 +10941,7 @@ function createMassiveBorgExplosion(position, cubeSize = 30) {
         opacity: 0.8,
         blending: THREE.AdditiveBlending
     });
+    _hyFlat(explosionMat2); // HYBRID: ORIGINAL brightness
     const explosion2 = new THREE.Mesh(explosionGeo2, explosionMat2);
     explosion2.position.copy(position);
     scene.add(explosion2);
@@ -10560,6 +10975,7 @@ function createMassiveBorgExplosion(position, cubeSize = 30) {
         opacity: 1.0,
         blending: THREE.AdditiveBlending
     });
+    _hyFlat(particleMaterial); // HYBRID: ORIGINAL brightness
 
     const particles = new THREE.Points(particleGeometry, particleMaterial);
     scene.add(particles);
@@ -10630,6 +11046,7 @@ function createMassiveBorgExplosion(position, cubeSize = 30) {
                         opacity: 0.7,
                         blending: THREE.AdditiveBlending
                     });
+                    _hyFlat(ringMat); // HYBRID: ORIGINAL brightness
                     const ring = new THREE.Mesh(ringGeo, ringMat);
                     ring.position.copy(position);
                     ring.rotation.x = Math.random() * Math.PI;
@@ -13903,6 +14320,7 @@ function createMissileExplosion(position) {
         transparent: true,
         opacity: 0.9
     });
+    _hyFlat(explosionMaterial); // HYBRID: ORIGINAL brightness
     const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
     explosion.position.copy(position);
     scene.add(explosion);
@@ -13925,6 +14343,7 @@ function createMissileExplosion(position) {
         transparent: true,
         opacity: 1
     });
+    _hyFlat(particleMaterial); // HYBRID: ORIGINAL brightness
     const particleSystem = new THREE.Points(particles, particleMaterial);
     particleSystem.position.copy(position);
     scene.add(particleSystem);
@@ -16751,6 +17170,7 @@ function createWingmanExplosion(ally) {
         color: 0xffffff, transparent: true, opacity: 1.0,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    _hyFlat(implMat); // HYBRID: ORIGINAL brightness
     const impl = new THREE.Mesh(implGeo, implMat);
     impl.position.copy(center);
     impl.renderOrder = 61;
@@ -16767,6 +17187,7 @@ function createWingmanExplosion(ally) {
             color: baseColor, transparent: true, opacity: 0.0,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
+        _hyFlat(beamMat); // HYBRID: ORIGINAL brightness
         const beam = new THREE.Mesh(beamGeo, beamMat);
         // Move pivot to base so the beam extends outward along +Y when scaled
         beam.position.set(0, 100, 0);
@@ -16789,6 +17210,7 @@ function createWingmanExplosion(ally) {
         color: 0xffcc44, transparent: true, opacity: 1.0,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    _hyFlat(fireballMat); // HYBRID: ORIGINAL brightness
     const fireball = new THREE.Mesh(fireballGeo, fireballMat);
     fireball.position.copy(center);
     fireball.renderOrder = 60;
@@ -16801,6 +17223,7 @@ function createWingmanExplosion(ally) {
         side: THREE.DoubleSide,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    _hyFlat(shockMat); // HYBRID: ORIGINAL brightness
     const shock = new THREE.Mesh(shockGeo, shockMat);
     shock.position.copy(center);
     if (typeof camera !== 'undefined') shock.lookAt(camera.position);
@@ -16825,6 +17248,7 @@ function createWingmanExplosion(ally) {
         color: 0xffaa44, size: 4, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    _hyFlat(partMat); // HYBRID: ORIGINAL brightness
     const particles = new THREE.Points(partGeo, partMat);
     particles.position.copy(center);
     scene.add(particles);
