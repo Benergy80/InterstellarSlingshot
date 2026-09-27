@@ -2467,11 +2467,24 @@ function getCurrentGalaxyId() {
             typeof p.userData.galaxyId === 'number'
         );
         
+        // HYBRID: under solScale:big a galaxy's star systems sit 13-48k from its
+        // core and Sol sits 23,860 from Sgr A*, so the ORIGINAL 20,000 reach
+        // reported "no galaxy" at the start point. Wider reach, and the NEAREST
+        // core wins (with a wider reach the first match is no longer the right one).
+        const _big = !!(window.HYBRID && window.HYBRID.is('solScale', 'big'));
+        if (_big) {
+            let best = -1, bestD = 50000;
+            for (const blackHole of galaxyBlackHoles) {
+                const distance = camera.position.distanceTo(blackHole.position);
+                if (distance < bestD) { bestD = distance; best = blackHole.userData.galaxyId; }
+            }
+            if (best !== -1) return best;
+        }
         // Check if we're near any galaxy black hole
         for (const blackHole of galaxyBlackHoles) {
             const distance = camera.position.distanceTo(blackHole.position);
             const detectionRadius = 20000; // Large radius around each black hole
-                        
+
             if (distance < detectionRadius) {
                 return blackHole.userData.galaxyId;
             }

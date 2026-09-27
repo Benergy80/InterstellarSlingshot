@@ -321,12 +321,17 @@ check('park', async () => {
     const parks0 = dp.arrivalParks; D.unlockWarp(); D.goPhase('warpToNebulaCluster');
     const t0 = Date.now(); let warped = false;
     const trace = [];
-    while (Date.now() - t0 < 45000) {
+    // Nebulae sit 28-60k out since the scale package, so the leg is long: allow 90 s.
+    while (Date.now() - t0 < 90000) {
         await sleep(250); if (gs.emergencyWarp.active) warped = true; if (dp.arrivalParks > parks0) break;
         if (!trace.length || trace[trace.length - 1][1] !== dp.phase) trace.push([Math.round((Date.now() - t0) / 100) / 10, dp.phase, ie('enemies').length]);
+        // Moving to open space can cross into another galaxy's range, and the
+        // game then loads that galaxy's enemies — 200-odd of them, which drag the
+        // pilot into a fight. This check is about the PARK, so keep them stashed.
+        if (ie('enemies').length) K.stashEnemies();
         // A post-kill timer from the demo's last fight (mine / findLocalEnemies)
-        // can overwrite the staged phase a beat later; hold the leg for 6 s.
-        if (!warped && Date.now() - t0 < 6000 && dp.phase !== 'warpToNebulaCluster' && dp.phase !== 'coastToNebulaCluster') D.goPhase('warpToNebulaCluster');
+        // can overwrite the staged phase a beat later; hold the leg until it warps.
+        if (!warped && Date.now() - t0 < 15000 && dp.phase !== 'warpToNebulaCluster' && dp.phase !== 'coastToNebulaCluster') D.goPhase('warpToNebulaCluster');
     }
     const parkMs = dp.arrivalParks > parks0 ? Date.now() - t0 : null;
     await sleep(600);   // let the park settle a beat, as a viewer would see it
