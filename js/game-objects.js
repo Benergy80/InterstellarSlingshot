@@ -2571,6 +2571,9 @@ const HY_BH = {
     RAMP_FAR: 40,         // radii: beyond this only the ORIGINAL look shows
     RAMP_NEAR: 2.6,       // radii: full intensity (event-horizon warp fires at 2.5)
     GRID_FROM: 0.45,      // ramp value where the warped grid starts to fade in
+    ORIG_YIELD: 0,        // how far the ORIGINAL glow/disk/hoop fade as you close in: 0 never, 1 fully
+    GRID: false,          // the warped grid lines — off (Ben: "get rid of the grid lines")
+    OUTER_RING: false,    // the big circle at 6.4 radii — off (Ben: "not necessary")
     SPARKS: 320,          // spark streaks per hole (only drawn when near)
     WELL_RADII: 16,       // gravity / warning / slingshot see the hole within this many radii
     ARRIVE_RADII: [9, 15] // black-hole warp lands this many radii out (plus the critical distance)
@@ -2661,7 +2664,11 @@ function _hyBHLensMaterial(col) {
             // aurora: a halo breathing in the hole colour, plus a faint wide outer ring
             '  float halo = exp(-(rho - 1.0) * 0.75) * smoothstep(1.0, 1.35, rho);',
             '  float aur = hyVn(vec2(u*14.0, rho*1.4 - uTime*0.22), 14.0);',
-            '  float ring = exp(-pow((rho - 6.4) / 0.045, 2.0)) * 0.55 + exp(-pow((rho - 6.4) / 0.4, 2.0)) * 0.10;',
+            // Ben, 2026-09-27: "The big circles around the black holes are not
+            // necessary." Off unless HY_BH.OUTER_RING is set.
+            (HY_BH.OUTER_RING
+                ? '  float ring = exp(-pow((rho - 6.4) / 0.045, 2.0)) * 0.55 + exp(-pow((rho - 6.4) / 0.4, 2.0)) * 0.10;'
+                : '  float ring = 0.0;'),
             '  float edge = smoothstep(8.0, 7.2, rho);',
             '  float iD = uBright * (0.04 + 0.96 * pow(uI, 1.1)) * (1.0 + 0.5 * uI);',
             '  float iA = uAur * (0.02 + 0.98 * pow(uI, 1.4)) * (1.0 + 1.2 * uI);',
@@ -2837,10 +2844,13 @@ function _hyBHTick(renderer, scene, camera) {
     // the flat hoop fades out, the ORIGINAL disk and glow ease back. The
     // ORIGINAL fade writes these opacities in animate(); scale whatever it
     // last wrote (and never compound while the game is paused).
+    // Ben, 2026-09-27: "Can the other black hole effects come back alongside
+    // the current ones." ORIG_YIELD 0 = the ORIGINAL glow, disk and hoop never
+    // fade; 1 = they hand over to the new layers completely.
     for (let i = 0; i < f.orig.length; i++) {
         const o = f.orig[i], m = o.m;
         if (m.opacity !== o.w) o.base = m.opacity;
-        m.opacity = o.base * (1 - o.k * I);
+        m.opacity = o.base * (1 - o.k * I * HY_BH.ORIG_YIELD);
         o.w = m.opacity;
     }
     // ORIGINAL colour influence: the galaxy-tint dome (updateGalaxyAtmosphere)
@@ -2849,7 +2859,7 @@ function _hyBHTick(renderer, scene, camera) {
         const dome = scene.getObjectByName('GalaxyAtmosphereDome');
         if (dome && dome.material) { dome.material.toneMapped = false; dome.material.needsUpdate = true; _hyBHDome.done = true; }
     }
-    const g = (I - HY_BH.GRID_FROM) / (1 - HY_BH.GRID_FROM);
+    const g = HY_BH.GRID ? (I - HY_BH.GRID_FROM) / (1 - HY_BH.GRID_FROM) : 0;
     f.grid.visible = g > 0;
     if (g > 0) { f.grid.material.opacity = 0.55 * g * g; f.grid.rotation.y = -now * 0.04; }
 }
