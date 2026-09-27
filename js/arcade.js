@@ -433,8 +433,12 @@
     }
     // visual-flair.js loads before this file, so this normally binds at once;
     // retry on DOM ready in case load order ever changes.
-    if (!_wrapArcadeText()) {
-        document.addEventListener('DOMContentLoaded', _wrapArcadeText, { once: true });
+    // HYBRID: ORIGINAL praise text is not re-fitted (size, wrap, position and
+    // pop are visual-flair's own). `?hy=praiseText:overhaul` re-enables the fit.
+    if (!window.HYBRID || HYBRID.is('praiseText', 'overhaul')) {
+        if (!_wrapArcadeText()) {
+            document.addEventListener('DOMContentLoaded', _wrapArcadeText, { once: true });
+        }
     }
 
     // Exports
