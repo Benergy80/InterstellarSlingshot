@@ -2644,7 +2644,12 @@ const _PLUME_NOSE_ASPECT_LO = -0.40;
 function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     if (_hyEnemyPlumesOverhaul()) return _updateShipThrusterCones_overhaul(ship, thrusting, dist, charge);
     if (!ship || !ship.userData || !ship.userData._thrusters) return;
-    const target = thrusting ? 1.0 : 0.0;
+    // HYBRID: the physical flight model passes its real throttle (0..1), so the
+    // flame tells the truth — a pilot light when coasting, full when burning.
+    // Boolean callers (player, wingmen) get the ORIGINAL on/off.
+    const target = (typeof thrusting === 'number')
+        ? 0.30 + 0.70 * Math.max(0, Math.min(1, thrusting))
+        : (thrusting ? 1.0 : 0.0);
     const cur = ship.userData._thrusterIntensity || 0;
     const speed = thrusting ? 0.22 : 0.15;
     const next = cur + (target - cur) * speed;
