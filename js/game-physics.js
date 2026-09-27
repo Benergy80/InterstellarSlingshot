@@ -1337,7 +1337,13 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         const _destRadius = (targetBlackHole.geometry && targetBlackHole.geometry.parameters &&
             targetBlackHole.geometry.parameters.radius) || 50;
         const _destCritical = Math.max(_destRadius * 2.5, 50);
-        const warpDistance = _destCritical + 650 + Math.random() * 600;
+        // HYBRID (blackHoles): a scaled hole lands HY_BH.ARRIVE_RADII out, so the
+        // hole is big in view but the player is well outside its warning zone.
+        const _arrR = (targetBlackHole.userData && targetBlackHole.userData._hyBHK && window.HY_BH)
+            ? window.HY_BH.ARRIVE_RADII : null;
+        const warpDistance = _arrR
+            ? _destCritical + _destRadius * (_arrR[0] + Math.random() * (_arrR[1] - _arrR[0]))
+            : _destCritical + 650 + Math.random() * 600;
         const warpAngle = Math.random() * Math.PI * 2;   // Random angle around black hole
         const warpHeight = (Math.random() - 0.5) * 200;  // Random height variation
         
@@ -3675,8 +3681,12 @@ if (surfaceCollision) {
                 if (planet.userData.type === 'blackhole') {
                     // Warp threshold relative to visual size so all BHs warp at
                     // a consistent visual distance from their surface
+                    // HYBRID (blackHoles): _hyBHK = how much bigger this hole is than
+                    // ORIGINAL, so every event-horizon distance keeps its size in radii.
+                    const _bhK = planet.userData._hyBHK || 1;
                     const criticalDistance = Math.max(planetRadius * 2.5, 50);
-                    const warningDistance = Math.max(criticalDistance + 50, gameState.eventHorizonWarning.warningDistance);
+                    const warningDistance = Math.max(criticalDistance + 50 * _bhK, gameState.eventHorizonWarning.warningDistance * _bhK);
+                    planet.userData._ehWarnDist = warningDistance;
                     
                     if (distance < warningDistance && distance > criticalDistance && !gameState.eventHorizonWarning.active) {
                         gameState.eventHorizonWarning.active = true;
@@ -3738,8 +3748,8 @@ if (surfaceCollision) {
                     _gravVec.multiplyScalar(20);
                     
                     // Enhanced spiral effects - OPTIMIZED: reduced DOM operations
-                    if (distance < 200) {
-                        const spiralStrength = Math.pow((200 - distance) / 200, 2);
+                    if (distance < 200 * _bhK) {
+                        const spiralStrength = Math.pow((200 * _bhK - distance) / (200 * _bhK), 2);
                         // Cache time once instead of calling Date.now() multiple times
                         const now = performance.now() * 0.001;
                         _gravSpiralForce.set(
@@ -3750,7 +3760,7 @@ if (surfaceCollision) {
 
                         gameState.velocityVector.addScaledVector(_gravSpiralForce, dtF);
 
-                        if (distance < 160) {
+                        if (distance < 160 * _bhK) {
                             camera.rotation.z += spiralStrength * 0.02 * Math.sin(now * 5) * dtF;
 
                             if (!window._cachedDangerOverlay) {

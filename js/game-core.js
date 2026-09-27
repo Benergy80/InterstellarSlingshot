@@ -1249,6 +1249,11 @@ if (planet.userData.type === 'moon') {
         if (planet.userData.type === 'asteroid') {
             return distance < activeRange;
         }
+        // HYBRID (blackHoles): a scaled black hole's well, warning and warp
+        // zone reach far past activeRange — keep it active out to WELL_RADII.
+        if (planet.userData._hyBHK && planet.geometry && window.HY_BH) {
+            return distance < Math.max(activeRange, planet.geometry.parameters.radius * window.HY_BH.WELL_RADII);
+        }
         return distance < activeRange;
     });
     

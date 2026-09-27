@@ -5227,7 +5227,9 @@ function updateEventHorizonWarnings() {
     //   • world-space distance from camera exceeds warningDistance
     if (ehw.active) {
         const bh = ehw.blackHole;
-        const warningDistance = ehw.warningDistance || 400;
+        // HYBRID (blackHoles): the physics loop stores each hole's own warning
+        // distance; a big hole's zone is far wider than the 200 default.
+        const warningDistance = (bh && bh.userData && bh.userData._ehWarnDist) || ehw.warningDistance || 400;
 
         let shouldClear = false;
         if (!bh) {

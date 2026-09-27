@@ -2533,10 +2533,446 @@ if (typeof window !== 'undefined' && typeof createOptimizedPlanets3D === 'functi
     window.createOptimizedPlanets3D = function () {
         const r = _hyCOP.apply(this, arguments);
         try { _hyOriginalBlackHoleLook(); } catch (e) { console.warn('HYBRID blackHoles:', e); }
+        try { _hyBigBlackHoles(); } catch (e) { console.warn('HYBRID blackHoles (size/disc):', e); }
         return r;
     };
     window.createOptimizedPlanets3D._hyBH = true;
 }
+
+// =============================================================================
+// HYBRID (blackHoles:original) — BIG BLACK HOLES WITH A LENSED DISC
+//
+// Ben: "Black holes should be increased in scale and should get more intense
+// aurora and accretion disc effect as the player approaches them."
+// On top of the ORIGINAL hole (particle swirl, glow sprite, gradient disk,
+// coloured hoop — all kept) every hole is
+//   1. SCALED: shadow radius = HY_BH.SIZE × its type factor. Glow, disk,
+//      hoop, gravity (mass × k²), warp threshold and every event-horizon
+//      distance scale with it (k = new radius / ORIGINAL radius, stored as
+//      userData._hyBHK so the physics / UI / arrival code can read it). A
+//      galaxy core's particle swirl and its star systems grow by
+//      HY_BH.GALAXY_SCALE so the galaxy still reads as a galaxy around it.
+//   2. given a vector-style Gargantua (hard, saturated, additive, no tone
+//      curve): a streaked accretion disc across the front, the far side
+//      lensed into an arch over the shadow and a fainter one beneath, a
+//      hairline photon ring, an aurora halo with a faint outer ring,
+//      tangential spark streaks and, closest in, a warped gravity-well grid.
+//   3. all of (2) ramps with distance measured in hole radii
+//      (HY_BH.RAMP_FAR → RAMP_NEAR), so it survives any rescale.
+// Everything here is skipped under ?hy=blackHoles:overhaul.
+// =============================================================================
+const HY_BH = {
+    SIZE: 900,            // shadow radius of a standard galaxy core (heart worlds are 620, Jupiter 120)
+    REL: { Dwarf: 0.75, Quasar: 1.35, sgr: 1.0, companion: 0.85, gateway: 0.45, other: 1.0 },
+    GALAXY_SCALE: 4,      // a galaxy core's particle swirl + star systems grow this much
+    CLEAR_RADII: 6,       // star systems around a hole are pushed out past this many radii
+    DISC_BRIGHT: 1.0,     // accretion disc + arch brightness multiplier
+    AURORA_BRIGHT: 1.0,   // halo / aurora brightness multiplier
+    RAMP_FAR: 40,         // radii: beyond this only the ORIGINAL look shows
+    RAMP_NEAR: 2.6,       // radii: full intensity (event-horizon warp fires at 2.5)
+    GRID_FROM: 0.45,      // ramp value where the warped grid starts to fade in
+    SPARKS: 320,          // spark streaks per hole (only drawn when near)
+    WELL_RADII: 16,       // gravity / warning / slingshot see the hole within this many radii
+    ARRIVE_RADII: [9, 15] // black-hole warp lands this many radii out (plus the critical distance)
+};
+if (typeof window !== 'undefined') window.HY_BH = HY_BH;
+
+const _hyBHNoiseGLSL = [
+    'float hyH21(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); return fract(p.x*p.y); }',
+    // value noise, x wrapped with period M so an angle coordinate has no seam
+    'float hyVn(vec2 p, float M){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);',
+    '  float x0 = mod(i.x, M), x1 = mod(i.x + 1.0, M);',
+    '  return mix(mix(hyH21(vec2(x0,i.y)), hyH21(vec2(x1,i.y)), f.x),',
+    '             mix(hyH21(vec2(x0,i.y+1.0)), hyH21(vec2(x1,i.y+1.0)), f.x), f.y); }'
+].join('\n');
+
+// The accretion disc: a flat annulus in the hole's equatorial plane, built in
+// hole-radius units (the fx group is scaled by the radius).
+function _hyBHDiscMaterial(col) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 }, uI: { value: 0 }, uBright: { value: HY_BH.DISC_BRIGHT },
+            uCol: { value: new THREE.Color(col) }, uN: { value: new THREE.Vector3(0, 1, 0) },
+            uCenter: { value: new THREE.Vector3() }, uRin: { value: 1.22 }, uRout: { value: 5.6 }
+        },
+        vertexShader: [
+            'varying vec3 vLocal; varying vec3 vWorld;',
+            'void main(){ vLocal = position; vec4 w = modelMatrix * vec4(position,1.0); vWorld = w.xyz;',
+            '  gl_Position = projectionMatrix * viewMatrix * w; }'
+        ].join('\n'),
+        fragmentShader: [
+            'uniform float uTime, uI, uBright, uRin, uRout; uniform vec3 uCol, uN, uCenter;',
+            'varying vec3 vLocal; varying vec3 vWorld;',
+            _hyBHNoiseGLSL,
+            'void main(){',
+            '  float r = length(vLocal.xz);',
+            '  float t = clamp((r - uRin) / (uRout - uRin), 0.0, 1.0);',
+            '  float a = atan(vLocal.z, vLocal.x) / 6.2831853;',
+            '  float u = a + uTime * 0.05 * pow(r, -1.5);',        // differential rotation → shear streaks
+            '  float s1 = hyVn(vec2(u*40.0, r*9.0), 40.0);',
+            '  float s2 = hyVn(vec2(u*96.0 + 7.0, r*31.0), 96.0);',
+            '  float s3 = hyVn(vec2(u*160.0 + 3.0, r*70.0), 160.0);',
+            '  float streak = smoothstep(0.30, 0.95, s1*0.45 + s2*0.35 + s3*0.20);',
+            '  float prof = smoothstep(0.0, 0.035, t) * pow(1.0 - t, 1.5);',
+            '  float hot = exp(-t * 6.0);',
+            '  vec3 c = mix(uCol, vec3(1.0, 0.52, 0.12), smoothstep(0.85, 0.35, t));',
+            '  c = mix(c, vec3(1.0, 0.96, 0.84), hot);',
+            '  vec3 T = normalize(cross(uN, vWorld - uCenter));',     // orbital direction
+            '  float dop = 1.0 + 0.6 * dot(T, normalize(cameraPosition - vWorld));',
+            '  float wisp = smoothstep(0.55, 1.0, s1) * smoothstep(0.4, 1.0, t) * 0.6;',  // ragged outer edge
+            '  float k = (prof * (0.30 + 0.70 * streak) + wisp * (1.0 - t)) * dop;',
+            '  float inten = uBright * (0.03 + 0.97 * pow(uI, 1.15)) * (1.0 + 0.8 * uI);',
+            '  gl_FragColor = vec4(c * k * inten, 1.0);',
+            '}'
+        ].join('\n'),
+        transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending, toneMapped: false, fog: false
+    });
+}
+
+// The lensed image, photon ring and aurora halo: one camera-facing quad whose
+// +y is the disc normal projected onto the screen, so the arch always sits
+// "above" the disc the way Gargantua's does. Quad spans ±8 radii.
+function _hyBHLensMaterial(col) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uTime: { value: 0 }, uI: { value: 0 }, uFace: { value: 0 },
+            uBright: { value: HY_BH.DISC_BRIGHT }, uAur: { value: HY_BH.AURORA_BRIGHT },
+            uCol: { value: new THREE.Color(col) }
+        },
+        vertexShader: 'varying vec2 vP; void main(){ vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+        fragmentShader: [
+            'uniform float uTime, uI, uFace, uBright, uAur; uniform vec3 uCol; varying vec2 vP;',
+            _hyBHNoiseGLSL,
+            'void main(){',
+            '  float rho = length(vP);',
+            '  if (rho < 0.98 || rho > 8.0) discard;',
+            '  float yN = vP.y / rho;',
+            '  float ang = atan(vP.y, vP.x) / 6.2831853;',
+            '  float u = ang + uTime * 0.012;',
+            '  float st = hyVn(vec2(u*9.0, rho*60.0), 9.0) * 0.5 + hyVn(vec2(u*23.0 + 5.0, rho*150.0), 23.0) * 0.3 + hyVn(vec2(u*60.0, rho*320.0), 60.0) * 0.2;',
+            // photon ring — a hairline hugging the shadow
+            '  float pr = exp(-pow((rho - 1.035) / 0.012, 2.0));',
+            // lensed far side of the disc: broad arch above, thinner fainter one below
+            '  float top = smoothstep(1.06, 1.13, rho) * smoothstep(1.95, 1.3, rho) * smoothstep(0.02, 0.42, yN);',
+            '  float bot = smoothstep(1.04, 1.08, rho) * smoothstep(1.42, 1.12, rho) * smoothstep(0.02, 0.42, -yN) * 0.45;',
+            '  float face = smoothstep(1.06, 1.12, rho) * smoothstep(1.6, 1.2, rho) * 0.55;',
+            '  float arch = mix(top + bot, face, uFace) * (0.12 + 0.88 * smoothstep(0.3, 0.8, st));',
+            // aurora: a halo breathing in the hole colour, plus a faint wide outer ring
+            '  float halo = exp(-(rho - 1.0) * 0.75) * smoothstep(1.0, 1.35, rho);',
+            '  float aur = hyVn(vec2(u*14.0, rho*1.4 - uTime*0.22), 14.0);',
+            '  float ring = exp(-pow((rho - 6.4) / 0.045, 2.0)) * 0.55 + exp(-pow((rho - 6.4) / 0.4, 2.0)) * 0.10;',
+            '  float edge = smoothstep(8.0, 7.2, rho);',
+            '  float iD = uBright * (0.04 + 0.96 * pow(uI, 1.1)) * (1.0 + 0.5 * uI);',
+            '  float iA = uAur * (0.02 + 0.98 * pow(uI, 1.4)) * (1.0 + 1.2 * uI);',
+            '  vec3 hot = vec3(1.0, 0.9, 0.68);',
+            '  vec3 c = hot * (pr * (0.35 + 0.65 * min(1.0, uI * 3.0)) * 2.2 * uBright + arch * 1.0 * iD)',
+            '         + uCol * (halo * (0.35 + 0.9 * aur) * 0.55 + ring) * iA;',
+            '  gl_FragColor = vec4(c * edge, 1.0);',
+            '}'
+        ].join('\n'),
+        transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending, toneMapped: false, fog: false
+    });
+}
+
+// Warped gravity-well grid (the stylised reference): polar rings + twisted
+// spokes dipping into a funnel under the disc. Hole-radius units.
+function _hyBHGridGeometry() {
+    const v = [];
+    const R0 = 2.6, R1 = 19;
+    const depth = function (r) { return -1.9 * Math.pow(R0 / r, 1.1); };
+    const twist = function (r) { return 1.1 * (R0 / r); };
+    const P = function (r, a) { const aa = a + twist(r); return [Math.cos(aa) * r, depth(r), Math.sin(aa) * r]; };
+    for (let i = 0; i < 12; i++) {                       // rings
+        const r = R0 * Math.pow(R1 / R0, i / 11);
+        for (let s = 0; s < 72; s++) {
+            const a0 = s / 72 * Math.PI * 2, a1 = (s + 1) / 72 * Math.PI * 2;
+            v.push.apply(v, P(r, a0)); v.push.apply(v, P(r, a1));
+        }
+    }
+    for (let k = 0; k < 36; k++) {                       // spokes
+        const a = k / 36 * Math.PI * 2;
+        for (let s = 0; s < 20; s++) {
+            const r0 = R0 * Math.pow(R1 / R0, s / 20), r1 = R0 * Math.pow(R1 / R0, (s + 1) / 20);
+            v.push.apply(v, P(r0, a)); v.push.apply(v, P(r1, a));
+        }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+    return g;
+}
+
+function _hyBHBuildFx(bh, R, col) {
+    const fx = new THREE.Group();
+    fx.name = 'hyBlackHoleFx';
+    fx.scale.setScalar(R);
+    fx.userData.__dbTris = Infinity;
+
+    const discGeo = new THREE.RingGeometry(1.22, 5.6, 160, 6);
+    discGeo.rotateX(-Math.PI / 2);
+    const disc = new THREE.Mesh(discGeo, _hyBHDiscMaterial(col));
+    disc.frustumCulled = false;
+    disc.renderOrder = 69;
+    fx.add(disc);
+
+    const lens = new THREE.Mesh(new THREE.PlaneGeometry(16, 16), _hyBHLensMaterial(col));
+    lens.frustumCulled = false;
+    lens.renderOrder = 71;
+    fx.add(lens);
+
+    const N = HY_BH.SPARKS;
+    const sp = new Float32Array(N * 6), sc = new Float32Array(N * 6);
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(sc, 3));
+    const sparkState = [];
+    for (let i = 0; i < N; i++) {
+        sparkState.push({ r: 1.3 + Math.random() * 4.5, a: Math.random() * Math.PI * 2, y: (Math.random() - 0.5) * 0.25,
+            vr: 0.05 + Math.random() * 0.5, w: 0.6 + Math.random() * 0.8 });
+        sc[i * 6] = 1.0; sc[i * 6 + 1] = 0.95; sc[i * 6 + 2] = 0.7;     // head
+        sc[i * 6 + 3] = 0.9; sc[i * 6 + 4] = 0.28; sc[i * 6 + 5] = 0.04; // tail
+    }
+    const sparks = new THREE.LineSegments(sg, new THREE.LineBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 1, blending: THREE.AdditiveBlending,
+        depthWrite: false, toneMapped: false, fog: false }));
+    sparks.frustumCulled = false;
+    sparks.renderOrder = 72;
+    sparks.visible = false;
+    fx.add(sparks);
+
+    const gridCol = new THREE.Color(col).lerp(new THREE.Color(0xffc060), 0.35);
+    const grid = new THREE.LineSegments(_hyBHGridGeometry(), new THREE.LineBasicMaterial({
+        color: gridCol, transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
+        depthWrite: false, toneMapped: false, fog: false }));
+    grid.frustumCulled = false;
+    grid.visible = false;
+    fx.add(grid);
+
+    fx.traverse(function (o) { o.userData.__dbTris = Infinity; });
+    bh.add(fx);
+    // ORIGINAL dressing that yields as the ramp rises: [material, how much]
+    const orig = [];
+    bh.children.forEach(function (ch) {
+        if (ch === fx || !ch.material || ch.isPoints) return;
+        if (ch.userData.isGargantuaGlow) orig.push({ m: ch.material, k: 0.85, base: ch.material.opacity, w: -1 });
+        else if (ch.userData.isGargantuaDisk) orig.push({ m: ch.material, k: 0.75, base: ch.material.opacity, w: -1 });
+        else if (ch.geometry && ch.geometry.type === 'RingGeometry' && ch.geometry.parameters.innerRadius * ch.scale.x < R * 3)
+        {
+            // the flat coloured hoop: no depth write, or it cuts the disc behind it
+            ch.material.depthWrite = false;
+            orig.push({ m: ch.material, k: 1.0, base: ch.material.opacity, w: -1 });
+        }
+    });
+    bh.userData._hyFx = { fx, disc, lens, sparks, sparkState, grid, orig, R, last: 0, frame: -1 };
+    bh.userData._hyBHI = 0;
+    bh.onBeforeRender = _hyBHTick;
+}
+
+const _hyBHv = (typeof THREE !== 'undefined') ? {
+    c: new THREE.Vector3(), n: new THREE.Vector3(), z: new THREE.Vector3(), y: new THREE.Vector3(),
+    x: new THREE.Vector3(), m: new THREE.Matrix4(), q: new THREE.Quaternion(), pq: new THREE.Quaternion()
+} : null;
+
+const _hyBHDome = { done: false };
+
+// Runs from the hole's own onBeforeRender, so it also runs while paused.
+function _hyBHTick(renderer, scene, camera) {
+    const f = this.userData && this.userData._hyFx;
+    if (!f || !camera || !_hyBHv) return;
+    const frame = renderer && renderer.info ? renderer.info.render.frame : 0;
+    if (f.frame === frame) return;                 // anaglyph renders twice per frame
+    f.frame = frame;
+    const now = performance.now() * 0.001;
+    const dt = f.last ? Math.min(0.1, now - f.last) : 0.016;
+    f.last = now;
+    const V = _hyBHv;
+    this.getWorldPosition(V.c);
+    this.getWorldQuaternion(V.pq);
+    V.n.set(0, 1, 0).applyQuaternion(V.pq);
+    const dR = Math.max(0.01, camera.position.distanceTo(V.c) / f.R);
+    // proximity ramp, log-scaled in hole radii: 0 at RAMP_FAR, 1 at RAMP_NEAR
+    let I = (Math.log(HY_BH.RAMP_FAR) - Math.log(dR)) / (Math.log(HY_BH.RAMP_FAR) - Math.log(HY_BH.RAMP_NEAR));
+    I = I < 0 ? 0 : (I > 1 ? 1 : I);
+    I = I * I * (3 - 2 * I);
+    this.userData._hyBHI = I;
+
+    const du = f.disc.material.uniforms;
+    du.uTime.value = now; du.uI.value = I;
+    du.uN.value.copy(V.n); du.uCenter.value.copy(V.c);
+
+    // lens quad: face the camera, +y = disc normal projected on screen
+    V.z.copy(camera.position).sub(V.c).normalize();
+    V.y.copy(V.n).addScaledVector(V.z, -V.n.dot(V.z));
+    if (V.y.lengthSq() < 1e-6) V.y.copy(camera.up).addScaledVector(V.z, -camera.up.dot(V.z));
+    V.y.normalize();
+    V.x.crossVectors(V.y, V.z);
+    V.m.makeBasis(V.x, V.y, V.z);
+    V.q.setFromRotationMatrix(V.m);
+    f.lens.quaternion.copy(V.pq.invert()).multiply(V.q);
+    const lu = f.lens.material.uniforms;
+    lu.uTime.value = now; lu.uI.value = I; lu.uFace.value = Math.abs(V.n.dot(V.z));
+
+    // sparks: thrown off the disc tangentially, more and longer as you close in
+    const on = I > 0.08;
+    f.sparks.visible = on;
+    if (on) {
+        const st = f.sparkState, arr = f.sparks.geometry.attributes.position.array;
+        const live = Math.floor(st.length * (0.2 + 0.8 * I));
+        const len = 0.05 + 0.32 * I;
+        for (let i = 0; i < live; i++) {
+            const s = st[i];
+            s.a += dt * s.w * 0.9 * Math.pow(s.r, -1.5) * 3;
+            s.r += dt * s.vr * (0.4 + 1.2 * I);
+            if (s.r > 7.5) { s.r = 1.25 + Math.random() * 1.5; s.a = Math.random() * Math.PI * 2; }
+            const ta = s.a - len * Math.min(1.5, 2.2 / s.r), tr = s.r - s.vr * len * 0.6;
+            arr[i * 6] = Math.cos(s.a) * s.r; arr[i * 6 + 1] = s.y; arr[i * 6 + 2] = Math.sin(s.a) * s.r;
+            arr[i * 6 + 3] = Math.cos(ta) * tr; arr[i * 6 + 4] = s.y; arr[i * 6 + 5] = Math.sin(ta) * tr;
+        }
+        f.sparks.geometry.setDrawRange(0, live * 2);
+        f.sparks.geometry.attributes.position.needsUpdate = true;
+        f.sparks.material.opacity = Math.min(1, 0.25 + 0.9 * I);
+    }
+    // Near in, the Gargantua layers take over from the ORIGINAL dressing:
+    // the flat hoop fades out, the ORIGINAL disk and glow ease back. The
+    // ORIGINAL fade writes these opacities in animate(); scale whatever it
+    // last wrote (and never compound while the game is paused).
+    for (let i = 0; i < f.orig.length; i++) {
+        const o = f.orig[i], m = o.m;
+        if (m.opacity !== o.w) o.base = m.opacity;
+        m.opacity = o.base * (1 - o.k * I);
+        o.w = m.opacity;
+    }
+    // ORIGINAL colour influence: the galaxy-tint dome (updateGalaxyAtmosphere)
+    // drew untouched by a tone curve in ORIGINAL; the overhaul's ACES greyed it.
+    if (!_hyBHDome.done && frame % 60 === 0 && scene) {
+        const dome = scene.getObjectByName('GalaxyAtmosphereDome');
+        if (dome && dome.material) { dome.material.toneMapped = false; dome.material.needsUpdate = true; _hyBHDome.done = true; }
+    }
+    const g = (I - HY_BH.GRID_FROM) / (1 - HY_BH.GRID_FROM);
+    f.grid.visible = g > 0;
+    if (g > 0) { f.grid.material.opacity = 0.55 * g * g; f.grid.rotation.y = -now * 0.04; }
+}
+
+// Scale every hole, its ORIGINAL dressing, its physics numbers and its
+// galaxy; then add the lensed-disc fx.  Runs once, after the world is built.
+function _hyBigBlackHoles() {
+    if (_hyBHOverhaul() || typeof planets === 'undefined' || !planets || typeof THREE === 'undefined') return 0;
+    const holes = planets.filter(function (p) { return p && p.userData && p.userData.type === 'blackhole' && !p.userData._hyBig; });
+    let sgr = null;
+    holes.forEach(function (bh) {
+        const u = bh.userData;
+        const R0 = bh.geometry && bh.geometry.parameters ? bh.geometry.parameters.radius : 36;
+        let rel = HY_BH.REL.other;
+        if (u.isSagittariusA) rel = HY_BH.REL.sgr;
+        else if (u.isCompanionCore) rel = HY_BH.REL.companion;
+        else if (u.isLocalGateway) rel = HY_BH.REL.gateway;
+        else if (u.galaxyType && HY_BH.REL[u.galaxyType.name]) rel = HY_BH.REL[u.galaxyType.name];
+        const R = HY_BH.SIZE * rel, k = R / R0;
+        const isGalaxy = !!(u.isGalacticCore && !u.isCompanionCore);
+        const gs = (isGalaxy || u.isCompanionCore) ? HY_BH.GALAXY_SCALE : 1;
+
+        const oldGeo = bh.geometry;
+        bh.geometry = new THREE.SphereGeometry(R, 48, 32);
+        if (oldGeo) oldGeo.dispose();
+        bh.userData.__dbTris = Infinity;
+
+        const swirl = [u.galaxyStars, u.starCluster];
+        bh.children.slice().forEach(function (ch) {
+            const isLargeRing = ch.geometry && ch.geometry.type === 'RingGeometry' && ch.geometry.parameters &&
+                ch.geometry.parameters.innerRadius > R0 * 12;
+            if (ch.isPoints || swirl.indexOf(ch) >= 0 || isLargeRing) {
+                ch.scale.multiplyScalar(gs);
+                ch.position.multiplyScalar(gs);
+                if (ch.isPoints && ch.material && ch.material.size) ch.material.size *= gs;
+            } else {
+                ch.scale.multiplyScalar(k);
+                ch.position.multiplyScalar(k);
+            }
+            ch.traverse(function (o) {
+                o.userData.__dbTris = Infinity;
+                if (o.material && !o.isPoints) {
+                    (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) {
+                        if (m.visible === false) m.visible = true;
+                        m.toneMapped = false;
+                    });
+                }
+            });
+        });
+        if (u._gargGlowScale) u._gargGlowScale *= k;
+        if (u._gargNear) u._gargNear *= k;
+        if (u._gargFar) u._gargFar *= k;
+        if (u.mass) u.mass *= k * k;             // same pull at the same distance in radii
+        if (u.warpThreshold) u.warpThreshold *= k;
+        u._hyBHK = k;
+        u._hyR0 = R0;
+        u._hyBig = true;
+
+        const col = (u.galaxyType && u.galaxyType.color) ||
+            (u.isCompanionCore ? 0xcc55ff : (u.isSagittariusA ? 0xff4500 : 0xff7a2a));
+        _hyBHBuildFx(bh, R, col);
+        if (u.isSagittariusA) sgr = bh;
+
+        // the galaxy grows with its core: star systems move out radially
+        if (u.isLocalGateway || isGalaxy) _hyBHClearSystems(bh, R, isGalaxy ? gs : 1);
+    });
+    // keep the Companion Core clear of the bigger Sgr A*
+    holes.forEach(function (bh) {
+        if (!bh.userData.isCompanionCore || !sgr) return;
+        const d = bh.position.distanceTo(sgr.position);
+        const want = (sgr.geometry.parameters.radius + bh.geometry.parameters.radius) * HY_BH.CLEAR_RADII * 0.9;
+        if (d > 0 && d < want) {
+            bh.position.sub(sgr.position).multiplyScalar(want / d).add(sgr.position);
+            bh.updateMatrixWorld(true);
+        }
+    });
+    return holes.length;
+}
+
+// Push the star systems of a galaxy core (or the local gateway) outward:
+// a system r from the hole moves to CLEAR_RADII·R + r·gs.
+function _hyBHClearSystems(bh, R, gs) {
+    const c = bh.position, u = bh.userData;
+    const groups = new Map();
+    const reach = (u.isLocalGateway ? 6000 : 4000);
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || p === bh || !p.userData) continue;
+        const pu = p.userData, sc = pu.systemCenter;
+        if (!sc || pu.type === 'blackhole') continue;
+        if (u.isGalacticCore ? pu.galaxyId !== u.galaxyId : Math.hypot(sc.x - c.x, sc.y - c.y, sc.z - c.z) > reach) continue;
+        const key = Math.round(sc.x) + ',' + Math.round(sc.y) + ',' + Math.round(sc.z);
+        if (!groups.has(key)) groups.set(key, { sc: { x: sc.x, y: sc.y, z: sc.z }, members: [] });
+        groups.get(key).members.push(p);
+    }
+    const lights = [];
+    if (typeof scene !== 'undefined' && scene) scene.children.forEach(function (o) { if (o.isPointLight) lights.push(o); });
+    const off = new THREE.Vector3();
+    groups.forEach(function (gr) {
+        off.set(gr.sc.x - c.x, gr.sc.y - c.y, gr.sc.z - c.z);
+        const r = off.length();
+        if (r < 1e-3) return;
+        const r2 = HY_BH.CLEAR_RADII * R + r * gs;
+        const delta = off.clone().multiplyScalar(r2 / r - 1);
+        const done = new Set();
+        gr.members.forEach(function (p) {
+            const pu = p.userData;
+            if (pu.systemCenter && !done.has(pu.systemCenter)) {
+                done.add(pu.systemCenter);
+                pu.systemCenter.x += delta.x; pu.systemCenter.y += delta.y; pu.systemCenter.z += delta.z;
+            }
+            if (pu.position3D && pu.position3D.isVector3) pu.position3D.add(delta);
+            p.position.add(delta);
+            p.updateMatrix();
+            p.updateMatrixWorld(true);
+        });
+        lights.forEach(function (l) {
+            if (Math.abs(l.position.x - gr.sc.x) < 1 && Math.abs(l.position.y - gr.sc.y) < 1 &&
+                Math.abs(l.position.z - gr.sc.z) < 1) l.position.add(delta);
+        });
+    });
+}
+if (typeof window !== 'undefined') window._hyBigBlackHoles = _hyBigBlackHoles;
 
 function _gargantuaGlowTexture(color) {
     if (_hyBHOverhaul()) return _gargantuaGlowTexture_overhaul.apply(this, arguments);

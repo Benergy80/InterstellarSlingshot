@@ -550,7 +550,9 @@ function _updateAccretionSpiral(fc) {
             for (let i = 0; i < planets.length; i++) {
                 const p = planets[i];
                 if (!p || !p.userData || p.userData.type !== 'blackhole') continue;
-                if (camera.position.distanceTo(p.position) > _ACC_RANGE) continue;
+                // HYBRID (blackHoles): a scaled hole's spiral shows from 40 radii
+                const _accR = p.userData._hyBHK && p.geometry ? Math.max(_ACC_RANGE, p.geometry.parameters.radius * 40) : _ACC_RANGE;
+                if (camera.position.distanceTo(p.position) > _accR) continue;
                 inRange.add(p.uuid);
                 if (!_accMap.has(p.uuid)) _accMap.set(p.uuid, _accMakeSpiral(p));
             }
@@ -569,7 +571,7 @@ function _updateAccretionSpiral(fc) {
         for (let i = 0; i < s.data.length; i++) {
             const d = s.data[i];
             d.a += (0.02 * d.s * r0 * 2) / d.r; // faster spin closer in
-            d.r -= 0.12 * d.s;                   // inward drift
+            d.r -= 0.12 * d.s * (s.bh.userData._hyBHK || 1); // inward drift (HYBRID: in ORIGINAL radii)
             if (d.r < r0 * 1.1) {                // crossed the horizon — respawn outside
                 d.r = r0 * (4 + Math.random() * 2);
                 d.a = Math.random() * Math.PI * 2;
