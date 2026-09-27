@@ -2482,7 +2482,94 @@ function _gsmooth(a, b, x) {
     return t * t * (3 - 2 * t);
 }
 
+// HYBRID (blackHoles switch): the ORIGINAL black hole is a flat photon-ring
+// glow sprite + gradient disk, with the galaxy's own particle swirl carrying
+// the look. The overhaul's lensed/wrapped/jetted Gargantua stays selectable
+// with ?hy=blackHoles:overhaul (its units are kept as *_overhaul).
+function _hyBHOverhaul() {
+    return typeof window === 'undefined' || !window.HYBRID || window.HYBRID.is('blackHoles', 'overhaul');
+}
+
+// HYBRID (blackHoles:original): put the ORIGINAL particle character back on
+// every black hole after the world is built. Three things hid it:
+//  1. the overhaul's global soft round point sprite. At the distances these
+//     swirls are seen from, a star is ~1 px, the sprite is sampled at its
+//     lowest mip (its average, ~15 %) and the swirl disappears;
+//  2. ACES tone mapping, which greys the pure white/neon points;
+//  3. the per-galaxy accretion hoop and the Companion's ring were retired.
+// Sgr A*'s local galaxy disk also goes back to ORIGINAL pure white.
+function _hyOriginalBlackHoleLook() {
+    if (_hyBHOverhaul() || typeof planets === 'undefined' || !planets) return 0;
+    const flat = function (o) {
+        if (!o || !o.isPoints || !o.material || o.userData._hyBHFlat) return;
+        o.userData._hyBHFlat = true;
+        if (typeof _hyFlat === 'function') _hyFlat(o.material, 'blackHoles');
+    };
+    let n = 0;
+    for (let i = 0; i < planets.length; i++) {
+        const bh = planets[i];
+        if (!bh || !bh.userData || bh.userData.type !== 'blackhole') continue;
+        n++;
+        bh.traverse(flat);
+        flat(bh.userData.starCluster);
+        flat(bh.userData.galaxyStars);
+        if (bh.userData.isSagittariusA) continue; // ORIGINAL kept Sgr A*'s hoop hidden too
+        bh.children.forEach(function (ch) {
+            if (ch.isMesh && !ch.visible && ch.geometry && ch.geometry.type === 'RingGeometry' &&
+                ch.material && !ch.material.map && !ch.userData.isGargantuaDisk) ch.visible = true;
+        });
+    }
+    const lgs = (typeof window !== 'undefined') ? window.localGalaxyStars : null;
+    if (lgs && lgs.material && !lgs.userData._hyBHFlat) {
+        flat(lgs);
+        lgs.material.vertexColors = false;
+        lgs.material.needsUpdate = true;
+    }
+    return n;
+}
+if (typeof window !== 'undefined' && typeof createOptimizedPlanets3D === 'function' &&
+    !createOptimizedPlanets3D._hyBH) {
+    const _hyCOP = createOptimizedPlanets3D;
+    window.createOptimizedPlanets3D = function () {
+        const r = _hyCOP.apply(this, arguments);
+        try { _hyOriginalBlackHoleLook(); } catch (e) { console.warn('HYBRID blackHoles:', e); }
+        return r;
+    };
+    window.createOptimizedPlanets3D._hyBH = true;
+}
+
 function _gargantuaGlowTexture(color) {
+    if (_hyBHOverhaul()) return _gargantuaGlowTexture_overhaul.apply(this, arguments);
+    const key = 'g' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // Transparent core — the black event-horizon sphere shows through here.
+    grad.addColorStop(0.00, 'rgba(0,0,0,0)');
+    grad.addColorStop(0.30, 'rgba(0,0,0,0)');
+    // Photon ring: a tight near-white band hugging the shadow edge.
+    grad.addColorStop(0.34, `rgba(255,255,255,0)`);
+    grad.addColorStop(0.37, `rgba(255,250,240,0.95)`);
+    grad.addColorStop(0.40, `rgba(${Math.min(255,r+120)},${Math.min(255,g+90)},${Math.min(255,b+40)},0.85)`);
+    // Warm lensed glow band fading out into a soft halo.
+    grad.addColorStop(0.52, `rgba(${r},${g},${b},0.35)`);
+    grad.addColorStop(0.74, `rgba(${r},${Math.round(g*0.6)},${Math.round(b*0.5)},0.10)`);
+    grad.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+// ── overhaul version of _gargantuaGlowTexture, kept for flag-gated comparison ──
+function _gargantuaGlowTexture_overhaul(color) {
     const key = 'g' + color;
     if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
     const c = new THREE.Color(color);
@@ -2534,38 +2621,35 @@ function _gargantuaGlowTexture(color) {
     return tex;
 }
 
-// DOPPLER-BEAMED ACCRETION DISK — HDR EMISSIVE PROFILE.
-//
-// History: the first version put its white-hot lip at texture offset 0.50 —
-// which, per the UV note above, is the disk's OUTER rim, with everything
-// from 0.00 to 0.46 fully transparent, i.e. a bright hoop at the far edge
-// and a hollow middle: the exact inverse of an accretion disk. The second
-// built the profile in the right space but painted it as an LDR texture on
-// an LDR material, so the hottest matter in the universe topped out around
-// 64% screen brightness and its ~13:1 beaming ratio got squashed into a few
-// levels of 8-bit alpha. Both read as a flat plastic hoop.
-//
-// This version treats the disk as an HDR emitter and lets the tone mapper
-// do the clipping (atmospheric-perspective.js switches the renderer to
-// ACESFilmic, and the material below carries a >1 colour multiplier):
-//
-//   • `over` is the physical emission in units where 1.0 == "just saturating
-//     the framebuffer". It routinely reaches 6 near the beamed ISCO lip.
-//     Alpha saturates there, and the EXCESS is spent whitening the colour —
-//     so the photon-ring edge genuinely clips to white and rolls off into
-//     the ring's own colour, instead of stopping dead at 8-bit alpha.
-//   • The colour is a three-stop temperature ramp (deep ember → the hole's
-//     own hue → white-hot) driven by a T ~ r^-3/4-ish radial term MULTIPLIED
-//     by the Doppler factor, so there is both an inner-hot/outer-cool radial
-//     gradient AND an approaching-vs-receding split, not just a brightness
-//     difference.
-//   • Beaming is ^2.8 for a ~30:1 limb ratio (real Doppler factor D^3-4 for
-//     a disk this deep in the potential), so the two limbs of the ring are
-//     unmistakably different objects on screen.
-//   • The outer feather now starts at t=0.50 instead of 0.74, so the disk
-//     dissolves over half its width — that's the "glow bleed" that keeps the
-//     edge from stepping from background to full ring in under 10 pixels.
 function _gargantuaDiskTexture(color) {
+    if (_hyBHOverhaul()) return _gargantuaDiskTexture_overhaul.apply(this, arguments);
+    const key = 'd' + color;
+    if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
+    const c = new THREE.Color(color);
+    const r = Math.round(c.r * 255), g = Math.round(c.g * 255), b = Math.round(c.b * 255);
+    const size = 256, cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    const ctx = cv.getContext('2d');
+    const cx = size / 2;
+    const grad = ctx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    // White-hot inner edge → warm body → dark outer rim (RingGeometry UVs
+    // map this square radially across the annulus).
+    grad.addColorStop(0.00, `rgba(255,250,235,0.0)`);
+    grad.addColorStop(0.46, `rgba(255,250,235,0.0)`);
+    grad.addColorStop(0.50, `rgba(255,248,230,0.95)`);
+    grad.addColorStop(0.58, `rgba(${Math.min(255,r+90)},${Math.min(255,g+50)},${b},0.7)`);
+    grad.addColorStop(0.78, `rgba(${r},${Math.round(g*0.55)},${Math.round(b*0.4)},0.35)`);
+    grad.addColorStop(1.00, `rgba(0,0,0,0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, size, size);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    _gargantuaTexCache[key] = tex;
+    return tex;
+}
+
+// ── overhaul version of _gargantuaDiskTexture, kept for flag-gated comparison ──
+function _gargantuaDiskTexture_overhaul(color) {
     const key = 'd' + color;
     if (_gargantuaTexCache[key]) return _gargantuaTexCache[key];
     const c = new THREE.Color(color);
@@ -5940,6 +6024,7 @@ function _gargantuaLensMaterial(color, shadowFrac) {
 // =============================================================================
 function addPolarJets(blackHole, radius, color, lengthK) {
     if (!blackHole || typeof THREE === 'undefined') return;
+    if (!_hyBHOverhaul()) return; // HYBRID: ORIGINAL holes have no plume jets
     if (!blackHole.userData) blackHole.userData = {};
     if (blackHole.userData._gargJets) return;
     // Normally called right after addGargantuaVisuals, which owns this list;
@@ -6042,6 +6127,79 @@ if (typeof window !== 'undefined') window.addPolarJets = addPolarJets;
 // an existing black-hole sphere. `radius` is the sphere radius; `color`
 // the warm disk/glow tint (defaults to a fiery orange).
 function addGargantuaVisuals(blackHole, radius, color, nearK, farK) {
+    if (_hyBHOverhaul()) return addGargantuaVisuals_overhaul.apply(this, arguments);
+    if (!blackHole || typeof THREE === 'undefined') return;
+    if (blackHole.userData && blackHole.userData._gargantua) return;
+    const col = (color === undefined || color === null) ? 0xff6a1a : color;
+
+    // 1. Camera-facing glow + photon ring. Photon ring sits at ~0.37 of
+    //    the texture, so a sprite of full-width W puts it at 0.37*W from
+    //    centre — size it so that lands just outside the sphere.
+    const glowMat = new THREE.SpriteMaterial({
+        map: _gargantuaGlowTexture(col),
+        color: 0xffffff,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true
+    });
+    const glow = new THREE.Sprite(glowMat);
+    const glowSize = radius * 3.1; // photon ring ≈ radius * 1.15
+    glow.scale.set(glowSize * 2, glowSize * 2, 1);
+    glow.frustumCulled = false;
+    glow.renderOrder = 70;
+    glow.userData.isGargantuaGlow = true;
+    blackHole.add(glow);
+
+    // 2. Wide flat gradient accretion disk. RingGeometry so the existing
+    //    animate() blackhole loop keeps it flat in the equatorial plane.
+    const diskGeo = new THREE.RingGeometry(radius * 1.05, radius * 4.0, 64);
+    const diskMat = new THREE.MeshBasicMaterial({
+        map: _gargantuaDiskTexture(col),
+        transparent: true,
+        opacity: 0.9,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    const disk = new THREE.Mesh(diskGeo, diskMat);
+    disk.rotation.x = Math.PI / 2;
+    disk.frustumCulled = false;
+    disk.renderOrder = 68;
+    disk.userData.isGargantuaDisk = true;
+    blackHole.add(disk);
+
+    if (!blackHole.userData) blackHole.userData = {};
+
+    // Proximity fade. ONLY the fake-Gargantua additions (the camera-
+    // facing glow sprite + the wide accretion disk) fade with distance.
+    // The original black-hole sphere material and any legacy accretion
+    // rings are intentionally left untouched — they keep their normal
+    // opacity regardless of how close the camera is.
+    const fade = [
+        { m: glowMat, base: 1.0 },
+        { m: diskMat, base: 0.9 }
+    ];
+    blackHole.userData._gargFade = fade;
+    // Refs for the slow "alive / unstable" corona pulse. Random phase so
+    // every hole breathes out of sync with the others.
+    blackHole.userData._gargGlow = glow;
+    blackHole.userData._gargGlowScale = glowSize * 2;
+    blackHole.userData._gargPulsePhase = Math.random() * Math.PI * 2;
+    // Defaults (14 / 110) keep the 8 galaxy holes glowing from far enough
+    // to navigate toward. Sgr A* / Companion Core pass a wide band tuned
+    // so the effect sits at ~5% from the Sol start (~9.5k away) and
+    // ramps the whole way to ~95% as the player closes in.
+    blackHole.userData._gargNear = radius * (nearK || 14);   // ~95% within
+    blackHole.userData._gargFar  = radius * (farK  || 110);  // ~5% beyond
+    blackHole.userData._gargantua = true;
+    if (gargantuaBlackHoles.indexOf(blackHole) === -1) {
+        gargantuaBlackHoles.push(blackHole);
+    }
+}
+
+// ── overhaul version of addGargantuaVisuals, kept for flag-gated comparison ──
+function addGargantuaVisuals_overhaul(blackHole, radius, color, nearK, farK) {
     if (!blackHole || typeof THREE === 'undefined') return;
     if (blackHole.userData && blackHole.userData._gargantua) return;
     const col = (color === undefined || color === null) ? 0xff6a1a : color;
@@ -6230,6 +6388,42 @@ function _gargLockDopplerLobe(blackHole, camera, worldPos) {
 }
 
 function updateGargantuaProximityFade(blackHole, camera) {
+    if (_hyBHOverhaul()) return updateGargantuaProximityFade_overhaul.apply(this, arguments);
+    if (!blackHole || !blackHole.userData || !camera || !_gargTmp) return;
+    const fade = blackHole.userData._gargFade;
+    if (!fade) return;
+    blackHole.getWorldPosition(_gargTmp);
+    const d = camera.position.distanceTo(_gargTmp);
+    const near = blackHole.userData._gargNear || 1;
+    const far = blackHole.userData._gargFar || (near * 8);
+    let p = (far - d) / (far - near);
+    p = p < 0 ? 0 : (p > 1 ? 1 : p);   // 0 at/beyond far, 1 within near
+    const vis = 0.05 + 0.90 * p;        // 5% .. 95% of each design opacity
+    for (let k = 0; k < fade.length; k++) {
+        fade[k].m.opacity = fade[k].base * vis;
+    }
+
+    // Slow, irregular corona pulse layered on top of the proximity
+    // fade. Two detuned low-freq sines (~11s and ~27s periods) so it
+    // wanders rather than ticking like a metronome — alive/unstable.
+    const glow = blackHole.userData._gargGlow;
+    if (glow && glow.material) {
+        const t = (typeof performance !== 'undefined'
+            ? performance.now() : Date.now()) * 0.001;
+        const ph = blackHole.userData._gargPulsePhase || 0;
+        const wob = Math.sin(t * 0.55 + ph) * 0.62 +
+                    Math.sin(t * 0.236 + ph * 1.7) * 0.38;   // ~[-1, 1]
+        const grow = (blackHole.userData._gargGlowScale || 1) * (1 + wob * 0.10);
+        glow.scale.set(grow, grow, 1);
+        // glow.material.opacity was just set to base*vis above; flare it
+        // ±30% and clamp so additive blending doesn't blow out.
+        let o = glow.material.opacity * (1 + wob * 0.30);
+        glow.material.opacity = o < 0 ? 0 : (o > 1.25 ? 1.25 : o);
+    }
+}
+
+// ── overhaul version of updateGargantuaProximityFade, kept for flag-gated comparison ──
+function updateGargantuaProximityFade_overhaul(blackHole, camera) {
     if (!blackHole || !blackHole.userData || !camera || !_gargTmp) return;
     const fade = blackHole.userData._gargFade;
     if (!fade) return;
@@ -8137,7 +8331,9 @@ try {
         // is what gave the volumetric clouds the frame back, and taking the
         // floor down as well would only re-open the hole the floor was raised
         // to close. A violet-blue void, not a dead monitor.
-        scene.background = new THREE.Color(0x0a0a1a);
+        // HYBRID skyWash:off — no raised floor; the renderer's ORIGINAL
+        // near-black clear colour shows through between the lit things.
+        scene.background = _hySkyWashOff() ? null : new THREE.Color(0x0a0a1a);
 
         console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.32)`);
     } catch (nebulaSkyboxError) {
@@ -10685,7 +10881,9 @@ function updateNebulaVisibility() {
     // game-core.js are sealed this wave. It goes ABOVE the 15-frame throttle
     // on purpose: it has its own (6-frame) cadence and it must keep running
     // on frames the visibility walk skips.
-    updateNearNebulaAnchor();
+    // HYBRID: the escort (near clouds held around the camera) is what made
+    // the sky a nebula you are always inside; overhaul-only.
+    if (_hyNebOverhaul()) updateNearNebulaAnchor();
 
     // PERF: Only check every 15 frames instead of every frame
     _nebulaVisibilityFrameCount++;
@@ -20065,6 +20263,106 @@ const NEB_VOL = (typeof window !== 'undefined' && window.__NEB_VOL) || {
 };
 if (typeof window !== 'undefined') window.__NEB_VOL = NEB_VOL;
 
+// =============================================================================
+// HYBRID DEEP SPACE — nebulae: 'combined' | 'overhaul' | 'original',
+// nebulaDensity 0..1, skyWash 'off' | 'on'   (js/hybrid-config.js)
+// =============================================================================
+// Ben: "the nebula clouds should also be used in combination with our original
+// ones" and "it is almost like there are too many nebula so we cannot see deep
+// space". Every nebula keeps its overhaul volumetric puff layer AND gets the
+// ORIGINAL crisp particle swirl back (size 2.5 hard pixels, opacity 0.65, no
+// tone mapping), sharing the same particle positions. nebulaDensity then thins
+// the volumetric side: at d only a fraction d of the clouds keep their puff
+// layer, each at (HY_NEB_VOL_FLOOR + (1 - floor) * d) of its brightness, and
+// the painted sky dome is scaled by d. 0 = no nebula at all, 1 = the overhaul's
+// full density (plus the ORIGINAL swirls).
+const HY_NEB_VOL_FLOOR = 0.35;      // puff brightness at d -> 0 (for the clouds that keep one)
+const HY_NEB_CRISP_OPACITY = 0.65;  // ORIGINAL createNebulas / createDistantNebulas value
+const HY_NEB_CRISP_FULL_AT = 0.45;  // swirls reach ORIGINAL opacity at this density and above
+function _hyNebOverhaul() {
+    return typeof window === 'undefined' || !window.HYBRID || window.HYBRID.is('nebulae', 'overhaul');
+}
+function _hyNebDensity() {
+    if (_hyNebOverhaul()) return 1;
+    if (window.HYBRID.is('nebulae', 'original')) return 0;
+    const d = window.HYBRID.num('nebulaDensity');
+    return isFinite(d) ? Math.max(0, Math.min(1, d)) : 0.45;
+}
+function _hySkyWashOff() {
+    return typeof window !== 'undefined' && !!window.HYBRID && window.HYBRID.is('skyWash', 'off');
+}
+let _hyNebSeq = 0;
+function _hyCombineNebulae() {
+    if (_hyNebOverhaul() || typeof nebulaClouds === 'undefined' || !nebulaClouds) return 0;
+    const original = window.HYBRID.is('nebulae', 'original');
+    const d = _hyNebDensity();
+    const volScale = HY_NEB_VOL_FLOOR + (1 - HY_NEB_VOL_FLOOR) * d;
+    const crispK = original ? 1 : Math.min(1, d / HY_NEB_CRISP_FULL_AT);
+    let n = 0;
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const g = nebulaClouds[i];
+        if (!g || !g.children || !g.userData || g.userData._hyNeb) continue;
+        const vol = g.children[0];
+        if (!vol || !vol.isPoints || !vol.material || !vol.material.userData ||
+            String(vol.material.userData._pcKey || '').indexOf('nebPointClamp') < 0) continue;
+        g.userData._hyNeb = true;
+        n++;
+        const pos = vol.geometry.attributes.position, col = vol.geometry.attributes.color;
+        // ORIGINAL swirl: same positions, colours normalised back to full
+        // saturation (the overhaul darkened them for additive stacking).
+        if (crispK > 0 && pos && col) {
+            const cc = new Float32Array(col.count * 3);
+            for (let p = 0; p < col.count; p++) {
+                const r = col.getX(p), gg = col.getY(p), b = col.getZ(p);
+                const m = Math.max(r, gg, b, 1e-3), s = 0.85 / m;
+                cc[p * 3] = r * s; cc[p * 3 + 1] = gg * s; cc[p * 3 + 2] = b * s;
+            }
+            const cg = new THREE.BufferGeometry();
+            cg.setAttribute('position', pos);
+            cg.setAttribute('color', new THREE.BufferAttribute(cc, 3));
+            const base = HY_NEB_CRISP_OPACITY * crispK;
+            const cm = new THREE.PointsMaterial({
+                size: 2.5, vertexColors: true, transparent: true, opacity: base,
+                blending: THREE.AdditiveBlending, sizeAttenuation: true, depthWrite: false, fog: false
+            });
+            cm.map = null; cm.alphaTest = 0; cm.toneMapped = false; // hard pixels, outside ACES
+            const crisp = new THREE.Points(cg, cm);
+            crisp.name = 'HybridOriginalNebula';
+            crisp.frustumCulled = vol.frustumCulled;
+            crisp.position.copy(vol.position); crisp.rotation.copy(vol.rotation); crisp.scale.copy(vol.scale);
+            // Distant / exotic clouds fade in by range (updateNebulaVisibility
+            // drives the group's currentOpacity toward 0.65); follow it.
+            crisp.onBeforeRender = function () {
+                const ud = g.userData;
+                cm.opacity = (ud.isDistant || ud.isExoticCore) && typeof ud.currentOpacity === 'number'
+                    ? base * Math.min(1, ud.currentOpacity / 0.65) : base;
+            };
+            g.add(crisp);
+        }
+        // Thin the volumetric layer: fewer clouds, each dimmer.
+        const keep = !original && (((_hyNebSeq++ + 1) * 0.6180339887) % 1) < d;
+        if (!keep) { vol.visible = false; continue; }
+        if (col && volScale < 1) {
+            for (let p = 0; p < col.array.length; p++) col.array[p] *= volScale;
+            col.needsUpdate = true;
+        }
+    }
+    return n;
+}
+if (typeof window !== 'undefined') {
+    window._hyCombineNebulae = _hyCombineNebulae;
+    ['createNebulas', 'createDistantNebulas', 'createExoticCoreNebulas', 'createClusteredNebulas'].forEach(function (k) {
+        const f = window[k];
+        if (typeof f !== 'function' || f._hyNeb) return;
+        window[k] = function () {
+            const r = f.apply(this, arguments);
+            try { _hyCombineNebulae(); } catch (e) { console.warn('HYBRID nebulae:', e); }
+            return r;
+        };
+        window[k]._hyNeb = true;
+    });
+}
+
 /**
  * Synthwave hue wheel. The old code used `Math.random()` for hue, which walks
  * the whole spectrum including muddy yellow-greens. Walking a fixed palette
@@ -21850,6 +22148,9 @@ function updateNebulaSkyboxOpacity() {
     if (typeof isBossBattleActive === 'function' && isBossBattleActive()) {
         targetOpacity = 0.17;
     }
+
+    // HYBRID: the painted dome is nebula too — thinned with nebulaDensity.
+    targetOpacity *= _hyNebDensity();
 
     const cur = sky.material.opacity;
     sky.material.opacity = cur + (targetOpacity - cur) * 0.02;
