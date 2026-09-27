@@ -1342,6 +1342,8 @@ const _HULL_GEO_EMIS_MAX = 3.0;     // and the brightness that pays for the rest
 
 (function _capHullScreenFloor() {
     if (typeof window === 'undefined' || typeof THREE === 'undefined') return;
+    // HYBRID: the hull screen floor only exists on the overhaul hulls.
+    if (typeof _enemyLookOverhaul === 'function' && !_enemyLookOverhaul()) return;
 
     function cappedInstall(group, minPx, maxBoost) {
         if (!group || !group.parent) return;
@@ -2476,7 +2478,13 @@ function _updateShipThrusterCones(ship, thrusting, dist, charge) {
             const rad = halo && halo.mesh.userData._plumeWorldRad;
             if (rad > 0) {
                 plumePx = rad * 2 * ppu;
-                if (plumePx < _PLUME_MIN_PX) widen = Math.min(_PLUME_MAX_WIDEN, _PLUME_MIN_PX / plumePx);
+                // HYBRID enemyLook:original — the ORIGINAL hulls are 0.5/2.02 the
+                // size this floor was tuned on, so scale the floor with them;
+                // otherwise it engages at 300u and stretches the plume to ~3x
+                // a hull it was meant to trail (0.62x at full burn).
+                const _minPx = (typeof _enemyLookOverhaul === 'function' && !_enemyLookOverhaul())
+                    ? _PLUME_MIN_PX * (0.5 / 2.02) : _PLUME_MIN_PX;
+                if (plumePx < _minPx) widen = Math.min(_PLUME_MAX_WIDEN, _minPx / plumePx);
             }
             const _hb = ship.userData._plumeLocalBox;
             if (_hb) {
@@ -2913,7 +2921,10 @@ function _enemyPlumeTick(enemy, thrusting, dist) {
     // _HULL_READ_DIST the plume is the contact and this rig would just be
     // draw calls. (_ensureShipThrusterCones has to have run first — the rig
     // is sized off the hull box it caches.)
-    if (!dist || dist <= _HULL_READ_DIST) {
+    // HYBRID: the hull-lamp readout is part of the overhaul hull look
+    // (enemyLook:overhaul); the ORIGINAL hull carries its own glow shell.
+    const _lookOver = (typeof _enemyLookOverhaul !== 'function') || _enemyLookOverhaul();
+    if (_lookOver && (!dist || dist <= _HULL_READ_DIST)) {
         _ensureHullReadout(enemy, enemy.userData.galaxyColor || 0xff5522);
     }
     _updateShipThrusterCones(enemy, !!thrusting, dist,
@@ -2923,7 +2934,7 @@ function _enemyPlumeTick(enemy, thrusting, dist) {
     // every frame — the combat loop, the tutorial patrol branch and the
     // wingman path all call it (see the note above), so a hull wears its
     // scars from the same instant it wears its plume, tutorial included.
-    if (typeof window._syncHullDamage === 'function') window._syncHullDamage(enemy);
+    if (_lookOver && typeof window._syncHullDamage === 'function') window._syncHullDamage(enemy);
 }
 
 function applyEnemyRotation(enemy, direction, speed) {    if (!enemy || !direction) return;
@@ -11381,6 +11392,83 @@ if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHi
 // (they have their own hit mechanics).
 // =============================================================================
 function _ensureEnemyShield(enemy) {
+    // HYBRID enemyLook: the ORIGINAL orange bubble (below) by default.
+    if (typeof _enemyLookOverhaul === 'function' && _enemyLookOverhaul()) return _ensureEnemyShield_overhaul(enemy);
+    if (!enemy || !enemy.userData || enemy.userData._shieldMesh ||
+        enemy.userData.shieldBroken || typeof THREE === 'undefined') return;
+
+    // MATERIALIZATION RACE GUARD: spawn-in shrinks the ship to 12% scale
+    // for ~0.8s. A shield created in that window is sized against the tiny
+    // hull and parent scale, then inflates 8x when the ship scales back up
+    // — the "giant shield" bug on discovery-path bosses. Wait it out; this
+    // is retried every behavior tick.
+    if (enemy.userData._materializing) return;
+
+    // Size from the VISIBLE hull bounding box in WORLD units (skip the
+    // oversized invisible hitbox sphere, glow + cone layers), exactly
+    // like _ensureShipThrusterCones — enemy GLB models are scaled ~48×,
+    // so the raw hitboxSize is hugely inflated. Then convert that world
+    // radius into the enemy's LOCAL frame (the shield is a child).
+    let worldR = 90;
+    try {
+        enemy.updateWorldMatrix(true, true);
+        const box = new THREE.Box3(); box.makeEmpty();
+        const mb = new THREE.Box3();
+        let any = false;
+        enemy.traverse(node => {
+            if (!node.isMesh || !node.geometry) return;
+            const u = node.userData || {};
+            if (u.isHitbox || u.isGlowLayer || u._isThrusterCone || u.isEnemyShield) return;
+            if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
+            if (!node.geometry.boundingBox) return;
+            mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            box.union(mb); any = true;
+        });
+        // Bubble hugs the hull for normal fighters (0.31); bosses,
+        // boss-support, elite + black-hole guardians keep the larger
+        // bubble (0.62) so their bigger silhouette reads correctly.
+        const _ud0 = enemy.userData || {};
+        const _bigShield = _ud0.isBoss || _ud0.isBossSupport ||
+                           _ud0.isEliteGuardian || _ud0.isBlackHoleGuardian;
+        if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
+            const sz = box.getSize(new THREE.Vector3());
+            worldR = Math.max(sz.x, sz.y, sz.z) * (_bigShield ? 0.62 : 0.31);
+        }
+    } catch (e) {}
+    {
+        const _ud1 = enemy.userData || {};
+        const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
+                           _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
+        // Big-shield ceiling 360 (was briefly 640 for the 2×-boss
+        // experiment; with boss scale reverted, 640 left guardians inside
+        // screen-filling orange spheres whenever the player got close).
+        const minR = _bigShield ? 45 : 22;
+        const maxR = _bigShield ? 360 : 140;
+        worldR = Math.max(minR, Math.min(worldR, maxR));
+    }
+
+    const ws = new THREE.Vector3();
+    try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
+    const s = Math.max(0.0001, (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3);
+    const localR = worldR / s;
+
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0xff8800, transparent: true, opacity: 0.0,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide
+    });
+    const shield = new THREE.Mesh(new THREE.SphereGeometry(localR, 18, 14), mat);
+    shield.frustumCulled = true;   // off-screen enemies skip the shield draw
+    shield.userData.isEnemyShield = true;
+    shield.userData.isGlowLayer = true;   // skipped by thruster-cone bbox
+    enemy.add(shield);
+    enemy.userData._shieldMesh = shield;
+    enemy.userData._shieldRadius = worldR;   // WORLD units, for shard sizing
+    enemy.userData.shieldHits = 0;
+    enemy.userData.shieldActive = false;
+}
+
+// ── overhaul version of _ensureEnemyShield, kept for flag-gated comparison ──
+function _ensureEnemyShield_overhaul(enemy) {
     if (!enemy || !enemy.userData || enemy.userData._shieldMesh ||
         enemy.userData.shieldBroken || typeof THREE === 'undefined') return;
 
