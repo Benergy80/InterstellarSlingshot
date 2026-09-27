@@ -203,12 +203,29 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927i | Wave 4 — F ORIGINAL intro; J black holes bigger (`HY_BH.SIZE` 900) with lensed disc ramping on approach |
 | 20260927j | Black holes: no outer circle, no grid (`HY_BH.OUTER_RING`, `HY_BH.GRID` off); ORIGINAL glow, disk and hoop stay on approach (`HY_BH.ORIG_YIELD` 0) |
 | 20260927k | Wave 5 — G scale and placement: one size ladder, one spacing rule (`solScale: big`; `HY_SCALE`, `HY_SOL`, `HY_LADDER`). Sol at (9919, 0, 21701); nebulae 28-60k out |
-| in progress | Wave 6 — G2 the opening view; L asteroids |
+| 20260927l | Wave 6 — G2 the opening view over Earth's limb (`OPENING_VISTA`, `openingVista`); L asteroids rebuilt and scaled (`HY_ROCKS`, `HY_ROAM`) |
 
-Open after wave 5: enemies near the player thinned with the wider spacing (within 15,000 of the
-start: 21 against ORIGINAL's 57); map/radar scale, trader routes and galaxy-core enemy spawn radii
-not re-checked at the new scale; galaxy and Alpha/Beta/Gamma planets are resized but still flat
-Lambert.
+**All twelve packages (A-L) are merged as of 20260927l.** Guard 9/9 at 60 fps; final demo soak
+3 x 150 s, 0 deaths.
+
+### Open items
+1. **Enemies near the player thinned** with the wider spacing: within 15,000 of the start, 21
+   against ORIGINAL's 57. Ben wants "lots of enemies". Not addressed.
+2. **The guard fails intermittently**, about 1 run in 6-8: slingshot, warp and steering fail
+   together (the warp never engages), with 0 page errors, then pass on re-run. Seen on every build
+   including the overhaul base. Cause not established; could be a real occasional fault in the warp.
+3. **After the opening view releases**, about half of boots roll the camera slowly by up to
+   70-90 degrees as the flight model's roll-leveller corrects it.
+4. **The Sun reads as an orange marbled planet** with only a faint glow.
+5. **The launch hand-off freezes** about 3.2 s then 1.3 s (ORIGINAL ~1 s) while the heavier world
+   generates.
+6. Not re-checked at the new scale: map/radar, trader routes, galaxy-core enemy spawn radii.
+   Galaxy and Alpha/Beta/Gamma planets are resized but still flat Lambert.
+7. Audio (ORIGINAL sound effects and music) was verified by code and logs only, never by ear.
+8. No Sol asteroid belt in the orbital plane: ORIGINAL lifts it 600-1,000 off the plane. One line
+   to drop the lift (`_yOff` for galaxy 7); costs ~310 rocks and 4 draw calls. Ben's call.
+9. Flying through a rock gives no bump: the collision threshold is ORIGINAL's 6 units and rocks
+   are now radius 9-64.
 
 Ben, 2026-09-27, on build i: "The big circles around the black holes are not necessary. Probably
 inspired by one of the images I uploaded. Can the other black hole effects come back alongside the
