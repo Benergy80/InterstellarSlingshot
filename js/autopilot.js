@@ -7607,6 +7607,14 @@
       // Martian Pirates get a 75 % boost to feel faster and more aggressive.
       let pull = dist < CLOSE_RANGE ? 2.0 : 0.8;
       if (e.userData.isMartianPirate) pull *= 1.75;
+      // HYBRID enemyFlight:'physical' — a hull the flight model flies must
+      // not be shoved sideways of its nose; the pull becomes part of what
+      // it WANTS (it turns and burns toward you) — see _efStep.
+      if (e.userData._ef && typeof _efOn === 'function' && _efOn()) {
+        if (!e.userData._efPull) e.userData._efPull = new THREE.Vector3();
+        e.userData._efPull.addScaledVector(_swarmVec, pull);
+        continue;
+      }
       e.position.addScaledVector(_swarmVec, pull);
       // If this enemy is render-interpolated (see game-core enemy block), shift
       // BOTH lerp endpoints by the same pull so the swarm motion rides along the
