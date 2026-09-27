@@ -153,6 +153,13 @@
     get warpCorridorRestages() { return ap._warpCorridorRestages || 0; },
     get warpCorridorRefusals() { return ap._warpCorridorRefusals || 0; },
     get lastCorridor() { return ap._lastCorridor || null; },
+    // Package K keep-out guard: episodes per act (shell / warpSteer / warpCut /
+    // jumpCut / glideCut / steer / brake / slingRefused) and the last one.
+    get keepout() {
+      const ko = ap._keepout || { counts: {}, last: null };
+      return { counts: Object.assign({}, ko.counts), last: ko.last,
+               k: KEEPOUT_K, hardK: KEEPOUT_HARD_K, lookS: KEEPOUT_LOOK_S };
+    },
     // The reach a jump actually delivers — the number that replaced
     // `jumpMaxDist: Infinity`. Exposed so a test can assert legs beyond it
     // took the O-warp path.
@@ -2306,6 +2313,10 @@
       }
     }
 
+    // KEEP-OUT GUARD — last word on the frame, after every phase and hold
+    // (see KEEPOUT_K). Physics runs next and reads what this leaves.
+    _keepoutGuard();
+
     tickHUD();
   }
 
@@ -4415,7 +4426,12 @@
     // 40 degree arriveDist backed off just enough to clear the danger radius
     // and leave braking room) while nearly doubling the corridor the burn is
     // allowed to arrive through.
-    const stand = Math.max(dangerR * 1.25, Math.min(arriveDist * 1.25, maxRange * 0.75));
+    // IN RADII (package K): arriveDist is R / tan(20 deg) = 2.75 R, so the
+    // park lands at 1.25 x 2.75 = ~3.4 R for every body of R >= ~40 (smaller
+    // ones hit the 80 u danger floor), and never inside PARK_MIN_KEEPOUTS
+    // keep-out spheres however the danger radius is bookkept.
+    const stand = Math.max(dangerR * 1.25, Math.min(arriveDist * 1.25, maxRange * 0.75),
+                           radius * KEEPOUT_K * PARK_MIN_KEEPOUTS);
     // THE LATERAL BUDGET, DERIVED RATHER THAN GUESSED. A straight burn's
     // closest approach is `stand` along-track and `off` across it, so the
     // final range is the hypotenuse. Round 2 capped `off` at a flat fraction
@@ -4813,6 +4829,292 @@
   // only trigger, and one death.
   const KEEPOUT_TTC_S = 4;
 
+  // ── KEEP-OUT SPHERES (hybrid package K — demo pilot safety) ──────────────
+  // Ben, 2026-09-27: "demo player keeps colliding with planets." The hybrid
+  // parks radius-620 heart worlds inside the Sol system and the scale package
+  // is about to enlarge every large body, so every number below is in BODY
+  // RADII, never in world units: resize the universe and the guard follows.
+  //
+  // Every planet and star owns a sphere of KEEPOUT_K x its radius. The game
+  // kills at 1.05 R (game-physics.js). The pilot never plans a leg through a
+  // keep-out sphere (see _jumpClearAhead, used by every warp / jump gate, and
+  // the slingshot exit check in triggerSlingshot), and _keepoutGuard() — the
+  // last thing update() does each frame — looks ahead along the REAL velocity,
+  // whatever is driving it, and acts through the manoeuvre's own controls:
+  //   * O-warp burn   steer the nose off the sphere (warp guidance bends the
+  //                   burn onto the nose, the same control Ben has); end the
+  //                   burn early if the bend cannot clear it in time.
+  //   * jump dash     ballistic, cannot bend: end it and brake.
+  //   * slingshot     the glide does not follow the nose: end it early (the
+  //                   game's own 1 s drop-out beat) and brake.
+  //   * sublight      turn the nose round the sphere (combat pursuit goes
+  //                   round, not through) and brake if the stop is close.
+  // Inside KEEPOUT_HARD_K, whatever the mode, the inward component of the
+  // velocity is removed so the ship slides along the shell instead of
+  // entering it. Demo only: this runs inside update(), after the `paused`
+  // early return, so a human at the stick is never touched.
+  // The arrival park (stand ~3.4 R, see _arrivalStandoff) sits well outside
+  // the sphere, so "big and dead ahead" is untouched; when the body on the
+  // collision course IS the parked subject the guard only brakes, never turns.
+  const KEEPOUT_K = 1.8;           // keep-out sphere, x body radius (Ben: tune here)
+  const KEEPOUT_HARD_K = 1.3;      // last-resort shell, x body radius (death is 1.05)
+  const KEEPOUT_LOOK_S = 4;        // look-ahead along the real velocity, seconds
+  const KEEPOUT_STEER_RATE = 0.06; // nose authority while steering round, rad per 60 fps frame
+  const KEEPOUT_STEER_MARGIN = 1.15; // aim this far outside the sphere when skirting it
+  const PARK_MIN_KEEPOUTS = 1.5;   // arrival park floor, in keep-out spheres (= 2.7 R at k 1.8)
+  // Radius as the kill test reads it (geometry radius), grown by the mesh's
+  // own scale so a body enlarged with .scale is still covered.
+  function _keepoutBodyR(p) {
+    const g = p && p.geometry && p.geometry.parameters;
+    let r = (g && g.radius) || (p && p.userData && p.userData.size) || 0;
+    if (r && p.scale) r *= Math.max(1, p.scale.x, p.scale.y, p.scale.z);
+    return r;
+  }
+  function _keepoutApplies(p) {
+    const ty = p && p.userData && p.userData.type;
+    return ty === 'planet' || ty === 'star' || ty === 'moon';
+  }
+  function _keepoutR(p) { return KEEPOUT_K * _keepoutBodyR(p); }
+  // First keep-out sphere the segment from->(from + dir*len) enters, as
+  // { obj, entry (u along dir), off (closest approach, u), k (radii) } or null.
+  // `skip` is a body the caller is deliberately arriving at.
+  const _koTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function _keepoutSweep(from, dir, len, skip) {
+    if (typeof planets === 'undefined' || !from || !dir || !_koTmp) return null;
+    let best = null;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || !p.position || p === skip || !_keepoutApplies(p)) continue;
+      const K = _keepoutR(p);
+      if (!(K > 0)) continue;
+      _koTmp.subVectors(p.position, from);
+      const along = _koTmp.dot(dir);
+      const d2 = _koTmp.lengthSq();
+      const inside = d2 < K * K;
+      if (!inside && (along <= 0 || along - K > len)) continue;
+      const off2 = Math.max(0, d2 - along * along);
+      if (!inside && off2 >= K * K) continue;
+      const entry = inside ? 0 : along - Math.sqrt(K * K - off2);
+      if (inside && along <= 0) continue;       // inside but already leaving
+      if (!best || entry < best.entry) {
+        best = { obj: p, entry: entry, off: Math.sqrt(off2), dist: Math.sqrt(d2),
+                 R: _keepoutBodyR(p), K: K };
+      }
+    }
+    return best;
+  }
+  function _keepoutRecord(kind, hit, speed) {
+    const ko = ap._keepout || (ap._keepout = { counts: {}, last: null });
+    const body = (hit.obj.userData && (hit.obj.userData.name || hit.obj.userData.type)) || 'body';
+    // Counted per EPISODE (same act on the same body within 1 s is one).
+    const l = ko.last;
+    if (!(l && l.kind === kind && l.body === body && Date.now() - l.at < 1000)) {
+      ko.counts[kind] = (ko.counts[kind] || 0) + 1;
+    }
+    ko.last = {
+      at: Date.now(), kind: kind, phase: ap.phase, speed: Math.round(speed * 10) / 10,
+      body: body,
+      dOverR: Math.round(hit.dist / hit.R * 100) / 100,
+      entryOverR: Math.round(hit.entry / hit.R * 100) / 100
+    };
+  }
+  // Point the nose along the line that grazes the sphere (KEEPOUT_STEER_MARGIN
+  // outside it) on the side the ship is already passing, at a capped rate.
+  const _koEsc = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _koRad = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _koFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _koAxis = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _koQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+  function _keepoutSteer(hit, vdir, dtF) {
+    if (!_koEsc || typeof camera === 'undefined') return;
+    const cp = camPos();
+    _koRad.subVectors(hit.obj.position, cp);
+    const dist = _koRad.length();
+    if (dist < 1e-6) return;
+    _koRad.divideScalar(dist);                                   // toward the body
+    _koEsc.copy(vdir).addScaledVector(_koRad, -vdir.dot(_koRad)); // tangent, pass side
+    if (_koEsc.lengthSq() < 1e-6) {                               // dead head-on: pick one
+      _koEsc.set(0, 1, 0).addScaledVector(_koRad, -_koRad.y);
+      if (_koEsc.lengthSq() < 1e-6) _koEsc.set(1, 0, 0).addScaledVector(_koRad, -_koRad.x);
+    }
+    _koEsc.normalize();
+    const s = (hit.K * KEEPOUT_STEER_MARGIN) / dist;
+    if (s < 1) {
+      // grazing line: sin(theta) = K'/dist along the tangent, cos toward the body
+      _koEsc.multiplyScalar(s).addScaledVector(_koRad, Math.sqrt(1 - s * s)).normalize();
+    } else {
+      // already inside the margin: tangent, leaning out
+      _koEsc.addScaledVector(_koRad, -0.5).normalize();
+    }
+    camera.getWorldDirection(_koFwd);
+    const ang = _koFwd.angleTo(_koEsc);
+    if (!(ang > 1e-4)) return;
+    _koAxis.crossVectors(_koFwd, _koEsc);
+    if (_koAxis.lengthSq() < 1e-10) return;
+    _koAxis.normalize();
+    _koQ.setFromAxisAngle(_koAxis, Math.min(ang, KEEPOUT_STEER_RATE * dtF));
+    camera.quaternion.premultiply(_koQ);
+    if (typeof gameState !== 'undefined') gameState._lastAutoOrientFrame = gameState.frameCount;
+  }
+  // Would the whip arc executeSlingshot is about to build round `body` cross
+  // another body's keep-out sphere? Mirrors its geometry (game-physics.js
+  // executeSlingshot / updateSlingshotWhip): a horizontal circle round the
+  // body at the ship's current range (floor 1.8 R), height held at the ship's,
+  // dipping up to 30 % inward mid-sweep, sweeping up to omega x 1.6 s = 4.6
+  // rad in the sign whose tangent starts closer to the aim. The whole sweep
+  // is checked (the release can come earlier, never later). Returns the first
+  // blocking hit in _keepoutSweep's shape, or null.
+  const _waPt = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function _whipArcBlocked(body) {
+    if (!body || !body.position || typeof planets === 'undefined' || !_waPt) return null;
+    const cp = camPos(), bp = body.position;
+    const bodyR = (body.geometry && body.geometry.parameters && body.geometry.parameters.radius) || 5;
+    const entryR = Math.max(cp.distanceTo(bp), Math.max(bodyR * 1.8, 60));
+    const minR = Math.max(bodyR * 1.7, 50, ((body.userData && body.userData.warpThreshold) || 0) * 1.25);
+    const dip = Math.max(0, Math.min(entryR * 0.30, entryR - minR));
+    const th0 = Math.atan2(cp.z - bp.z, cp.x - bp.x);
+    const aim = new THREE.Vector3();
+    const nt = gameState.currentTarget;
+    if (nt && nt.position && nt !== body) aim.subVectors(nt.position, bp).normalize();
+    else camera.getWorldDirection(aim);
+    const sign = ((-Math.sin(th0)) * aim.x + Math.cos(th0) * aim.z) >= 0 ? 1 : -1;
+    const y0 = cp.y - bp.y;
+    const SWEEP = (4.6 / 1.6) * 1.6;
+    const N = 48;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || p === body || !p.position || !_keepoutApplies(p)) continue;
+      const K = _keepoutR(p);
+      // cheap reject: the whole arc lives within entryR (+|y0|) of the body
+      if (p.position.distanceTo(bp) - K > entryR + Math.abs(y0) + 1) continue;
+      for (let j = 0; j <= N; j++) {
+        const u = j / N;
+        const th = th0 + sign * SWEEP * u;
+        const r = entryR - dip * Math.exp(-Math.pow((u - 0.5) / 0.2, 2));
+        _waPt.set(bp.x + Math.cos(th) * r, bp.y + y0, bp.z + Math.sin(th) * r);
+        const d = _waPt.distanceTo(p.position);
+        if (d < K * KEEPOUT_STEER_MARGIN) {
+          return { obj: p, entry: 0, off: d, dist: cp.distanceTo(p.position), R: _keepoutBodyR(p), K: K };
+        }
+      }
+    }
+    return null;
+  }
+
+  const _koV = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  function _keepoutGuard() {
+    if (typeof gameState === 'undefined' || !gameState.velocityVector || !_koV) return;
+    if (gameState.playerDying) return;
+    const v = gameState.velocityVector;
+    const speed = v.length();
+    if (!(speed > 0.05)) return;
+    const dtF = Math.max(1, Math.min(6, gameState.dtFrames || 1));
+    const ew = gameState.emergencyWarp || {};
+    const sl = gameState.slingshot || {};
+    const whip = !!gameState.slingshotWhip;
+    const warp = !!(ew.active && !ew.isJump);
+    const jump = !!(ew.isJump && (ew.active || ew.autoBraking));
+    const glide = !!(!whip && (sl.active || gameState.slingshotLaunchRamp));
+    const cp = camPos();
+    _koV.copy(v).divideScalar(speed);
+
+    // 1 — LAST-RESORT SHELL. Where the ship will be after this render frame's
+    // physics steps (up to 6 at low fps), plus one: never inside the shell.
+    // The whip arc writes position on its own rail (clamped to 1.7 R of its
+    // body in executeSlingshot), so it is left alone.
+    if (!whip && typeof planets !== 'undefined') {
+      const reach = speed * (dtF + 1);
+      for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.position || !_keepoutApplies(p)) continue;
+        const R = _keepoutBodyR(p);
+        if (!(R > 0)) continue;
+        const H = KEEPOUT_HARD_K * R;
+        _koRad.subVectors(p.position, cp);
+        const d = _koRad.length();
+        if (d - reach > H || d < 1e-6) continue;
+        _koRad.divideScalar(d);
+        const inward = v.dot(_koRad);
+        if (inward <= 0) continue;
+        v.addScaledVector(_koRad, -inward);   // slide along the shell
+        _keepoutRecord('shell', { obj: p, dist: d, R: R, entry: 0 }, speed);
+      }
+    }
+
+    // 2 — LOOK AHEAD along the real velocity. Every mode brakes on its own
+    // curve, so each gets its own stopping distance (u):
+    //   warp  : the exit ramp (ease-out cubic, 1 s, boost -> cruise) + 2 frames
+    //   glide : the same drop-out beat, to the approach speed
+    //   jump  : physics auto-brake 0.985/frame + X  -> ~v / 0.035 frames
+    //   cruise: X brake 0.975/frame + reverse thrust -> ~v / 0.03
+    const cruise = Math.min(speed, gameState.maxVelocity || 4);
+    let stop;
+    if (warp || glide) stop = (0.25 * speed + 0.75 * cruise) * 60 + speed * 2;
+    else if (jump) stop = speed / 0.035;
+    else stop = speed / 0.03;
+    const look = Math.max(speed * 60 * KEEPOUT_LOOK_S, stop * 1.5);
+    const subj = gameState._arrivalSubject && gameState._arrivalSubject.obj;
+    const hit = _keepoutSweep(cp, _koV, look, whip ? gameState.slingshotWhip.body : null);
+    if (!hit) { ap._keepoutSteering = false; return; }
+    const isSubject = !!(subj && hit.obj === subj);
+    const k = keys();
+
+    if (whip) {
+      // The rail ignores input and the shell cannot move it. Capture already
+      // refused arcs that cross a sphere (_whipArcBlocked); bodies still move
+      // on their orbits during the 1.6 s, so if one is about to meet the rail
+      // anyway, drop the whip (same teardown triggerPlayerDeath does) and let
+      // the game's own drop-out beat end the glide.
+      const w = gameState.slingshotWhip;
+      if (hit.obj !== w.body && hit.entry < speed * 60 * 0.5) {
+        gameState.slingshotWhip = null;
+        gameState.slingshotLaunchRamp = null;
+        if (typeof window !== 'undefined') {
+          window.__whipLaunch = null;
+          window.__whipDilation = 0;
+          if (window.__whipFrame) window.__whipFrame.active = false;
+        }
+        if (sl.active) sl.timeRemaining = 0;
+        k.x = true; k.w = false;
+        _keepoutRecord('whipAbort', hit, speed);
+      }
+      return;
+    }
+
+    if (warp) {
+      // Steer the burn round it (never round the arrival subject — arriving
+      // there is the point, and the arrival cut owns that stop). End the burn
+      // when the remaining runway is inside the drop-out ramp's own ground.
+      if (!isSubject) { _keepoutSteer(hit, _koV, dtF); ap._keepoutSteering = true; }
+      if (hit.entry < stop * 1.25 || isSubject && hit.entry < stop) {
+        ew.timeRemaining = 0;
+        _keepoutRecord('warpCut', hit, speed);
+      } else if (!isSubject) {
+        _keepoutRecord('warpSteer', hit, speed);
+      }
+      return;
+    }
+    if (jump || glide) {
+      if (hit.entry < stop * 1.5) {
+        if (jump && ew.active) ew.timeRemaining = 0;
+        if (glide) { if (sl.active) sl.timeRemaining = 0; gameState.slingshotLaunchRamp = null; }
+        k.x = true; k.w = false;
+        _keepoutRecord(jump ? 'jumpCut' : 'glideCut', hit, speed);
+      }
+      return;
+    }
+    // Sublight: combat, cruise, the park's approach. The parked subject is
+    // only ever braked for, so it stays big and dead ahead.
+    const turn = !isSubject || !_parkOwnsBeat();
+    if (turn) { _keepoutSteer(hit, _koV, dtF); ap._keepoutSteering = true; }
+    if (hit.entry < stop * 1.5) {
+      k.x = true; k.w = false;
+      _keepoutRecord('brake', hit, speed);
+    } else if (turn) {
+      _keepoutRecord('steer', hit, speed);
+    }
+  }
+
   // Furthest a burn can be armed to reach — the reachability test every
   // staging path is gated on. This replaces `_oWarpBoostDist()` in those
   // tests: what matters is not how far the CURRENT duration would carry the
@@ -5076,7 +5378,10 @@
       const off = Math.sqrt(Math.max(0, _jcTmp.lengthSq() - along * along));
       // Its danger radius plus a ship-length of margin — the same clearance
       // _departureBlocked uses, applied to every body rather than one.
-      const clear = _arrivalDangerR(p) + 300;
+      // Never less than the body's keep-out sphere (package K), which grows
+      // with the body's scale where the bookkeeping radius may not.
+      const clear = Math.max(_arrivalDangerR(p) + 300,
+        _keepoutApplies(p) ? _keepoutR(p) * KEEPOUT_STEER_MARGIN : 0);
       if (off >= clear) continue;
       const stopBy = along - clear;
       if (stopBy < limit) { limit = stopBy; _jcBlocker = p; }
@@ -6816,6 +7121,49 @@
     // the ship off the standoff the burn just bought. Defer (see
     // _parkOwnsBeat); callers already retry.
     if (_parkOwnsBeat()) return _parkDefer('slingshot');
+    // PACKAGE K — VALIDATE THE EXIT LEG BEFORE COMMITTING. The whip releases
+    // along the aim (nav target, else the nose) from the body it whips round,
+    // and the glide does not follow the nose, so a keep-out sphere across that
+    // line is a collision nobody can steer out of. Sweep the leg from the whip
+    // body to the target (or 8 s of glide when there is none); refuse if it
+    // crosses one, so the caller falls back to the O-warp, whose corridor gate
+    // re-stages round the obstacle. The in-flight guard still watches the
+    // glide beyond this horizon (_keepoutGuard, 'glideCut').
+    if (typeof findSlingshotTarget === 'function' && _koTmp) {
+      const _swBody = findSlingshotTarget();
+      // The ARC first: measured in the baseline soak, the whip rail swept the
+      // ship round its body straight through Venus ("PLANETARY IMPACT",
+      // whip live, 0.70 R). The rail ignores every input, so it is checked
+      // whole before capture — see _whipArcBlocked.
+      const _arcHit = _swBody && _whipArcBlocked(_swBody);
+      if (_arcHit) {
+        _keepoutRecord('whipRefused', _arcHit, 0);
+        return false;
+      }
+      if (_swBody && _swBody.position) {
+        const _swT = gameState.currentTarget;
+        const _swDir = new THREE.Vector3();
+        let _swLen = 80 * 60 * KEEPOUT_LOOK_S * 2;
+        if (_swT && _swT.position && _swT !== _swBody) {
+          _swDir.subVectors(_swT.position, _swBody.position);
+          _swLen = Math.min(_swLen, _swDir.length());
+        } else {
+          camera.getWorldDirection(_swDir);
+        }
+        if (_swDir.lengthSq() > 1e-6) {
+          _swDir.normalize();
+          // Start where the leg leaves the whip body's own sphere.
+          const _swOut = _keepoutR(_swBody) * 1.01;
+          const _swFrom = _swBody.position.clone().addScaledVector(_swDir, _swOut);
+          const _swHit = _keepoutSweep(_swFrom, _swDir, Math.max(0, _swLen - _swOut),
+            (_swT && _swT.position) ? _swT : null);
+          if (_swHit && _swHit.obj !== _swBody) {
+            _keepoutRecord('slingRefused', _swHit, 0);
+            return false;
+          }
+        }
+      }
+    }
     // FIX 1 — ARRIVAL SUBJECT: the slingshot is explicitly launched TOWARD
     // gameState.currentTarget (callers set it just before triggering, e.g.
     // "Aim target = the nebula" above) — resolve a real body near that aim
