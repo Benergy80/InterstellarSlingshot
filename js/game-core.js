@@ -1355,7 +1355,11 @@ function createOrbitLines() {
             isOrbitLine: true,
             galaxyId: planet.userData.galaxyId
         };
-        
+        // HYBRID: orbit rings are HUD ("Orbits ON"), not decoration. The draw
+        // budget hid every ring under 150 triangles — the inner Sol rings — and
+        // swapped them in and out as the view turned.
+        if (!window.HYBRID || !window.HYBRID.is('hud', 'overhaul')) orbitLine.userData.__dbTris = Infinity;
+
         scene.add(orbitLine);
         orbitLines.push(orbitLine);
     });
@@ -1537,7 +1541,9 @@ if (planet.userData.isLocalGateway && planet.userData.orbitalTilt) {
             galaxyId: planet.userData.galaxyId,
             isPlanetOrbit: true // Flag to distinguish from moon orbits
         };
-        
+        // HYBRID: never a draw-budget candidate (see createOrbitLines).
+        if (!window.HYBRID || !window.HYBRID.is('hud', 'overhaul')) orbitLine.userData.__dbTris = Infinity;
+
         scene.add(orbitLine);
         orbitLines.push(orbitLine);
         
