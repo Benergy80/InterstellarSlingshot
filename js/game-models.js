@@ -1692,8 +1692,203 @@ const _HULL_EMISSIVE_FLOOR = {
     rimIntensity: 0.85
 };
 
+// HYBRID enemyLook: 'original' (default) = the ORIGINAL vector-look hulls
+// (dark faction-tinted hull + pulsing additive glow shell, original size),
+// restored byte-exact below; 'overhaul' = the *_overhaul builders (lit,
+// rim-lit, emissive-floored hulls at 2.02x). Read at build time.
+function _enemyLookOverhaul() {
+    return !window.HYBRID || window.HYBRID.is('enemyLook', 'overhaul');
+}
+
+// ORIGINAL rendered with no tone mapping; the overhaul's ACES curve (exposure
+// 1.2) turns the flat faction colours and the additive glow shells grey.
+// tone: opt every hostile/neutral craft material out of it, EXCEPT the
+// overhaul engine plume (thrusters switch) and its telegraph sprites, which
+// were tuned under ACES.
+// keep: exempt the craft from the overhaul's draw-call budget
+// (_enforceDrawBudget, game-core.js), which suppresses every sub-150-tri mesh
+// beyond 450u once the frame is over 900 calls. ORIGINAL's enemy GLBs and
+// their glow shells are all under that, so the budget was silently blanking
+// 300-480 hostile/neutral parts in demo play: the ships existed but did not
+// draw. Anything it already hid is handed back.
+// Idempotent and cheap: it only writes what is not already set.
+function _enemyVectorTone(root, tone, keep) {
+    if (!root || !root.traverse) return;
+    const db = keep ? window.__drawBudget : null;
+    root.traverse((n) => {
+        const u = n.userData;
+        if (keep && u && u.__dbTris !== Infinity) {
+            u.__dbTris = Infinity;
+            if (db && db.hidden && db.hidden.has(n)) {
+                if (n.material) n.material.visible = true;
+                db.hidden.delete(n);
+            }
+        }
+        if (!tone) return;
+        if (u && (u._isThrusterCone || u._isHullRead)) return;
+        const m = n.material;
+        if (!m) return;
+        const list = Array.isArray(m) ? m : [m];
+        for (let i = 0; i < list.length; i++) {
+            const mm = list[i];
+            if (mm && mm.toneMapped !== false) { mm.toneMapped = false; mm.needsUpdate = true; }
+        }
+    });
+}
+
 // Create enemy mesh using GLB model or fallback geometry
 function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOverride) {
+    if (_enemyLookOverhaul()) return createEnemyMeshWithModel_overhaul(regionId, fallbackGeometry, material, scaleOverride);
+    const model = getEnemyModel(regionId);
+
+    if (model) {
+        // Use the GLB model
+        // console.log(`Using GLB model for Enemy ${regionId}`);
+
+        // Debug: Log what's in the model
+        let meshCount = 0;
+        let vertexCount = 0;
+
+        // CRITICAL: Set the entire model visible first
+        model.visible = true;
+        model.frustumCulled = false;  // Don't cull when slightly off-screen
+
+        // STEP 1: Collect all base meshes and apply materials
+        const baseMeshes = [];
+        model.traverse((child) => {
+            if (child.isMesh) {
+                meshCount++;
+                if (child.geometry) {
+                    const positions = child.geometry.attributes.position;
+                    if (positions) {
+                        vertexCount += positions.count;
+                    }
+                }
+
+                // Make visible
+                child.visible = true;
+                child.frustumCulled = false;
+
+                // Apply base material
+                const baseColor = new THREE.Color(material.color || 0xff0000);
+                baseColor.multiplyScalar(0.4);
+
+                child.material = new THREE.MeshStandardMaterial({
+                    color: baseColor,
+                    transparent: false,
+                    opacity: 1.0,
+                    roughness: 0.6,
+                    metalness: 0.7,
+                    side: THREE.DoubleSide,
+                    depthWrite: true,
+                    depthTest: true
+                });
+
+                child.castShadow = false;
+                child.receiveShadow = false;
+
+                baseMeshes.push(child);
+            }
+        });
+
+        // STEP 2: Center the model BEFORE adding glow layers
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+
+        model.traverse((child) => {
+            if (child.isMesh) {
+                child.position.sub(center);
+            }
+        });
+
+        // STEP 3: NOW add glow layers (after centering)
+        baseMeshes.forEach((child) => {
+            const glowGeometry = child.geometry.clone();
+            const glowColor = new THREE.Color(material.color || 0xff0000);
+            glowColor.multiplyScalar(1.2);
+
+            const glowMaterial = new THREE.MeshBasicMaterial({
+                color: glowColor,
+                transparent: true,
+                opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
+                blending: THREE.AdditiveBlending,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                depthTest: true
+            });
+
+            const glowMesh = new THREE.Mesh(glowGeometry, glowMaterial);
+            // Don't scale - keep exact same size as base for perfect alignment
+            glowMesh.scale.set(1.0, 1.0, 1.0);
+            glowMesh.position.set(0, 0, 0);
+            glowMesh.rotation.set(0, 0, 0);
+            glowMesh.userData.isGlowLayer = true;
+            child.add(glowMesh);
+        });
+
+        // Scale enemy models. ENEMY_SCALE_FACTOR halves every enemy
+        // (default-96 path AND explicit scaleOverride callers, e.g.
+        // galaxy enemies passing 96.0, plus local Pirates/Vulcans) at
+        // a single point so all enemy ships are 50% of their previous
+        // size. Bosses are unaffected (separate createBossMeshWithModel).
+        const ENEMY_SCALE_FACTOR = 0.5;
+        const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
+        const correction = _enemyModelScaleCorrection[regionId] || 1.0;
+        model.scale.multiplyScalar(finalScale * correction);
+
+        // Nose-flip models authored +Z-forward so they fly nose-first
+        _applyNoseFlip(model, regionId);
+
+        return model;
+    } else {
+        // Fallback to procedural geometry — log loudly so it's visible
+        // why the GLB didn't load.
+        const cacheState = (typeof modelCache !== 'undefined') ? modelCache.enemies[regionId] : 'UNDEFINED';
+        console.warn(`⚠️ Enemy${regionId}.glb fallback used. modelCache state: ${cacheState === null ? 'null (load failed)' : cacheState === undefined ? 'undefined (not loaded yet)' : 'unexpected ' + typeof cacheState}`);
+
+        // Create base mesh with darker, more defined material
+        const baseColor = new THREE.Color(material.color || 0xff0000);
+        baseColor.multiplyScalar(0.4);  // Darker base for contrast
+
+        const baseMaterial = new THREE.MeshStandardMaterial({
+            color: baseColor,
+            transparent: false,
+            opacity: 1.0,
+            roughness: 0.6,
+            metalness: 0.7,
+            side: THREE.DoubleSide
+        });
+
+        const baseMesh = new THREE.Mesh(fallbackGeometry, baseMaterial);
+
+        // Add glow layer
+        const glowColor = new THREE.Color(material.color || 0xff0000);
+        glowColor.multiplyScalar(1.2);
+
+        const glowMaterial = new THREE.MeshBasicMaterial({
+            color: glowColor,
+            transparent: true,
+            opacity: 0.2,  // Base opacity - will pulse from 0.0 to 0.7
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            depthTest: true
+        });
+
+        const glowMesh = new THREE.Mesh(fallbackGeometry.clone(), glowMaterial);
+        // Don't scale - keep exact same size as base for perfect alignment
+        glowMesh.scale.set(1.0, 1.0, 1.0);
+        glowMesh.position.set(0, 0, 0);  // Position at parent's origin
+        glowMesh.rotation.set(0, 0, 0);  // No rotation offset
+        glowMesh.userData.isGlowLayer = true;
+        baseMesh.add(glowMesh);
+
+        return baseMesh;
+    }
+}
+
+// ── overhaul version of createEnemyMeshWithModel, kept for flag-gated comparison ──
+function createEnemyMeshWithModel_overhaul(regionId, fallbackGeometry, material, scaleOverride) {
     const model = getEnemyModel(regionId);
 
     if (model) {
@@ -1884,6 +2079,87 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
 
 // Create boss mesh using GLB model or fallback geometry
 function createBossMeshWithModel(regionId, fallbackGeometry, material) {
+    if (_enemyLookOverhaul()) return createBossMeshWithModel_overhaul(regionId, fallbackGeometry, material);
+    const model = getBossModel(regionId);
+
+    if (model) {
+        // Use the GLB model
+        console.log(`👑 Using GLB Boss${regionId}.glb model`);
+
+        // CRITICAL: Set the entire model visible first
+        model.visible = true;
+        model.frustumCulled = false;
+
+        // PRESERVE the GLB model's material but enhance it with game colors
+        // DON'T replace it entirely - that makes models look like procedural geometry
+        model.traverse((child) => {
+            if (child.isMesh) {
+                // CRITICAL: Make each mesh visible
+                child.visible = true;
+                child.frustumCulled = false;
+
+                // Faction-tinted but bright enough to read clearly. The
+                // previous 0.3x multiplier was so dim that bosses appeared
+                // muddy/geometric — bumped to 0.7x and added emissive so
+                // the model silhouette pops against starfield.
+                const baseColor = new THREE.Color(material.color || 0xff0000);
+                const tintColor = baseColor.clone().multiplyScalar(0.7);
+
+                child.material = new THREE.MeshStandardMaterial({
+                    color: tintColor,
+                    emissive: baseColor.clone().multiplyScalar(0.35),
+                    emissiveIntensity: 0.9,
+                    roughness: 0.4,
+                    metalness: 0.7,
+                    transparent: false,
+                    opacity: 1.0,
+                    side: THREE.DoubleSide,
+                    depthWrite: true,
+                    depthTest: true,
+                    wireframe: false
+                });
+
+                child.castShadow = false;
+                child.receiveShadow = false;
+            }
+        });
+
+        // Center the model to fix position offset issues
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+
+        // Offset all children to center the model at origin
+        model.traverse((child) => {
+            if (child.isMesh) {
+                child.position.sub(center);
+            }
+        });
+
+        // Bosses are larger than enemies. BOSS_SCALE_FACTOR=0.5 halves
+        // every boss to match the enemy ship halving (144 -> 72 base).
+        const BOSS_SCALE_FACTOR = 0.5;
+        const bossCorrection = _enemyModelScaleCorrection[regionId] || 1.0;
+        model.scale.multiplyScalar(144.0 * BOSS_SCALE_FACTOR * bossCorrection);
+
+        // Boss1/Boss8 share the +Z-nose authoring of their fighter models
+        _applyNoseFlip(model, regionId);
+
+        return model;
+    } else {
+        // Fallback to procedural geometry — log loudly so we can diagnose
+        // why the GLB didn't load. modelCache.bosses[regionId] === null
+        // means either the file failed to load or spawn happened before
+        // loadAllModels finished.
+        const cacheState = (typeof modelCache !== 'undefined') ? modelCache.bosses[regionId] : 'UNDEFINED';
+        console.warn(`⚠️ Boss${regionId}.glb fallback used. modelCache state: ${cacheState === null ? 'null (load failed)' : cacheState === undefined ? 'undefined (not loaded yet)' : 'unexpected ' + typeof cacheState}`);
+        const mesh = new THREE.Mesh(fallbackGeometry, material);
+        mesh.scale.multiplyScalar(2.5);
+        return mesh;
+    }
+}
+
+// ── overhaul version of createBossMeshWithModel, kept for flag-gated comparison ──
+function createBossMeshWithModel_overhaul(regionId, fallbackGeometry, material) {
     const model = getBossModel(regionId);
 
     if (model) {
@@ -2687,7 +2963,9 @@ function _installUFOHullPresenceFix() {
 // Polling for the real function to appear is robust to all of that: it
 // costs nothing once installed (self-clearing) and nothing meaningful
 // while waiting (a few hundred ms of an empty typeof check).
-if (typeof window !== 'undefined') {
+// HYBRID: overhaul-only (enemyLook:overhaul). The ORIGINAL UFO keeps its own
+// createUFOEnemy material.
+if (typeof window !== 'undefined' && _enemyLookOverhaul()) {
     let _ufoFixAttempts = 0;
     const _ufoFixPoll = setInterval(() => {
         _ufoFixAttempts++;
@@ -2699,6 +2977,38 @@ if (typeof window !== 'undefined') {
 
 if (typeof window !== 'undefined') {
     window.applyUFOHullPresenceFloor = _applyUFOHullPresenceFloor;
+}
+
+// HYBRID enemyLook:original — keep every hostile and neutral craft out of the
+// ACES tone curve, so it renders with ORIGINAL's flat saturated colours.
+// HYBRID enemyPopulation:original — keep them out of the draw-call budget, so
+// every ship that exists is drawn, as in ORIGINAL (see _enemyVectorTone).
+// A sweep (not a hook in each builder) because the spawners add glow layers,
+// shields and hitboxes after the mesh builder returns, and UFOs, Borg cubes,
+// drones, trading, civilian and military ships each have their own builder.
+// Wingmen/ally ships belong to the player craft (playerShip switch).
+if (typeof window !== 'undefined') {
+    const _tone = !_enemyLookOverhaul();
+    const _keep = !!window.HYBRID && !window.HYBRID.is('enemyPopulation', 'overhaul');
+    const _enemyToneSweep = () => {
+        const lists = [
+            (typeof enemies !== 'undefined') ? enemies : null,
+            window.ufoEnemies, window.tradingShips, window.civilianShips
+        ];
+        for (let l = 0; l < lists.length; l++) {
+            const arr = lists[l];
+            if (!arr || !arr.length) continue;
+            for (let i = 0; i < arr.length; i++) _enemyVectorTone(arr[i], _tone, _keep);
+        }
+        const outer = (typeof outerInterstellarSystems !== 'undefined') ? outerInterstellarSystems : null;
+        if (outer) {
+            for (let s = 0; s < outer.length; s++) {
+                const d = outer[s] && outer[s].userData && outer[s].userData.drones;
+                if (d) for (let i = 0; i < d.length; i++) _enemyVectorTone(d[i], _tone, _keep);
+            }
+        }
+    };
+    if (_tone || _keep) setInterval(_enemyToneSweep, 500);
 }
 
 console.log('✅ Game models system loaded and ready');
