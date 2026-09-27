@@ -117,7 +117,14 @@ function resetIntroState() {
 // ceremony around it has to be lean and why the two black fades now OVERLAP
 // instead of running end to end: the loading screen and the reveal overlay are
 // both black, so cross-fading them costs one fade, not two.
-const IV_BOOT = {
+// HYBRID: `intro` switch. 'original' (default) = ORIGINAL title screen, timing
+// and launch-pad countdown; the hero vista is NOT built for the title (its
+// helpers below stay defined for reuse). 'overhaul' = the boot vista + IV_BOOT.
+function _hyIntroOverhaul() {
+    return !window.HYBRID || HYBRID.is('intro', 'overhaul');
+}
+
+const IV_BOOT = _hyIntroOverhaul() ? {
     loadHold:    550,   // was 3000 — the loading bar finishes inside this, and
                         //            the screen stays up for the init anyway
     loadFade:    500,   // was 1000 — loading screen -> the black overlay behind it
@@ -125,7 +132,18 @@ const IV_BOOT = {
     overlayLag:   20,   // was 100  — arm the overlay transition
     overlayFade: 900,   // was 2500 — black -> vista
     buttonLag:   240,   // was 1100 — after the overlay starts moving
-    buttonFade:  500    // was 1000 — button opacity ramp
+    buttonFade:  500,   // was 1000 — button opacity ramp
+    overlap:     true   // loading-screen fade and reveal run concurrently
+} : {
+    // ORIGINAL schedule, value for value.
+    loadHold:    3000,
+    loadFade:    1000,
+    preReveal:   500,
+    overlayLag:  100,
+    overlayFade: 2500,
+    buttonLag:   1100,
+    buttonFade:  1000,
+    overlap:     false  // ORIGINAL: loading screen fades out, THEN the reveal starts
 };
 
 // Boot ledger. index.html silences console.log unless GAME_DEBUG_VERBOSE is set,
@@ -168,9 +186,9 @@ function startGameWithIntro() {
                 initializeMinimalThreeJS();
 
                 // Fade the loading screen out and start the reveal in the SAME
-                // beat — see ivFadeOutLoadingScreen().
-                ivFadeOutLoadingScreen(loadingScreen);
-                startControlledFadeSequence();
+                // beat — see ivFadeOutLoadingScreen(). (ORIGINAL timing under
+                // intro:original: fade first, then the reveal.)
+                ivFadeOutLoadingScreen(loadingScreen, startControlledFadeSequence);
             }, IV_BOOT.loadHold);
             return;
         }
@@ -199,9 +217,9 @@ function startGameWithIntro() {
             // the reveal clock only starts once there is a lit vista to reveal.
             ivWarmFirstFrameSliced(() => {
                 // Fade the loading screen out and start the reveal in the SAME
-                // beat — see ivFadeOutLoadingScreen().
-                ivFadeOutLoadingScreen(loadingScreen);
-                startControlledFadeSequence();
+                // beat — see ivFadeOutLoadingScreen(). (ORIGINAL timing under
+                // intro:original: fade first, then the reveal.)
+                ivFadeOutLoadingScreen(loadingScreen, startControlledFadeSequence);
             });
         }, IV_BOOT.loadHold);
         
@@ -228,11 +246,17 @@ function startGameWithIntro() {
 // clock is already running, and IV_BOOT.preReveal is set just past
 // IV_BOOT.loadFade so the sky only starts coming up once the bar and its text
 // are gone. Nothing after the reveal is re-timed.
-function ivFadeOutLoadingScreen(loadingScreen) {
-    if (!loadingScreen) return;
+function ivFadeOutLoadingScreen(loadingScreen, then) {
+    const next = typeof then === 'function' ? then : null;
+    if (!loadingScreen) { if (next) next(); return; }
     loadingScreen.style.transition = 'opacity ' + (IV_BOOT.loadFade / 1000) + 's ease-out';
     loadingScreen.style.opacity = '0';
-    setTimeout(() => { loadingScreen.style.display = 'none'; }, IV_BOOT.loadFade);
+    setTimeout(() => {
+        loadingScreen.style.display = 'none';
+        // ORIGINAL order: the reveal starts once the loading screen is gone.
+        if (next && !IV_BOOT.overlap) next();
+    }, IV_BOOT.loadFade);
+    if (next && IV_BOOT.overlap) next();
 }
 
 function initializeThreeJSForIntro() {
@@ -326,7 +350,9 @@ function initializeThreeJSForIntro() {
     // The launch-pad sky is built and kept for the launch sequence, but the
     // PRE-LAUNCH menu now sits in front of the hero vista instead of it.
     ivPerf('padSkyReady');
-    buildIntroVista();
+    // HYBRID: the hero vista belongs to the in-game opening view, not the title
+    // (Ben). Built only under intro:overhaul; its helpers stay callable.
+    if (_hyIntroOverhaul()) buildIntroVista();
     ivPerf('vistaReady');
     
     // IMMEDIATELY create black overlay to prevent flash
@@ -653,6 +679,55 @@ function initializeMinimalThreeJS() {
 // =============================================================================
 
 function startLoadingAnimation() {
+    if (_hyIntroOverhaul()) return startLoadingAnimation_overhaul.apply(this, arguments);
+    let progress = 0;
+    const loadingTexts = [
+        "Starting flight systems...",
+        "Loading cosmic data...", 
+        "Scanning galaxy coordinates...",
+        "Calculating orbital mechanics...",
+        "Calibrating navigation sensors...",
+        "Initializing gravitational assist systems...",
+        "Preparing 3D environment...",
+        "Loading cyber weapon systems...",
+        "Optimizing neural interface...",
+        "Setting up synth audio...",
+        "Synchronizing quantum drives...",
+        "Ready for launch!"
+    ];
+    
+    const interval = setInterval(() => {
+        progress += 1.5 + Math.random() * 2.0; // FAST - takes ~3 seconds
+        progress = Math.min(progress, 100);
+        
+        const loadingBar = document.getElementById('loadingBar');
+        const loadingText = document.getElementById('loadingText');
+        
+        if (loadingBar) {
+            loadingBar.style.width = progress + '%';
+        }
+        
+        // Update loading text based on progress
+        const textIndex = Math.floor(progress / 8.3); // 12 messages over 100% progress
+        if (loadingText && textIndex < loadingTexts.length) {
+            loadingText.textContent = loadingTexts[textIndex];
+            console.log(`📊 Loading: ${progress.toFixed(0)}% - ${loadingTexts[textIndex]}`);
+        }
+        
+        if (progress >= 100) {
+            clearInterval(interval);
+            if (loadingText) {
+                loadingText.textContent = "Ready for launch!";
+            }
+            console.log('🚀 Loading animation completed in ~3 seconds');
+        }
+    }, 60); // Update every 60ms - fast updates
+    
+    console.log('🚀 Loading bar animation started with FAST progress');
+}
+
+// ── overhaul version of startLoadingAnimation, kept for flag-gated comparison ──
+function startLoadingAnimation_overhaul() {
     let progress = 0;
     const loadingTexts = [
         "Starting flight systems...",
@@ -1002,6 +1077,8 @@ function _ivTitleChromeApply() {
 function _ivTitleChrome(trim) {
     try {
         if (!!trim === IV_TITLE_CHROME.trimmed) return;
+        // HYBRID: ORIGINAL title screen keeps every HUD panel up.
+        if (trim && !_hyIntroOverhaul()) return;
         if (trim) {
             IV_TITLE_CHROME.faded = ['.ui-panel.bottom-left',    // SHIP STATUS
                                      '.ui-panel.bottom-right']   // Map
@@ -1047,6 +1124,44 @@ function _ivTitleChrome(trim) {
 }
 
 function showStartButton() {
+    if (_hyIntroOverhaul()) return showStartButton_overhaul.apply(this, arguments);
+    ivPerf('buttonAt');
+    // Create and show the start button with fade-in
+    createStartButton();
+    createDemoButton();
+
+    // Fade in start button
+    if (introSequence.startButton) {
+        introSequence.startButton.style.opacity = '0';
+        introSequence.startButton.style.transition = 'opacity 1s ease-in-out';
+
+        // Trigger fade-in after a brief delay
+        // (HYBRID: null guard kept from 2c51c04 — the button can be gone by then)
+        setTimeout(() => {
+            if (introSequence.startButton) introSequence.startButton.style.opacity = '1';
+        }, 100);
+    }
+
+    // Fade in demo button
+    if (introSequence.demoButton) {
+        introSequence.demoButton.style.opacity = '0';
+        introSequence.demoButton.style.transition = 'opacity 1s ease-in-out';
+        setTimeout(() => {
+            if (introSequence.demoButton) introSequence.demoButton.style.opacity = '1';
+        }, 300);
+    }
+
+    // Fade in skip button
+    if (introSequence.skipButton) {
+        introSequence.skipButton.style.transition = 'opacity 1s ease-in-out';
+        introSequence.skipButton.style.opacity = '0.7';
+    }
+
+    console.log('🚀 Start button, demo button, and skip button faded in');
+}
+
+// ── overhaul version of showStartButton, kept for flag-gated comparison ──
+function showStartButton_overhaul() {
     ivPerf('buttonAt');
     // Create and show the start button with fade-in
     createStartButton();
@@ -2375,6 +2490,71 @@ function createCountdownOverlay() {
     document.body.appendChild(countdownOverlay);
 }
 function createSkipButton() {
+    if (_hyIntroOverhaul()) return createSkipButton_overhaul.apply(this, arguments);
+    const skipButton = document.createElement('button');
+    skipButton.id = 'skipIntroBtn';
+    skipButton.className = 'absolute bottom-4 left-1/2 transform -translate-x-1/2 space-btn rounded px-4 py-2 text-sm';
+    skipButton.innerHTML = '<i class="fas fa-forward mr-2"></i>Skip Intro';
+    skipButton.addEventListener('click', skipIntroSequence);
+
+    // Apply the visible mobile styling to ALL mobile devices (iPhone,
+    // Android, iPad).  Previously only iPhone got this treatment and
+    // Android / iPad fell back to the transparent space-btn class which
+    // rendered invisible on the black intro background.
+    const isMobile = window.innerWidth <= 768 ||
+                     ('ontouchstart' in window && window.innerWidth <= 1024);
+
+    if (isMobile) {
+        // Match the desktop space-btn glassmorphism look — blue/cyan
+        // gradient, not a heavy dark background.  Just enforce positioning
+        // + tappable sizing so the button sits above the intro video.
+        skipButton.style.cssText = `
+            position: fixed !important;
+            bottom: 16px !important;
+            left: 50% !important;
+            transform: translateX(-50%) !important;
+            padding: 10px 22px !important;
+            background: linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3)) !important;
+            border: 1px solid rgba(0,150,255,0.55) !important;
+            border-radius: 8px !important;
+            color: rgba(0,255,255,0.95) !important;
+            font-family: 'Orbitron', monospace !important;
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            letter-spacing: 1px !important;
+            cursor: pointer !important;
+            opacity: 0;
+            transition: all 0.25s ease !important;
+            z-index: 10000 !important;
+            backdrop-filter: blur(5px) !important;
+            -webkit-backdrop-filter: blur(5px) !important;
+            box-shadow: 0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3) !important;
+            text-shadow: 0 0 6px rgba(0,255,255,0.6) !important;
+            -webkit-tap-highlight-color: rgba(0,200,255,0.3) !important;
+            touch-action: manipulation !important;
+        `;
+
+        skipButton.addEventListener('mouseenter', () => {
+            skipButton.style.background = 'linear-gradient(135deg, rgba(0,200,255,0.3), rgba(0,150,255,0.4))';
+            skipButton.style.boxShadow = '0 0 20px rgba(0,255,255,0.4), 0 6px 20px rgba(0,150,255,0.3), inset 0 1px 0 rgba(0,255,255,0.4)';
+        });
+
+        skipButton.addEventListener('mouseleave', () => {
+            skipButton.style.background = 'linear-gradient(135deg, rgba(0,150,255,0.2), rgba(0,100,200,0.3))';
+            skipButton.style.boxShadow = '0 4px 15px rgba(0,150,255,0.2), inset 0 1px 0 rgba(0,150,255,0.3)';
+        });
+    } else {
+        // Desktop AND iPad: transparent glassmorphism style from space-btn class
+        skipButton.style.opacity = '0';
+        skipButton.style.zIndex = '10000';
+    }
+
+    document.body.appendChild(skipButton);
+    introSequence.skipButton = skipButton;
+}
+
+// ── overhaul version of createSkipButton, kept for flag-gated comparison ──
+function createSkipButton_overhaul() {
     const skipButton = document.createElement('button');
     skipButton.id = 'skipIntroBtn';
     skipButton.className = 'absolute bottom-4 left-1/2 transform -translate-x-1/2 space-btn rounded px-4 py-2 text-sm';
@@ -4637,6 +4817,16 @@ introStyles.textContent = `
         opacity: 1;
     }
 `;
+
+// HYBRID: ORIGINAL full-frame countdown vignette. The overhaul's small scrim
+// above was sized for the hero vista, which intro:original does not build.
+if (!_hyIntroOverhaul()) {
+    introStyles.textContent += `
+    #introCountdownOverlay {
+        background: radial-gradient(ellipse at center, rgba(0,20,40,0.3) 0%, rgba(0,0,0,0.7) 100%);
+    }
+`;
+}
 
 document.head.appendChild(introStyles);
 
