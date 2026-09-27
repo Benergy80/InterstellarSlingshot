@@ -202,8 +202,13 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927h | K demo pilot safety: keep-out spheres in radii (`KEEPOUT_K`), 0 deaths in 11 soak runs |
 | 20260927i | Wave 4 — F ORIGINAL intro; J black holes bigger (`HY_BH.SIZE` 900) with lensed disc ramping on approach |
 | 20260927j | Black holes: no outer circle, no grid (`HY_BH.OUTER_RING`, `HY_BH.GRID` off); ORIGINAL glow, disk and hoop stay on approach (`HY_BH.ORIG_YIELD` 0) |
-| in progress | Wave 5 — G scale and placement (Sol, outer systems, giants, stars) |
-| last | Wave 6 — G2 the opening view; L asteroids |
+| 20260927k | Wave 5 — G scale and placement: one size ladder, one spacing rule (`solScale: big`; `HY_SCALE`, `HY_SOL`, `HY_LADDER`). Sol at (9919, 0, 21701); nebulae 28-60k out |
+| in progress | Wave 6 — G2 the opening view; L asteroids |
+
+Open after wave 5: enemies near the player thinned with the wider spacing (within 15,000 of the
+start: 21 against ORIGINAL's 57); map/radar scale, trader routes and galaxy-core enemy spawn radii
+not re-checked at the new scale; galaxy and Alpha/Beta/Gamma planets are resized but still flat
+Lambert.
 
 Ben, 2026-09-27, on build i: "The big circles around the black holes are not necessary. Probably
 inspired by one of the images I uploaded. Can the other black hole effects come back alongside the
