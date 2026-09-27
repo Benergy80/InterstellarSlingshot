@@ -3572,6 +3572,8 @@ function setupNormalGameContent() {
     }
 
     resetCameraToGamePosition();
+    // HYBRID G2 (openingVista): open on Earth's limb with the Sun above it.
+    composeOpeningVista();
     console.log('📍 Camera reset to game position');
     
     // CRITICAL: Initialize cosmic features
@@ -3857,6 +3859,289 @@ function resetCameraToGamePosition() {
     }
 
     console.log('📍 Camera set to orbit Earth in Sol System (no auto-nav target)');
+}
+
+// =============================================================================
+// HYBRID G2 — THE OPENING VIEW  (switch `openingVista`: 'on' | 'off')
+//
+// Ben: "I had hoped the view when the game started would be more like the view
+// shown on the star-explorer intro screen, with the planets huge in perspective
+// and amazing looking". One call at the hand-off seam (setupNormalGameContent,
+// right after resetCameraToGamePosition): the ship is parked a couple of radii
+// off Earth, framed so Earth's sunlit limb sweeps across the bottom of the
+// frame and the Sun hangs above it in the clear middle of the HUD. It is
+// composed from where the bodies ARE this boot (planets orbit on the wall
+// clock): a search over viewpoints round Earth, scored on the framing, with the
+// Moon and other worlds rewarded when they land in the clear part of the frame.
+//
+// Earth moves ~70 u/s, and the reveal runs 3-14 s after the seam, so the ship
+// holds station in Earth's orbital frame until the player touches a control,
+// the demo pilot takes over (DEMO_HOLD_S after the reveal), or HOLD_S passes.
+// It then leaves on its nose with the station's velocity, so nothing lurches;
+// the nose line and Earth's orbital drift both clear Earth by 1.5+ radii.
+// =============================================================================
+const OPENING_VISTA = {
+    PLANET: 'Earth',              // the hero world (a Sol planet's name)
+    DIST_K: 2.1,                  // camera distance from the hero's centre, in its radii (demo keep-out is 1.8)
+    SUN_NDC: [-0.06, 0.45],       // where the Sun sits on screen (x right, y up, -1..1)
+    PLANET_NDC: [0.08, -1.35],    // where the hero's CENTRE sits (below the frame: its sunlit limb fills the bottom)
+    FWD_CLEAR_K: 1.5,             // the nose line must miss the hero's centre by at least this many radii
+    DRIFT_CLEAR_K: 1.8,           // after release the hero slides along its orbit: the ship must stay this far off that line
+    MAX_LEAN_DEG: 35,             // how far the orbital plane may lean on screen
+    FALLBACK_SCORE: 0.3,          // framing error above which the level-horizon fallback family is tried
+    HOLD_S: 8,                    // seconds after gameplay begins that the ship keeps station (any input ends it sooner)
+    DEMO_HOLD_S: 3,               // DEMO MODE: seconds the view holds, ship in frame, before the demo pilot takes over
+    CLEAR: [-0.45, 0.50, -0.85, 0.70] // HUD-free screen box [x0,x1,y0,y1]: the Moon and other worlds score inside it
+};
+const _ovState = { active: false, hero: null, off: null, a: 0, b: 0, lastC: null, lastT: 0, vel: null, placed: null, raf: 0, pc: null };
+
+function _ovBody(name) {
+    if (typeof planets === 'undefined' || !planets) return null;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (p && p.userData && p.userData.name === name) return p;
+    }
+    return null;
+}
+
+function _ovRadius(p) {
+    const r = p && p.geometry && p.geometry.parameters ? p.geometry.parameters.radius : 0;
+    return r * (p && p.scale ? p.scale.x : 1);
+}
+
+function _ovSun() {
+    const o = window.localSystemOffset;
+    return o ? new THREE.Vector3(o.x, o.y, o.z) : null;
+}
+
+// The hero's orbital frame: r = out from the Sun, t = along its motion, y = up.
+function _ovFrame(E, S, hero) {
+    const r = new THREE.Vector3(E.x - S.x, 0, E.z - S.z).normalize();
+    const t = new THREE.Vector3(-r.z, 0, r.x);
+    if ((hero.userData.orbitSpeed || 0) < 0) t.negate();
+    return { r, t };
+}
+
+// Two angles that put the Sun at SUN_NDC from C. Preferred family ('euler'):
+// Euler (a, b, 0) — the flight model levels roll to Euler z = 0 and would
+// otherwise undo a composed-in roll after the hold. Near world +-x that family
+// cannot pitch (gimbal), so the fallback ('look') is pitch a / yaw b with the
+// orbital plane level on screen; the leveller then rolls it after release.
+function _ovOrient(o, a, b, look) {
+    if (look) {
+        const f = new THREE.Vector3(-Math.sin(b) * Math.cos(a), Math.sin(a), -Math.cos(b) * Math.cos(a));
+        o.up.set(0, 1, 0);
+        o.lookAt(f.add(o.position));
+    } else {
+        o.rotation.set(a, b, 0);
+    }
+}
+function _ovProject(pc, pt, a, b) {
+    _ovOrient(pc, a, b, pc.userData.ovLook);
+    pc.updateMatrixWorld(true);
+    return pt.clone().project(pc);
+}
+function _ovAim(pc, C, S, a0, b0) {
+    const T = OPENING_VISTA.SUN_NDC;
+    pc.position.copy(C);
+    let a = a0, b = b0;
+    if (a === undefined) {
+        const f = new THREE.Vector3().subVectors(S, C).normalize();
+        if (pc.userData.ovLook) {
+            a = Math.asin(Math.max(-1, Math.min(1, f.y)));
+            b = Math.atan2(-f.x, -f.z);
+        } else {
+            a = Math.atan2(f.y, -f.z);
+            b = Math.asin(Math.max(-1, Math.min(1, -f.x)));
+        }
+    }
+    const h = 1e-4;
+    for (let it = 0; it < 14; it++) {
+        const p = _ovProject(pc, S, a, b);
+        const ex = p.x - T[0], ey = p.y - T[1];
+        if (Math.abs(ex) + Math.abs(ey) < 1e-4) break;
+        const pa = _ovProject(pc, S, a + h, b), pb = _ovProject(pc, S, a, b + h);
+        const j11 = (pa.x - p.x) / h, j12 = (pb.x - p.x) / h;
+        const j21 = (pa.y - p.y) / h, j22 = (pb.y - p.y) / h;
+        const det = j11 * j22 - j12 * j21;
+        if (Math.abs(det) < 1e-9) return null;
+        a -= (j22 * ex - j12 * ey) / det;
+        b -= (-j21 * ex + j11 * ey) / det;
+    }
+    const p = _ovProject(pc, S, a, b);
+    if (p.z > 1 || Math.abs(p.x - T[0]) + Math.abs(p.y - T[1]) > 0.01) return null;
+    return { a, b };
+}
+
+// Puts the camera where the opening view wants it. Returns true when it did;
+// false leaves resetCameraToGamePosition()'s start exactly as it was.
+function composeOpeningVista() {
+    try {
+        if (!window.HYBRID || !HYBRID.is('openingVista', 'on')) return false;
+        if (typeof THREE === 'undefined' || !camera) return false;
+        const V = OPENING_VISTA;
+        // Planets sit at their build position until the first orbit tick;
+        // step the orbits once so we compose from where they are NOW.
+        if (typeof updatePlanetOrbits === 'function') updatePlanetOrbits();
+        const hero = _ovBody(V.PLANET);
+        const S = _ovSun();
+        if (!hero || !S) return false;
+        scene.updateMatrixWorld(true);
+        const E = hero.getWorldPosition(new THREE.Vector3());
+        const R = _ovRadius(hero);
+        if (!(R > 0)) return false;
+        const fr = _ovFrame(E, S, hero);
+        const sunBody = _ovBody('Sol');
+        const sunR = sunBody ? _ovRadius(sunBody) : 300;
+
+        // Scored extras: the Moon and the other inner worlds, where they are now.
+        const extras = [];
+        ['Luna', 'Mercury', 'Venus', 'Mars', 'Jupiter'].forEach((n, i) => {
+            const b = _ovBody(n);
+            if (b) extras.push({ p: b.getWorldPosition(new THREE.Vector3()), w: i === 0 ? 1.0 : 0.35 });
+        });
+
+        const pc = new THREE.PerspectiveCamera(camera.fov, camera.aspect || (16 / 9), 1, 1e6);
+        let best = null;
+        const dir = new THREE.Vector3(), C = new THREE.Vector3(), toE = new THREE.Vector3();
+        const fwd = new THREE.Vector3(), up = new THREE.Vector3(), right = new THREE.Vector3();
+        for (const look of [false, true]) {
+        if (look && best && best.score < V.FALLBACK_SCORE) break;
+        pc.userData.ovLook = look;
+        for (let el = -70; el <= 70; el += 5) {
+            for (let az = 0; az < 360; az += 5) {
+                const e = el * Math.PI / 180, z = az * Math.PI / 180;
+                dir.set(Math.cos(e) * Math.cos(z), Math.sin(e), Math.cos(e) * Math.sin(z));
+                // After release the hero pulls ahead along t: stay clear of that line.
+                const dt = dir.dot(fr.t);
+                if (dt > 0 && V.DIST_K * Math.sqrt(1 - dt * dt) < V.DRIFT_CLEAR_K) continue;
+                C.copy(E).addScaledVector(dir, V.DIST_K * R);
+                if (C.distanceTo(S) < 4 * sunR) continue;
+                const aim = _ovAim(pc, C, S);
+                if (!aim) continue;
+                const pe = _ovProject(pc, E, aim.a, aim.b);
+                // the hero sits below the frame, never above or off to a side
+                if (pe.z > 1 || pe.y > -0.9 || Math.abs(pe.x) > 0.8) continue;
+                let score = Math.hypot(pe.x - V.PLANET_NDC[0], pe.y - V.PLANET_NDC[1]);
+                // the nose line must clear the hero
+                pc.getWorldDirection(fwd);
+                toE.subVectors(E, C);
+                const along = toE.dot(fwd);
+                const miss = along > 0 ? toE.clone().addScaledVector(fwd, -along).length() : Infinity;
+                if (miss < V.FWD_CLEAR_K * R) continue;
+                // on-screen lean of the orbital plane
+                up.set(0, 1, 0).applyQuaternion(pc.quaternion);
+                right.set(1, 0, 0).applyQuaternion(pc.quaternion);
+                const lean = Math.abs(Math.atan2(right.y, up.y)) * 180 / Math.PI;
+                if (lean > V.MAX_LEAN_DEG) continue;
+                score += lean / 300;
+                // the look family is rolled in Euler terms: the leveller will turn it after release
+                const rz = Math.abs(pc.rotation.z), roll = Math.min(rz, Math.PI - rz);
+                if (look) score += V.FALLBACK_SCORE * 0.5 + roll / Math.PI;
+                extras.forEach((x) => {
+                    const q = _ovProject(pc, x.p, aim.a, aim.b);
+                    if (q.z < 1 && q.x > V.CLEAR[0] && q.x < V.CLEAR[1] && q.y > V.CLEAR[2] && q.y < V.CLEAR[3]) score -= 0.12 * x.w;
+                });
+                if (!best || score < best.score) best = { score, C: C.clone(), a: aim.a, b: aim.b, pe: [pe.x, pe.y], lean, look };
+            }
+        }
+        }
+        if (!best) { console.warn('🌍 Opening vista: no framing found — keeping the standard start'); return false; }
+
+        camera.position.copy(best.C);
+        _ovOrient(camera, best.a, best.b, best.look);
+        camera.updateMatrixWorld(true);
+        if (typeof cameraRotation !== 'undefined' && cameraRotation) {
+            cameraRotation.x = camera.rotation.x; cameraRotation.y = camera.rotation.y; cameraRotation.z = camera.rotation.z;
+        }
+        if (typeof gameState !== 'undefined' && gameState.velocityVector) {
+            camera.getWorldDirection(fwd);
+            gameState.velocityVector.copy(fwd).multiplyScalar(gameState.minVelocity || 0.4);
+        }
+        // Hold station in the hero's ORBITAL frame: the Sun-Earth-ship triangle
+        // then stays the same shape while Earth orbits, so the picture holds.
+        const off = new THREE.Vector3().subVectors(best.C, E);
+        _ovState.hero = hero;
+        _ovState.off = { r: off.dot(fr.r), t: off.dot(fr.t), y: off.y };
+        _ovState.a = best.a; _ovState.b = best.b;
+        _ovState.pc = pc;
+        pc.userData.ovLook = best.look;
+        _ovState.lastC = best.C.clone();
+        _ovState.lastT = performance.now();
+        _ovState.vel = new THREE.Vector3();
+        _ovState.placed = best.C.clone();
+        _ovState.active = true;
+        window.__openingVista = { score: +best.score.toFixed(3), heroNdc: best.pe.map((v) => +v.toFixed(2)), lean: Math.round(best.lean), family: best.look ? 'look' : 'euler',
+                                  dist: Math.round(best.C.distanceTo(E)), radius: R, hero: V.PLANET, held: true, released: null };
+        const onInput = (ev) => { if (ev && ev.isTrusted === false) return; _ovRelease('input'); };
+        _ovState.onInput = onInput;
+        ['keydown', 'mousedown', 'touchstart', 'wheel'].forEach((t) => window.addEventListener(t, onInput, true));
+        cancelAnimationFrame(_ovState.raf);
+        _ovState.raf = requestAnimationFrame(_ovHoldTick);
+        console.log('🌍 Opening vista: ' + V.PLANET + ' at ' + V.DIST_K + ' radii, lean ' + Math.round(best.lean) + '°, score ' + best.score.toFixed(3));
+        return true;
+    } catch (e) {
+        console.warn('Opening vista failed — keeping the standard start:', e);
+        return false;
+    }
+}
+
+// Keeps the ship on station beside the hero world until something takes over.
+function _ovHoldTick() {
+    if (!_ovState.active) return;
+    const hero = _ovState.hero;
+    const now = performance.now();
+    const gs = (typeof gameState !== 'undefined') ? gameState : null;
+    const S = _ovSun();
+    if (!hero || !hero.parent || !camera || !gs || !S) return _ovRelease('lost');
+    // Something else moved the ship (a warp, a death, a respawn): let it.
+    if (_ovState.placed && camera.position.distanceTo(_ovState.placed) > 60) return _ovRelease('moved');
+    if (gs.slingshot && gs.slingshot.active) return _ovRelease('slingshot');
+    if (gs.emergencyWarp && gs.emergencyWarp.active) return _ovRelease('warp');
+    if (window.demoPilot && window.demoPilot.active) return _ovRelease('demo');
+    if (gs.gameStartTime && Date.now() - gs.gameStartTime > OPENING_VISTA.HOLD_S * 1000) return _ovRelease('time');
+    const E = hero.getWorldPosition(new THREE.Vector3());
+    const fr = _ovFrame(E, S, hero);
+    const C = E.clone().addScaledVector(fr.r, _ovState.off.r).addScaledVector(fr.t, _ovState.off.t);
+    C.y += _ovState.off.y;
+    const aim = _ovAim(_ovState.pc, C, S, _ovState.a, _ovState.b);
+    if (aim) { _ovState.a = aim.a; _ovState.b = aim.b; }
+    const dt = (now - _ovState.lastT) / 1000;
+    if (dt > 0.001) {
+        _ovState.vel.subVectors(C, _ovState.lastC).divideScalar(dt);
+        _ovState.lastC.copy(C);
+        _ovState.lastT = now;
+    }
+    camera.position.copy(C);
+    _ovOrient(camera, _ovState.a, _ovState.b, _ovState.pc.userData.ovLook);
+    if (typeof cameraRotation !== 'undefined' && cameraRotation) {
+        cameraRotation.x = camera.rotation.x; cameraRotation.y = camera.rotation.y; cameraRotation.z = camera.rotation.z;
+    }
+    _ovState.placed = C.clone();
+    _ovState.raf = requestAnimationFrame(_ovHoldTick);
+}
+
+function _ovRelease(why) {
+    if (!_ovState.active) return;
+    _ovState.active = false;
+    cancelAnimationFrame(_ovState.raf);
+    if (_ovState.onInput) {
+        ['keydown', 'mousedown', 'touchstart', 'wheel'].forEach((t) => window.removeEventListener(t, _ovState.onInput, true));
+        _ovState.onInput = null;
+    }
+    // Leave WITH the station's motion (velocityVector is units per 60 Hz
+    // frame) so nothing lurches; damping then lets Earth drift slowly away.
+    // The demo pilot sets its own velocity, so it gets none.
+    if ((why === 'input' || why === 'time') && typeof gameState !== 'undefined' && gameState.velocityVector && _ovState.vel &&
+        _ovState.vel.length() < 600 && camera) {
+        // While held, whatever the ship's own velocity did was invisible; it
+        // leaves on its nose at cruise floor, plus the station's motion.
+        const f = new THREE.Vector3();
+        camera.getWorldDirection(f);
+        gameState.velocityVector.copy(f).multiplyScalar(gameState.minVelocity || 0.4).addScaledVector(_ovState.vel, 1 / 60);
+    }
+    if (window.__openingVista) { window.__openingVista.held = false; window.__openingVista.released = why; }
+    console.log('🌍 Opening vista released (' + why + ')');
 }
 
 function fadeOutIntroElements(progress) {
@@ -4259,7 +4544,14 @@ function startNormalGameplay() {
             cameraState.mode = 'third-person';
             cameraState.isTransitioning = false;
         }
-        startDemoAutopilotNow();
+        // HYBRID G2 (openingVista): let the opening view play for a beat with
+        // the ship in it before the pilot turns away (the 15 s safety net in
+        // setupNormalGameContent still covers this path).
+        if (_ovState.active && OPENING_VISTA.DEMO_HOLD_S > 0) {
+            setTimeout(startDemoAutopilotNow, OPENING_VISTA.DEMO_HOLD_S * 1000);
+        } else {
+            startDemoAutopilotNow();
+        }
         console.log('🎬 Demo mode — skipping the 0-person cinematic opening and tutorial');
         return;
     }
