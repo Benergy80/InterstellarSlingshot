@@ -4765,16 +4765,19 @@ if (typeof window !== 'undefined') window._updateEnemyCombatFeel = _updateEnemyC
 
 // ONE table, per ship class. Ben tunes these.  u = world units.
 const ENEMY_FLIGHT = {
-    //            maxSpeed  mainThrust manThrust  maxTurn  evadeTurn turnAccel  maxSlip  bankMax  rollRate rollAccel align
-    //            u/s       u/s²       u/s²       deg/s    deg/s     deg/s²     deg      deg      deg/s    deg/s²    1/s
-    fighter: { maxSpeed: 700, mainThrust: 520, manThrust: 110, maxTurn: 100, evadeTurn: 125, turnAccel: 300, maxSlip: 45, bankMax: 55, rollRate: 260, rollAccel: 1100, align: 2.4 },
-    elite:   { maxSpeed: 760, mainThrust: 600, manThrust: 130, maxTurn: 90,  evadeTurn: 115, turnAccel: 260, maxSlip: 40, bankMax: 50, rollRate: 220, rollAccel: 900,  align: 2.2 },
-    support: { maxSpeed: 560, mainThrust: 380, manThrust: 80,  maxTurn: 75,  evadeTurn: 95,  turnAccel: 190, maxSlip: 35, bankMax: 40, rollRate: 160, rollAccel: 600,  align: 1.6 },
-    boss:    { maxSpeed: 420, mainThrust: 220, manThrust: 45,  maxTurn: 35,  evadeTurn: 35,  turnAccel: 60,  maxSlip: 25, bankMax: 18, rollRate: 50,  rollAccel: 150,  align: 1.0 },
+    //            maxSpeed  mainThrust manThrust  brake    maxTurn  evadeTurn turnAccel  maxSlip  bankMax  rollRate rollAccel align
+    //            u/s       u/s²       u/s²       u/s²     deg/s    deg/s     deg/s²     deg      deg      deg/s    deg/s²    1/s
+    fighter: { maxSpeed: 600, mainThrust: 520, manThrust: 110, brake: 220, maxTurn: 100, evadeTurn: 125, turnAccel: 300, maxSlip: 45, bankMax: 55, rollRate: 260, rollAccel: 1100, align: 2.4 },
+    elite:   { maxSpeed: 660, mainThrust: 600, manThrust: 130, brake: 250, maxTurn: 90,  evadeTurn: 115, turnAccel: 260, maxSlip: 40, bankMax: 50, rollRate: 220, rollAccel: 900,  align: 2.2 },
+    support: { maxSpeed: 520, mainThrust: 380, manThrust: 80,  brake: 160, maxTurn: 75,  evadeTurn: 95,  turnAccel: 190, maxSlip: 35, bankMax: 40, rollRate: 160, rollAccel: 600,  align: 1.6 },
+    boss:    { maxSpeed: 420, mainThrust: 220, manThrust: 45,  brake: 90,  maxTurn: 35,  evadeTurn: 35,  turnAccel: 60,  maxSlip: 25, bankMax: 18, rollRate: 50,  rollAccel: 150,  align: 1.0 },
 };
 // maxSpeed   top speed; also caps how fast any behaviour may ask to go
 // mainThrust main engine, along the nose only
-// manThrust  manoeuvring thrusters (strafe any direction, brake) — keep weak
+// manThrust  manoeuvring thrusters (strafe in any direction) — keep weak
+// brake      retro-thrust when the AI wants to slow down; well under
+//            mainThrust, so an overshoot becomes a fly-by and a loop back,
+//            but a hull still settles into the fight
 // maxTurn    nose turn-rate ceiling in normal flight
 // evadeTurn  nose turn-rate ceiling while flying an evasive manoeuvre
 // turnAccel  how fast the nose turn rate may build or bleed (the ease in/out)
@@ -4884,6 +4887,8 @@ function _efManeuver(enemy, ef, spec, dt, out) {
             // stop pulling once it has come round
             if (ef.nose.dot(ef.m.fwd0) < -0.85) out.nose = null;
         }
+        // Carries its speed through the break rather than burning to top
+        // speed (a full burn flung hulls 600 u+ out of the fight).
         out.full = true;
     } else {
         // Corkscrew: a sustained roll with a steady pull — the nose draws
@@ -5035,8 +5040,8 @@ function _efStep(enemy) {
     // Throttle holds the SPEED the AI asked for; direction is the nose's job
     // (and the grip's). A turn is flown at speed, it is not a burn sideways.
     let fwd = (_efI.length() - ef.v.length()) / Math.max(EF_RESPONSE, dt);
-    if (_efMan.full) fwd = spec.mainThrust;
-    const aMain = Math.max(-spec.manThrust, Math.min(spec.mainThrust, fwd));   // brake = thrusters only
+    if (_efMan.full) fwd = Math.max(0, fwd);   // hold speed through the break: no braking mid-manoeuvre
+    const aMain = Math.max(-spec.brake, Math.min(spec.mainThrust, fwd));
     _efB.copy(_efA).addScaledVector(ef.nose, -_efA.dot(ef.nose));              // lateral wish
     if (_efMan.lat) {
         _efRt.crossVectors(ef.nose, ef.up).normalize();
