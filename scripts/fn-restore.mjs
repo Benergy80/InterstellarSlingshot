@@ -66,8 +66,10 @@ for (const n of names) {
     if (KEEP_AS) {
         if (h.kind !== 'function') { console.error(`✗ ${n}: --keep-as only works on function declarations`); bad++; continue; }
         const base = n.split('/').pop();
-        const renamed = src.slice(h.start, h.end).replace(new RegExp(`(function\\s*\\*?\\s*)${base}\\b`), `$1${base}${KEEP_AS}`);
-        text = `${o.src}\n\n// ── overhaul version of ${base}, kept for flag-gated comparison ──\n${renamed.slice(renamed.indexOf(src.slice(h.bodyStart, h.bodyStart + 8)))}`;
+        // Rename in the declaration itself (bodyStart), never in the comment block
+        // above it — a comment containing the word "function" used to derail this.
+        const renamed = src.slice(h.bodyStart, h.end).replace(new RegExp(`^((?:async\\s+)?function\\s*\\*?\\s*)${base}\\b`), `$1${base}${KEEP_AS}`);
+        text = `${o.src}\n\n// ── overhaul version of ${base}, kept for flag-gated comparison ──\n${renamed}`;
     }
     edits.push({ start: h.start, end: h.end, text, label: `${n} (${h.lines}L → ${o.lines}L)` });
 }
