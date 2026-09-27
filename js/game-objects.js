@@ -7398,9 +7398,11 @@ function _hySpaceNebulae() {
         if (u.type === 'blackhole') {
             const R = _hyBodyR(p), clear = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
             nodes.push({ c: p.position.clone(), R: 0, edge: clear * R, fixed: true });
-        } else if (u.type === 'star' && !u.isLocalStar && u._hyPlaced) {
-            nodes.push({ c: p.position.clone(), R: 0, edge: _hyBodyR(p) * HY_SCALE.PLACE_K, fixed: true });
         }
+    });
+    // every star system placed so far, by its edge (rule 2)
+    if (typeof planets !== 'undefined') _hyCollectSystems().systems.forEach(function (g) {
+        if (g.placed) nodes.push({ c: g.center.clone(), R: 0, edge: g.edge, fixed: true });
     });
     ((typeof window !== 'undefined' && window.outerInterstellarSystems) || []).forEach(function (o) {
         if (o && o.position) nodes.push({ c: o.position.clone(), R: 0, edge: (o.userData && o.userData._hyEdge) || 4000, fixed: true });
@@ -7609,6 +7611,8 @@ const HY_LADDER = {
     star:   [300, 560],
     FIELD:  [70, 330],       // where a re-sized system's planets land (planet + lower giant)
     MOON_MAX_OF_PLANET: 0.4, // a moon is never more than this fraction of its planet
+    MOON_ORBIT_MIN: 1.8,     // moon orbits, in planet radii (Sol's moons sit at 3.4-4.5)
+    MOON_ORBIT_MAX: 4.5,
     OUTER_K: 3.5,            // outer interstellar systems (outer-systems.js): sizes and orbits x this
     OUTER_STAR_K: 2.25,      // ...their bright stars (225-338; the 2.5x glow shell stays < 900 u)
 };
@@ -7714,17 +7718,35 @@ function _hyLadderSystems(tag) {
             const r1 = _hyLerpClass(HY_LADDER.FIELD, tOf(F.planet, r0));
             const kp = _hyResizeBody(m, r1);
             bodies++;
+            // Moons: size by the planet's factor (clamped to the moon class);
+            // orbits in PLANET RADII, soft-compressed so the outermost sits at
+            // most MOON_ORBIT_MAX radii out (Sol's moons sit at 3.4-4.5) — the
+            // specks' moons were 7-20 of their tiny planet's radii, which at
+            // ladder size would make every moon system a solar system.
+            const moons = [];
             for (let i = 0; i < planets.length; i++) {
                 const mo = planets[i], mu = mo && mo.userData;
-                if (!mu || mu.parentPlanet !== m) continue;
+                if (mu && mu.parentPlanet === m) moons.push(mo);
+            }
+            let maxRatio = 0;
+            moons.forEach(function (mo) { maxRatio = Math.max(maxRatio, (mo.userData.orbitRadius || 0) / r0); });
+            const M0 = HY_LADDER.MOON_ORBIT_MIN, M1 = HY_LADDER.MOON_ORBIT_MAX;
+            const squeeze = maxRatio > M1 ? (M1 - M0) / Math.max(1e-3, maxRatio - M0) : 1;
+            moons.forEach(function (mo) {
+                const mu = mo.userData;
                 const mr1 = Math.max(HY_LADDER.moon[0],
                     Math.min(HY_LADDER.moon[1], r1 * HY_LADDER.MOON_MAX_OF_PLANET, _hyBodyR(mo) * kp));
                 _hyResizeBody(mo, mr1);
-                if (mu.orbitRadius > 0) mu.orbitRadius *= kp;
-                if (mo.parent === m) mo.position.multiplyScalar(kp);
+                if (mu.orbitRadius > 0) {
+                    const ratio = mu.orbitRadius / r0;
+                    const o1 = r1 * Math.max(M0, ratio > M0 ? M0 + (ratio - M0) * squeeze : ratio);
+                    const km = o1 / mu.orbitRadius;
+                    mu.orbitRadius = o1;
+                    if (mo.parent === m) mo.position.multiplyScalar(km);
+                }
                 mu._hyLadder = true;
                 bodies++;
-            }
+            });
             if (m.userData.orbitRadius > 0) orbiters.push(m);
             m.userData._hyLadder = true;
         });
