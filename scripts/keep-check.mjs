@@ -51,6 +51,15 @@
 //                (another package enlarges Sol on purpose).
 //   8 health     uncaught page errors, window.__selftest.fails() (fps
 //                warnings ignored), median fps over an unstaged demo window.
+//   9 enemyFlight Ben (2026-09-27): "enemy movement is a little too erratic
+//                ... emulate the physics of space flight so maneuvers should be
+//                effected by momentum and ship nose direction and thrust". Same
+//                8-fighter dogfight staging as check 5, one sample per fighter
+//                per AI tick for 12 s: velocity swings >60° in one tick (per
+//                s), nose turn-rate p95, acceleration p95 vs the flight table
+//                (window.ENEMY_FLIGHT), ticks that jumped further than max speed
+//                allows, nose-to-velocity angle when cruising. Fails under
+//                ?hy=enemyFlight:overhaul (swings ~3/s, turn p95 ~280°/s).
 //
 // VERDICTS  Each check is a list of criteria. A criterion that also failed in
 //   the baseline is KNOWN (the overhaul never met it) and does not fail the run
@@ -220,6 +229,49 @@ check('enemyAI', async () => {
         }
     } finally { if (typeof of === 'function') window.fireEnemyWeapon = of; }
     return { enemies: E.length, soaked: pick.length, shots, seen };
+});
+
+check('enemyFlight', async () => {
+    const K = window.__kc, ie = K.ie, sleep = K.sleep; const cam = ie('camera'), gs = ie('gameState');
+    const E = ie('enemies');
+    const live = E.filter((e) => e.userData && e.userData.health > 0 && !e.userData.isBoss && !e.userData.isUFO && e.position);
+    live.sort((a, b) => a.position.distanceTo(cam.position) - b.position.distanceTo(cam.position));
+    const pick = live.slice(0, 8);
+    const fwd = cam.getWorldDirection(new THREE.Vector3());
+    pick.forEach((e, i) => { const a = i / 8 * Math.PI * 2;
+        e.position.copy(cam.position).addScaledVector(fwd, 350).add(new THREE.Vector3(Math.cos(a) * 250, Math.sin(a) * 80, Math.sin(a) * 250));
+        if (e.userData._iFrom) { e.userData._iFrom.copy(e.position); e.userData._iTo.copy(e.position); } });
+    // one sample per fighter per AI tick: true position (floating origin undone), nose, active
+    const S = pick.map(() => []); const Z = new THREE.Vector3(); const t0 = performance.now();
+    const ou = window.updateEnemyBehavior;
+    window.updateEnemyBehavior = function () {
+        const r = ou.apply(this, arguments); const t = (performance.now() - t0) / 1000; const o = window.worldOriginOffset || { x: 0, y: 0, z: 0 };
+        pick.forEach((e, i) => { if (!e.userData || e.userData.health <= 0) return; Z.set(0, 0, -1).applyQuaternion(e.quaternion);
+            S[i].push([t, e.position.x + o.x, e.position.y + o.y, e.position.z + o.z, Z.x, Z.y, Z.z, e.userData.isActive ? 1 : 0]); });
+        return r;
+    };
+    try { while (performance.now() - t0 < 12000) { await sleep(250); gs.hull = gs.maxHull || 100; } }
+    finally { window.updateEnemyBehavior = ou; }
+    const R2D = 180 / Math.PI; const len = (a) => Math.hypot(a[0], a[1], a[2]);
+    const ang = (a, b) => { const la = len(a), lb = len(b); return (la < 1e-9 || lb < 1e-9) ? NaN : Math.acos(Math.max(-1, Math.min(1, (a[0] * b[0] + a[1] * b[1] + a[2] * b[2]) / (la * lb)))) * R2D; };
+    const T = window.ENEMY_FLIGHT && window.ENEMY_FLIGHT.fighter;
+    const vmax = T ? T.maxSpeed : null; const amax = T ? T.mainThrust + T.manThrust : null;
+    const M = { speed: [], accel: [], turn: [], slipCruise: [] }; let swings = 0, secs = 0, ticks = 0, overspeed = 0;
+    S.forEach((s0) => { const s = s0.filter((x) => x[0] > 0.6 && x[7] === 1); let pv = null;
+        for (let k = 1; k < s.length; k++) { const a = s[k - 1], b = s[k], dt = b[0] - a[0];
+            if (!(dt > 0.005 && dt < 0.2)) { pv = null; continue; }
+            const d = [b[1] - a[1], b[2] - a[2], b[3] - a[3]]; const j = len(d); if (j > 1500) { pv = null; continue; }
+            const v = d.map((x) => x / dt), sp = len(v); ticks++; secs += dt; M.speed.push(sp);
+            if (vmax && j > vmax * dt * 1.1 + 1) overspeed++;
+            const w = ang(a.slice(4, 7), b.slice(4, 7)) / dt; M.turn.push(w);
+            if (pv) { M.accel.push(len([v[0] - pv[0], v[1] - pv[1], v[2] - pv[2]]) / dt); if (ang(pv, v) > 60) swings++; }
+            if (sp > 20 && w < 30) M.slipCruise.push(ang(b.slice(4, 7), v));
+            pv = v; } });
+    const q = (a, f) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return +s[Math.floor(f * (s.length - 1))].toFixed(1); };
+    return { flight: window.HYBRID ? window.HYBRID.get('enemyFlight') : null, soaked: pick.length, fighterSeconds: +secs.toFixed(1), ticks,
+        speedMed: q(M.speed, 0.5), speedP95: q(M.speed, 0.95), accelMed: q(M.accel, 0.5), accelP95: q(M.accel, 0.95), accelMax: q(M.accel, 1),
+        turnMed: q(M.turn, 0.5), turnP95: q(M.turn, 0.95), slipCruiseMed: q(M.slipCruise, 0.5),
+        swingsPerSec: +(swings / Math.max(1e-6, secs)).toFixed(2), overspeedTicks: overspeed, tableMaxSpeed: vmax, tableMaxAccel: amax };
 });
 
 check('scale', async () => {
@@ -433,6 +485,18 @@ const JUDGE = {
             { id: 'advanced', ok: adv.length >= 3 && (badv === null || adv.length >= Math.ceil(0.5 * badv)), msg: `${adv.length} advanced states entered${badv !== null ? ` (base ${badv})` : ''}: ${adv.join(' ')}` },
             { id: 'firing', ok: n(m.shots) >= 1, msg: `${m.shots} shots` },
         ]; },
+    // Ben: "emulate the physics of space flight ... momentum and ship nose
+    // direction and thrust". Absolute bounds (the flight model's own promise)
+    // plus a loose no-worse-than-baseline on direction swings.
+    enemyFlight: (m, b) => { const amax = n(m.tableMaxAccel) || 630;
+        return [
+            { id: 'soak', ok: n(m.fighterSeconds) >= 20, msg: `${m.soaked} fighters, ${m.fighterSeconds} fighter-s logged (flight=${m.flight})` },
+            { id: 'swings', ok: n(m.swingsPerSec) <= 0.3 && (!b || n(m.swingsPerSec) <= Math.max(0.3, 2 * n(b.swingsPerSec))), msg: `${m.swingsPerSec}/s velocity swings >60° in one tick${b ? ` (base ${b.swingsPerSec})` : ''}` },
+            { id: 'turnRate', ok: n(m.turnP95) <= 140, msg: `nose turn p95 ${m.turnP95}°/s (med ${m.turnMed})` },
+            { id: 'accel', ok: n(m.accelP95) <= 1.15 * amax, msg: `accel p95 ${m.accelP95} u/s² (med ${m.accelMed}, max ${m.accelMax}; table ${amax})` },
+            { id: 'momentum', ok: n(m.overspeedTicks) <= Math.max(1, 0.01 * n(m.ticks)), msg: `${m.overspeedTicks} of ${m.ticks} ticks jumped further than max speed allows (speed med ${m.speedMed}, p95 ${m.speedP95})` },
+            { id: 'noseLeads', ok: n(m.slipCruiseMed) <= 15, msg: `nose-to-velocity ${m.slipCruiseMed}° median when cruising` },
+        ]; },
     thrusters: (m, b) => { const i = m.idle || {}, t = m.thrust || {}, bo = m.boost || {}; const bt = b && b.thrust;
         return [
             { id: 'plume', ok: n(t.visible) >= 1 && (!bt || n(t.visible) >= 0.75 * bt.visible), msg: `${t.visible}/${t.n} plume objects visible under thrust${bt ? ` (base ${bt.visible})` : ''}` },
@@ -517,19 +581,20 @@ if (booted) {
     try { await page.evaluate(() => { window.__kc.restoreEnemies(); window.__kc.reset(); }); } catch (e) { /* page may be gone */ }
 }
 
-// Assemble the 8 reported checks from the raw measurements.
+// Assemble the 9 reported checks from the raw measurements.
 const metrics = {
     slingshot: raw.slingshot,
     warp: raw.warp,
     park: raw.park,
     steering: raw.slingshot && raw.warp ? { slingshot: raw.slingshot, warp: raw.warp } : { err: 'needs slingshot + warp' },
     enemyAI: raw.enemyAI,
+    enemyFlight: raw.enemyFlight,
     thrusters: raw.thrusters,
     scale: raw.scale,
     health: Object.assign({}, raw.health_pre || {}, { pageErrors: pageErrors.length, pageErrorSamples: pageErrors.slice(0, 5) }),
 };
 const LABEL = { slingshot: '1 slingshot', warp: '2 warp', park: '3 park', steering: '4 steering', enemyAI: '5 enemyAI',
-    thrusters: '6 thrusters', scale: '7 scale', health: '8 health' };
+    thrusters: '6 thrusters', scale: '7 scale', health: '8 health', enemyFlight: '9 enemyFlight' };
 let anyFail = !booted;
 results.checks = {};
 for (const k of Object.keys(LABEL)) {
