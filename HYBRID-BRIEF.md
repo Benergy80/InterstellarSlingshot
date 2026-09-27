@@ -183,5 +183,57 @@ file and line. Read the entry for your system before touching it.
 | E | UI — original HUD, notifications, praise text, remove the wingman panel | `hybrid/ui` |
 | F | Intro — original title screen, intro, countdown, launch | `hybrid/intro` |
 | G | Sol scale and the opening vista | `hybrid/sol` |
+| H | Keep guard — `scripts/keep-check.mjs` | `hybrid/keepguard` |
+| I | Enemy flight model — momentum, nose, thrust | `hybrid/enemyflight` |
 
 Each package lands on its own branch off the hybrid base and is merged by the integrator.
+
+## Status (2026-09-27)
+
+| Build | Contents |
+|---|---|
+| 20260927a | Wave 1 — A craft, E UI, H keep guard |
+| 20260927b | Wave 2 — B enemies, D effects and audio |
+| 20260927c | Orbit lines steady; giant planets keep their colour (`farPlanetFade`) |
+| in progress | Wave 3 — C deep space, F intro; package I enemy flight |
+| next | Wave 4 — G Sol scale and opening vista |
+
+Play the hybrid: `node scripts/serve.mjs 8803` → http://localhost:8803/
+
+## Feedback from Ben while testing (verbatim, 2026-09-27)
+
+> Sol system orbit lines load late and are unstable. What are the nearby large dark planets and
+> what is their light source currently?
+
+Resolved in 20260927c. Orbit lines: the overhaul culled and faded them by distance (9-10 of ~210
+shown, opacity wandering 0.07-0.29); ORIGINAL behaviour restored. Dark planets: the "heart worlds"
+(one `<Nebula> Prime` per nebula, radius 620), lit only by their own shader's `uSun` (their
+nebula's nearest star), were dimmed to 7-50 % by the distance-haze pass `_aerialFactor`; it now
+fades by apparent size.
+
+> enemy movement is a little too erratic with the main enemies. We want to emulate the physics of
+> space flight so maneuvers should be effected by momentum and ship nose direction and thrust.
+> Maybe comparing to Star Wars games as well as Starfox.
+
+Package I. Keep what the AI decides; replace how it moves: persistent velocity, thrust along the
+nose, rate- and acceleration-limited turns, velocity lagging the nose, banking. Switch `enemyFlight`.
+
+## Open questions for Ben
+
+1. **Invisible messages.** In ORIGINAL, `showAchievement` messages (wingman comms, "Target Hit!",
+   "Hull Repaired") are never displayed — they are always deferred. The hybrid matches that. If he
+   wants them visible, where?
+2. **Slingshot steering** turns the camera but not the flight path (warp steering bends the path
+   by 100+ degrees). Is bending the path during a slingshot wanted?
+3. **Enemy engine plumes** are kept on the ORIGINAL hulls (`thrusters`). Do they suit the old look?
+4. **Heart-world colours** are saturated now that they are lit. Too candy-coloured?
+5. **Music** reverted to ORIGINAL by the integrator's default, not his word (`music`).
+
+## Known issues
+
+- Intermittent, predates the hybrid: "Cannot read properties of undefined (reading 'value')" from
+  three.js `refreshMaterialUniforms`, which then throws every frame (picture freezes). Seen in 2 of
+  12 guard runs, both under machine load; not reproduced since. `keep-check` prints the offending
+  object and material under "draw calls that threw" when it recurs.
+- `keep-check` is slightly flaky: 1 in 12 runs the warp did not engage, 1 in 12 the arrival park
+  was missed, with no page errors. Cause not established.
