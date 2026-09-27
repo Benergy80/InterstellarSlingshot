@@ -778,7 +778,117 @@ void main() {
     gl_FragColor = vec4( uColor * ( 0.6 + 0.4 * fres ), a );
 }`;
 
+// HYBRID shields switch: 'original' = wireframe buckyball (default),
+// 'overhaul' = fresnel bubble, 'blend' = the buckyball plus the overhaul's
+// fresnel shell used ONLY as a raise/impact bloom (invisible when idle).
+function _hybridShieldMode() {
+    return window.HYBRID ? window.HYBRID.get('shields') : 'overhaul';
+}
+
 function create3DShield() {
+    if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
+    const _hyShield = _hybridShieldMode();
+    if (shieldSystem.blendShell) {
+        shieldSystem.blendShell.geometry.dispose();
+        shieldSystem.blendShell.material.dispose();
+        shieldSystem.blendShell = null;
+    }
+    if (_hyShield === 'overhaul') return create3DShield_overhaul();
+
+    // Remove existing if any
+    destroy3DShield();
+    
+    // Create icosahedron geometry (buckyball/geodesic sphere base)
+    const radius = 8;  // Size to surround ship (smaller, tighter fit)
+    const detail = 1;   // Subdivision level for buckyball look
+    const geometry = new THREE.IcosahedronGeometry(radius, detail);
+    
+    // Wireframe material for energy shield look. Additive + no depth
+    // write so the bubble ADDS light instead of covering the scene —
+    // bright additive effects behind it (black-hole glow / accretion)
+    // stay fully visible through the shield instead of being dimmed.
+    // Mobile renders with AA off + pixelRatio 1, so additive 1px
+    // wireframe lines pile onto single device pixels and read much
+    // brighter than on desktop — dim them there.
+    const _shieldIsMobile = (typeof window !== 'undefined')
+        ? (typeof window._isMobileRenderTier === 'function'
+            ? window._isMobileRenderTier()
+            : (typeof window.__isMobileGPU !== 'undefined'
+                ? window.__isMobileGPU
+                : ((window.innerWidth <= 768) ||
+                   ('ontouchstart' in window) ||
+                   (navigator.maxTouchPoints > 0) ||
+                   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent || ''))))
+        : false;
+    const material = new THREE.MeshBasicMaterial({
+        color: 0x00d4ff,
+        wireframe: true,
+        transparent: true,
+        // Tuned to match the 1st-person hex overlay's centre line opacity
+        // (~0.31) so the shield reads consistently across both views.
+        opacity: _shieldIsMobile ? 0.22 : 0.32,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    
+    shieldSystem.mesh3D = new THREE.Mesh(geometry, material);
+    shieldSystem.mesh3D.renderOrder = 50;  // Render above most things
+    
+    // Add inner glow sphere
+    const glowGeometry = new THREE.IcosahedronGeometry(radius * 0.95, detail);
+    // Inner glow: the filled back-side sphere was the main culprit
+    // tinting/dimming the black hole. Additive + no depth write turns
+    // it into a faint cyan light wash that never occludes what's behind.
+    const glowMaterial = new THREE.MeshBasicMaterial({
+        color: 0x00d4ff,
+        transparent: true,
+        opacity: 0.10,
+        side: THREE.BackSide,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+    });
+    shieldSystem.glowMesh3D = new THREE.Mesh(glowGeometry, glowMaterial);
+    shieldSystem.glowMesh3D.renderOrder = 49;
+    
+    scene.add(shieldSystem.mesh3D);
+    scene.add(shieldSystem.glowMesh3D);
+
+    // HYBRID: keep the vector neon out of the overhaul's ACES tone curve,
+    // which desaturates flat colours (0x00d4ff would read teal-grey).
+    material.toneMapped = false;
+    glowMaterial.toneMapped = false;
+
+    if (_hyShield === 'blend') {
+        const shell = new THREE.Mesh(
+            new THREE.SphereGeometry(radius * 1.02, 28, 20),
+            new THREE.ShaderMaterial({
+                uniforms: {
+                    uColor: { value: new THREE.Color(_SHIELD_BASE_COLOR) },
+                    uBase:  { value: 0.0 },
+                    uFlash: { value: 0.0 },
+                    uPower: { value: 3.2 }
+                },
+                vertexShader: _SHIELD_RIM_VERT,
+                fragmentShader: _SHIELD_RIM_FRAG,
+                transparent: true,
+                blending: THREE.AdditiveBlending,
+                depthWrite: false,
+                side: THREE.BackSide
+            })
+        );
+        shell.renderOrder = 51;
+        shell.frustumCulled = false;
+        shell.visible = false;
+        shieldSystem.mesh3D.add(shell);     // follows position, visibility, removal
+        shieldSystem.blendShell = shell;
+        shieldSystem.raiseFlash = Date.now();
+    }
+
+    console.log('🛡️ 3D buckyball shield created');
+}
+
+// ── overhaul version of create3DShield, kept for flag-gated comparison ──
+function create3DShield_overhaul() {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined') return;
 
     // Remove existing if any
@@ -862,7 +972,86 @@ function syncShieldPositionToShip() {
 }
 if (typeof window !== 'undefined') window.syncShieldPositionToShip = syncShieldPositionToShip;
 
+// 'blend': the overhaul's activation swell and red impact bloom, driven on
+// the fresnel shell parented to the buckyball.
+function _updateShieldBlendShell() {
+    const shell = shieldSystem.blendShell;
+    const u = shell.material.uniforms;
+    const now = Date.now();
+    let flash = 0;
+    let col = _SHIELD_BASE_COLOR;
+    const hf = shieldSystem.hitFlash;
+    if (hf && now - hf.start < hf.duration) {
+        const k = 1 - (now - hf.start) / hf.duration;
+        flash = 0.6 * k;
+        col = _SHIELD_HIT_COLOR;
+    } else if (shieldSystem.raiseFlash) {
+        const k = 1 - (now - shieldSystem.raiseFlash) / 700;
+        if (k > 0) flash = 0.6 * k * k; else shieldSystem.raiseFlash = 0;
+    }
+    u.uFlash.value = flash;
+    u.uColor.value.setHex(col);
+    shell.visible = flash > 0.002;
+}
+
 function update3DShield() {
+    if (_hybridShieldMode() === 'overhaul') return update3DShield_overhaul();
+    if (!shieldSystem.mesh3D || !shieldSystem.active) return;
+    if (shieldSystem.blendShell) _updateShieldBlendShell();
+
+    // Get player ship position
+    const playerPos = typeof getPlayerPosition === 'function'
+        ? getPlayerPosition()
+        : (window.cameraState?.playerShipMesh?.position || camera.position);
+
+    // Position shield around player
+    shieldSystem.mesh3D.position.copy(playerPos);
+    shieldSystem.glowMesh3D.position.copy(playerPos);
+    
+    // Rotate slowly for visual effect
+    shieldSystem.mesh3D.rotation.x += 0.005;
+    shieldSystem.mesh3D.rotation.y += 0.008;
+    shieldSystem.glowMesh3D.rotation.x += 0.003;
+    shieldSystem.glowMesh3D.rotation.y += 0.005;
+    
+    // Pulse opacity based on energy level
+    const pulse = Math.sin(Date.now() * 0.003) * 0.1;
+    const energyFactor = gameState.energy / 100;
+
+    // RED hit-flash wins over the normal recolor so the wireframe lines
+    // visibly strobe red like the player-ship hit feedback. This MUST be
+    // applied here every frame — a setTimeout tint was being overwritten
+    // by the recolor below within one frame (the original bug).
+    const _hf = shieldSystem.hitFlash;
+    if (_hf && Date.now() - _hf.start < _hf.duration) {
+        const _red = Math.floor((Date.now() - _hf.start) / 100) % 2 === 0;
+        // Only the OUTER WIREFRAME lines strobe red. The translucent inner
+        // sphere stays the player's cyan/blue so a hit reads as an outline
+        // flash, not a full red screen wash that hides the ship.
+        shieldSystem.mesh3D.material.color.setHex(_red ? _SHIELD_HIT_COLOR : _SHIELD_BASE_COLOR);
+        shieldSystem.mesh3D.material.opacity = _red ? 0.95 : 0.45;
+        shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
+        shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
+        return;
+    }
+
+    // ~0.3 base so the wireframe lines match the 1st-person overlay's
+    // centre line opacity (was 0.5 + … which read at 0.6-0.8).
+    shieldSystem.mesh3D.material.opacity = 0.3 + pulse + (energyFactor * 0.1);
+    shieldSystem.glowMesh3D.material.opacity = 0.1 + (pulse * 0.5);
+
+    // Change color when energy is low
+    if (gameState.energy < 15) {
+        shieldSystem.mesh3D.material.color.setHex(0xff6600);
+        shieldSystem.glowMesh3D.material.color.setHex(0xff6600);
+    } else {
+        shieldSystem.mesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
+        shieldSystem.glowMesh3D.material.color.setHex(_SHIELD_BASE_COLOR);
+    }
+}
+
+// ── overhaul version of update3DShield, kept for flag-gated comparison ──
+function update3DShield_overhaul() {
     if (!shieldSystem.mesh3D || !shieldSystem.active) return;
 
     // Get player ship position
