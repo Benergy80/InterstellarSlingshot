@@ -1,0 +1,443 @@
+{
+  "note": "keep-check baseline — measured by scripts/keep-check.mjs --rebaseline. knownFail = criteria the build already failed; they do not fail later runs.",
+  "build": "20260814f",
+  "root": "/Users/benstagl/InterstellarSlingshot/.claude/worktrees/wf_bd1625af-19d-3",
+  "at": "2026-09-27T15:37:13.040Z",
+  "checks": {
+    "slingshot": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "body": "Nebula-1 System 1 Planet A",
+        "bodyR": 33,
+        "range": 192,
+        "control": {
+          "inRange": true,
+          "entry": 1.98,
+          "captured": true,
+          "fov0": 95.8,
+          "whip": true,
+          "releaseMs": 1666,
+          "peak": 80,
+          "exit": 79.57,
+          "fovKick": 4.1,
+          "addedFx": 36,
+          "trail": true,
+          "ramp": true,
+          "stillActive": true,
+          "velTurn": 0,
+          "camTurn": 0
+        },
+        "steered": {
+          "inRange": true,
+          "entry": 1.97,
+          "captured": true,
+          "fov0": 87.8,
+          "whip": true,
+          "releaseMs": 1631,
+          "peak": 79.9,
+          "exit": 79.59,
+          "fovKick": 12,
+          "addedFx": 39,
+          "trail": true,
+          "ramp": true,
+          "stillActive": true,
+          "velTurn": 0,
+          "camTurn": 9.24
+        },
+        "_ms": 5764
+      }
+    },
+    "warp": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "control": {
+          "fov0": 76.1,
+          "turn": 0,
+          "engageMs": 685,
+          "endMs": 8744,
+          "peak": 15,
+          "after": 0.92,
+          "fovKick": 30.5,
+          "fovSettle": -0.8,
+          "tunnel": 1,
+          "starfield": true,
+          "exitRamp": true,
+          "exitBeats": 1
+        },
+        "yaw": {
+          "fov0": 75.4,
+          "turn": 110.23,
+          "engageMs": 725,
+          "endMs": 8703,
+          "peak": 15,
+          "after": 0.93,
+          "fovKick": 30.9,
+          "fovSettle": 0,
+          "tunnel": 1,
+          "starfield": true,
+          "exitRamp": true,
+          "exitBeats": 1
+        },
+        "pitch": {
+          "fov0": 75.4,
+          "turn": 110.7,
+          "engageMs": 744,
+          "endMs": 8650,
+          "peak": 15,
+          "after": 0.93,
+          "fovKick": 30.7,
+          "fovSettle": -0.1,
+          "tunnel": 1,
+          "starfield": true,
+          "exitRamp": true,
+          "exitBeats": 1
+        },
+        "_ms": 33445
+      }
+    },
+    "park": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "parked": true,
+        "parkMs": 26774,
+        "warped": true,
+        "park": {
+          "at": 1790523489286,
+          "path": "cut:framed",
+          "extMs": 0,
+          "ms": 3876,
+          "fromRange": 2529,
+          "range": 1954,
+          "stand": 2129,
+          "margin": -175,
+          "speed": 0.53,
+          "closing": 0.24,
+          "subject": "Atlantis Nebula Prime"
+        },
+        "phase": "bossEngage",
+        "subject": "Atlantis Nebula Prime",
+        "dist": 1943,
+        "radius": 620,
+        "offDeg": 0.89,
+        "angDeg": 35.39,
+        "speed": 0.443,
+        "fov": 75,
+        "_ms": 27404
+      }
+    },
+    "steering": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "slingshot": {
+          "body": "Nebula-1 System 1 Planet A",
+          "bodyR": 33,
+          "range": 192,
+          "control": {
+            "inRange": true,
+            "entry": 1.98,
+            "captured": true,
+            "fov0": 95.8,
+            "whip": true,
+            "releaseMs": 1666,
+            "peak": 80,
+            "exit": 79.57,
+            "fovKick": 4.1,
+            "addedFx": 36,
+            "trail": true,
+            "ramp": true,
+            "stillActive": true,
+            "velTurn": 0,
+            "camTurn": 0
+          },
+          "steered": {
+            "inRange": true,
+            "entry": 1.97,
+            "captured": true,
+            "fov0": 87.8,
+            "whip": true,
+            "releaseMs": 1631,
+            "peak": 79.9,
+            "exit": 79.59,
+            "fovKick": 12,
+            "addedFx": 39,
+            "trail": true,
+            "ramp": true,
+            "stillActive": true,
+            "velTurn": 0,
+            "camTurn": 9.24
+          },
+          "_ms": 5764
+        },
+        "warp": {
+          "control": {
+            "fov0": 76.1,
+            "turn": 0,
+            "engageMs": 685,
+            "endMs": 8744,
+            "peak": 15,
+            "after": 0.92,
+            "fovKick": 30.5,
+            "fovSettle": -0.8,
+            "tunnel": 1,
+            "starfield": true,
+            "exitRamp": true,
+            "exitBeats": 1
+          },
+          "yaw": {
+            "fov0": 75.4,
+            "turn": 110.23,
+            "engageMs": 725,
+            "endMs": 8703,
+            "peak": 15,
+            "after": 0.93,
+            "fovKick": 30.9,
+            "fovSettle": 0,
+            "tunnel": 1,
+            "starfield": true,
+            "exitRamp": true,
+            "exitBeats": 1
+          },
+          "pitch": {
+            "fov0": 75.4,
+            "turn": 110.7,
+            "engageMs": 744,
+            "endMs": 8650,
+            "peak": 15,
+            "after": 0.93,
+            "fovKick": 30.7,
+            "fovSettle": -0.1,
+            "tunnel": 1,
+            "starfield": true,
+            "exitRamp": true,
+            "exitBeats": 1
+          },
+          "_ms": 33445
+        }
+      }
+    },
+    "enemyAI": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "enemies": 317,
+        "soaked": 8,
+        "shots": 44,
+        "seen": {
+          "attackMode:flank": 124,
+          "phase:setup": 250,
+          "attackMode:pursue": 152,
+          "phase:burst": 20,
+          "telegraph": 31,
+          "phase:aim": 31,
+          "attackMode:evade": 84,
+          "phase:break": 59,
+          "evade:barrel": 58,
+          "evade:splitS": 34,
+          "evade:corkscrew": 5
+        },
+        "_ms": 12027
+      }
+    },
+    "thrusters": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "shipVisible": true,
+        "idle": {
+          "n": 10,
+          "visible": 8,
+          "energy": 3.555
+        },
+        "thrust": {
+          "n": 10,
+          "visible": 8,
+          "energy": 124.133
+        },
+        "thrustSpeed": 1.98,
+        "boost": {
+          "n": 10,
+          "visible": 10,
+          "energy": 126.542
+        },
+        "boostSpeed": 18.55,
+        "_ms": 4553
+      }
+    },
+    "scale": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "groups": {
+          "moon@nebula": {
+            "n": 384,
+            "medR": 10.6,
+            "p90R": 22,
+            "maxR": 35.9,
+            "shaderFrac": 1,
+            "mats": {
+              "ShaderMaterial": 384
+            }
+          },
+          "moon@system": {
+            "n": 245,
+            "medR": 1.4,
+            "p90R": 2,
+            "maxR": 3.1,
+            "shaderFrac": 0,
+            "mats": {
+              "MeshLambertMaterial": 245
+            }
+          },
+          "planet@nebula": {
+            "n": 231,
+            "medR": 64.3,
+            "p90R": 141.2,
+            "maxR": 620,
+            "shaderFrac": 1,
+            "mats": {
+              "ShaderMaterial": 231
+            }
+          },
+          "planet@system": {
+            "n": 311,
+            "medR": 9.1,
+            "p90R": 107.4,
+            "maxR": 462.2,
+            "shaderFrac": 0.363,
+            "mats": {
+              "MeshLambertMaterial": 198,
+              "ShaderMaterial": 113
+            }
+          },
+          "star@nebula": {
+            "n": 44,
+            "medR": 49.3,
+            "p90R": 64,
+            "maxR": 68.9,
+            "shaderFrac": 1,
+            "mats": {
+              "ShaderMaterial": 44
+            }
+          },
+          "star@system": {
+            "n": 46,
+            "medR": 30,
+            "p90R": 483.5,
+            "maxR": 557.9,
+            "shaderFrac": 0.522,
+            "mats": {
+              "ShaderMaterial": 24,
+              "MeshBasicMaterial": 22
+            }
+          }
+        },
+        "sol": {
+          "Sol": {
+            "R": 80,
+            "mat": "ShaderMaterial"
+          },
+          "Mercury": {
+            "R": 20,
+            "mat": "MeshPhongMaterial"
+          },
+          "Venus": {
+            "R": 52,
+            "mat": "MeshPhongMaterial"
+          },
+          "Earth": {
+            "R": 64,
+            "mat": "MeshPhongMaterial"
+          },
+          "Luna": {
+            "R": 20,
+            "mat": "MeshPhongMaterial"
+          },
+          "Mars": {
+            "R": 34,
+            "mat": "MeshPhongMaterial"
+          },
+          "Phobos": {
+            "R": 7,
+            "mat": "MeshPhongMaterial"
+          },
+          "Deimos": {
+            "R": 6,
+            "mat": "MeshPhongMaterial"
+          },
+          "Jupiter": {
+            "R": 120,
+            "mat": "MeshPhongMaterial"
+          },
+          "Io": {
+            "R": 14,
+            "mat": "MeshPhongMaterial"
+          },
+          "Europa": {
+            "R": 13,
+            "mat": "MeshPhongMaterial"
+          },
+          "Ganymede": {
+            "R": 18,
+            "mat": "MeshPhongMaterial"
+          },
+          "Callisto": {
+            "R": 16,
+            "mat": "MeshPhongMaterial"
+          },
+          "Saturn": {
+            "R": 96,
+            "mat": "MeshPhongMaterial"
+          },
+          "Titan": {
+            "R": 20,
+            "mat": "MeshPhongMaterial"
+          },
+          "Enceladus": {
+            "R": 8,
+            "mat": "MeshPhongMaterial"
+          },
+          "Uranus": {
+            "R": 64,
+            "mat": "MeshPhongMaterial"
+          },
+          "Titania": {
+            "R": 11,
+            "mat": "MeshPhongMaterial"
+          },
+          "Neptune": {
+            "R": 56,
+            "mat": "MeshPhongMaterial"
+          },
+          "Triton": {
+            "R": 10,
+            "mat": "MeshPhongMaterial"
+          }
+        },
+        "lights": {
+          "AmbientLight": 2,
+          "PointLight": 63
+        },
+        "lightTotal": 65,
+        "pointIntensity": 628.8,
+        "_ms": 26
+      }
+    },
+    "health": {
+      "status": "PASS",
+      "knownFail": [],
+      "metrics": {
+        "fpsMedian": 60,
+        "fpsSamples": 16,
+        "selftest": [],
+        "selftestFails": 0,
+        "_ms": 8243,
+        "pageErrors": 0,
+        "pageErrorSamples": []
+      }
+    }
+  }
+}
