@@ -11366,6 +11366,8 @@ function _aerialFactor(o, d) {
 }
 // Apparent half-size (r/d) below which the distance fade applies in full, and
 // above which a body is left untouched. 0.012 ~ 1.4 deg across, 0.045 ~ 5 deg.
+// Asteroid surface brightness under asteroids:original (1 = ORIGINAL albedo).
+const HY_ROCK_ALBEDO = 0.45;
 const AERIAL_SIZE_FADE = 0.012;
 const AERIAL_SIZE_FULL = 0.045;
 
@@ -13775,8 +13777,21 @@ function updateDistanceCulling() {
             // range: a belt reads as a band of sparks precisely BECAUSE each rock
             // is a pixel or two. Rocks skip the angular rule, the impostor tier
             // and the aerial fade, and fall through to the authored range.
-            const br = (angular && !(_hyRocks && o.userData && o.userData.type === 'asteroid'))
-                ? _cullBodyRadius(o) : 0;
+            const _rock = _hyRocks && angular && o.userData && o.userData.type === 'asteroid';
+            const br = (angular && !_rock) ? _cullBodyRadius(o) : 0;
+            // A rock is a pixel or two wide from almost anywhere, so its whole
+            // presence is that pixel's BRIGHTNESS. Under the overhaul's tone curve
+            // the ORIGINAL's pale sparks came out dull brown and the belt vanished
+            // into the sky. (Three shared materials, so this runs three times.)
+            if (_rock && o.material && o.material.toneMapped !== false) {
+                o.material.toneMapped = false;
+                // Without the tone curve the overhaul's brighter star lights clip
+                // a lit rock to flat white (60-75 % of its pixels). Pull the
+                // surface down so facets keep their shading; the emissive floor
+                // is what carries the far, sub-pixel rocks and is left alone.
+                if (o.material.color) o.material.color.multiplyScalar(HY_ROCK_ALBEDO);
+                o.material.needsUpdate = true;
+            }
             // AERIAL PERSPECTIVE — the depth term (see the note above the
             // constants). One sqrt per body per pass, and zero for everything
             // inside AERIAL_NEAR, which is everything the player is near.
