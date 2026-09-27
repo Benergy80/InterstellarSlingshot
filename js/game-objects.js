@@ -7341,6 +7341,22 @@ function _hyPlaceSystems(tag) {
     const nodes = [];
     const sol = (typeof window !== 'undefined' && window.localSystemOffset) || _hySolCenter();
     nodes.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), R: _hySunR(), edge: _hySolEdge(), fixed: true });
+    // Black holes by the same rule. Only the Companion Core is close enough to
+    // another hole to need it (it rode 0.9 x CLEAR_RADII x (R1 + R2) above
+    // Sgr A*): it moves straight out along the same line, dressing and all.
+    const _clr = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
+    const _sgr = col.holes.find(function (h) { return h.userData.isSagittariusA; });
+    col.holes.forEach(function (h) {
+        if (!_sgr || h === _sgr || !h.userData.isCompanionCore || h.userData._hyPlaced) return;
+        const a = { c: _sgr.position, R: _hyBodyR(_sgr), edge: _clr * _hyBodyR(_sgr) };
+        const b = { c: h.position, R: _hyBodyR(h), edge: _clr * _hyBodyR(h) };
+        const want = _hyReq(a, b), d = h.position.distanceTo(_sgr.position);
+        if (d > 1 && d < want) {
+            h.position.sub(_sgr.position).multiplyScalar(want / d).add(_sgr.position);
+            h.updateMatrixWorld(true);
+        }
+        h.userData._hyPlaced = true;
+    });
     col.holes.forEach(function (h) {
         const R = _hyBodyR(h);
         const clear = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
@@ -7385,6 +7401,9 @@ function _hySpaceNebulae() {
         } else if (u.type === 'star' && !u.isLocalStar && u._hyPlaced) {
             nodes.push({ c: p.position.clone(), R: 0, edge: _hyBodyR(p) * HY_SCALE.PLACE_K, fixed: true });
         }
+    });
+    ((typeof window !== 'undefined' && window.outerInterstellarSystems) || []).forEach(function (o) {
+        if (o && o.position) nodes.push({ c: o.position.clone(), R: 0, edge: (o.userData && o.userData._hyEdge) || 4000, fixed: true });
     });
     const mov = [];
     nebulaClouds.forEach(function (n) {
@@ -7558,6 +7577,214 @@ function _hyApplySolLayout(localPlanets) {
         });
     });
 }
+
+// =============================================================================
+// HYBRID (solScale:big) — ONE SIZE LADDER FOR EVERY STAR AND PLANET   (Part 2)
+//
+// Ben: "Outer system planets and stars should be increased in scale as well."
+// The Alpha / Beta / Gamma stars were radius 10-14 with 4-9 u planets, the
+// galaxy systems' stars 5-13 with 2-14 u planets, the Dune stars 30-44 and the
+// nebula cluster stars 30-70 — specks beside a 620 heart world. Every such
+// system is re-sized onto one ladder (moons < planets < giants < stars <
+// black holes) and re-laid by HY_SCALE rule 3, then placed by rules 1-2:
+//
+//   class    radius (world units)    who
+//   moon     16 - 60                 every moon (keeps its planet's proportion)
+//   planet   70 - 200                field worlds, Sol's rocky planets
+//   giant    220 - 620               field giants top out at FIELD_MAX (330);
+//                                    Jupiter 280, Saturn 240; heart worlds 620
+//   star     300 - 560               every star (Sol 340, held by the start point)
+//   hole     405 - 1215 (shadow)     HY_BH; disc to 5.6 radii (2,268 - 6,804)
+//
+// Within a family (nebula / galaxy / gateway / local) sizes keep their order:
+// the smallest star of a family maps to the bottom of the star class, the
+// largest to the top; planets likewise onto 70-FIELD_MAX. Procedural galaxies
+// (already 200-700 stars, 100-450 planets) are the reference and untouched.
+// Mass and gravity stay as they were (the slingshot is tuned on them).
+// =============================================================================
+const HY_LADDER = {
+    moon:   [16, 60],
+    planet: [70, 200],
+    giant:  [220, 620],
+    star:   [300, 560],
+    FIELD:  [70, 330],       // where a re-sized system's planets land (planet + lower giant)
+    MOON_MAX_OF_PLANET: 0.4, // a moon is never more than this fraction of its planet
+    OUTER_K: 3.5,            // outer interstellar systems (outer-systems.js): sizes and orbits x this
+    OUTER_STAR_K: 2.25,      // ...their bright stars (225-338; the 2.5x glow shell stays < 900 u)
+};
+if (typeof window !== 'undefined') window.HY_LADDER = HY_LADDER;
+
+function _hyLerpClass(cls, t) { return cls[0] + (cls[1] - cls[0]) * Math.max(0, Math.min(1, t)); }
+
+// Re-size one body to radius newR: new geometry (so every reader of
+// geometry.parameters.radius — collision, slingshot range, keep-out, arrival
+// standoff, culling — follows), non-moon children scaled with it, and the few
+// shader lengths kept in world units. Returns the factor.
+function _hyResizeBody(p, newR) {
+    const g = p && p.geometry, gp = g && g.parameters;
+    if (!gp || !gp.radius || !(newR > 0)) return 1;
+    const k = newR / gp.radius;
+    if (Math.abs(k - 1) < 1e-3) return 1;
+    let ng;
+    if (g.type === 'SphereGeometry') {
+        const ws = Math.max(gp.widthSegments || 16, newR >= 200 ? 64 : (newR >= 80 ? 40 : 24));
+        const hs = Math.max(gp.heightSegments || 12, Math.round(ws * 0.75));
+        ng = new THREE.SphereGeometry(newR, ws, hs);
+    } else {
+        ng = g.clone();
+        ng.scale(k, k, k);
+        ng.parameters = Object.assign({}, gp, { radius: newR });
+    }
+    p.geometry = ng;   // the old one may be shared: not disposed
+    const scaleUni = function (un, names) {
+        if (!un) return;
+        names.forEach(function (n) { if (un[n] && typeof un[n].value === 'number') un[n].value *= k; });
+    };
+    p.children.forEach(function (c) {
+        if (c.userData && c.userData.parentPlanet === p) return;   // moons are re-sized on their own
+        c.scale.multiplyScalar(k);
+        c.position.multiplyScalar(k);
+        c.traverse(function (o) { if (o.material && o.material.uniforms) scaleUni(o.material.uniforms, ['uPlanetR']); });
+    });
+    if (p.material) {
+        scaleUni(p.material.uniforms, ['uRingOuter']);
+        if (p.material.userData) scaleUni(p.material.userData._ringShadow, ['uRingOuter']);
+    }
+    const u = p.userData;
+    ['radius', 'size', '_coronaBaseScale', '_coronaBloomScale', '_coronaSpikeScale'].forEach(function (key) {
+        if (typeof u[key] === 'number') u[key] *= k;
+    });
+    return k;
+}
+
+function _hyFamily(p) {
+    const u = p.userData;
+    if (u.nebulaId !== undefined) return 'nebula';
+    if (u.isLocalGateway) return 'gateway';
+    if (typeof u.galaxyId === 'number') return 'galaxy';
+    return 'local';
+}
+
+// Keep a body's LINEAR orbital speed when its orbit radius changes
+// (game-core boosts orbits under 500 u by 500 / r).
+function _hySpeedK(r0, r1) {
+    return (Math.max(1, 500 / r0) * r0) / (Math.max(1, 500 / r1) * r1);
+}
+
+function _hyLadderSystems(tag) {
+    if (!_hyScaleOn() || typeof planets === 'undefined' || typeof THREE === 'undefined') return 0;
+    const col = _hyCollectSystems();
+    const todo = col.systems.filter(function (g) {
+        return !g.placed && !g.members.some(function (m) { return m.userData._hyLadder; });
+    });
+    if (!todo.length) return 0;
+    // family ranges (radius, before any change)
+    const fam = {};
+    const span = function (f, kind, r) {
+        const F = fam[f] = fam[f] || {};
+        const s = F[kind] = F[kind] || [Infinity, -Infinity];
+        s[0] = Math.min(s[0], r); s[1] = Math.max(s[1], r);
+    };
+    todo.forEach(function (g) {
+        const f = _hyFamily(g.star || g.members[0]);
+        g.family = f;
+        if (g.star) span(f, 'star', _hyBodyR(g.star));
+        g.members.forEach(function (m) {
+            if (m !== g.star && !m.userData.parentPlanet) span(f, 'planet', _hyBodyR(m));
+        });
+    });
+    const tOf = function (s, r) { return s[1] > s[0] ? (r - s[0]) / (s[1] - s[0]) : 0.5; };
+    const lights = [];
+    if (typeof scene !== 'undefined' && scene) scene.children.forEach(function (o) { if (o.isPointLight) lights.push(o); });
+    let bodies = 0;
+    todo.forEach(function (g) {
+        const F = fam[g.family];
+        const oldEdge = g.edge;
+        let starR = 0;
+        if (g.star) {
+            starR = _hyLerpClass(HY_LADDER.star, tOf(F.star, _hyBodyR(g.star)));
+            _hyResizeBody(g.star, starR);
+            bodies++;
+        }
+        // planets, with their moons
+        const orbiters = [];
+        g.members.forEach(function (m) {
+            if (m === g.star || m.userData.parentPlanet) return;
+            const r0 = _hyBodyR(m);
+            const r1 = _hyLerpClass(HY_LADDER.FIELD, tOf(F.planet, r0));
+            const kp = _hyResizeBody(m, r1);
+            bodies++;
+            for (let i = 0; i < planets.length; i++) {
+                const mo = planets[i], mu = mo && mo.userData;
+                if (!mu || mu.parentPlanet !== m) continue;
+                const mr1 = Math.max(HY_LADDER.moon[0],
+                    Math.min(HY_LADDER.moon[1], r1 * HY_LADDER.MOON_MAX_OF_PLANET, _hyBodyR(mo) * kp));
+                _hyResizeBody(mo, mr1);
+                if (mu.orbitRadius > 0) mu.orbitRadius *= kp;
+                if (mo.parent === m) mo.position.multiplyScalar(kp);
+                mu._hyLadder = true;
+                bodies++;
+            }
+            if (m.userData.orbitRadius > 0) orbiters.push(m);
+            m.userData._hyLadder = true;
+        });
+        if (g.star) g.star.userData._hyLadder = true;
+        // rule 3: re-lay the orbits, innermost first
+        orbiters.sort(function (a, b) { return a.userData.orbitRadius - b.userData.orbitRadius; });
+        let prevO = 0, prevReach = 0;
+        orbiters.forEach(function (m, i) {
+            const u = m.userData, reach = _hyReach(m), r0 = u.orbitRadius;
+            const r1 = i === 0 ? Math.max(HY_SCALE.STAR_CLEAR * starR, 1) + reach
+                               : prevO + HY_SCALE.ORBIT_K * (prevReach + reach);
+            u.orbitRadius = Math.round(r1);
+            if (u.orbitSpeed) u.orbitSpeed *= _hySpeedK(r0, r1);
+            const sc = u.systemCenter, ph = u.orbitPhase || 0;
+            if (sc) m.position.set(sc.x + Math.cos(ph) * r1, m.position.y, sc.z + Math.sin(ph) * r1);
+            m.updateMatrixWorld(true);
+            prevO = r1; prevReach = reach;
+        });
+        _hyMeasureSystem(g);
+        // a system light reaches the new edge
+        lights.forEach(function (l) {
+            if (l.distance > 0 && l.position.distanceTo(g.center) < 2 && oldEdge > 0) l.distance *= Math.max(1, g.edge / oldEdge);
+        });
+    });
+    console.log('HYBRID scale: ladder re-sized ' + bodies + ' bodies in ' + todo.length + ' systems (' + tag + ')');
+    return bodies;
+}
+if (typeof window !== 'undefined') window._hyLadderSystems = _hyLadderSystems;
+
+// Outer interstellar systems (outer-systems.js) are self-contained groups at
+// 40-100k: sized there with HY_LADDER.OUTER_K; here they are placed by rules
+// 1-2 against everything built before them (moved as whole groups).
+function _hyPlaceOuterSystems() {
+    if (!_hyScaleOn() || typeof THREE === 'undefined') return 0;
+    const O = (typeof window !== 'undefined' && window.outerInterstellarSystems) || [];
+    if (!O.length) return 0;
+    const nodes = [];
+    const sol = window.localSystemOffset || _hySolCenter();
+    nodes.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), R: _hySunR(), edge: _hySolEdge(), fixed: true });
+    const col = _hyCollectSystems();
+    col.holes.forEach(function (h) {
+        nodes.push({ c: h.position.clone(), R: _hyBodyR(h), edge: HY_BH.CLEAR_RADII * _hyBodyR(h), fixed: true });
+    });
+    col.systems.forEach(function (g) { nodes.push({ c: g.center.clone(), R: g.R, edge: g.edge, fixed: true }); });
+    const mov = [];
+    O.forEach(function (s) {
+        if (!s || !s.position || s.userData._hyPlaced) return;
+        const n = { c: s.position.clone(), R: s.userData._hyR || 0, edge: s.userData._hyEdge || 4000, fixed: false, s: s };
+        nodes.push(n); mov.push(n);
+    });
+    _hySolve(nodes);
+    let moves = 0;
+    mov.forEach(function (n) {
+        if (n.c.distanceTo(n.s.position) > 1) { n.s.position.copy(n.c); n.s.updateMatrixWorld(true); moves++; }
+        n.s.userData._hyPlaced = true;
+    });
+    console.log('HYBRID scale: placed ' + mov.length + ' outer systems, moved ' + moves);
+    return moves;
+}
+if (typeof window !== 'undefined') window._hyPlaceOuterSystems = _hyPlaceOuterSystems;
 
 function createOptimizedPlanets3D() {
     console.log('Creating comprehensive 3D universe with full local solar system...');
