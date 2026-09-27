@@ -17531,11 +17531,13 @@ function _fireUFORayBeam(startPos, endPos) {
     const mid = new THREE.Vector3().addVectors(startPos, endPos).multiplyScalar(0.5);
 
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xff2211, transparent: true, opacity: 0.95 });
+    if (typeof _hyFlat === 'function') _hyFlat(coreMat, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const core = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 2.4, len, 10), coreMat);
     const glowMat = new THREE.MeshBasicMaterial({
         color: 0xff7744, transparent: true, opacity: 0.45,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    if (typeof _hyFlat === 'function') _hyFlat(glowMat, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const glow = new THREE.Mesh(new THREE.CylinderGeometry(7, 7, len, 10), glowMat);
 
     [core, glow].forEach(m => {

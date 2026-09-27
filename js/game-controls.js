@@ -79,8 +79,10 @@ function _hyFxOverhaul() {
 // while explosions are 'original'. Used by the ORIGINAL death/impact builders
 // the overhaul never rewrote (boss, Borg, missile, wingman, asteroid, player,
 // hit sparks), which otherwise render ACES-dulled in this build.
-function _hyFlat(x) {
-    if (!x || _hyFxOverhaul()) return x;
+// `sw` names the switch that owns the effect: 'explosions' (default) or
+// 'weaponFx' (lasers, beams, muzzle flashes, tracers, missiles).
+function _hyFlat(x, sw) {
+    if (!x || !window.HYBRID || window.HYBRID.is(sw || 'explosions', 'overhaul')) return x;
     if (x.isMaterial) { x.toneMapped = false; return x; }
     if (x.traverse) x.traverse(function (o) {
         if (!o.material) return;
@@ -5438,6 +5440,7 @@ function _spawnBossMissile(boss) {
         color: 0xff3322, transparent: true, opacity: 0.95,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
+    _hyFlat(mat, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const m = new THREE.Mesh(geo, mat);
     m.position.copy(boss.position);
     // Launch in a fanned direction toward the player
@@ -11266,6 +11269,7 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             transparent: true,
             opacity: coreOpacity
         });
+        _hyFlat(laserMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
 
         const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
         // Render enemy lasers in front of background nebulae / asteroid
@@ -11316,6 +11320,7 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
             blending: THREE.AdditiveBlending,
             depthWrite: false
         });
+        _hyFlat(glowMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
         laserBeam.add(glow);
         
@@ -11479,6 +11484,7 @@ function createThirdPersonBeam(startPos, endPos, color) {
             transparent: true,
             opacity: 0.8
         });
+        _hyFlat(laserMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
         
         const laserBeam = new THREE.Mesh(laserGeometry, laserMaterial);
         
@@ -11510,6 +11516,7 @@ function createThirdPersonBeam(startPos, endPos, color) {
             opacity: 0.3,
             blending: THREE.AdditiveBlending
         });
+        _hyFlat(glowMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
         const glow = new THREE.Mesh(glowGeometry, glowMaterial);
         laserBeam.add(glow);
         
@@ -11597,6 +11604,7 @@ function createMuzzleFlash(position) {
         transparent: true,
         opacity: 1.0
     });
+    _hyFlat(flashMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const flash = new THREE.Mesh(flashGeometry, flashMaterial);
     flash.position.copy(position);
     scene.add(flash);
@@ -11659,6 +11667,7 @@ function createTracerProjectile(startPos, endPos, color) {
         transparent: true,
         opacity: 0.9
     });
+    _hyFlat(tracerMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const tracer = new THREE.Mesh(tracerGeometry, tracerMaterial);
     
     // Orient tracer along direction
@@ -11680,6 +11689,7 @@ function createTracerProjectile(startPos, endPos, color) {
         opacity: 0.4,
         blending: THREE.AdditiveBlending
     });
+    _hyFlat(glowMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const glow = new THREE.Mesh(glowGeometry, glowMaterial);
     tracer.add(glow);
     
@@ -13985,6 +13995,7 @@ function createMissile(startPos, targetPos, targetObject) {
     }
     const missileGeometry = new THREE.CylinderGeometry(0.3, 0.5, 2, 8);
     const missileMaterial = new THREE.MeshBasicMaterial({ color: 0xff3300 });
+    _hyFlat(missileMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const missile = new THREE.Mesh(missileGeometry, missileMaterial);
 
     missile.position.copy(startPos);
@@ -14004,6 +14015,7 @@ function createMissile(startPos, targetPos, targetObject) {
         opacity: 0.4,
         blending: THREE.AdditiveBlending
     });
+    _hyFlat(glowMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const glow = new THREE.Mesh(glowGeometry, glowMaterial);
     missile.add(glow);
 
@@ -14014,6 +14026,7 @@ function createMissile(startPos, targetPos, targetObject) {
         transparent: true,
         opacity: 0.6
     });
+    _hyFlat(trailMaterial, 'weaponFx'); // HYBRID: ORIGINAL brightness
     const trail = new THREE.Mesh(trailGeometry, trailMaterial);
     trail.position.y = -1.5;
     missile.add(trail);
@@ -16908,6 +16921,7 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
 
         const missileGeo = new THREE.CylinderGeometry(0.4, 0.7, 3, 8);
         const missileMat = new THREE.MeshBasicMaterial({ color: color });
+        _hyFlat(missileMat, 'weaponFx'); // HYBRID: ORIGINAL brightness
         const missile = new THREE.Mesh(missileGeo, missileMat);
         missile.position.copy(startPos);
 
@@ -16917,6 +16931,7 @@ function _fireWingmanMissile(ally, target, targetPos, ud) {
             color: color, transparent: true, opacity: 0.45,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
+        _hyFlat(glowMat, 'weaponFx'); // HYBRID: ORIGINAL brightness
         const glow = new THREE.Mesh(glowGeo, glowMat);
         missile.add(glow);
 
@@ -17007,6 +17022,7 @@ function _fireWingmanLaser(startPos, endPos, color) {
         // CORE — thick, fully opaque
         const coreGeo = new THREE.CylinderGeometry(0.8, 0.8, length, 12);
         const coreMat = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 1.0 });
+        _hyFlat(coreMat, 'weaponFx'); // HYBRID: ORIGINAL brightness
         const core = new THREE.Mesh(coreGeo, coreMat);
         // OUTER GLOW — much wider, additive blend
         const glowGeo = new THREE.CylinderGeometry(2.2, 2.2, length, 12);
@@ -17014,6 +17030,7 @@ function _fireWingmanLaser(startPos, endPos, color) {
             color: color, transparent: true, opacity: 0.45,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
+        _hyFlat(glowMat, 'weaponFx'); // HYBRID: ORIGINAL brightness
         const glow = new THREE.Mesh(glowGeo, glowMat);
 
         const up = new THREE.Vector3(0, 1, 0);
