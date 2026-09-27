@@ -2476,10 +2476,14 @@ const _PLUME_NOSE_ASPECT_LO = -0.40;
 
 function _updateShipThrusterCones(ship, thrusting, dist, charge) {
     if (!ship || !ship.userData || !ship.userData._thrusters) return;
-    const target = thrusting ? 1.0 : _PLUME_IDLE;
+    // A NUMBER is a real throttle (0..1, enemy flight model); a boolean is
+    // the old idle-or-full switch.
+    const _thrNum = (typeof thrusting === 'number');
+    const target = _thrNum ? _PLUME_IDLE + (1.0 - _PLUME_IDLE) * Math.max(0, Math.min(1, thrusting))
+                           : (thrusting ? 1.0 : _PLUME_IDLE);
     const cur = ship.userData._thrusterIntensity;
     const prev = (cur === undefined) ? _PLUME_IDLE : cur;
-    const next = prev + (target - prev) * (thrusting ? 0.22 : 0.15);
+    const next = prev + (target - prev) * ((_thrNum ? target > prev : thrusting) ? 0.22 : 0.15);
     ship.userData._thrusterIntensity = next;
 
     // Attack telegraph rides the PLUME, not the hull. The hull's emissive
@@ -2964,7 +2968,7 @@ function _enemyPlumeTick(enemy, thrusting, dist) {
     if (_lookOver && (!dist || dist <= _HULL_READ_DIST)) {
         _ensureHullReadout(enemy, enemy.userData.galaxyColor || 0xff5522);
     }
-    _updateShipThrusterCones(enemy, !!thrusting, dist,
+    _updateShipThrusterCones(enemy, (typeof thrusting === "number") ? thrusting : !!thrusting, dist,
                              enemy.userData._telegraphPhase || 0);
     // DAMAGE TIER. Driven from here rather than from a new loop because this
     // is already the one function every hostile in the game passes through
@@ -4717,12 +4721,445 @@ function _updateEnemyCombatFeel(enemy) {
     if (ud._underFireUntil && Date.now() < ud._underFireUntil) {
         _tryStartEvasive(enemy, 'graze');
     }
+    // HYBRID enemyFlight:'physical' — the flight model flies the manoeuvre
+    // (true roll about the nose, pulls, momentum); nothing here may write
+    // position or roll for a hull it owns.
+    if (ud._ef && _efOn()) return;
     const roll = ud._evade ? _stepEvasive(enemy) : 0;
     _applyEnemyFlightRoll(enemy, roll);
     // (euler unwrap now handled by _enemyOrientGovern, which runs after
     // every orientation authority for this hull — including this one.)
 }
 if (typeof window !== 'undefined') window._updateEnemyCombatFeel = _updateEnemyCombatFeel;
+
+// =============================================================================
+// ENEMY FLIGHT MODEL — hybrid switch enemyFlight: 'physical' (default)
+// -----------------------------------------------------------------------------
+// Ben: "enemy movement is a little too erratic ... emulate the physics of
+// space flight so maneuvers should be effected by momentum and ship nose
+// direction and thrust" (Star Wars flight games, Star Fox).
+//
+// The advanced AI above still decides WHAT a ship does (attack pattern, flank,
+// evade, aim/burst/break, telegraph). It used to also decide HOW it moves: each
+// behaviour stepped enemy.position straight to wherever it wanted to be, and up
+// to four authorities wrote the orientation. Now every behaviour's position
+// write is only an INTENT. _efBegin records where the hull was when the tick
+// began; the behaviours run exactly as before; _efStep reads the displacement
+// they asked for as a desired velocity, rewinds, and flies the hull there:
+//
+//   momentum   velocity persists between ticks; it changes only by bounded
+//              acceleration (main engine along the nose, weak manoeuvring
+//              thrusters, and the "grip" that drags velocity onto the nose).
+//   nose       turns at a bounded rate with bounded angular acceleration, so
+//              turns ease in and out; the engine can only push where it points.
+//   slide      velocity lags the nose in a hard turn, then is dragged round.
+//   bank       roll into the turn about the nose axis; barrel roll / split-S /
+//              corkscrew are flown as real rolls and pulls.
+//   plume      the engine plume is fed the actual main-engine throttle.
+//
+// Runs on the AI tick with real delta time; game-core's render glide smooths
+// the frames. Holds no positions across ticks (only velocity + attitude), so a
+// floating-origin rebase needs nothing from it. UFOs and BORG hulls keep their
+// own mechanics. Flip back with ?hy=enemyFlight:overhaul.
+// =============================================================================
+
+// ONE table, per ship class. Ben tunes these.  u = world units.
+const ENEMY_FLIGHT = {
+    //            maxSpeed  mainThrust manThrust  maxTurn  evadeTurn turnAccel  maxSlip  bankMax  rollRate rollAccel align
+    //            u/s       u/s²       u/s²       deg/s    deg/s     deg/s²     deg      deg      deg/s    deg/s²    1/s
+    fighter: { maxSpeed: 700, mainThrust: 520, manThrust: 110, maxTurn: 100, evadeTurn: 125, turnAccel: 300, maxSlip: 45, bankMax: 55, rollRate: 260, rollAccel: 1100, align: 2.4 },
+    elite:   { maxSpeed: 760, mainThrust: 600, manThrust: 130, maxTurn: 90,  evadeTurn: 115, turnAccel: 260, maxSlip: 40, bankMax: 50, rollRate: 220, rollAccel: 900,  align: 2.2 },
+    support: { maxSpeed: 560, mainThrust: 380, manThrust: 80,  maxTurn: 75,  evadeTurn: 95,  turnAccel: 190, maxSlip: 35, bankMax: 40, rollRate: 160, rollAccel: 600,  align: 1.6 },
+    boss:    { maxSpeed: 420, mainThrust: 220, manThrust: 45,  maxTurn: 35,  evadeTurn: 35,  turnAccel: 60,  maxSlip: 25, bankMax: 18, rollRate: 50,  rollAccel: 150,  align: 1.0 },
+};
+// maxSpeed   top speed; also caps how fast any behaviour may ask to go
+// mainThrust main engine, along the nose only
+// manThrust  manoeuvring thrusters (strafe any direction, brake) — keep weak
+// maxTurn    nose turn-rate ceiling in normal flight
+// evadeTurn  nose turn-rate ceiling while flying an evasive manoeuvre
+// turnAccel  how fast the nose turn rate may build or bleed (the ease in/out)
+// maxSlip    furthest the nose may lead the velocity in a turn (the slide);
+//            past it the ship flies an arc instead of pivoting. Not applied
+//            below EF_SLIP_SPEED, or while flying an evasive manoeuvre.
+// bankMax    roll into a full-rate turn
+// rollRate / rollAccel  roll-rate ceiling and how fast roll rate builds
+// align      how fast velocity is dragged onto the nose (higher = less slide)
+const EF_RESPONSE = 0.12;   // s — how soon a behaviour wants its velocity met (thrust limits do the rest)
+const EF_NOSE_LEAD = 1.0;   // nose points past the wanted velocity by this much of the error, to drag it round
+const EF_AIM_BLEND = 0.55;  // while telegraphing / in a burst, nose swings this far onto the target
+const EF_AIM_CONE = 80;     // deg — only if the target is within this of where it is going anyway
+const EF_SLIP_SPEED = 60;  // u/s — slower than this a hull may pivot freely
+const EF_TELEPORT = 1500;   // u in one tick = a respawn / relocation, not flight: accepted as-is
+const _EF_D2R = Math.PI / 180;
+
+const _efA = new THREE.Vector3(), _efB = new THREE.Vector3(), _efC = new THREE.Vector3();
+const _efI = new THREE.Vector3(), _efN = new THREE.Vector3(), _efW = new THREE.Vector3();
+const _efLv = new THREE.Vector3(), _efRt = new THREE.Vector3(), _efUpW = new THREE.Vector3(0, 1, 0);
+const _efQ = new THREE.Quaternion(), _efM = new THREE.Matrix4(), _efEu = new THREE.Euler(0, 0, 0, 'YXZ');
+
+function _efOn() {
+    return !!(typeof window !== 'undefined' && window.HYBRID && !window.HYBRID.is('enemyFlight', 'overhaul'));
+}
+function _efClass(ud) {
+    if (ud.isBoss) return ENEMY_FLIGHT.boss;
+    if (ud.isBossSupport) return ENEMY_FLIGHT.support;
+    if (ud.isEliteGuardian || ud.isBlackHoleGuardian) return ENEMY_FLIGHT.elite;
+    return ENEMY_FLIGHT.fighter;
+}
+
+// Start of this hull's AI tick. Returns true when the flight model owns it.
+function _efBegin(enemy) {
+    if (!enemy || !enemy.userData || !enemy.position || !enemy.quaternion) return false;
+    const ud = enemy.userData;
+    if (ud.isUFO || ud.isBorgCube || ud.type === 'borg_drone') return false;
+    let ef = ud._ef;
+    if (!ef) {
+        const nose = new THREE.Vector3(0, 0, -1).applyQuaternion(enemy.quaternion).normalize();
+        const up = new THREE.Vector3(0, 1, 0).applyQuaternion(enemy.quaternion);
+        up.addScaledVector(nose, -up.dot(nose)).normalize();
+        ef = ud._ef = {
+            v: nose.clone().multiplyScalar(90),   // u/s
+            nose: nose, up: up,
+            w: new THREE.Vector3(),               // nose angular velocity, rad/s (axis * rate)
+            rollRate: 0,                          // rad/s about the nose
+            thr: 0,                               // main-engine throttle 0..1 (smoothed, feeds the plume)
+            p0: new THREE.Vector3(), t: 0, vTick: null, dt: 1 / 30,
+            m: null,                              // manoeuvre bookkeeping
+        };
+    }
+    ef.p0.copy(enemy.position);
+    // An impulse applied between ticks (laser knockback nudges ud.velocity)
+    // is carried by momentum instead of being lost.
+    if (ef.vTick && ud.velocity && ud.velocity.isVector3) {
+        _efA.subVectors(ud.velocity, ef.vTick);
+        if (_efA.lengthSq() > 1e-8) ef.v.addScaledVector(_efA, 1 / Math.max(1 / 60, ef.dt));
+    }
+    // Behaviours that integrate their own velocity (pursuit, swarm) start
+    // from the real one, in their per-tick units.
+    if (!ud.velocity || !ud.velocity.isVector3) ud.velocity = new THREE.Vector3();
+    ud.velocity.copy(ef.v).multiplyScalar(ef.dt);
+    if (!ef.vTick) ef.vTick = new THREE.Vector3();
+    ef.vTick.copy(ud.velocity);
+    return true;
+}
+
+// Rotate unit vector v about unit axis by angle (in place).
+function _efRotate(v, axis, angle) {
+    _efQ.setFromAxisAngle(axis, angle);
+    return v.applyQuaternion(_efQ);
+}
+
+// Manoeuvre state for this tick: extra roll rate, a nose override, throttle.
+// Uses the AI's own ud._evade clock (so fire accuracy, keep-check and the
+// cooldowns see the same manoeuvre), but flies it instead of sliding.
+function _efManeuver(enemy, ef, spec, dt, out) {
+    const ud = enemy.userData;
+    const m = ud._evade;
+    out.roll = null; out.nose = null; out.full = false; out.lat = 0; out.evading = false;
+    if (!m) { ef.m = null; return; }
+    const now = Date.now();
+    let p = (now - m.t0) / m.dur;
+    if (p >= 1) { ud._evade = null; ud._evadeEndedAt = now; ef.m = null; return; }
+    if (p < 0) p = 0;
+    if (!ef.m || ef.m.ref !== m) ef.m = { ref: m, rolled: 0, fwd0: ef.nose.clone() };
+    out.evading = true;
+    const TAU = Math.PI * 2, dir = m.dir || 1;
+    // Roll is flown as an absolute schedule; the step hands back the rate
+    // that lands it, so a clipped tick is made up on the next one.
+    let rollTo = 0;
+    if (m.type === 'barrel') {
+        // A full roll about the nose; the manoeuvring thrusters push out and
+        // back (cosine), so the hull drifts a little off its line and the
+        // momentum carries it.
+        rollTo = dir * TAU * _cfRollEase(p);
+        out.lat = dir * Math.cos(p * Math.PI);
+    } else if (m.type === 'splitS') {
+        // Half roll inverted, then pull through: the nose goes toward the
+        // canopy (now pointing at the floor), down through the vertical and
+        // round, and the hull comes out upright heading the other way.
+        rollTo = dir * Math.PI * _cfRollEase(Math.min(1, p / 0.3));
+        if (p > 0.26) {
+            out.nose = _efN.copy(ef.nose).multiplyScalar(Math.cos(80 * _EF_D2R))
+                .addScaledVector(ef.up, Math.sin(80 * _EF_D2R)).normalize();
+            // stop pulling once it has come round
+            if (ef.nose.dot(ef.m.fwd0) < -0.85) out.nose = null;
+        }
+        out.full = true;
+    } else {
+        // Corkscrew: a sustained roll with a steady pull — the nose draws
+        // a helix round the old flight line.
+        rollTo = dir * TAU * _cfRollEase(p);
+        const pull = 28 * _EF_D2R * Math.sin(Math.PI * p);
+        out.nose = _efN.copy(ef.nose).multiplyScalar(Math.cos(pull)).addScaledVector(ef.up, Math.sin(pull)).normalize();
+    }
+    out.roll = (rollTo - ef.m.rolled) / Math.max(dt, 1e-3);   // rad/s wanted this tick
+}
+const _efMan = { roll: null, nose: null, full: false, lat: 0, evading: false };
+
+// Write enemy.rotation (YXZ) from enemy.quaternion in the euler branch nearest
+// the render glide's start, so game-core's component-wise lerp walks the short
+// arc (same rule as _enemyOrientGovern).
+function _efWriteEuler(enemy) {
+    const from = enemy.userData._iFromRot;
+    _efEu.setFromQuaternion(enemy.quaternion, 'YXZ');
+    if (!from) { enemy.rotation.set(_efEu.x, _efEu.y, _efEu.z, 'YXZ'); return; }
+    const ax = _govNearTurn(_efEu.x, from.x), ay = _govNearTurn(_efEu.y, from.y), az = _govNearTurn(_efEu.z, from.z);
+    const bx = _govNearTurn(Math.PI - _efEu.x, from.x), by = _govNearTurn(_efEu.y + Math.PI, from.y), bz = _govNearTurn(_efEu.z + Math.PI, from.z);
+    const costA = Math.max(Math.abs(ax - from.x), Math.abs(ay - from.y), Math.abs(az - from.z));
+    const costB = Math.max(Math.abs(bx - from.x), Math.abs(by - from.y), Math.abs(bz - from.z));
+    const useB = costB < costA;
+    let rx = useB ? bx : ax, ry = useB ? by : ay, rz = useB ? bz : az;
+    if (rz > 12.6 || rz < -12.6) { const k = Math.round(rz / _GOV_TAU) * _GOV_TAU; rz -= k; from.z -= k; }
+    // True arc this tick, to spot an euler path that is not the short way.
+    _efEu.set(from.x, from.y, from.z, 'YXZ');
+    _efQ.setFromEuler(_efEu);
+    const arc = 2 * Math.acos(Math.min(1, Math.abs(_efQ.dot(enemy.quaternion))));
+    enemy.rotation.set(rx, ry, rz, 'YXZ');
+    // Near nose-vertical the euler is ill-conditioned: its components can
+    // swing far wider than the real rotation. Hold rather than let the lerp
+    // fly the hull through an orientation neither end asked for.
+    if (Math.min(costA, costB) > Math.max(0.5, arc * 2.5)) { from.x = rx; from.y = ry; from.z = rz; }
+}
+
+// End of this hull's AI tick: intent -> motion. Last position AND orientation
+// write of the tick (game-core snapshots both as the glide target).
+function _efStep(enemy) {
+    const ud = enemy.userData, ef = ud._ef;
+    if (!ef) return;
+    const spec = _efClass(ud);
+    const nowMs = performance.now();
+    let dt = ef.t ? (nowMs - ef.t) / 1000 : 1 / 30;
+    if (!(dt > 0.004 && dt < 0.5)) dt = 1 / 30;
+    // Real time, so a slow machine's fighters are not slower; a long stall
+    // (tab restore) is flown as 250 ms at most rather than caught up at once.
+    if (dt > 0.25) dt = 0.25;
+    ef.t = nowMs; ef.dt = dt;
+
+    // ---- 1. the intent: what the behaviours asked for this tick ----------
+    _efI.subVectors(enemy.position, ef.p0);
+    // The per-frame swarm pull (autopilot.js swarmEnemiesNearPlayer) is
+    // banked between ticks as a wish, not applied as a shove.
+    if (ud._efPull) { _efI.add(ud._efPull); ud._efPull.set(0, 0, 0); }
+    const asked = _efI.length();
+    if (!isFinite(asked)) { enemy.position.copy(ef.p0); _efI.set(0, 0, 0); }
+    else if (asked > EF_TELEPORT) {
+        // Not flight: a respawn or a relocation. Take it, keep the attitude.
+        ud.velocity.copy(ef.v).multiplyScalar(dt); ef.vTick.copy(ud.velocity);
+        _efOrient(enemy, ef); return;
+    }
+    _efI.divideScalar(dt);                        // desired velocity, u/s
+    ef.ask = _efI.length();                       // (instrumentation: what the AI asked for)
+    if (_efI.length() > spec.maxSpeed) _efI.setLength(spec.maxSpeed);
+    enemy.position.copy(ef.p0);                   // rewind: only the flight model moves the hull
+
+    // ---- 2. where the nose should point -----------------------------------
+    _efMan.roll = null;
+    _efManeuver(enemy, ef, spec, dt, _efMan);
+    const turnCap = (_efMan.evading ? spec.evadeTurn : spec.maxTurn) * _EF_D2R;
+    const turnAcc = spec.turnAccel * _EF_D2R * (_efMan.evading ? 1.6 : 1);
+    if (_efMan.nose) {
+        _efA.copy(_efMan.nose);
+    } else if (_efI.lengthSq() > 64) {
+        // Point past the wanted velocity by the error, so the engine drags
+        // the actual velocity round onto it (and the hull visibly slides).
+        _efA.subVectors(_efI, ef.v).multiplyScalar(EF_NOSE_LEAD).add(_efI);
+        if (_efA.lengthSq() < 1e-6) _efA.copy(_efI);
+        _efA.normalize();
+        // Lining up a shot: nose onto the target (it crabs a little, the way
+        // a starfighter holds its guns on you through a pass).
+        const ap = (typeof _factionAttackProfile === 'function') ? _factionAttackProfile(enemy) : null;
+        const shooting = ud._telegraphing || (ap && ud._burstLeft !== undefined && ud._burstLeft < ap.burst);
+        if (shooting && !ud.isBoss) {
+            const tp = (typeof _engagedTargetPos === 'function') ? _engagedTargetPos(enemy) : null;
+            if (tp) {
+                _efB.subVectors(tp, enemy.position);
+                if (_efB.lengthSq() > 1) {
+                    _efB.normalize();
+                    if (_efB.dot(_efA) > Math.cos(EF_AIM_CONE * _EF_D2R)) _efA.lerp(_efB, EF_AIM_BLEND).normalize();
+                }
+            }
+        }
+    } else {
+        _efA.copy(ef.nose);                        // nothing asked: hold attitude, drift
+    }
+
+    // A hull at speed commits to an arc: the nose may lead its velocity by
+    // at most maxSlip, so a reversal is a turn you can watch and lead, not
+    // a flip-and-burn.
+    if (!_efMan.evading) {
+        const vs = ef.v.length();
+        if (vs > EF_SLIP_SPEED) {
+            _efB.copy(ef.v).divideScalar(vs);
+            const lim = spec.maxSlip * _EF_D2R;
+            const off = Math.acos(Math.max(-1, Math.min(1, _efB.dot(_efA))));
+            if (off > lim) {
+                _efC.crossVectors(_efB, _efA);
+                if (_efC.lengthSq() < 1e-10) _efC.copy(ef.up);
+                _efC.normalize();
+                _efA.copy(_efB);
+                _efRotate(_efA, _efC, lim).normalize();
+            }
+        }
+    }
+
+    // ---- 3. nose: bounded rate, bounded angular acceleration --------------
+    const cosT = Math.max(-1, Math.min(1, ef.nose.dot(_efA)));
+    const theta = Math.acos(cosT);
+    _efW.set(0, 0, 0);
+    if (theta > 1e-4) {
+        _efB.crossVectors(ef.nose, _efA);
+        if (_efB.lengthSq() < 1e-10) _efB.copy(ef.up);   // dead astern: turn over the canopy
+        _efB.normalize();
+        // Rate that would stop exactly on target under turnAccel (so the turn
+        // eases out without overshoot), capped at the envelope.
+        const wWant = Math.min(turnCap, Math.sqrt(2 * turnAcc * theta) * 0.92);
+        _efW.copy(_efB).multiplyScalar(wWant);
+    }
+    _efC.subVectors(_efW, ef.w);
+    const dwMax = turnAcc * dt;
+    if (_efC.length() > dwMax) _efC.setLength(dwMax);
+    ef.w.add(_efC);
+    ef.w.addScaledVector(ef.nose, -ef.w.dot(ef.nose));  // no spin about the nose here; roll is separate
+    const wMag = ef.w.length();
+    if (wMag > turnCap) { ef.w.multiplyScalar(turnCap / wMag); }
+    const turnAng = Math.min(ef.w.length() * dt, theta > 1e-4 ? theta + 0.02 : ef.w.length() * dt);
+    if (turnAng > 1e-6) {
+        _efB.copy(ef.w).normalize();
+        _efRotate(ef.nose, _efB, turnAng).normalize();
+        _efRotate(ef.up, _efB, turnAng);          // parallel-transport the canopy with the nose
+    }
+    ef.up.addScaledVector(ef.nose, -ef.up.dot(ef.nose)).normalize();
+
+    // ---- 4. thrust: main engine along the nose, weak thrusters elsewhere --
+    _efA.subVectors(_efI, ef.v).divideScalar(Math.max(EF_RESPONSE, dt));   // acceleration wanted
+    // Throttle holds the SPEED the AI asked for; direction is the nose's job
+    // (and the grip's). A turn is flown at speed, it is not a burn sideways.
+    let fwd = (_efI.length() - ef.v.length()) / Math.max(EF_RESPONSE, dt);
+    if (_efMan.full) fwd = spec.mainThrust;
+    const aMain = Math.max(-spec.manThrust, Math.min(spec.mainThrust, fwd));   // brake = thrusters only
+    _efB.copy(_efA).addScaledVector(ef.nose, -_efA.dot(ef.nose));              // lateral wish
+    if (_efMan.lat) {
+        _efRt.crossVectors(ef.nose, ef.up).normalize();
+        _efB.addScaledVector(_efRt, _efMan.lat * spec.manThrust);
+    }
+    if (_efB.length() > spec.manThrust) _efB.setLength(spec.manThrust);
+    _efC.copy(ef.v);                                                          // v before
+    ef.v.addScaledVector(ef.nose, aMain * dt).addScaledVector(_efB, dt);
+    // Grip: the velocity is dragged onto the nose (keeping its speed when it
+    // is moving forward) — this is what turns a hard turn into a slide and
+    // then an arc, rather than a pivot.
+    let aGrip = 0;
+    {
+        const sp = ef.v.length();
+        const par = ef.v.dot(ef.nose);
+        _efW.copy(ef.v);
+        _efLv.copy(ef.v).addScaledVector(ef.nose, -par);                       // slip component
+        const keep = Math.exp(-spec.align * dt);
+        ef.v.copy(ef.nose).multiplyScalar(par).addScaledVector(_efLv, keep);
+        if (par > 0 && ef.v.lengthSq() > 1e-8) ef.v.setLength(sp);
+        aGrip = _efW.distanceTo(ef.v) / dt;      // the engine's work dragging the velocity round
+    }
+    // Total acceleration never exceeds what the engines can do.
+    _efLv.subVectors(ef.v, _efC);
+    const aCap = (spec.mainThrust + spec.manThrust) * dt;
+    if (_efLv.length() > aCap) { _efLv.setLength(aCap); ef.v.copy(_efC).add(_efLv); }
+    if (ef.v.length() > spec.maxSpeed) ef.v.setLength(spec.maxSpeed);
+    // Plume = what the main engine is doing: accelerating, or hauling the
+    // velocity round in a turn. Straight and level at speed, it coasts.
+    const thrTarget = Math.min(1, (Math.max(0, aMain) + aGrip) / spec.mainThrust);
+    ef.thr += (thrTarget - ef.thr) * Math.min(1, dt * 7);
+
+    // ---- 5. move ----------------------------------------------------------
+    enemy.position.addScaledVector(ef.v, dt);
+    // Event horizons stay a hard wall (rare): push out, lose the inward speed.
+    if (typeof _enemyAvoidBlackHoles === 'function') {
+        _efC.copy(enemy.position);
+        _enemyAvoidBlackHoles(enemy);
+        if (_efC.distanceToSquared(enemy.position) > 1e-6) {
+            _efA.subVectors(enemy.position, _efC).normalize();
+            const inward = ef.v.dot(_efA);
+            if (inward < 0) ef.v.addScaledVector(_efA, -inward);
+        }
+    }
+    ud.velocity.copy(ef.v).multiplyScalar(dt);   // per-tick units for the behaviours
+    ef.vTick.copy(ud.velocity);
+
+    // ---- 6. roll: bank into the turn, or fly the manoeuvre's roll ---------
+    const rollCap = spec.rollRate * _EF_D2R * (_efMan.evading ? 1.4 : 1);
+    const rollAcc = spec.rollAccel * _EF_D2R * (_efMan.evading ? 1.6 : 1);
+    let rollWant;
+    if (_efMan.roll !== null) {
+        rollWant = _efMan.roll;
+    } else {
+        // Level reference: world up seen from the nose. Degenerate when the
+        // nose is near vertical — then hold the roll we have.
+        _efLv.copy(_efUpW).addScaledVector(ef.nose, -ef.nose.y);
+        if (_efLv.lengthSq() < 0.03) {
+            rollWant = 0;
+        } else {
+            _efLv.normalize();
+            _efRt.crossVectors(ef.nose, _efLv);                       // level right wing
+            // Signed lateral turn rate: + when the nose swings right.
+            _efB.crossVectors(ef.w, ef.nose);
+            const lateral = _efB.dot(_efRt);
+            let bank = spec.bankMax * _EF_D2R * Math.max(-1, Math.min(1, lateral / Math.max(1e-3, spec.maxTurn * _EF_D2R)));
+            if (ud._telegraphing) bank *= 0.3;                        // wings level while lining up the shot
+            // current roll: angle from level-up to canopy about the nose, + = right wing down
+            const cur = Math.atan2(ef.up.dot(_efRt), ef.up.dot(_efLv));
+            let err = bank - cur;
+            err = Math.atan2(Math.sin(err), Math.cos(err));
+            rollWant = Math.max(-rollCap, Math.min(rollCap, err * 5));
+        }
+    }
+    let dr = rollWant - ef.rollRate;
+    const drMax = rollAcc * dt;
+    if (dr > drMax) dr = drMax; else if (dr < -drMax) dr = -drMax;
+    ef.rollRate += dr;
+    if (ef.rollRate > rollCap) ef.rollRate = rollCap; else if (ef.rollRate < -rollCap) ef.rollRate = -rollCap;
+    const rollStep = ef.rollRate * dt;
+    if (Math.abs(rollStep) > 1e-6) {
+        // + roll = right wing down = canopy tips toward the right wing
+        _efRotate(ef.up, ef.nose, rollStep).normalize();
+        if (ef.m) ef.m.rolled += rollStep;
+    }
+    _efOrient(enemy, ef);
+}
+
+function _efOrient(enemy, ef) {
+    _efRt.crossVectors(ef.nose, ef.up).normalize();           // right wing (+X)
+    ef.up.crossVectors(_efRt, ef.nose).normalize();           // re-orthogonalise canopy (+Y)
+    _efA.copy(ef.nose).negate();                              // tail (+Z) — hulls fly -Z forward
+    _efM.makeBasis(_efRt, ef.up, _efA);
+    enemy.quaternion.setFromRotationMatrix(_efM);
+    _efWriteEuler(enemy);
+}
+
+// The sightline-clearance shove in _enemyFlightHygiene can ask for up to
+// 64 u in one tick (~1,900 u/s) — as a WISH that would fling a fighter to top
+// speed and out of the fight. Under the flight model it is a gentle sidestep:
+// the request is capped to EF_HYGIENE_SPEED.
+const EF_HYGIENE_SPEED = 160;   // u/s
+function _efHygieneBegin(enemy) {
+    const ef = enemy.userData._ef; if (!ef) return;
+    if (!ef.hy) ef.hy = new THREE.Vector3();
+    ef.hy.copy(enemy.position);
+}
+function _efHygieneEnd(enemy) {
+    const ef = enemy.userData._ef; if (!ef || !ef.hy) return;
+    _efC.subVectors(enemy.position, ef.hy);
+    const cap = EF_HYGIENE_SPEED * Math.max(1 / 60, ef.dt);
+    if (_efC.length() > cap) { _efC.setLength(cap); enemy.position.copy(ef.hy).add(_efC); }
+}
+
+// Engine-plume level for this hull: the real main-engine throttle.
+function _efThrottle(enemy) {
+    const ef = enemy && enemy.userData && enemy.userData._ef;
+    return ef ? ef.thr : 0;
+}
+if (typeof window !== 'undefined') {
+    window.ENEMY_FLIGHT = ENEMY_FLIGHT;
+    window._efBegin = _efBegin; window._efStep = _efStep;
+}
 
 function updateEnemyBehavior() {
     // Safety checks
@@ -4742,8 +5179,10 @@ function updateEnemyBehavior() {
     // NEW: Don't activate enemies until tutorial is complete (IMPROVED DETECTION)
     if (typeof tutorialSystem !== 'undefined' && tutorialSystem.active && !tutorialSystem.completed) {
         // Tutorial is still active - enemies should be passive
+        const _efPhysT = (typeof _efOn === 'function') && _efOn();
         enemies.forEach(enemy => {
             if (enemy.userData.health <= 0) return;
+            const _efFlyT = _efPhysT && _efBegin(enemy);
             enemy.userData.isActive = false;
             enemy.userData.attackMode = 'patrol';
 
@@ -4776,6 +5215,11 @@ function updateEnemyBehavior() {
             // Plume runs BEFORE the tutorial return, so the scripted
             // opening encounter — the first hostiles the player ever sees —
             // carries the same engine signature combat does.
+            if (_efFlyT) {
+                _efStep(enemy);
+                _enemyPlumeTick(enemy, _efThrottle(enemy),
+                                camera.position.distanceTo(enemy.position));
+            } else
             _enemyPlumeTick(enemy, tutorialThrust,
                             camera.position.distanceTo(enemy.position));
         });
@@ -4837,8 +5281,14 @@ function updateEnemyBehavior() {
         }
     } catch (e) { _fhShip = null; }
 
+    const _efPhys = (typeof _efOn === 'function') && _efOn();
+
     enemies.forEach(enemy => {
         if (enemy.userData.health <= 0) return;
+
+        // HYBRID enemyFlight:'physical' — from here on every position write
+        // is an intent; _efStep at the end of the tick flies it.
+        const _efFly = _efPhys && _efBegin(enemy);
 
         // Put this hull on the aviation euler order BEFORE anything writes
         // its orientation this tick. One-time per enemy; see
@@ -4942,7 +5392,9 @@ function updateEnemyBehavior() {
         // keep them out of the camera→ship sightline so they don't
         // block the player's view of their own ship during combat.
         if (enemy.userData.isActive && typeof _enemyFlightHygiene === 'function') {
+            if (_efFly) _efHygieneBegin(enemy);
             _enemyFlightHygiene(enemy, _fhShip, _fhCam, playerPos, isLocal);
+            if (_efFly) _efHygieneEnd(enemy);
         }
 
         // Keep enemies OUT of every black hole's event-horizon warp zone
@@ -4954,7 +5406,11 @@ function updateEnemyBehavior() {
 
         // Engine plume — see _enemyPlumeTick. Combat hulls carry a real
         // velocity vector, so speed picks idle vs full burn.
-        {
+        // Under the flight model the plume is fed the real main-engine
+        // throttle (0..1): bright under thrust, idle burn when coasting.
+        if (_efFly) {
+            _enemyPlumeTick(enemy, _efThrottle(enemy), distanceToPlayer);
+        } else {
             const _v = enemy.userData.velocity;
             const _speedNow = _v ? _v.length() : (enemy.userData.isActive ? 0.5 : 0.2);
             _enemyPlumeTick(enemy, _speedNow > 0.08, distanceToPlayer);
@@ -5016,7 +5472,8 @@ function updateEnemyBehavior() {
         // the eye can follow. Must stay the final orientation write in the
         // tick — game-core snapshots enemy.rotation as the glide target the
         // instant updateEnemyBehavior returns.
-        if (typeof _enemyOrientGovern === 'function') _enemyOrientGovern(enemy);
+        if (_efFly) _efStep(enemy);
+        else if (typeof _enemyOrientGovern === 'function') _enemyOrientGovern(enemy);
 
     });
     
