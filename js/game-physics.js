@@ -2829,7 +2829,8 @@ function _fireWarpExitBeat(blackHole, refSpeed) {
         if (typeof window !== 'undefined' && typeof window.warpExitBeat === 'function') {
             window.warpExitBeat(!!blackHole, refSpeed || 0);
         }
-        if (typeof playSound === 'function') { try { playSound('warp'); } catch (e) {} }
+        // HYBRID sfx: the warp-exit whoosh is an overhaul-added cue.
+        if ((!window.HYBRID || window.HYBRID.is('sfx', 'overhaul')) && typeof playSound === 'function') { try { playSound('warp'); } catch (e) {} }
     } catch (e) {}
 }
 

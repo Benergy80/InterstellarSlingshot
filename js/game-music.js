@@ -1615,6 +1615,9 @@
   // `_retry` is set when the call comes from the pending queue — those must
   // never re-park themselves (the queue entry is already holding the beat).
   function playStinger(key, pos, _retry, gainMul) {
+    // HYBRID sfx: stingers (discovery / boss / threat / kill / warp-exit /
+    // liberation hits) are overhaul-added cues — ORIGINAL had none.
+    if (window.HYBRID && !window.HYBRID.is('sfx', 'overhaul')) return false;
     const spec = STINGERS[key];
     if (!spec) return false;
     // Hard no's: nothing is ever going to make these sound, so don't park.
