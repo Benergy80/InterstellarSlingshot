@@ -783,10 +783,6 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
     // ~20% is a 1.5x on contribution (it goes as 1/d^2) and puts the near
     // cloud at 4,500-6,000u from the camera for most of the run.
     const bands = [[4200, 5600], [13000, 18000], [24000, 32000], [34000, 45000]];
-    // HYBRID (nebulae != overhaul): no escort, so the near cluster must not be
-    // parked on top of Sol either — it becomes a place 9-12k out you fly to.
-    const _hyNear = !_hyNebOverhaul();
-    if (_hyNear) bands[0] = [9000, 12000];
 
     // Golden-angle azimuth + stratified elevation instead of two raw
     // Math.random()s: four independent random directions bunch often enough
@@ -843,14 +839,14 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
             // sky. That is what the local system being ON the rim of a nebula
             // looks like, and it is why the near cloud is now in frame on most
             // headings instead of one in six.
-            spread: radius * (i === 0 ? (_hyNear ? 0.35 : 0.9) : 0.26),
+            spread: radius * (i === 0 ? 0.9 : 0.26),
             anchor: new THREE.Vector3(_sol.x, _sol.y, _sol.z),
             // Hard floor on how close a near cloud's CENTRE may land to the
             // local system: the wash measured at <=1,000u is not a look, it is
             // a whiteout. 4,000 + the 3,500u camera roam is a 500u worst case,
             // which is deep inside the volume — that case is what
             // updateVolumetricNebulaProximity() exists to survive.
-            minAnchorDistance: i === 0 ? (_hyNear ? 8000 : 4000) : 0
+            minAnchorDistance: i === 0 ? 4000 : 0
         });
     }
 
