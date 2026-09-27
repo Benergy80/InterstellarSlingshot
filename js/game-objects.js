@@ -14882,6 +14882,9 @@ function updateDistanceCulling() {
     // in this function (a distance and a float per crossing world, and there
     // are a handful) so it runs on every frame, before the throttle.
     _impXfTick();
+    // HYBRID (asteroids: original): belts turn every frame; their logical rocks
+    // follow (see HY_ROCKS).
+    if (_hyRocksOn()) _hyRockTick();
     if (!forced && _cullFrameCount % 10 !== 0) return;
     _cullLastPassFrame = _cullFrameCount;
     _cullPrevCam.x = camera.position.x;
@@ -15099,7 +15102,9 @@ function updateDistanceCulling() {
     cullArray(typeof planets !== 'undefined' ? planets : null, 30000, true);
     // Cosmetic/static content: range sits just beyond the ~25k nebula-cloud
     // fade so a belt never winks out while its system's cloud is still drawn.
-    cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, 30000);
+    // HYBRID: a scaled belt is a few instanced draws plus a spark cloud, so it
+    // can stay on the sky further out (HY_ROCKS.DRAW_RANGE).
+    cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, _hyRocks ? HY_ROCKS.DRAW_RANGE : 30000);
     cullArray(typeof interstellarAsteroids !== 'undefined' ? interstellarAsteroids : null, 30000);
     // Dense-galaxy-field asteroids: hundreds per field, so cull them much
     // tighter (8,000u) — they only need to render when you're actually IN
@@ -22305,7 +22310,13 @@ function createAsteroidBelts() {
                 beltRadius = _bhR * (_clr + 0.4 + Math.random() * 1.2);
                 beltWidth = _bhR * (0.45 + Math.random() * 0.9);
             }
-            
+            // HYBRID (asteroids: original): scaled, instanced belt — see HY_ROCKS.
+            if (_hyRocksOn()) {
+                const _yOff = galaxyIndex === 7 ? (Math.random() < 0.5 ? 1 : -1) * (600 + Math.random() * 400) : 0;
+                _hyRockBelt(galaxyType, galaxyIndex, galaxyCenter, beltRadius, beltWidth, b, _yOff);
+                continue;
+            }
+
             for (let j = 0; j < asteroidCount; j++) {
     // Use shared resources
     const geomIndex = Math.floor(Math.random() * 3);
@@ -22413,6 +22424,7 @@ beltGroup.frustumCulled = false; // Don't cull the entire group
 // =============================================================================
 function createScatteredAsteroidFields() {
     if (typeof window.asteroidBelts === 'undefined') window.asteroidBelts = [];
+    if (_hyRocksOn()) { _hyScatterClusters(); return; }   // HYBRID: scaled, placed in radii
     if (!asteroidResources || !asteroidResources.geometries) {
         initializeAsteroidResources();
     }
@@ -22534,6 +22546,435 @@ function createScatteredAsteroidFields() {
 }
 
 // =============================================================================
+// HYBRID (asteroids: original) — ORIGINAL'S ASTEROIDS, SCALED FOR THIS WORLD
+//
+// ORIGINAL built belts of 75-112 rocks, scale 3-9, 1,600-2,600 from a radius-36
+// galaxy core, each rock its own draw call. In the hybrid the cores are radius
+// 900 with a disc to 5.6 radii, belts ring them at 6.4-7.6 radii (3x the old
+// ring) and ORIGINAL's rocks are specks you never see. So, under this switch:
+//
+//   * SIZE and COUNT scale with the ring: rocks 3x bigger, as many per 1,000 u
+//     of ring as HY_ROCKS.BELT_DENSITY says, a few boulders.
+//   * DRAWN INSTANCED: every belt / cluster is one InstancedMesh per rock shape
+//     plus one spark cloud (1-2 px points, so a belt still reads as a band from
+//     30,000 u out when each rock is sub-pixel). A few draw calls per belt
+//     instead of one per rock.
+//   * EVERY VISIBLE ROCK IS STILL A ROCK: each instance has an invisible
+//     "logical" Mesh (shared geometry, ghost material) in `planets`, in WORLD
+//     space, carrying ORIGINAL's userData. Raycast targeting, the nav list,
+//     the radar, collisions, the demo pilot's strafing and destroyAsteroid all
+//     work on it unchanged. Destroying it collapses its instance and spark.
+//     (ORIGINAL parented rocks to the belt, so every gameplay check that read
+//     `rock.position` got belt-LOCAL coordinates and only worked round the
+//     origin; world-space logical rocks fix that without touching those files.)
+//   * ORBIT: the belt turns as one (ORIGINAL's rocks orbit at 60-180 u/s at the
+//     ring; HY_ROCKS.ORBIT_SPEED keeps that linear speed), and the logical rocks
+//     of belts near the camera follow it every frame.
+//   * PLACEMENT in radii: clusters ring a core outside its belt, deep-space
+//     clusters keep HOLE_CLEAR radii from any hole and BODY_CLEAR_K radii from
+//     any other body (the demo pilot's keep-out is 1.8).
+// =============================================================================
+const HY_ROCKS = {
+    BELT_DENSITY: 10,            // rocks per 1,000 u of ring (ORIGINAL ~7 per 1,000 u)
+    BELT_MIN: 150, BELT_MAX: 600,
+    BELT_SCALE: [9, 27],         // rock radius (ORIGINAL 3-9, x3 with the ring)
+    BOULDER_FRAC: 0.07,          // share of rocks that are boulders
+    BOULDER_SCALE: [34, 64],
+    BELT_THICK: 600,             // band height (ORIGINAL 200)
+    SOL_SCALE_K: 1.5,            // Sol's belt rocks are this much bigger: it is the one you see from the start
+    CLUSTER_ROCKS: [36, 56],     // per galaxy cluster (ORIGINAL 25-40)
+    CLUSTER_SPREAD: [900, 1500], // (ORIGINAL 350-600)
+    CLUSTER_SCALE: [6, 20],      // (ORIGINAL 2.5-7)
+    CLUSTER_CORE_RADII: [9, 14], // galaxy clusters sit this far from their core, in core radii
+    START_CLUSTERS: 3,           // clusters in front of the start (ORIGINAL: Sgr A*'s, 3-7k ahead)
+    START_DIST: [3500, 8000],    // from the start point
+    START_LIFT: [1100, 1800],    // above / below Sol's plane, clear of every orbit's keep-out
+    START_CONE: 2.1,             // total spread of headings (radians) round the start view
+    DEEP_CLUSTERS: 12, DEEP_ROCKS: [28, 44], DEEP_SPREAD: [1700, 2700], DEEP_SCALE: [8, 24],
+    DEEP_BOX: 45000,             // deep-space clusters: within +/- this of the origin (ORIGINAL)
+    HOLE_CLEAR: 7,               // field edge >= this many hole radii (disc 5.6, CLEAR_RADII 6)
+    BODY_CLEAR_K: 3,             // field edge >= this many body radii from planets/stars/moons
+    ORBIT_SPEED: 110,            // u/s along the ring (ORIGINAL 60-180 at 1,600-2,600)
+    CLUSTER_SWIRL: 25,           // u/s at a cluster's edge
+    DRAW_RANGE: 45000,           // belt visuals are drawn within this of the belt centre
+    TICK_RANGE: 22000,           // logical rocks follow the turning belt within this of the camera
+    SPARK_PX: 3,                 // spark size (screen pixels)
+    EMISSIVE: 0.75,              // self-light, as a share of the rock colour
+    SECTORS: 16,                 // radar anchors per ring
+};
+if (typeof window !== 'undefined') window.HY_ROCKS = HY_ROCKS;
+
+function _hyRocksOn() {
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('asteroids', 'original'));
+}
+const _hyRockKit = { vis: null, ghost: null, spark: null, hooked: false, t: 0, last: 0 };
+function _hyRockRand(a) { return a[0] + Math.random() * (a[1] - a[0]); }
+
+function _hyRockMaterials() {
+    if (_hyRockKit.vis) return _hyRockKit;
+    // One lit material for every rock; the per-instance colour carries ORIGINAL's
+    // three variants and drives the emissive floor too (onBeforeCompile), so a
+    // rock in the dark still reads as that rock's colour.
+    const vis = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.9, metalness: 0.15,
+        emissive: 0xffffff, emissiveIntensity: HY_ROCKS.EMISSIVE, flatShading: true });
+    vis.toneMapped = false;
+    vis.onBeforeCompile = function (sh) {
+        sh.fragmentShader = sh.fragmentShader.replace('vec3 totalEmissiveRadiance = emissive;',
+            'vec3 totalEmissiveRadiance = emissive;\n#ifdef USE_COLOR\n\ttotalEmissiveRadiance *= vColor;\n#endif');
+    };
+    vis.customProgramCacheKey = function () { return 'hyRock'; };
+    const ghost = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    ghost.visible = false;          // never submitted; the instance draws the rock
+    ghost.toneMapped = false;       // (and keeps the cull pass's rock re-grade off it)
+    const spark = new THREE.PointsMaterial({ size: HY_ROCKS.SPARK_PX, sizeAttenuation: false,
+        vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false });
+    spark.toneMapped = false;
+    _hyRockKit.vis = vis; _hyRockKit.ghost = ghost; _hyRockKit.spark = spark;
+    return _hyRockKit;
+}
+
+// ORIGINAL's three colour variants, at the albedo the integrator graded them to.
+function _hyRockColour(out) {
+    const v = [[0, 0.15, 0.7], [0.09, 0.5, 0.6], [0.58, 0.4, 0.75]][Math.floor(Math.random() * 3)];
+    const jit = 0.85 + Math.random() * 0.3;
+    return out.setHSL(v[0], v[1], v[2]).multiplyScalar(HY_ROCK_ALBEDO * jit);
+}
+
+// A destroyed rock takes its instance and its spark with it.
+function _hyRockHook() {
+    if (_hyRockKit.hooked || typeof window === 'undefined' || typeof window.destroyAsteroid !== 'function') return;
+    const orig = window.destroyAsteroid;
+    window.destroyAsteroid = function (a) {
+        try { _hyRockRetire(a); } catch (e) { /* the rock still goes */ }
+        return orig.apply(this, arguments);
+    };
+    _hyRockKit.hooked = true;
+}
+const _hyRockZero = (typeof THREE !== 'undefined') ? new THREE.Matrix4().makeScale(0, 0, 0) : null;
+function _hyRockRetire(a) {
+    const u = a && a.userData;
+    if (!u || !u._hyIM || u._hyDead) return;
+    u._hyDead = true;
+    u._hyIM.setMatrixAt(u._hyIdx, _hyRockZero);
+    u._hyIM.instanceMatrix.needsUpdate = true;
+    const pts = u._hyBelt && u._hyBelt.userData._hySpark;
+    if (pts && u._hyPt >= 0) {
+        pts.geometry.attributes.position.setY(u._hyPt, 1e9);
+        pts.geometry.attributes.position.needsUpdate = true;
+    }
+}
+
+// Build one field: `group` is the belt / cluster Group (already positioned),
+// `spec.place()` returns a rock's local offset and `spec.size()` its radius.
+function _hyRockField(group, spec) {
+    const kit = _hyRockMaterials();
+    _hyRockHook();
+    const geoms = spec.geoms.map(i => asteroidResources.geometries[i]);
+    const n = Math.max(1, Math.round(spec.count));
+    const pivot = new THREE.Object3D();
+    pivot.name = 'hyRockPivot';
+    group.add(pivot);
+    const perGeom = geoms.map(() => []);
+    const rocks = [];
+    const col = new THREE.Color();
+    const sparkPos = new Float32Array(n * 3), sparkCol = new Float32Array(n * 3);
+    const anchors = [];
+    if (spec.sectors) {
+        for (let k = 0; k < HY_ROCKS.SECTORS; k++) {
+            const a = new THREE.Object3D();
+            a.userData = { type: 'asteroidAnchor', ang: (k + 0.5) / HY_ROCKS.SECTORS * Math.PI * 2, r: spec.ringR };
+            anchors.push(a);
+        }
+    }
+    for (let j = 0; j < n; j++) {
+        const p = spec.place(j, n);
+        const s = spec.size();
+        const gi = Math.floor(Math.random() * geoms.length);
+        const rock = new THREE.Mesh(geoms[gi], kit.ghost);
+        rock.scale.setScalar(s);
+        rock.rotation.set(Math.random() * 6.283, Math.random() * 6.283, Math.random() * 6.283);
+        rock.frustumCulled = false;
+        rock.position.set(group.position.x + p.x, group.position.y + p.y, group.position.z + p.z);
+        _hyRockColour(col);
+        const ang = Math.atan2(p.z, p.x);
+        let anchor = group;
+        if (anchors.length) {
+            const k = Math.floor(((ang + Math.PI * 2) % (Math.PI * 2)) / (Math.PI * 2) * HY_ROCKS.SECTORS) % HY_ROCKS.SECTORS;
+            anchor = anchors[k];
+        }
+        rock.userData = {
+            name: spec.name(j),
+            type: 'asteroid',
+            health: 2,
+            maxHealth: 2,
+            orbitSpeed: 0,                 // the belt turns as one (see _hyRockTick)
+            rotationSpeed: 0,
+            beltCenter: group.position.clone(),
+            orbitRadius: Math.hypot(p.x, p.z),
+            orbitPhase: ang,
+            galaxyId: spec.galaxyId,
+            isTargetable: true,
+            isDestructible: true,
+            beltGroup: anchor,             // radar reads its position: the rock's sector
+            _hyBelt: group,
+            _hyL: new THREE.Vector3(p.x, p.y, p.z),
+            _hyPt: j,
+            _hyColor: col.getHex(),
+        };
+        perGeom[gi].push(rock);
+        rocks.push(rock);
+        scene.add(rock);
+        planets.push(rock);
+        sparkPos[j * 3] = p.x; sparkPos[j * 3 + 1] = p.y; sparkPos[j * 3 + 2] = p.z;
+        // Sparks are the far read of the belt: the same hue, brighter.
+        sparkCol[j * 3] = Math.min(1, col.r * 2.6); sparkCol[j * 3 + 1] = Math.min(1, col.g * 2.6); sparkCol[j * 3 + 2] = Math.min(1, col.b * 2.6);
+    }
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    perGeom.forEach((list, gi) => {
+        if (!list.length) return;
+        const im = new THREE.InstancedMesh(geoms[gi], kit.vis, list.length);
+        im.frustumCulled = false;          // instances span the whole ring
+        im.userData.__dbTris = Infinity;   // never a draw-budget candidate
+        im.userData.type = 'asteroidInstances';
+        list.forEach((rock, i) => {
+            q.setFromEuler(rock.rotation);
+            sc.setScalar(rock.scale.x);
+            m4.compose(rock.userData._hyL, q, sc);
+            im.setMatrixAt(i, m4);
+            im.setColorAt(i, col.setHex(rock.userData._hyColor));
+            rock.userData._hyIM = im;
+            rock.userData._hyIdx = i;
+        });
+        im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        pivot.add(im);
+    });
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+    sg.setAttribute('color', new THREE.BufferAttribute(sparkCol, 3));
+    const spark = new THREE.Points(sg, kit.spark);
+    spark.frustumCulled = false;
+    spark.userData.__dbTris = Infinity;
+    pivot.add(spark);
+    group.userData._hyRocks = rocks;
+    group.userData._hyPivot = pivot;
+    group.userData._hySpark = spark;
+    group.userData._hyAnchors = anchors;
+    group.userData._hyOmega = (spec.omega || 0) * (Math.random() < 0.5 ? -1 : 1);
+    group.userData._hyTheta = 0;
+    group.userData._hyDirty = true;
+    group.userData.asteroidCount = n;
+    group.visible = true;
+    group.frustumCulled = false;
+}
+
+// A belt ring round a hole (or Sol), in place of ORIGINAL's per-rock loop.
+function _hyRockBelt(galaxyType, galaxyIndex, centre, ringR, width, b, yOffset) {
+    const group = new THREE.Group();
+    group.position.set(centre.x, centre.y + (yOffset || 0), centre.z);
+    const circ = 2 * Math.PI * ringR / 1000;
+    const count = Math.min(HY_ROCKS.BELT_MAX, Math.max(HY_ROCKS.BELT_MIN, circ * HY_ROCKS.BELT_DENSITY * (0.85 + Math.random() * 0.3)));
+    _hyRockField(group, {
+        count: count, geoms: [0, 1, 2], galaxyId: galaxyIndex, sectors: true, ringR: ringR,
+        omega: HY_ROCKS.ORBIT_SPEED / Math.max(ringR, 1),
+        name: (j) => `${galaxyType.name} Asteroid ${j + 1}`,
+        place: (j, n) => {
+            const a = (j / n) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+            const d = ringR + (Math.random() - 0.5) * width;
+            return { x: Math.cos(a) * d, y: (Math.random() - 0.5) * HY_ROCKS.BELT_THICK, z: Math.sin(a) * d };
+        },
+        size: () => (galaxyIndex === 7 ? HY_ROCKS.SOL_SCALE_K : 1) *
+            (Math.random() < HY_ROCKS.BOULDER_FRAC ? _hyRockRand(HY_ROCKS.BOULDER_SCALE) : _hyRockRand(HY_ROCKS.BELT_SCALE)),
+    });
+    group.userData = Object.assign(group.userData, {
+        name: `${galaxyType.name} Galaxy Asteroid Belt ${b + 1}`,
+        type: 'asteroidBelt',
+        center: centre.clone(),
+        radius: ringR,
+        galaxyId: galaxyIndex,
+        blackHolePosition: centre.clone(),
+    });
+    scene.add(group);
+    asteroidBelts.push(group);
+    return group;
+}
+
+// A clump (scatter cluster), ORIGINAL's flattened-sphere fill, scaled.
+function _hyRockCluster(galaxyIndex, centre, count, spread, scaleRange) {
+    const galaxyType = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyIndex]) ? galaxyTypes[galaxyIndex] : { name: 'Deep Space' };
+    const group = new THREE.Group();
+    group.position.copy(centre);
+    _hyRockField(group, {
+        count: count, geoms: [0, 1, 2, 3, 4], galaxyId: galaxyIndex, sectors: false,
+        omega: HY_ROCKS.CLUSTER_SWIRL / Math.max(spread, 1),
+        name: (j) => `${galaxyType.name} Scatter ${j + 1}`,
+        place: () => {
+            const phi = Math.random() * Math.PI * 2, r = Math.random() * spread;
+            return { x: Math.cos(phi) * r, y: (Math.random() - 0.5) * spread * 0.4, z: Math.sin(phi) * r };
+        },
+        size: () => _hyRockRand(scaleRange),
+    });
+    group.userData = Object.assign(group.userData, {
+        name: `${galaxyType.name} Asteroid Cluster`,
+        type: 'asteroidBelt',
+        center: centre.clone(),
+        radius: spread,
+        galaxyId: galaxyIndex,
+        isScatterCluster: true,
+        blackHolePosition: centre.clone(),
+    });
+    scene.add(group);
+    asteroidBelts.push(group);
+    return group;
+}
+
+// THE PLACEMENT RULE, in radii. A field of reach `reach` centred at `pos` is
+// clear when its edge keeps HOLE_CLEAR radii from every black hole and
+// BODY_CLEAR_K radii from every planet, star and moon. Also used by the roaming
+// fields (js/interstellar-asteroids.js).
+function _hyRockBodies() {
+    const out = [];
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], u = p && p.userData;
+        if (!u || !p.geometry || !p.geometry.parameters || !p.geometry.parameters.radius) continue;
+        if (u.type !== 'blackhole' && u.type !== 'planet' && u.type !== 'star' && u.type !== 'moon') continue;
+        const w = new THREE.Vector3(); p.getWorldPosition(w);
+        const s = p.scale ? Math.max(p.scale.x, p.scale.y, p.scale.z) : 1;
+        out.push({ c: w, R: p.geometry.parameters.radius * s, hole: u.type === 'blackhole' });
+    }
+    return out;
+}
+function _hyRockClear(pos, reach, bodies) {
+    bodies = bodies || _hyRockBodies();
+    for (let i = 0; i < bodies.length; i++) {
+        const b = bodies[i];
+        const need = (b.hole ? HY_ROCKS.HOLE_CLEAR : HY_ROCKS.BODY_CLEAR_K) * b.R + reach;
+        if (b.c.distanceToSquared(pos) < need * need) return false;
+    }
+    return true;
+}
+if (typeof window !== 'undefined') { window._hyRockClear = _hyRockClear; window._hyRockBodies = _hyRockBodies; }
+
+// createScatteredAsteroidFields under the switch: same clusters, same homes,
+// placed by the rule.
+function _hyScatterClusters() {
+    if (!asteroidResources.initialized) initializeAsteroidResources();
+    const bodies = _hyRockBodies();
+    let added = 0;
+    const holes = planets.filter(p => p.userData && p.userData.type === 'blackhole' &&
+        typeof p.userData.galaxyId === 'number' && !p.userData.isLocalGateway);
+    holes.forEach(bh => {
+        const galaxyIndex = bh.userData.galaxyId;
+        if (galaxyIndex === 7) return;           // ORIGINAL: no clutter by the start
+        const R = _hyBodyR(bh) * (bh.scale ? bh.scale.x : 1);
+        const clusters = 3 + Math.floor(Math.random() * 3);
+        for (let k = 0; k < clusters; k++) {
+            const spread = _hyRockRand(HY_ROCKS.CLUSTER_SPREAD);
+            let centre = null;
+            for (let tries = 0; tries < 16 && !centre; tries++) {
+                const ang = Math.random() * Math.PI * 2;
+                const dist = R * _hyRockRand(HY_ROCKS.CLUSTER_CORE_RADII) + spread;
+                const c = new THREE.Vector3(bh.position.x + Math.cos(ang) * dist,
+                    bh.position.y + (Math.random() - 0.5) * 600 * 2.5, bh.position.z + Math.sin(ang) * dist);
+                if (_hyRockClear(c, spread, bodies)) centre = c;
+            }
+            if (!centre) continue;
+            _hyRockCluster(galaxyIndex, centre, Math.round(_hyRockRand(HY_ROCKS.CLUSTER_ROCKS)), spread, HY_ROCKS.CLUSTER_SCALE);
+            added++;
+        }
+    });
+    // ORIGINAL started 10,000 from Sgr A*, facing it, with Sgr A*'s clusters
+    // 3-7k from the hole: the first minutes flew past rocks. The hybrid starts
+    // 24,000 out, so a few clusters stand in front of the start instead, lifted
+    // off Sol's plane so no orbiting planet ever sweeps through one.
+    const sol = (typeof window !== 'undefined') && window.localSystemOffset;
+    if (sol && HY_ROCKS.START_CLUSTERS > 0) {
+        const st = new THREE.Vector3(sol.x + HY_SOL.START.x, sol.y + HY_SOL.START.y, sol.z + HY_SOL.START.z);
+        const oo = window.worldOriginOffset;
+        const fwd = new THREE.Vector3(-(oo ? oo.x : 0) - st.x, 0, -(oo ? oo.z : 0) - st.z).normalize();
+        for (let k = 0; k < HY_ROCKS.START_CLUSTERS; k++) {
+            const spread = _hyRockRand(HY_ROCKS.CLUSTER_SPREAD);
+            let centre = null;
+            for (let tries = 0; tries < 20 && !centre; tries++) {
+                const yaw = (Math.random() - 0.5) * HY_ROCKS.START_CONE;
+                const dir = fwd.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+                const c = st.clone().addScaledVector(dir, _hyRockRand(HY_ROCKS.START_DIST));
+                c.y = sol.y + (Math.random() < 0.5 ? 1 : -1) * _hyRockRand(HY_ROCKS.START_LIFT);
+                if (_hyRockClear(c, spread, bodies)) centre = c;
+            }
+            if (!centre) continue;
+            _hyRockCluster(7, centre, Math.round(_hyRockRand(HY_ROCKS.CLUSTER_ROCKS)), spread, HY_ROCKS.CLUSTER_SCALE);
+            added++;
+        }
+    }
+    for (let k = 0; k < HY_ROCKS.DEEP_CLUSTERS; k++) {
+        const spread = _hyRockRand(HY_ROCKS.DEEP_SPREAD);
+        let centre = null;
+        for (let tries = 0; tries < 24 && !centre; tries++) {
+            const c = new THREE.Vector3((Math.random() - 0.5) * 2 * HY_ROCKS.DEEP_BOX,
+                (Math.random() - 0.5) * 0.4 * HY_ROCKS.DEEP_BOX, (Math.random() - 0.5) * 2 * HY_ROCKS.DEEP_BOX);
+            if (_hyRockClear(c, spread, bodies)) centre = c;
+        }
+        if (!centre) continue;
+        _hyRockCluster(-1, centre, Math.round(_hyRockRand(HY_ROCKS.DEEP_ROCKS)), spread, HY_ROCKS.DEEP_SCALE);
+        added++;
+    }
+    console.log(`💎 Created ${added} scattered asteroid clusters (hybrid scale)`);
+}
+
+// Per frame (from updateDistanceCulling, ahead of its throttle): turn every
+// belt, and walk the logical rocks of belts near the camera round with it.
+function _hyRockTick() {
+    if (typeof asteroidBelts === 'undefined' || !asteroidBelts.length || typeof camera === 'undefined') return;
+    const now = performance.now();
+    const dt = _hyRockKit.last ? Math.min(0.1, (now - _hyRockKit.last) / 1000) : 0;
+    _hyRockKit.last = now;
+    if (typeof gameState !== 'undefined' && gameState && gameState.paused) return;
+    const cp = camera.position;
+    for (let i = 0; i < asteroidBelts.length; i++) {
+        const g = asteroidBelts[i], u = g && g.userData;
+        if (!u || !u._hyPivot) continue;
+        if (u._hyOmega) { u._hyTheta += u._hyOmega * dt; u._hyPivot.rotation.y = u._hyTheta; u._hyDirty = true; }
+        if (!u._hyDirty) continue;
+        const reach = HY_ROCKS.TICK_RANGE + (u.radius || 0);
+        if (g.position.distanceToSquared(cp) > reach * reach) continue;
+        u._hyDirty = false;
+        const c = Math.cos(u._hyTheta), s = Math.sin(u._hyTheta);
+        const bx = g.position.x, by = g.position.y, bz = g.position.z;
+        const rocks = u._hyRocks;
+        for (let j = 0; j < rocks.length; j++) {
+            const r = rocks[j], L = r.userData._hyL;
+            if (r.userData._hyDead) continue;
+            // rotation.y by theta: x' = x cos + z sin, z' = -x sin + z cos
+            r.position.set(bx + L.x * c + L.z * s, by + L.y, bz - L.x * s + L.z * c);
+        }
+        const an = u._hyAnchors;
+        for (let k = 0; an && k < an.length; k++) {
+            const a = an[k].userData.ang, R = an[k].userData.r;
+            const lx = Math.cos(a) * R, lz = Math.sin(a) * R;
+            an[k].position.set(bx + lx * c + lz * s, by, bz - lx * s + lz * c);
+        }
+    }
+}
+
+// cleanupDistantAsteroids for a belt built above (its rocks are scene children).
+function _hyRockDropBelt(belt) {
+    const rocks = belt.userData._hyRocks || [];
+    for (let j = 0; j < rocks.length; j++) {
+        const r = rocks[j];
+        const pi = planets.indexOf(r); if (pi > -1) planets.splice(pi, 1);
+        if (typeof activePlanets !== 'undefined') { const ai = activePlanets.indexOf(r); if (ai > -1) activePlanets.splice(ai, 1); }
+        scene.remove(r);
+    }
+    const pv = belt.userData._hyPivot;
+    if (pv) pv.children.forEach(o => {
+        if (o.isInstancedMesh && typeof o.dispose === 'function') o.dispose();
+        else if (o.isPoints) o.geometry.dispose();
+    });
+    belt.userData._hyRocks = [];
+}
+
+// =============================================================================
 // DYNAMIC ASTEROID LOADING FOR GALAXIES
 // =============================================================================
 
@@ -22595,7 +23036,23 @@ function loadAsteroidsForGalaxy(galaxyId) {
         const asteroidCount = 37 + Math.random() * 75; // Reduced 25% for performance
         const beltRadius = 1600 + Math.random() * 1000;
         const beltWidth = 400 + Math.random() * 800;
-        
+        // HYBRID (asteroids: original): the same ring createAsteroidBelts builds,
+        // in the hole's radii (1,600-2,600 u is inside a scaled core's disc).
+        if (_hyRocksOn()) {
+            let _r = beltRadius, _w = beltWidth, _yOff = 0;
+            if (galaxyId === 7) {
+                _yOff = (Math.random() < 0.5 ? 1 : -1) * (600 + Math.random() * 400);
+                if (_hyScaleOn()) { const _lane = _hySolLayout().belt; _r = (_lane[0] + _lane[1]) / 2; _w = _lane[1] - _lane[0]; }
+            } else if (_hyScaleOn() && blackHole.userData._hyBHK) {
+                const _bhR = _hyBodyR(blackHole);
+                const _clr = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
+                _r = _bhR * (_clr + 0.4 + Math.random() * 1.2);
+                _w = _bhR * (0.45 + Math.random() * 0.9);
+            }
+            _hyRockBelt(galaxyType, galaxyId, galaxyCenter, _r, _w, b, _yOff);
+            continue;
+        }
+
         for (let j = 0; j < asteroidCount; j++) {
             const geomIndex = Math.floor(Math.random() * 3);
             const geometry = asteroidResources.geometries[geomIndex];
@@ -23017,6 +23474,8 @@ function cleanupDistantAsteroids(currentGalaxyId) {
         const distanceToPlayer = camera.position.distanceTo(belt.position);
         
         if (distanceToPlayer > cleanupDistance) {
+            // HYBRID: an instanced belt's rocks are scene children, not its own.
+            if (belt.userData._hyRocks) _hyRockDropBelt(belt);
             // Remove all asteroids from the belt
             const asteroidCount = belt.children.length;
             
