@@ -11152,8 +11152,24 @@ function _aerialFactor(o, d) {
     if (ud.type !== 'planet' && ud.type !== 'moon') return 0;
     if (d <= AERIAL_NEAR) return 0;
     if (_aerialLocalSys !== null && _aerialSystem(o) === _aerialLocalSys) return 0;
-    return 1 - Math.exp(-(d - AERIAL_NEAR) / AERIAL_SCALE);
+    const k = 1 - Math.exp(-(d - AERIAL_NEAR) / AERIAL_SCALE);
+    // HYBRID: fade by how big the body LOOKS, not only by how far it is. The
+    // distance curve was tuned for field worlds (r ~ 60-140); on a 620 u heart
+    // world it dims a body that still spans 10-25 deg of the frame to 7-50 %
+    // brightness, which reads as a huge black disc. A body wide enough to read
+    // as a place keeps its full colour; only the small far ones sink into haze.
+    if (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('farPlanetFade', 'bySize')) {
+        const r = ud.radius || ud._pbR || 0;
+        const ang = r > 0 ? r / d : 0;             // ~ half the angular size, radians
+        const t = Math.min(1, Math.max(0, (ang - AERIAL_SIZE_FADE) / (AERIAL_SIZE_FULL - AERIAL_SIZE_FADE)));
+        return k * (1 - t * t * (3 - 2 * t));
+    }
+    return k;
 }
+// Apparent half-size (r/d) below which the distance fade applies in full, and
+// above which a body is left untouched. 0.012 ~ 1.4 deg across, 0.045 ~ 5 deg.
+const AERIAL_SIZE_FADE = 0.012;
+const AERIAL_SIZE_FULL = 0.045;
 
 // Every material this body draws with, with its untouched colours captured, so
 // the ramp is a WRITE of an absolute value and never an accumulating multiply.
@@ -13853,6 +13869,86 @@ window.cullPixelCensus = function (minPx) {
 let _orbitVisibilityFrameCount = 0;
 
 function updateOrbitLineVisibility() {
+    // HYBRID: orbit lines are part of the HUD ("Orbits ON"). ORIGINAL shows them
+    // all, steady; the overhaul culled and faded them by distance.
+    if (window.HYBRID && window.HYBRID.is('hud', 'overhaul')) return updateOrbitLineVisibility_overhaul();
+    // PERF: Only check every 30 frames instead of every frame
+    _orbitVisibilityFrameCount++;
+    if (_orbitVisibilityFrameCount % 30 !== 0) return;
+    
+    if (typeof orbitLines === 'undefined' || orbitLines.length === 0) return;
+    if (typeof camera === 'undefined') return;
+    
+    const nebulaShowDistance = 3000; // Show orbits within 3000 units of nebula
+    const blackHoleShowDistance = 5000; // Show orbits within 5000 units of black hole
+    
+    // Check proximity to nebulas
+    let nearNebula = false;
+    let nearestNebulaDistance = Infinity;
+    
+    if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
+        nebulaClouds.forEach(nebula => {
+            if (nebula && nebula.position) {
+                const distance = camera.position.distanceTo(nebula.position);
+                if (distance < nearestNebulaDistance) {
+                    nearestNebulaDistance = distance;
+                }
+                if (distance < nebulaShowDistance) {
+                    nearNebula = true;
+                }
+            }
+        });
+    }
+    
+    // Check proximity to black holes (galaxy cores)
+    let nearBlackHole = false;
+    if (typeof galaxyTypes !== 'undefined') {
+        for (let g = 0; g < galaxyTypes.length; g++) {
+            const galaxyCenter = getGalaxy3DPosition ? getGalaxy3DPosition(g) : null;
+            if (galaxyCenter) {
+                const distance = camera.position.distanceTo(galaxyCenter);
+                if (distance < blackHoleShowDistance) {
+                    nearBlackHole = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Update orbit visibility
+    const shouldShowOrbits = nearNebula || nearBlackHole;
+    
+    orbitLines.forEach(line => {
+        if (line && line.userData) {
+            // Only auto-show/hide orbits that belong to systems near player
+            if (line.userData.systemCenter) {
+                const systemDistance = camera.position.distanceTo(line.userData.systemCenter);
+                const isNearbySystem = systemDistance < 5000;
+                
+                if (isNearbySystem && shouldShowOrbits) {
+                    line.visible = true;
+                    // Fade opacity based on distance
+                    if (line.material) {
+                        const fadeStart = 3000;
+                        const fadeEnd = 5000;
+                        if (systemDistance > fadeStart) {
+                            const fadeProgress = (systemDistance - fadeStart) / (fadeEnd - fadeStart);
+                            line.material.opacity = 0.4 * (1 - fadeProgress * 0.7);
+                        } else {
+                            line.material.opacity = 0.4;
+                        }
+                    }
+                } else if (!window.orbitLinesVisible) {
+                    // Only hide if player hasn't manually toggled orbits on
+                    line.visible = false;
+                }
+            }
+        }
+    });
+}
+
+// ── overhaul version of updateOrbitLineVisibility, kept for flag-gated comparison ──
+function updateOrbitLineVisibility_overhaul() {
     // PERF: Only check every 30 frames instead of every frame
     _orbitVisibilityFrameCount++;
     if (_orbitVisibilityFrameCount % 30 !== 0) return;

@@ -33,6 +33,7 @@
         nebulae:         'combined',   // 'combined' | 'overhaul' | 'original'
         nebulaDensity:   0.45,         // 0 = none … 1 = overhaul's full density
         skyWash:         'off',        // the overhaul's full-frame colour wash  'off' | 'on'
+        farPlanetFade:   'bySize',     // far planets dim by apparent size, so giants stay lit  'bySize' | 'overhaul'
         // — effects and audio —
         explosions:      'original',
         weaponFx:        'original',
