@@ -81,12 +81,25 @@ function _hyFxOverhaul() {
 // hit sparks), which otherwise render ACES-dulled in this build.
 // `sw` names the switch that owns the effect: 'explosions' (default) or
 // 'weaponFx' (lasers, beams, muzzle flashes, tracers, missiles).
+// Points also shed the overhaul's global soft round sprite (the
+// THREE.PointsMaterial Proxy in game-objects.js), so ORIGINAL debris and
+// sparks stay the hard square pixels they were — the sprite shrank them to
+// faint 1-2 px smudges.
+function _hyFlatMat(m) {
+    m.toneMapped = false;
+    if (m.isPointsMaterial && m.map && typeof window.getPointSprite === 'function' &&
+        m.map === window.getPointSprite()) {
+        m.map = null;
+        if (m.alphaTest > 0 && m.alphaTest <= 0.04) m.alphaTest = 0;
+        m.needsUpdate = true;
+    }
+}
 function _hyFlat(x, sw) {
     if (!x || !window.HYBRID || window.HYBRID.is(sw || 'explosions', 'overhaul')) return x;
-    if (x.isMaterial) { x.toneMapped = false; return x; }
+    if (x.isMaterial) { _hyFlatMat(x); return x; }
     if (x.traverse) x.traverse(function (o) {
         if (!o.material) return;
-        (Array.isArray(o.material) ? o.material : [o.material]).forEach(function (m) { m.toneMapped = false; });
+        (Array.isArray(o.material) ? o.material : [o.material]).forEach(_hyFlatMat);
     });
     return x;
 }
@@ -7136,7 +7149,7 @@ function createPirateExplosionVariant(position, variant) {
     const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
     const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
     const explosionMaterial = new THREE.MeshBasicMaterial({ color: cfg.core, transparent: true });
-    explosionMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(explosionMaterial); // HYBRID: ORIGINAL brightness
     const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
     explosion.position.copy(position);
     scene.add(explosion);
@@ -7152,7 +7165,7 @@ function createPirateExplosionVariant(position, variant) {
     const particleMaterial = new THREE.PointsMaterial({
         color: cfg.particles, size: 1.1, transparent: true, opacity: 1
     });
-    particleMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(particleMaterial); // HYBRID: ORIGINAL brightness
     const particleSystem = new THREE.Points(particles, particleMaterial);
     particleSystem.position.copy(position);
     scene.add(particleSystem);
@@ -8880,7 +8893,7 @@ function createExplosionEffect(targetObject) {
         color: 0xff6600,
         transparent: true
     });
-    explosionMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(explosionMaterial); // HYBRID: ORIGINAL brightness
     const explosion = new THREE.Mesh(explosionGeometry, explosionMaterial);
     explosion.position.copy(position);
     scene.add(explosion);
@@ -8903,7 +8916,7 @@ function createExplosionEffect(targetObject) {
         transparent: true,
         opacity: 1
     });
-    particleMaterial.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(particleMaterial); // HYBRID: ORIGINAL brightness
     const particleSystem = new THREE.Points(particles, particleMaterial);
     particleSystem.position.copy(position);
     scene.add(particleSystem);
@@ -9216,7 +9229,7 @@ function _fxSphere(center, radius, color, opacity, life, growth) {
         color: color, transparent: true, opacity: opacity,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
-    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(mat); // HYBRID: ORIGINAL brightness
     const m = new THREE.Mesh(geo, mat);
     m.position.copy(center);
     m.frustumCulled = false;
@@ -9241,7 +9254,7 @@ function _fxRing(center, radius, color, growth, life, opacity) {
         color: color, transparent: true, opacity: opacity || 0.85,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
-    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(mat); // HYBRID: ORIGINAL brightness
     const ring = new THREE.Mesh(geo, mat);
     ring.position.copy(center);
     if (typeof camera !== 'undefined') ring.lookAt(camera.position);
@@ -9346,7 +9359,7 @@ function _fxShards(center, count, color, size, speed, life, kind) {
             color: color, transparent: true, opacity: 1,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
-        m.toneMapped = false; // HYBRID: ORIGINAL brightness
+        _hyFlat(m); // HYBRID: ORIGINAL brightness
         const mesh = new THREE.Mesh(g, m);
         mesh.position.copy(center);
         mesh.frustumCulled = false;
@@ -10015,7 +10028,7 @@ function _fxPolyRing(center, radius, color, sides, growth, life, opacity) {
         color: color, transparent: true, opacity: opacity || 0.85,
         side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false
     });
-    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(mat); // HYBRID: ORIGINAL brightness
     const ring = new THREE.Mesh(geo, mat);
     ring.position.copy(center);
     if (typeof camera !== 'undefined') ring.lookAt(camera.position);
@@ -10165,7 +10178,7 @@ function _fxParticles(center, count, color, size, speed, life, swirl) {
         color: color, size: size, transparent: true, opacity: 1,
         blending: THREE.AdditiveBlending, depthWrite: false
     });
-    mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+    _hyFlat(mat); // HYBRID: ORIGINAL brightness
     const pts = new THREE.Points(geo, mat);
     pts.frustumCulled = false;
     scene.add(pts);
@@ -10301,7 +10314,7 @@ function _fxLightning(center, count, color, len) {
             color: color, transparent: true, opacity: 0.9,
             blending: THREE.AdditiveBlending, depthWrite: false
         });
-        mat.toneMapped = false; // HYBRID: ORIGINAL brightness
+        _hyFlat(mat); // HYBRID: ORIGINAL brightness
         const bolt = new THREE.Mesh(geo, mat);
         bolt.position.copy(center);
         const dir = new THREE.Vector3(
