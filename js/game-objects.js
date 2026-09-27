@@ -783,6 +783,10 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
     // ~20% is a 1.5x on contribution (it goes as 1/d^2) and puts the near
     // cloud at 4,500-6,000u from the camera for most of the run.
     const bands = [[4200, 5600], [13000, 18000], [24000, 32000], [34000, 45000]];
+    // HYBRID (nebulae != overhaul): no escort, so the near cluster must not be
+    // parked on top of Sol either — it becomes a place 9-12k out you fly to.
+    const _hyNear = !_hyNebOverhaul();
+    if (_hyNear) bands[0] = [9000, 12000];
 
     // Golden-angle azimuth + stratified elevation instead of two raw
     // Math.random()s: four independent random directions bunch often enough
@@ -839,14 +843,14 @@ function generateSphericalNebulaPositions(clusterCount = 3) {
             // sky. That is what the local system being ON the rim of a nebula
             // looks like, and it is why the near cloud is now in frame on most
             // headings instead of one in six.
-            spread: radius * (i === 0 ? 0.9 : 0.26),
+            spread: radius * (i === 0 ? (_hyNear ? 0.35 : 0.9) : 0.26),
             anchor: new THREE.Vector3(_sol.x, _sol.y, _sol.z),
             // Hard floor on how close a near cloud's CENTRE may land to the
             // local system: the wash measured at <=1,000u is not a look, it is
             // a whiteout. 4,000 + the 3,500u camera roam is a 500u worst case,
             // which is deep inside the volume — that case is what
             // updateVolumetricNebulaProximity() exists to survive.
-            minAnchorDistance: i === 0 ? 4000 : 0
+            minAnchorDistance: i === 0 ? (_hyNear ? 8000 : 4000) : 0
         });
     }
 
@@ -8331,7 +8335,9 @@ try {
         // is what gave the volumetric clouds the frame back, and taking the
         // floor down as well would only re-open the hole the floor was raised
         // to close. A violet-blue void, not a dead monitor.
-        scene.background = new THREE.Color(0x0a0a1a);
+        // HYBRID skyWash:off — no raised floor; the renderer's ORIGINAL
+        // near-black clear colour shows through between the lit things.
+        scene.background = _hySkyWashOff() ? null : new THREE.Color(0x0a0a1a);
 
         console.log(`✅ Nebula skybox backdrop created (${_nebW}x${_nebH}, radius 195000, additive @0.32)`);
     } catch (nebulaSkyboxError) {
@@ -10879,7 +10885,9 @@ function updateNebulaVisibility() {
     // game-core.js are sealed this wave. It goes ABOVE the 15-frame throttle
     // on purpose: it has its own (6-frame) cadence and it must keep running
     // on frames the visibility walk skips.
-    updateNearNebulaAnchor();
+    // HYBRID: the escort (near clouds held around the camera) is what made
+    // the sky a nebula you are always inside; overhaul-only.
+    if (_hyNebOverhaul()) updateNearNebulaAnchor();
 
     // PERF: Only check every 15 frames instead of every frame
     _nebulaVisibilityFrameCount++;
@@ -20252,6 +20260,106 @@ const NEB_VOL = (typeof window !== 'undefined' && window.__NEB_VOL) || {
 };
 if (typeof window !== 'undefined') window.__NEB_VOL = NEB_VOL;
 
+// =============================================================================
+// HYBRID DEEP SPACE — nebulae: 'combined' | 'overhaul' | 'original',
+// nebulaDensity 0..1, skyWash 'off' | 'on'   (js/hybrid-config.js)
+// =============================================================================
+// Ben: "the nebula clouds should also be used in combination with our original
+// ones" and "it is almost like there are too many nebula so we cannot see deep
+// space". Every nebula keeps its overhaul volumetric puff layer AND gets the
+// ORIGINAL crisp particle swirl back (size 2.5 hard pixels, opacity 0.65, no
+// tone mapping), sharing the same particle positions. nebulaDensity then thins
+// the volumetric side: at d only a fraction d of the clouds keep their puff
+// layer, each at (HY_NEB_VOL_FLOOR + (1 - floor) * d) of its brightness, and
+// the painted sky dome is scaled by d. 0 = no nebula at all, 1 = the overhaul's
+// full density (plus the ORIGINAL swirls).
+const HY_NEB_VOL_FLOOR = 0.35;      // puff brightness at d -> 0 (for the clouds that keep one)
+const HY_NEB_CRISP_OPACITY = 0.65;  // ORIGINAL createNebulas / createDistantNebulas value
+const HY_NEB_CRISP_FULL_AT = 0.45;  // swirls reach ORIGINAL opacity at this density and above
+function _hyNebOverhaul() {
+    return typeof window === 'undefined' || !window.HYBRID || window.HYBRID.is('nebulae', 'overhaul');
+}
+function _hyNebDensity() {
+    if (_hyNebOverhaul()) return 1;
+    if (window.HYBRID.is('nebulae', 'original')) return 0;
+    const d = window.HYBRID.num('nebulaDensity');
+    return isFinite(d) ? Math.max(0, Math.min(1, d)) : 0.45;
+}
+function _hySkyWashOff() {
+    return typeof window !== 'undefined' && !!window.HYBRID && window.HYBRID.is('skyWash', 'off');
+}
+let _hyNebSeq = 0;
+function _hyCombineNebulae() {
+    if (_hyNebOverhaul() || typeof nebulaClouds === 'undefined' || !nebulaClouds) return 0;
+    const original = window.HYBRID.is('nebulae', 'original');
+    const d = _hyNebDensity();
+    const volScale = HY_NEB_VOL_FLOOR + (1 - HY_NEB_VOL_FLOOR) * d;
+    const crispK = original ? 1 : Math.min(1, d / HY_NEB_CRISP_FULL_AT);
+    let n = 0;
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const g = nebulaClouds[i];
+        if (!g || !g.children || !g.userData || g.userData._hyNeb) continue;
+        const vol = g.children[0];
+        if (!vol || !vol.isPoints || !vol.material || !vol.material.userData ||
+            String(vol.material.userData._pcKey || '').indexOf('nebPointClamp') < 0) continue;
+        g.userData._hyNeb = true;
+        n++;
+        const pos = vol.geometry.attributes.position, col = vol.geometry.attributes.color;
+        // ORIGINAL swirl: same positions, colours normalised back to full
+        // saturation (the overhaul darkened them for additive stacking).
+        if (crispK > 0 && pos && col) {
+            const cc = new Float32Array(col.count * 3);
+            for (let p = 0; p < col.count; p++) {
+                const r = col.getX(p), gg = col.getY(p), b = col.getZ(p);
+                const m = Math.max(r, gg, b, 1e-3), s = 0.85 / m;
+                cc[p * 3] = r * s; cc[p * 3 + 1] = gg * s; cc[p * 3 + 2] = b * s;
+            }
+            const cg = new THREE.BufferGeometry();
+            cg.setAttribute('position', pos);
+            cg.setAttribute('color', new THREE.BufferAttribute(cc, 3));
+            const base = HY_NEB_CRISP_OPACITY * crispK;
+            const cm = new THREE.PointsMaterial({
+                size: 2.5, vertexColors: true, transparent: true, opacity: base,
+                blending: THREE.AdditiveBlending, sizeAttenuation: true, depthWrite: false, fog: false
+            });
+            cm.map = null; cm.alphaTest = 0; cm.toneMapped = false; // hard pixels, outside ACES
+            const crisp = new THREE.Points(cg, cm);
+            crisp.name = 'HybridOriginalNebula';
+            crisp.frustumCulled = vol.frustumCulled;
+            crisp.position.copy(vol.position); crisp.rotation.copy(vol.rotation); crisp.scale.copy(vol.scale);
+            // Distant / exotic clouds fade in by range (updateNebulaVisibility
+            // drives the group's currentOpacity toward 0.65); follow it.
+            crisp.onBeforeRender = function () {
+                const ud = g.userData;
+                cm.opacity = (ud.isDistant || ud.isExoticCore) && typeof ud.currentOpacity === 'number'
+                    ? base * Math.min(1, ud.currentOpacity / 0.65) : base;
+            };
+            g.add(crisp);
+        }
+        // Thin the volumetric layer: fewer clouds, each dimmer.
+        const keep = !original && (((_hyNebSeq++ + 1) * 0.6180339887) % 1) < d;
+        if (!keep) { vol.visible = false; continue; }
+        if (col && volScale < 1) {
+            for (let p = 0; p < col.array.length; p++) col.array[p] *= volScale;
+            col.needsUpdate = true;
+        }
+    }
+    return n;
+}
+if (typeof window !== 'undefined') {
+    window._hyCombineNebulae = _hyCombineNebulae;
+    ['createNebulas', 'createDistantNebulas', 'createExoticCoreNebulas', 'createClusteredNebulas'].forEach(function (k) {
+        const f = window[k];
+        if (typeof f !== 'function' || f._hyNeb) return;
+        window[k] = function () {
+            const r = f.apply(this, arguments);
+            try { _hyCombineNebulae(); } catch (e) { console.warn('HYBRID nebulae:', e); }
+            return r;
+        };
+        window[k]._hyNeb = true;
+    });
+}
+
 /**
  * Synthwave hue wheel. The old code used `Math.random()` for hue, which walks
  * the whole spectrum including muddy yellow-greens. Walking a fixed palette
@@ -22037,6 +22145,9 @@ function updateNebulaSkyboxOpacity() {
     if (typeof isBossBattleActive === 'function' && isBossBattleActive()) {
         targetOpacity = 0.17;
     }
+
+    // HYBRID: the painted dome is nebula too — thinned with nebulaDensity.
+    targetOpacity *= _hyNebDensity();
 
     const cur = sky.material.opacity;
     sky.material.opacity = cur + (targetOpacity - cur) * 0.02;
