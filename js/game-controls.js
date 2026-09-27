@@ -72,8 +72,35 @@ function adjustMinimumSpeed(speed) {
 // (*_overhaul). Each restored builder dispatches on this. The ORIGINAL
 // materials opt out of the overhaul's ACES tone curve (toneMapped = false)
 // so they render at the ORIGINAL's saturated brightness.
+//
+// 'combined' (Ben, 2026-09-27: "we should combine the old explosions with the
+// new ones") = the ORIGINAL burst, complete, with the overhaul's detonation
+// (fireball, shockwave ring, burning hull fragments) played over it. While the
+// overhaul builder runs as that second layer, _hyFxCtx is raised so the shared
+// primitives it calls (_fxSphere, _fxRing, …) resolve to their overhaul
+// versions; the ORIGINAL body then runs with the ORIGINAL primitives.
+let _hyFxCtx = 0;
+let _hyFxLast = { t: -1e9, x: 0, y: 0, z: 0 };
+function _hyFxMode() {
+    return window.HYBRID ? window.HYBRID.get('explosions') : 'overhaul';
+}
 function _hyFxOverhaul() {
-    return !window.HYBRID || window.HYBRID.is('explosions', 'overhaul');
+    return _hyFxCtx > 0 || _hyFxMode() === 'overhaul';
+}
+// Play `builder` (an *_overhaul explosion) as the second layer of a combined
+// burst. One layer per blast: an ORIGINAL builder that calls another builder
+// for the same kill must not stack a second detonation on the first.
+function _hyFxLayer(builder, self, args, at) {
+    if (_hyFxCtx > 0 || _hyFxMode() !== 'combined') return;
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const p = (at && at.position) ? at.position : at;
+    if (p && typeof p.x === 'number') {
+        const dx = p.x - _hyFxLast.x, dy = p.y - _hyFxLast.y, dz = p.z - _hyFxLast.z;
+        if (now - _hyFxLast.t < 60 && dx * dx + dy * dy + dz * dz < 4) return;
+        _hyFxLast = { t: now, x: p.x, y: p.y, z: p.z };
+    }
+    _hyFxCtx++;
+    try { builder.apply(self, args); } catch (e) { console.warn('combined explosion layer failed:', e && e.message); } finally { _hyFxCtx--; }
 }
 // Opt a material (or every material under an object) out of ACES — only
 // while explosions are 'original'. Used by the ORIGINAL death/impact builders
@@ -7324,6 +7351,7 @@ const PIRATE_EXPLOSION_VARIANTS = {
 };
 function createPirateExplosionVariant(position, variant) {
     if (_hyFxOverhaul()) return createPirateExplosionVariant_overhaul.apply(this, arguments);
+    _hyFxLayer(createPirateExplosionVariant_overhaul, this, arguments, position);
     const cfg = PIRATE_EXPLOSION_VARIANTS[variant] || PIRATE_EXPLOSION_VARIANTS.ember;
     const explosionGeometry = new THREE.SphereGeometry(2, 8, 8);
     const explosionMaterial = new THREE.MeshBasicMaterial({ color: cfg.core, transparent: true });
@@ -9054,6 +9082,7 @@ function _fxKillBurst(center, S, cfg, victim) {
 
 function createExplosionEffect(targetObject) {
     if (_hyFxOverhaul()) return createExplosionEffect_overhaul.apply(this, arguments);
+    _hyFxLayer(createExplosionEffect_overhaul, this, arguments, targetObject);
     // Support both object with position property and direct position vector
     let position;
     if (targetObject && targetObject.position) {
@@ -10727,6 +10756,7 @@ function createFactionExplosion_overhaul(position, galaxyId, scale, victim) {
 // recipe; scale multiplies all sizes (defaults to 1).
 function createFactionExplosion(position, galaxyId, scale) {
     if (_hyFxOverhaul()) return createFactionExplosion_overhaul.apply(this, arguments);
+    _hyFxLayer(createFactionExplosion_overhaul, this, arguments, position);
     if (!position || typeof scene === 'undefined' || typeof THREE === 'undefined') return;
     const center = position.clone ? position.clone()
                  : new THREE.Vector3(position.x, position.y, position.z);

@@ -18,6 +18,7 @@
 //   --canvas         capture the WebGL canvas only (no DOM HUD)
 //   --size 1600x900  viewport (default 1600x900)
 //   --hold <s>       keep the page alive this long after the last shot
+//   --hy k:v,k:v     flip hybrid switches for this run (appends ?hy=…)
 //
 // Prints BUILD_TAG, console/page errors and window.__selftest failures.
 // Exit code 1 if the page threw an uncaught error.
@@ -52,6 +53,7 @@ const SHOTS = String(opt('shots', '10,25')).split(',').map(Number).filter((n) =>
 const EVAL = opt('eval', null);
 const SETTLE = Number(opt('settle', 400));
 const HOLD = Number(opt('hold', 0));
+const HY = opt('hy', null);   // hybrid switches for this run, e.g. --hy explosions:original,shields:blend
 const [W, H] = String(opt('size', '1600x900')).split('x').map(Number);
 const CANVAS_ONLY = flag('canvas');
 
@@ -98,7 +100,7 @@ page.on('pageerror', (e) => pageErrors.push(String(e.message || e).slice(0, 300)
 
 let code = 0;
 try {
-    await page.goto(`http://127.0.0.1:${port}/index.html`, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.goto(`http://127.0.0.1:${port}/index.html${HY ? '?hy=' + encodeURIComponent(HY) : ''}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const btnSel = MODE === 'play' ? '#introStartBtn, #introLaunchBtn, #introPlayBtn' : '#introDemoBtn';
     await page.waitForSelector('#introDemoBtn', { timeout: 120000 });
     console.log('shot: BUILD_TAG', await page.evaluate(() => window.BUILD_TAG));

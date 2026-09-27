@@ -38,7 +38,7 @@
         farPlanetFade:   'bySize',     // far planets dim by apparent size, so giants stay lit  'bySize' | 'overhaul'
         asteroids:       'original',   // belts drawn rock by rock, as sparks  'original' | 'overhaul' (culled to dots)
         // — effects and audio —
-        explosions:      'original',
+        explosions:      'combined',   // 'combined' (old burst + new detonation) | 'original' | 'overhaul'
         weaponFx:        'original',
         sfx:             'original',
         music:           'original',
