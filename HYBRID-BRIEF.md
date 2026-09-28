@@ -204,9 +204,11 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927j | Black holes: no outer circle, no grid (`HY_BH.OUTER_RING`, `HY_BH.GRID` off); ORIGINAL glow, disk and hoop stay on approach (`HY_BH.ORIG_YIELD` 0) |
 | 20260927k | Wave 5 — G scale and placement: one size ladder, one spacing rule (`solScale: big`; `HY_SCALE`, `HY_SOL`, `HY_LADDER`). Sol at (9919, 0, 21701); nebulae 28-60k out |
 | 20260927l | Wave 6 — G2 the opening view over Earth's limb (`OPENING_VISTA`, `openingVista`); L asteroids rebuilt and scaled (`HY_ROCKS`, `HY_ROAM`) |
-
 | 20260927m | Opening view OFF by default (Ben rejected it) |
-| in progress | M — the ORIGINAL asteroids: every kind, ORIGINAL builders, shootable by real input |
+| 20260927n | M — the original asteroids from `claude/slingshot-assist` (instancer 7269c47 + ORIGINAL builders for every kind; `HY_ASTEROIDS`); L's rebuild behind `asteroids: instanced`; CapsLock target cycling no longer throws |
+
+Shooting test, real input: `node scripts/rock-shoot.mjs --root . --out .critic/rock-shoot` →
+4 of 4 rocks hit for each of the 7 kinds on 20260927n.
 
 **All twelve packages (A-L) are merged as of 20260927l.** Guard 9/9 at 60 fps; final demo soak
 3 x 150 s, 0 deaths.
