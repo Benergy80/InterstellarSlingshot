@@ -36,7 +36,12 @@
         nebulaDensity:   0.45,         // 0 = none … 1 = overhaul's full density
         skyWash:         'off',        // the overhaul's full-frame colour wash  'off' | 'on'
         farPlanetFade:   'bySize',     // far planets dim by apparent size, so giants stay lit  'bySize' | 'overhaul'
-        asteroids:       'original',   // belts drawn rock by rock, as sparks  'original' | 'overhaul' (culled to dots)
+        // Ben, 2026-09-27: "I don't just want some new asteroids, I want all of the
+        // different asteroids from the original version."
+        //   'original'  = ORIGINAL's asteroids: every kind, its own builder, look and behaviour
+        //   'instanced' = the hybrid's rebuilt belts (HY_ROCKS: instanced rocks + spark clouds)
+        //   'overhaul'  = the overhaul's (culled to dots at range)
+        asteroids:       'original',
         // — effects and audio —
         explosions:      'combined',   // 'combined' (old burst + new detonation) | 'original' | 'overhaul'
         weaponFx:        'original',
