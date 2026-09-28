@@ -98,6 +98,7 @@ const PROBE = (mode, beltKind) => {
     };
     const wp = new THREE.Vector3(), ndc = new THREE.Vector3();
     const radius = (o) => {
+        if (o.isAsteroidProxy) return o.scale.x;   // instanced rock (asteroid-instancer.js): unit geometry x scale
         const g = o.geometry; if (!g) return 1;
         if (!g.boundingSphere) g.computeBoundingSphere();
         o.getWorldScale(ndc); return g.boundingSphere.radius * Math.max(ndc.x, ndc.y, ndc.z);
@@ -105,6 +106,7 @@ const PROBE = (mode, beltKind) => {
     const drawn = (o) => {
         // Hybrid instanced rocks: the invisible logical mesh stands for an
         // instance drawn under its belt group.
+        if (o.isAsteroidProxy) { const r = o._instRef; return !!(r && !r.dead && r.combo.mesh.visible && r.combo.mesh.parent); }
         if (o.userData && o.userData._hyIM) { if (o.userData._hyDead) return false; o = o.userData._hyIM; }
         if (o.material && o.material.visible === false) return false;
         for (let p = o; p; p = p.parent) { if (!p.visible) return false; if (p.isScene) return true; }
@@ -124,7 +126,7 @@ const PROBE = (mode, beltKind) => {
             const d = wp.distanceTo(cam.position);
             if (d < 2000) k.n2k++; if (d < 8000) k.n8k++; if (d < 30000) k.n30k++;
             if (d < k.nearest) k.nearest = d;
-            if (d < 1000) { const P = C.pass[kind] || (C.pass[kind] = new Set()); P.add(o.uuid); }
+            if (d < 1000) { const P = C.pass[kind] || (C.pass[kind] = new Set()); P.add(o.uuid || o._instRef || o); }
             const dr = drawn(o); if (dr) k.drawn++;
             if (dr) {
                 ndc.copy(wp).project(cam);
