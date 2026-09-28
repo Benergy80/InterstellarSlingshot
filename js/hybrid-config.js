@@ -49,7 +49,7 @@
         intro:           'original',   // title screen, countdown, launch sequence
         // — new in the hybrid —
         solScale:        'big',        // Sol planets + Sun sized like other systems  'big' | 'overhaul'
-        openingVista:    'on',         // start play with planets huge in frame       'on' | 'off'
+        openingVista:    'off',        // Ben, 2026-09-27: "the new starting view is bad, revert."  'on' | 'off'
     };
 
     const KEY = 'hybridSwitches';
