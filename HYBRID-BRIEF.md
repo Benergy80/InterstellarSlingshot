@@ -205,8 +205,21 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927k | Wave 5 — G scale and placement: one size ladder, one spacing rule (`solScale: big`; `HY_SCALE`, `HY_SOL`, `HY_LADDER`). Sol at (9919, 0, 21701); nebulae 28-60k out |
 | 20260927l | Wave 6 — G2 the opening view over Earth's limb (`OPENING_VISTA`, `openingVista`); L asteroids rebuilt and scaled (`HY_ROCKS`, `HY_ROAM`) |
 
+| 20260927m | Opening view OFF by default (Ben rejected it) |
+| in progress | M — the ORIGINAL asteroids: every kind, ORIGINAL builders, shootable by real input |
+
 **All twelve packages (A-L) are merged as of 20260927l.** Guard 9/9 at 60 fps; final demo soak
 3 x 150 s, 0 deaths.
+
+**Ben on build l, verbatim (2026-09-27):** "1 the asteroids used to be able to be shot. 2 the new
+starting view is bad, revert. I don't just want some new asteroids, I want all of the different
+asteroids from the original version."
+
+Two packages were rejected:
+- **G2 opening view** — reverted to ORIGINAL's start in 20260927m (`openingVista: off`).
+- **L asteroids** — it REPLACED ORIGINAL's asteroids with a new instanced builder. Ben wanted the
+  originals. Package M restores them; L's builder moves behind `asteroids: instanced`.
+  Lesson: "bring X back" means restore ORIGINAL's X, not build a better X.
 
 ### Open items
 1. **Enemies near the player thinned** with the wider spacing: within 15,000 of the start, 21
