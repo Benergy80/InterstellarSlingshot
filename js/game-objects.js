@@ -15084,7 +15084,9 @@ function updateDistanceCulling() {
             // The lit set: this body will be submitted as geometry, so it is a
             // surface a light can actually land on. (Impostors never get here —
             // point sprites take no lighting.) See the LIGHT BUDGET note.
-            if (inRange) _litAdd(_cullWP.x, _cullWP.y, _cullWP.z, br || _cullBodyRadius(o));
+            // HYBRID (asteroids: original): an instanced rock's proxy is not an
+            // Object3D (no children to measure); its radius is its scale.
+            if (inRange) _litAdd(_cullWP.x, _cullWP.y, _cullWP.z, br || (o.isAsteroidProxy ? o.scale.x : _cullBodyRadius(o)));
             if (!inRange) {
                 if (o.visible) { o.visible = false; o.userData._distCulled = true; }
                 // Moons are the bodies game-core force-shows every frame.
@@ -15113,9 +15115,9 @@ function updateDistanceCulling() {
     // that galaxy fighting, not as specks from 25k away. Runs AFTER the 30k
     // pass above (which would otherwise keep them visible out to 30k).
     if (typeof interstellarAsteroids !== 'undefined') {
-        // HYBRID (asteroids: original): the field is mapped out with its galaxy
-        // (HY_ASTEROIDS), so its reach grows by the same factor.
-        const _dr = 8000 * ((_hyAstOn() && typeof HY_BH !== 'undefined') ? HY_BH.GALAXY_SCALE : 1);
+        // HYBRID (asteroids: original): the rocks are SIZE_K bigger, so they
+        // reach ORIGINAL's on-screen size at the 8,000 u cull SIZE_K x further.
+        const _dr = 8000 * _hyAstK();
         const dr2 = (_dr * _cullScale) * (_dr * _cullScale);
         for (let i = 0; i < interstellarAsteroids.length; i++) {
             const a = interstellarAsteroids[i];
