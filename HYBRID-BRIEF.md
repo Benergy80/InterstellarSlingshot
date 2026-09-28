@@ -221,6 +221,32 @@ Two packages were rejected:
   originals. Package M restores them; L's builder moves behind `asteroids: instanced`.
   Lesson: "bring X back" means restore ORIGINAL's X, not build a better X.
 
+### ⚠ "ORIGINAL" (origin/main) is NOT the source for asteroids
+
+**Ben, verbatim:** "now there are double the asteroid belts than needed. can you see the
+ASTEROID_SETTINGS.md and ASTEROID_TYPES.md in the files?" and "One of the most recent branches
+before the anaglyph-3d branch should have our working asteroids".
+
+The working asteroids are on **`claude/slingshot-assist`** (tip 53aa0aa, 2026-07-04, PR #25,
+never merged). It forks from main at 2f0ccbe, the same point anaglyph-3d forked from, so neither
+origin/main nor the overhaul ever received it. Commit **7269c47** "Asteroids → InstancedMesh
+(GPU)": `js/asteroid-instancer.js`, proxy objects in `planets`, and the weapon and mining raycasts
+rewritten to hit the instanced meshes (one-hit destroy verified at the time).
+Reference checkout: `/Users/benstagl/InterstellarSlingshot` (read-only); served at
+http://localhost:8804/ for comparison.
+
+Belts measured (demo, t=10 s):
+
+| Build | Belts | Rocks per belt | Local "Ancient" belts |
+|---|---|---|---|
+| slingshot-assist | 11, 1-2 per galaxy | instanced | ONE, ring 5,604 |
+| origin/main | 10, 1-2 per galaxy | 85-111 | two, lift -628 and +817 |
+| hybrid 20260927m (package L) | 13 | 280-557 | two, BOTH at ring 4,916 — the doubling |
+
+**Whenever Ben remembers something working that origin/main does not do, check the unmerged
+branches first**: `claude/slingshot-assist` (PR #25), `claude/volkaris-level` (PR #23),
+`claude/neon-city-level` (PR #19), `claude/hud-chrome-restyle`.
+
 ### Open items
 1. **Enemies near the player thinned** with the wider spacing: within 15,000 of the start, 21
    against ORIGINAL's 57. Ben wants "lots of enemies". Not addressed.
