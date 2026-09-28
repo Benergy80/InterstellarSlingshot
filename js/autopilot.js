@@ -3144,8 +3144,12 @@
     if (!shootNearbyAsteroids._origin) shootNearbyAsteroids._origin = new THREE.Vector2(0, 0);
     const ray = shootNearbyAsteroids._ray;
     ray.setFromCamera(shootNearbyAsteroids._origin, camera);
-    const hits = ray.intersectObjects([asteroid], true);
-    if (!hits.length) return;
+    // HYBRID: same proxy-aware confirm as shootNearbyAsteroids (on
+    // claude/slingshot-assist this raycast threw on an instanced proxy).
+    const onTarget = (asteroid.isAsteroidProxy && window.asteroidInstancer)
+      ? !!window.asteroidInstancer.raycast(ray)
+      : ray.intersectObjects([asteroid], true).length > 0;
+    if (!onTarget) return;
 
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
@@ -6803,8 +6807,18 @@
     if (!shootNearbyAsteroids._origin) shootNearbyAsteroids._origin = new THREE.Vector2(0, 0);
     const ray = shootNearbyAsteroids._ray;
     ray.setFromCamera(shootNearbyAsteroids._origin, camera);
-    const hits = ray.intersectObjects([target], true);
-    if (!hits.length) return;
+    // Belt asteroids are instanced — the proxy isn't a raycastable mesh, so
+    // confirm the crosshair is on an asteroid via the instancer raycast
+    // (fire on any belt asteroid under the crosshair; fireWeapon re-resolves
+    // the exact one). Fall back to a mesh raycast for non-instanced ones.
+    // (HYBRID: ported from claude/slingshot-assist 7269c47.)
+    let onTarget;
+    if (target.isAsteroidProxy && typeof window !== 'undefined' && window.asteroidInstancer) {
+      onTarget = !!window.asteroidInstancer.raycast(ray);
+    } else {
+      onTarget = ray.intersectObjects([target], true).length > 0;
+    }
+    if (!onTarget) return;
 
     gameState.crosshairX = window.innerWidth / 2;
     gameState.crosshairY = window.innerHeight / 2;
