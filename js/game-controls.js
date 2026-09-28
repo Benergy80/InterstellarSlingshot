@@ -16074,8 +16074,12 @@ function cycleTargets() {
     
     // OPTIMIZED: Helper function to filter by squared distance (avoids expensive sqrt)
     const filterBySquaredDist = (items, maxDistSquared) => {
+        // Some cosmicFeatures lists do not exist in every universe; cycling
+        // targets (CapsLock) used to throw on the first missing one and stop.
+        if (!Array.isArray(items)) return [];
         const camPos = camera.position;
         return items.filter(obj => {
+            if (!obj || !obj.position) return false;
             const dx = obj.position.x - camPos.x;
             const dy = obj.position.y - camPos.y;
             const dz = obj.position.z - camPos.z;
