@@ -978,6 +978,12 @@ window.triggerPlayerDeath = triggerPlayerDeath;
 
 // RESTORED: Asteroid destruction functions
 function destroyAsteroid(asteroid) {
+    // Instanced asteroid: free its InstancedMesh slot (swap-remove). The
+    // scene.remove / beltGroup.remove below are harmless no-ops on the proxy.
+    // (HYBRID: ported from claude/slingshot-assist 7269c47.)
+    if (asteroid && asteroid._instRef && typeof window !== 'undefined' && window.asteroidInstancer) {
+        window.asteroidInstancer.free(asteroid._instRef);
+    }
     scene.remove(asteroid);
 
     // Small reward for destruction so phase-5 strafing pays out.
@@ -1031,7 +1037,9 @@ function destroyAsteroidByWeapon(asteroid, hitPosition = null) {
     // FIXED: Account for asteroid scale when calculating radius
     const baseRadius = asteroid.geometry ? asteroid.geometry.parameters.radius : 1;
     const actualRadius = baseRadius * (asteroid.scale.x || 1); // Use scale to get actual size
-    const hullRestoration = Math.min(15 + (actualRadius * 2), 25);
+    // HYBRID (asteroids: original): the reward reads ORIGINAL's radius (the
+    // rock is SIZE_K bigger; the explosion below grows with it).
+    const hullRestoration = Math.min(15 + (actualRadius / (typeof _hyAstK === 'function' ? _hyAstK() : 1) * 2), 25);
     
     gameState.hull = Math.min(gameState.maxHull, gameState.hull + hullRestoration);
     
@@ -3624,7 +3632,8 @@ if (keys.x) {
             const planetRadius = planet.geometry ? planet.geometry.parameters.radius : 1;
             
             // ⭐ ASTEROID COLLISION - Apply damage and check for death
-            if (planet.userData.type === 'asteroid' && distance < collisionThreshold) {
+            // HYBRID (asteroids: original): the rocks are SIZE_K bigger, so is the reach.
+            if (planet.userData.type === 'asteroid' && distance < collisionThreshold * (typeof _hyAstK === 'function' ? _hyAstK() : 1)) {
                 destroyAsteroidByCollision(planet);
 
                 if (gameState.hull <= 0) {
@@ -4129,7 +4138,7 @@ if (surfaceCollision) {
             if (!asteroid || !asteroid.userData) return;
 
             const asteroidDistance = camera.position.distanceTo(asteroid.position);
-            const collisionDistance = asteroid.userData.size + 10; // Size + safety margin
+            const collisionDistance = asteroid.userData.size * (asteroid.scale.x || 1) + 10; // Size + safety margin (HYBRID: x mesh scale, see HY_ASTEROIDS)
 
             if (asteroidDistance < collisionDistance) {
                 // Push player away from asteroid

@@ -578,6 +578,13 @@ function createOrbitingAsteroid(center, orbitRadius, index, systemGroup) {
         rotationSpeedZ: (Math.random() - 0.5) * 0.02
     };
 
+    // HYBRID (asteroids: original): SIZE_K bigger, drawn like ORIGINAL's
+    // (health stays ORIGINAL's). See HY_ASTEROIDS in game-objects.js.
+    if (typeof _hyAstOn === 'function' && _hyAstOn()) {
+        asteroid.scale.setScalar(_hyAstK());
+        _hyAstDrawn(asteroid);
+    }
+
     systemGroup.userData.orbiters.push(asteroid);
     systemGroup.add(asteroid);
     return asteroid;

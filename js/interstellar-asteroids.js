@@ -40,7 +40,8 @@ function createInterstellarAsteroidFields() {
     // console.log(`✅ Created ${INTERSTELLAR_ASTEROID_CONFIG.fieldCount} interstellar asteroid fields with ${interstellarAsteroids.length} total asteroids`);
 }
 
-// HYBRID (asteroids: original). ORIGINAL scattered these fields 25,000-55,000
+// HYBRID (asteroids: instanced — package L; the default 'original' keeps
+// ORIGINAL's layout, see HY_ASTEROIDS in game-objects.js). ORIGINAL scattered these fields 25,000-55,000
 // from the origin with the player starting ~10,000 from it, so the nearest field
 // was typically 7-18k away. The hybrid starts ~24,000 from the origin at Sol,
 // so the fields are laid out round Sol instead, in the band below, flattened
@@ -54,7 +55,7 @@ const HY_ROAM = {
     DENSE_FROM_RADII: 6.4,     // dense fields start this many core radii out (ORIGINAL 800 u)
 };
 function _hyRoamOn() {
-    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('asteroids', 'original'));
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('asteroids', 'instanced'));
 }
 function _hyRoamFieldPositions(count) {
     const sol = window.localSystemOffset || { x: 0, y: 0, z: 0 };
@@ -83,7 +84,10 @@ function generateAsteroidFieldPositions(count) {
     const positions = [];
     const { minDistance, maxDistance } = INTERSTELLAR_ASTEROID_CONFIG;
 
-    for (let i = 0; i < count; i++) {
+    // HYBRID (asteroids: original): ORIGINAL's draw, re-drawn while a field
+    // would sit on a body or inside Sol (HY_ASTEROIDS.CLEAR in game-objects.js).
+    const _hyK = (typeof _hyAstK === 'function') ? _hyAstK() : 1;
+    const _draw = () => {
         // Distribute around sphere in interstellar space
         const radius = minDistance + Math.random() * (maxDistance - minDistance);
         const theta = Math.random() * Math.PI * 2;
@@ -93,7 +97,10 @@ function generateAsteroidFieldPositions(count) {
         const y = radius * Math.sin(phi) * Math.sin(theta);
         const z = radius * Math.cos(phi);
 
-        positions.push({ x, y, z, radius });
+        return { x, y, z, radius };
+    };
+    for (let i = 0; i < count; i++) {
+        positions.push(typeof _hyAstPlace === 'function' ? _hyAstPlace(_draw, 2600 * _hyK) : _draw());
     }
 
     return positions;
@@ -102,7 +109,7 @@ function generateAsteroidFieldPositions(count) {
 // Create a single asteroid field
 function createAsteroidField(centerPosition, fieldIndex) {
     const { asteroidsPerField, baseSize, sizeVariation, minSpeed, maxSpeed } = INTERSTELLAR_ASTEROID_CONFIG;
-    const fieldSpread = 3000;  // How spread out the asteroids are
+    const fieldSpread = 3000 * ((typeof _hyAstK === 'function') ? _hyAstK() : 1);  // How spread out the asteroids are (HYBRID: x SIZE_K)
 
     for (let i = 0; i < asteroidsPerField; i++) {
         // Random offset from field center
@@ -204,6 +211,13 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
         denseField: cheap,  // dense-galaxy-field asteroid → tighter cull range
     };
     asteroid.frustumCulled = true; // off-screen ones skip drawing
+    // HYBRID (asteroids: original): the mesh is SIZE_K bigger; userData.size
+    // stays ORIGINAL's, so health, damage and breakup generations are ORIGINAL's
+    // (lengths read size x scale). Drawn past the draw budget and tone curve.
+    if (typeof _hyAstOn === 'function' && _hyAstOn()) {
+        asteroid.scale.setScalar(_hyAstK());
+        _hyAstDrawn(asteroid);
+    }
     if (_hyRoamOn()) {
         // HYBRID: each rock owns its material and has 80 triangles, so the
         // overhaul's draw budget hid every one beyond 450 u; and its tone curve
@@ -235,13 +249,16 @@ function createDenseGalaxyAsteroidFields() {
     const chosen = cores.filter((c, i) => i % 2 === 0).slice(0, 3);
     chosen.forEach((core, idx) => {
         const _g = core.geometry && core.geometry.parameters;
-        createDenseAsteroidField(core.position, 100 + idx, _g && _g.radius ? _g.radius * core.scale.x : 0);
+        createDenseAsteroidField(core.position, 100 + idx, _g && _g.radius ? _g.radius * core.scale.x : 0, core);
         core.userData.hasDenseAsteroidField = true;
     });
     console.log('🪨 Dense asteroid fields created in ' + chosen.length + ' galaxies');
 }
 
-function createDenseAsteroidField(center, fieldIndex, coreR) {
+function createDenseAsteroidField(center, fieldIndex, coreR, core) {
+    // HYBRID (asteroids: original): mapped out with the galaxy (HY_ASTEROIDS).
+    const _hyG = (typeof _hyAstCore === 'function') ? _hyAstCore(core) : null;
+    const _hyH = _hyG ? _hyAstHoles() : null;   // every hole, to keep rocks off their discs
     const COUNT = 140;          // packed but perf-aware (cheap material)
     // HYBRID: 800 u is inside a radius-900 core's shadow; start past its disc.
     const CORE_CLEAR = (_hyRoamOn() && coreR) ? coreR * HY_ROAM.DENSE_FROM_RADII : 800;     // keep the very center flyable
@@ -249,7 +266,8 @@ function createDenseAsteroidField(center, fieldIndex, coreR) {
     for (let i = 0; i < COUNT; i++) {
         // Bias inward (pow<1) so it's DENSE near the core/combat zone, and
         // flatten vertically into a rough disk so it reads as a belt.
-        const r = CORE_CLEAR + Math.pow(Math.random(), 0.6) * REACH;
+        let r = CORE_CLEAR + Math.pow(Math.random(), 0.6) * REACH;
+        if (_hyG) r = _hyG.map(r);
         const theta = Math.random() * Math.PI * 2;
         const phi = Math.acos(1 - 2 * Math.random());
         const pos = {
@@ -264,6 +282,8 @@ function createDenseAsteroidField(center, fieldIndex, coreR) {
             const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
             if (d < CORE_CLEAR) { const k = CORE_CLEAR / d; pos.x = center.x + dx * k; pos.y = center.y + dy * k; pos.z = center.z + dz * k; }
         }
+        if (_hyG) _hyAstFloor(pos, center, _hyG.R);
+        if (_hyH && !_hyAstFree(pos.x, pos.y, pos.z, _hyH)) continue;   // HYBRID: inside a neighbouring hole's disc
         const size = 16 + Math.random() * 64; // 16-80, varied — big ones break into a cloud
         const vel = new THREE.Vector3(
             (Math.random() - 0.5) * 0.22,
@@ -305,7 +325,7 @@ function breakInterstellarAsteroid(asteroid, hitPosition, hitNormal) {
 
     // Create debris effect at hit position
     if (typeof createAsteroidExplosion === 'function') {
-        createAsteroidExplosion(hitPosition, asteroid.userData.size * 0.3);
+        createAsteroidExplosion(hitPosition, asteroid.userData.size * 0.3 * (asteroid.scale.x || 1));   // HYBRID: x mesh scale
     }
 
     // Calculate new size for fragments
@@ -315,7 +335,7 @@ function breakInterstellarAsteroid(asteroid, hitPosition, hitNormal) {
     for (let i = 0; i < breakupPieces; i++) {
         // Random offset from hit position
         const spreadAngle = (Math.PI * 2 / breakupPieces) * i + Math.random() * 0.5;
-        const spreadDistance = asteroid.userData.size * 0.5;
+        const spreadDistance = asteroid.userData.size * 0.5 * (asteroid.scale.x || 1);   // HYBRID: x mesh scale
 
         const offsetX = Math.cos(spreadAngle) * spreadDistance;
         const offsetY = (Math.random() - 0.5) * spreadDistance;
@@ -399,7 +419,7 @@ function checkInterstellarAsteroidCollisions() {
 
             // Calculate distance
             const distance = asteroidA.position.distanceTo(asteroidB.position);
-            const collisionDistance = asteroidA.userData.size + asteroidB.userData.size;
+            const collisionDistance = asteroidA.userData.size * (asteroidA.scale.x || 1) + asteroidB.userData.size * (asteroidB.scale.x || 1);   // HYBRID: x mesh scale
 
             if (distance < collisionDistance) {
                 // Collision detected!

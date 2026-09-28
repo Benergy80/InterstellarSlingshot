@@ -14882,7 +14882,7 @@ function updateDistanceCulling() {
     // in this function (a distance and a float per crossing world, and there
     // are a handful) so it runs on every frame, before the throttle.
     _impXfTick();
-    // HYBRID (asteroids: original): belts turn every frame; their logical rocks
+    // HYBRID (asteroids: instanced): belts turn every frame; their logical rocks
     // follow (see HY_ROCKS).
     if (_hyRocksOn()) _hyRockTick();
     if (!forced && _cullFrameCount % 10 !== 0) return;
@@ -14943,7 +14943,9 @@ function updateDistanceCulling() {
     _impPassBegin(cx, cy, cz);   // eye + light table for the illumination term
     _litReset();     // rebuilt by this pass, read by _lightBudgetPass at the end
 
-    const _hyRocks = !!(window.HYBRID && window.HYBRID.is('asteroids', 'original'));
+    // HYBRID: rocks (ORIGINAL's under 'original', package L's under 'instanced')
+    // are culled by range, never by the angular rule.
+    const _hyRocks = !!(window.HYBRID && !window.HYBRID.is('asteroids', 'overhaul'));
     const cullArray = (arr, range, angular) => {
         if (typeof arr === 'undefined' || !arr || !arr.length) return;
         range *= _cullScale;
@@ -15104,14 +15106,17 @@ function updateDistanceCulling() {
     // fade so a belt never winks out while its system's cloud is still drawn.
     // HYBRID: a scaled belt is a few instanced draws plus a spark cloud, so it
     // can stay on the sky further out (HY_ROCKS.DRAW_RANGE).
-    cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, _hyRocks ? HY_ROCKS.DRAW_RANGE : 30000);
+    cullArray(typeof asteroidBelts !== 'undefined' ? asteroidBelts : null, _hyRocksOn() ? HY_ROCKS.DRAW_RANGE : 30000);
     cullArray(typeof interstellarAsteroids !== 'undefined' ? interstellarAsteroids : null, 30000);
     // Dense-galaxy-field asteroids: hundreds per field, so cull them much
     // tighter (8,000u) — they only need to render when you're actually IN
     // that galaxy fighting, not as specks from 25k away. Runs AFTER the 30k
     // pass above (which would otherwise keep them visible out to 30k).
     if (typeof interstellarAsteroids !== 'undefined') {
-        const dr2 = (8000 * _cullScale) * (8000 * _cullScale);
+        // HYBRID (asteroids: original): the field is mapped out with its galaxy
+        // (HY_ASTEROIDS), so its reach grows by the same factor.
+        const _dr = 8000 * ((_hyAstOn() && typeof HY_BH !== 'undefined') ? HY_BH.GALAXY_SCALE : 1);
+        const dr2 = (_dr * _cullScale) * (_dr * _cullScale);
         for (let i = 0; i < interstellarAsteroids.length; i++) {
             const a = interstellarAsteroids[i];
             if (!a || !a.userData || !a.userData.denseField || !a.position) continue;
@@ -22218,8 +22223,222 @@ function initializeAsteroidResources() {
     );
 });
     
+    // HYBRID (asteroids: original): out of the overhaul's tone curve, surface
+    // x HY_ASTEROIDS.ALBEDO (1 = ORIGINAL's pale, near-white facets; the 0.45
+    // grade updateDistanceCulling applies under the other values read tan).
+    if (_hyAstOn()) {
+        asteroidResources.materials.forEach(function (m) {
+            m.toneMapped = false;
+            if (HY_ASTEROIDS.ALBEDO !== 1) m.color.multiplyScalar(HY_ASTEROIDS.ALBEDO);
+        });
+    }
+
     asteroidResources.initialized = true;
     console.log('✅ Asteroid resources initialized with self-lit materials');
+}
+
+// Spawn one belt asteroid. Uses the InstancedMesh instancer when available
+// (returns a lightweight proxy pushed into `planets`); falls back to a real
+// child Mesh of the beltGroup if the instancer module didn't load, so the
+// game still works (just without the draw-call win). The retained belt
+// animation loop in game-core.js animates the fallback meshes; the instancer
+// animates the instanced ones.
+// (HYBRID: ported from claude/slingshot-assist 7269c47; the instancer is on
+// only under asteroids:original — see js/asteroid-instancer.js.)
+function _spawnAsteroidInstance(o) {
+    const rot = { x: Math.random() * Math.PI * 2, y: Math.random() * Math.PI * 2, z: Math.random() * Math.PI * 2 };
+    if (typeof window !== 'undefined' && window.asteroidInstancer && window.asteroidInstancer.isEnabled()) {
+        return window.asteroidInstancer.add({
+            geomIdx: o.geomIdx, matIdx: o.matIdx, beltGroup: o.beltGroup,
+            orbitRadius: o.orbitRadius, orbitPhase: o.orbitPhase, ringHeight: o.ringHeight,
+            orbitSpeed: o.orbitSpeed, rotSpeed: o.rotSpeed, rot: rot,
+            scale: o.scale, userData: o.userData
+        });
+    }
+    // Fallback — real mesh (parity with the pre-instancer behaviour)
+    const geometry = asteroidResources.geometries[o.geomIdx];
+    const material = asteroidResources.materials[o.matIdx];
+    const asteroid = new THREE.Mesh(geometry, material);
+    asteroid.scale.setScalar(o.scale);
+    asteroid.frustumCulled = false;
+    asteroid.position.set(Math.cos(o.orbitPhase) * o.orbitRadius, o.ringHeight, Math.sin(o.orbitPhase) * o.orbitRadius);
+    asteroid.rotation.set(rot.x, rot.y, rot.z);
+    asteroid.userData = o.userData;
+    if (o.beltGroup) o.beltGroup.add(asteroid);
+    return asteroid;
+}
+
+// =============================================================================
+// HYBRID (asteroids: original) — ORIGINAL'S ASTEROIDS, EVERY KIND, IN THE BIG WORLD
+//
+// Ben: "I don't just want some new asteroids, I want all of the different
+// asteroids from the original version" and "the asteroids used to be able to
+// be shot". Under 'original' every kind is built by ORIGINAL's own builder
+// (below, and interstellar-asteroids.js, outer-systems.js) with ORIGINAL's
+// counts, shapes, materials, motion, hit / break / reward rules. Only what
+// the bigger world forces differs, one named constant each:
+//
+//   SIZE_K     every asteroid kind is this much bigger than ORIGINAL (belt,
+//              cluster, roaming, dense-field and outer-system rocks alike, so
+//              their sizes relative to each other are ORIGINAL's). The planets
+//              grew about 3x (Earth 40 -> 130). 1 = ORIGINAL's exact sizes.
+//              Gameplay numbers stay ORIGINAL's (health, damage, breakup
+//              generations); only lengths — the mesh, its hit and collision
+//              reach, a fragment's throw — grow with it.
+//   GALAXY     round a galaxy core, an ORIGINAL distance r from the core becomes
+//              HY_BH.CLEAR_RADII x R + r x HY_BH.GALAXY_SCALE: the very rule the
+//              galaxy's own star systems were moved out by (_hyBHClearSystems),
+//              so belts, clusters and dense fields keep ORIGINAL's order round
+//              the core (systems, then belts, then clusters) and all sit clear
+//              of the disc (5.6 R) and the warp zone (2.5 R). No galaxy rock is
+//              ever nearer the core than CORE_MIN_RADII, and no rock whose
+//              orbit would pass within CORE_MIN_RADII of ANY hole is built.
+//   PACE       a belt moved off ORIGINAL's ring turns at the rate that gives
+//              each rock SIZE_K x ORIGINAL's speed — as fast for its size as
+//              ORIGINAL's (_hyAstPace).
+//   CLEAR      free-floating fields (deep-space clusters, roaming fields) keep
+//              ORIGINAL's layout but are re-drawn when a field would sit within
+//              HOLE_CLEAR hole radii / BODY_CLEAR_K body radii of a body (the
+//              demo pilot's keep-out is 1.8) or inside Sol's keep-clear.
+//   drawn      every rock is exempt from the overhaul's angular cull, impostor
+//              tier and aerial fade (updateDistanceCulling), from its draw budget
+//              (userData.__dbTris = Infinity) and from its tone curve
+//              (toneMapped = false), so it draws like ORIGINAL's (ALBEDO).
+//   loader     loadAsteroidsForGalaxy counts only real belts as "already has
+//              belts" (a galaxy that starts beyond 80,000 u has only clusters),
+//              so each galaxy gets its belts once, never twice.
+//   SOL        Sol's belt(s) keep ORIGINAL's draws and lift off the plane, their
+//              5,000-7,000 ring band mapped onto the lane _hySolLayout() reserves
+//              between Mars and Jupiter (_hyAstSol).
+//   one ring   two belts of one host never share a ring (BELT_GAP): the doubled
+//              belt Ben saw. The second belt's band is pushed clear of the first.
+// ?hy=asteroids:instanced gives package L's rebuild; ?hy=asteroids:overhaul the
+// overhaul's handling.
+// =============================================================================
+const HY_ASTEROIDS = {
+    SIZE_K: 3,             // every asteroid kind x this (1 = ORIGINAL's sizes)
+    CORE_MIN_RADII: 6.4,   // no galaxy rock nearer its core than this (disc 5.6, CLEAR_RADII 6)
+    HOLE_CLEAR: 7,         // a free field's edge keeps this many hole radii from any black hole
+    BODY_CLEAR_K: 3,       // ...and this many body radii from any planet, star or moon
+    TRIES: 40,             // re-draws of a free field's centre before ORIGINAL's draw is kept
+    BELT_GAP: 200,         // two belts of one host never share a ring: bands at least this far apart (ORIGINAL units)
+    SOL_BAND: [5000, 7000],// ORIGINAL's Sol belt rings, mapped onto the Mars-Jupiter lane (see _hyAstSol)
+    ALBEDO: 1,             // belt / cluster rock surface brightness (1 = ORIGINAL's)
+};
+if (typeof window !== 'undefined') window.HY_ASTEROIDS = HY_ASTEROIDS;
+
+function _hyAstOn() {
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('asteroids', 'original'));
+}
+// The one size factor (1 when the switch is off).
+function _hyAstK() { return _hyAstOn() ? HY_ASTEROIDS.SIZE_K : 1; }
+// Placement round a scaled galaxy core: { R, gs, map(r) } or null (ORIGINAL distances).
+function _hyAstCore(bh) {
+    if (!_hyAstOn() || !bh || !bh.userData || !bh.userData._hyBHK || typeof HY_BH === 'undefined') return null;
+    const R = _hyBodyR(bh), gs = HY_BH.GALAXY_SCALE;
+    return { R: R, gs: gs, map: function (r) { return HY_BH.CLEAR_RADII * R + r * gs; } };
+}
+// Push a world position out along its line from `c` so it is at least
+// CORE_MIN_RADII core radii away.
+function _hyAstFloor(pos, c, R) {
+    const dx = pos.x - c.x, dy = pos.y - c.y, dz = pos.z - c.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1, min = HY_ASTEROIDS.CORE_MIN_RADII * R;
+    if (d < min) { const k = min / d; pos.x = c.x + dx * k; pos.y = c.y + dy * k; pos.z = c.z + dz * k; }
+    return pos;
+}
+// Is a free field of half-size `reach` centred at `pos` clear of every body?
+function _hyAstClear(pos, reach, bodies) {
+    for (let i = 0; i < bodies.length; i++) {
+        const b = bodies[i];
+        const need = (b.hole ? HY_ASTEROIDS.HOLE_CLEAR : HY_ASTEROIDS.BODY_CLEAR_K) * b.R + reach;
+        if (b.c.distanceToSquared(pos) < need * need) return false;
+    }
+    const sol = (typeof window !== 'undefined') && window.localSystemOffset;
+    const solR = (typeof window !== 'undefined' && typeof window._hySolAreaRadius === 'function') ? window._hySolAreaRadius() : null;
+    if (sol && solR) {
+        const dx = pos.x - sol.x, dy = pos.y - sol.y, dz = pos.z - sol.z, need = solR + reach;
+        if (dx * dx + dy * dy + dz * dz < need * need) return false;
+    }
+    return true;
+}
+// ORIGINAL's draw for a free field's centre, re-drawn until clear. `draw()`
+// returns a Vector3-like {x,y,z}; the last draw is kept if none is clear.
+function _hyAstPlace(draw, reach) {
+    let p = draw();
+    if (!_hyAstOn()) return p;
+    const bodies = _hyRockBodies();
+    for (let t = 0; t < HY_ASTEROIDS.TRIES && !_hyAstClear(new THREE.Vector3(p.x, p.y, p.z), reach, bodies); t++) p = draw();
+    return p;
+}
+// Drawn like ORIGINAL's: never a draw-budget candidate, out of the tone curve.
+function _hyAstDrawn(mesh) {
+    if (!_hyAstOn() || !mesh) return mesh;
+    mesh.userData.__dbTris = Infinity;
+    if (mesh.material && mesh.material.toneMapped !== false) { mesh.material.toneMapped = false; mesh.material.needsUpdate = true; }
+    return mesh;
+}
+// A host's second belt must not share the first one's ring: push its band
+// out until it clears every band already laid (ORIGINAL units, before the
+// galaxy map). Returns the radius to use.
+function _hyAstRing(r, w, laid) {
+    if (!_hyAstOn()) return r;
+    for (let i = 0; i < laid.length; i++) {
+        const o = laid[i], need = (o.w + w) / 2 + HY_ASTEROIDS.BELT_GAP;
+        if (Math.abs(r - o.r) < need) r = o.r + need;
+    }
+    return r;
+}
+// Sol's belt(s): ORIGINAL's ring band (SOL_BAND, drawn 5,000-7,000 with a
+// 1,000-2,200 width) mapped linearly onto the lane _hySolLayout() reserves
+// between Mars and Jupiter, so a second belt keeps its own ring. Returns
+// { r, w } — ORIGINAL's numbers when the switch or solScale:big is off.
+function _hyAstSol(r0, w0) {
+    if (!_hyAstOn() || typeof _hyScaleOn !== 'function' || !_hyScaleOn()) return { r: r0, w: w0 };
+    const lane = _hySolLayout().belt, B = HY_ASTEROIDS.SOL_BAND;
+    const k = (lane[1] - lane[0]) / (B[1] - B[0]);
+    return { r: lane[0] + (r0 - B[0]) * k, w: w0 * k };
+}
+// A belt moved from ORIGINAL's ring r0 to ring r: the factor on its angular
+// orbit rate that makes each rock travel SIZE_K x ORIGINAL's speed — the same
+// pace for its size as in ORIGINAL (a rock you aim at crosses the crosshair
+// as fast as ORIGINAL's did). 1 when the switch is off.
+// Every black hole as { c, R } (read once per builder call), and whether a
+// world point is clear of all of them by CORE_MIN_RADII — a belt mapped round
+// its own core can still reach a neighbouring hole (the Local Gateway sits
+// among the galaxies). A rock that is not clear is not built.
+function _hyAstHoles() {
+    if (!_hyAstOn()) return null;
+    const out = [];
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (p && p.userData && p.userData.type === 'blackhole') out.push({ c: p.position, R: _hyBodyR(p) });
+    }
+    return out;
+}
+function _hyAstFree(x, y, z, holes) {
+    if (!holes) return true;
+    for (let i = 0; i < holes.length; i++) {
+        const h = holes[i], m = HY_ASTEROIDS.CORE_MIN_RADII * h.R;
+        const dx = x - h.c.x, dy = y - h.c.y, dz = z - h.c.z;
+        if (dx * dx + dy * dy + dz * dz < m * m) return false;
+    }
+    return true;
+}
+// The same for a rock that orbits: its whole circle (radius r, height y
+// above the belt centre c, in the belt's plane) must stay clear.
+function _hyAstRingFree(c, r, y, holes) {
+    if (!holes) return true;
+    for (let i = 0; i < holes.length; i++) {
+        const h = holes[i], m = HY_ASTEROIDS.CORE_MIN_RADII * h.R;
+        const rho = Math.hypot(h.c.x - c.x, h.c.z - c.z), dy = c.y + y - h.c.y, dr = rho - r;
+        if (dr * dr + dy * dy < m * m) return false;
+    }
+    return true;
+}
+function _hyAstPace(r0, r) { return (_hyAstOn() && r > 0) ? HY_ASTEROIDS.SIZE_K * r0 / r : 1; }
+if (typeof window !== 'undefined') {
+    window._hyAstOn = _hyAstOn; window._hyAstK = _hyAstK; window._hyAstCore = _hyAstCore;
+    window._hyAstFloor = _hyAstFloor; window._hyAstPlace = _hyAstPlace; window._hyAstDrawn = _hyAstDrawn;
 }
 
 function createAsteroidBelts() {
@@ -22277,13 +22496,15 @@ function createAsteroidBelts() {
         console.log(`Creating OPTIMIZED belt for galaxy ${galaxyIndex} (${galaxyType.name}) at black hole position:`, galaxyCenter);
         
         const beltCount = Math.random() > 0.5 ? 2 : 1;
-        
+        const _hyLaid = [];     // HYBRID: this host's bands so far (no two belts on one ring)
+        const _hyH = galaxyIndex !== 7 ? _hyAstHoles() : null;   // HYBRID: rocks stay clear of every hole
+
         for (let b = 0; b < beltCount; b++) {
             const beltGroup = new THREE.Group();
-            
+
             // PLENTIFUL: 50-150 asteroids
             const asteroidCount = 75 + Math.random() * 37; // Reduced 25% for performance
-            
+
             // CLOSER: 800-2000 units from black hole
         	let beltRadius = 1600 + Math.random() * 1000;
             let beltWidth = 400 + Math.random() * 800;
@@ -22293,6 +22514,9 @@ function createAsteroidBelts() {
             if (galaxyIndex === 7) {
                 beltRadius = 5000 + Math.random() * 2000; // ~5000-7000
                 beltWidth = 1000 + Math.random() * 1200;  // fuller band at the larger radius
+            }
+            const _hyO = { r: beltRadius, w: beltWidth };   // HYBRID: ORIGINAL's draw (asteroids: original)
+            if (galaxyIndex === 7) {
                 // HYBRID (solScale:big): the lane _hySolLayout() leaves between
                 // Mars and Jupiter (5-7k is Saturn's neighbourhood at this scale).
                 if (_hyScaleOn()) {
@@ -22310,7 +22534,17 @@ function createAsteroidBelts() {
                 beltRadius = _bhR * (_clr + 0.4 + Math.random() * 1.2);
                 beltWidth = _bhR * (0.45 + Math.random() * 0.9);
             }
-            // HYBRID (asteroids: original): scaled, instanced belt — see HY_ROCKS.
+            // HYBRID (asteroids: original): ORIGINAL's ring, never on another
+            // belt's ring, then mapped out with the galaxy / onto Sol's lane
+            // (see HY_ASTEROIDS).
+            const _hyG = galaxyIndex !== 7 ? _hyAstCore(blackHole) : null;
+            if (_hyAstOn()) {
+                _hyO.r = _hyAstRing(_hyO.r, _hyO.w, _hyLaid);
+                _hyLaid.push({ r: _hyO.r, w: _hyO.w });
+                if (_hyG) { beltRadius = _hyG.map(_hyO.r); beltWidth = _hyO.w * _hyG.gs; }
+                else if (galaxyIndex === 7) { const _s = _hyAstSol(_hyO.r, _hyO.w); beltRadius = _s.r; beltWidth = _s.w; }
+            }
+            // HYBRID (asteroids: instanced): scaled, instanced belt — see HY_ROCKS.
             if (_hyRocksOn()) {
                 const _yOff = galaxyIndex === 7 ? (Math.random() < 0.5 ? 1 : -1) * (600 + Math.random() * 400) : 0;
                 _hyRockBelt(galaxyType, galaxyIndex, galaxyCenter, beltRadius, beltWidth, b, _yOff);
@@ -22318,45 +22552,27 @@ function createAsteroidBelts() {
             }
 
             for (let j = 0; j < asteroidCount; j++) {
-    // Use shared resources
+    // INSTANCED: shared geometry/material picked by index; the actual mesh
+    // is one of the instancer's ≤9 InstancedMeshes, and a lightweight proxy
+    // goes into `planets` for targeting/collision/mining.
     const geomIndex = Math.floor(Math.random() * 3);
-    const geometry = asteroidResources.geometries[geomIndex];
-    
     const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
-    const material = asteroidResources.materials[matIndex];
-    
-    const asteroid = new THREE.Mesh(geometry, material);
-    
-    // INCREASED: Make asteroids 2-3x larger for visibility
-    const scale = 3 + Math.random() * 6; // Was 1-5, now 3-9
-    asteroid.scale.setScalar(scale);
-    
-    // CRITICAL: Disable frustum culling so distant asteroids stay visible
-    asteroid.frustumCulled = false;
-    
+    const scale = (3 + Math.random() * 6) * _hyAstK(); // Was 1-5, now 3-9 (HYBRID: x SIZE_K)
+
     const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
     const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
-    const ringHeight = (Math.random() - 0.5) * 200;
-    
-    asteroid.position.set(
-        Math.cos(ringAngle) * ringDistance,
-        ringHeight,
-        Math.sin(ringAngle) * ringDistance
-    );
-    
-    asteroid.rotation.set(
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2,
-        Math.random() * Math.PI * 2
-    );
-    
-    asteroid.userData = {
+    const ringHeight = (Math.random() - 0.5) * 200 * (_hyG ? _hyG.gs : 1);   // HYBRID: galaxy scale
+    if (!_hyAstRingFree(galaxyCenter, ringDistance, ringHeight, _hyH)) continue;   // HYBRID: its orbit crosses a hole's disc
+
+    const orbitSpeed = (0.0005 + Math.random() * 0.001) * _hyAstPace(_hyO.r, beltRadius);   // HYBRID: see _hyAstPace
+    const rotationSpeed = (Math.random() - 0.5) * 0.015;
+    const userData = {
         name: `${galaxyType.name} Asteroid ${j + 1}`,
         type: 'asteroid',
         health: 2,
         maxHealth: 2,
-        orbitSpeed: 0.0005 + Math.random() * 0.001,
-        rotationSpeed: (Math.random() - 0.5) * 0.015,
+        orbitSpeed: orbitSpeed,
+        rotationSpeed: rotationSpeed,
         beltCenter: galaxyCenter,
         orbitRadius: ringDistance,
         orbitPhase: ringAngle,
@@ -22365,9 +22581,13 @@ function createAsteroidBelts() {
         isDestructible: true,
         beltGroup: beltGroup
     };
-    
-    beltGroup.add(asteroid);
-    planets.push(asteroid);
+
+    const proxy = _spawnAsteroidInstance({
+        geomIdx: geomIndex, matIdx: matIndex, beltGroup: beltGroup,
+        orbitRadius: ringDistance, orbitPhase: ringAngle, ringHeight: ringHeight,
+        orbitSpeed: orbitSpeed, rotSpeed: rotationSpeed, scale: scale, userData: userData
+    });
+    if (proxy) planets.push(proxy);
 }
 
 // After the loop, ensure belt group is visible
@@ -22429,39 +22649,36 @@ function createScatteredAsteroidFields() {
         initializeAsteroidResources();
     }
 
+    const _hyH = _hyAstHoles();   // HYBRID: rocks stay clear of every hole
+
     function _spawnCluster(galaxyIndex, center, opts) {
         const cluster = new THREE.Group();
         const count = (opts && opts.count) || (22 + Math.floor(Math.random() * 16));
-        const spread = (opts && opts.spread) || (350 + Math.random() * 250);
+        const spread = ((opts && opts.spread) || (350 + Math.random() * 250)) * _hyAstK();   // HYBRID: x SIZE_K
         const minScale = (opts && opts.minScale) || 2.5;
         const scaleRange = (opts && opts.scaleRange) || 4.5;
         const galaxyType = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyIndex])
             ? galaxyTypes[galaxyIndex] : { name: 'Deep Space' };
 
         for (let j = 0; j < count; j++) {
-            const geom = asteroidResources.geometries[Math.floor(Math.random() * asteroidResources.geometries.length)];
-            const mat  = asteroidResources.materials[Math.floor(Math.random() * asteroidResources.materials.length)];
-            const a = new THREE.Mesh(geom, mat);
-            a.scale.setScalar(minScale + Math.random() * scaleRange);
-            a.frustumCulled = false;
+            const geomIdx = Math.floor(Math.random() * asteroidResources.geometries.length);
+            const matIdx  = Math.floor(Math.random() * asteroidResources.materials.length);
+            const scale = (minScale + Math.random() * scaleRange) * _hyAstK();   // HYBRID: x SIZE_K
             // Random within a flattened sphere so it reads as a clumpy
             // field rather than a tight ring.
             const phi = Math.random() * Math.PI * 2;
             const r   = Math.random() * spread;
             const h   = (Math.random() - 0.5) * spread * 0.4;
-            a.position.set(Math.cos(phi) * r, h, Math.sin(phi) * r);
-            a.rotation.set(
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2
-            );
-            a.userData = {
+            if (!_hyAstRingFree(center, r, h, _hyH)) continue;   // HYBRID: its orbit crosses a hole's disc
+            const orbitSpeed = 0.0003 + Math.random() * 0.0008;
+            const rotationSpeed = (Math.random() - 0.5) * 0.012;
+            const userData = {
                 name: `${galaxyType.name} Scatter ${j + 1}`,
                 type: 'asteroid',
                 health: 2,
                 maxHealth: 2,
-                orbitSpeed: 0.0003 + Math.random() * 0.0008,
-                rotationSpeed: (Math.random() - 0.5) * 0.012,
+                orbitSpeed: orbitSpeed,
+                rotationSpeed: rotationSpeed,
                 beltCenter: center.clone(),
                 orbitRadius: r,
                 orbitPhase: phi,
@@ -22470,8 +22687,12 @@ function createScatteredAsteroidFields() {
                 isDestructible: true,
                 beltGroup: cluster
             };
-            cluster.add(a);
-            planets.push(a);
+            const proxy = _spawnAsteroidInstance({
+                geomIdx: geomIdx, matIdx: matIdx, beltGroup: cluster,
+                orbitRadius: r, orbitPhase: phi, ringHeight: h,
+                orbitSpeed: orbitSpeed, rotSpeed: rotationSpeed, scale: scale, userData: userData
+            });
+            if (proxy) planets.push(proxy);
         }
 
         cluster.position.copy(center);
@@ -22510,13 +22731,16 @@ function createScatteredAsteroidFields() {
             // Place 3,000-7,000 units from the BH so they don't pile on
             // the existing BH ring and they overlap the regular combat
             // zones where enemies spawn.
-            const dist = 3000 + Math.random() * 4000;
-            const yJitter = (Math.random() - 0.5) * 600;
+            // HYBRID (asteroids: original): mapped out with the galaxy (HY_ASTEROIDS).
+            const _hyG = _hyAstCore(bh);
+            const dist = _hyG ? _hyG.map(3000 + Math.random() * 4000) : 3000 + Math.random() * 4000;
+            const yJitter = (Math.random() - 0.5) * 600 * (_hyG ? _hyG.gs : 1);
             const center = new THREE.Vector3(
                 bh.position.x + Math.cos(ang) * dist,
                 bh.position.y + yJitter,
                 bh.position.z + Math.sin(ang) * dist
             );
+            if (_hyG) _hyAstFloor(center, bh.position, _hyG.R);
             _spawnCluster(galaxyIndex, center, { count: 25 + Math.floor(Math.random() * 15) });
             added++;
         }
@@ -22526,11 +22750,12 @@ function createScatteredAsteroidFields() {
     //    placed at random points within ±45,000 of the origin so the
     //    player encounters them while warping or coasting.
     for (let k = 0; k < 12; k++) {
-        const center = new THREE.Vector3(
+        // HYBRID (asteroids: original): ORIGINAL's box, re-drawn off any body.
+        const center = _hyAstPlace(() => new THREE.Vector3(
             (Math.random() - 0.5) * 90000,
             (Math.random() - 0.5) * 18000,
             (Math.random() - 0.5) * 90000
-        );
+        ), 1100 * _hyAstK());
         // Larger spread + sparser fill — these are loose asteroid
         // streams between galaxies, not tight combat-cover clusters.
         _spawnCluster(-1, center, {
@@ -22546,7 +22771,9 @@ function createScatteredAsteroidFields() {
 }
 
 // =============================================================================
-// HYBRID (asteroids: original) — ORIGINAL'S ASTEROIDS, SCALED FOR THIS WORLD
+// HYBRID (asteroids: instanced) — package L's rebuild of the belts, kept for comparison
+// (?hy=asteroids:instanced). The default, asteroids:original, is ORIGINAL's own
+// builders: see HY_ASTEROIDS above createAsteroidBelts.
 //
 // ORIGINAL built belts of 75-112 rocks, scale 3-9, 1,600-2,600 from a radius-36
 // galaxy core, each rock its own draw call. In the hybrid the cores are radius
@@ -22605,7 +22832,7 @@ const HY_ROCKS = {
 if (typeof window !== 'undefined') window.HY_ROCKS = HY_ROCKS;
 
 function _hyRocksOn() {
-    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('asteroids', 'original'));
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('asteroids', 'instanced'));
 }
 const _hyRockKit = { vis: null, ghost: null, spark: null, hooked: false, t: 0, last: 0 };
 function _hyRockRand(a) { return a[0] + Math.random() * (a[1] - a[0]); }
@@ -22983,8 +23210,13 @@ function loadAsteroidsForGalaxy(galaxyId) {
     
     // Check if asteroids already exist for this galaxy
     if (typeof asteroidBelts !== 'undefined') {
-        const existingBelts = asteroidBelts.filter(belt => 
-            belt.userData && belt.userData.galaxyId === galaxyId
+        // HYBRID (asteroids: original): a scatter cluster is not a belt. In the
+        // bigger world a galaxy can start beyond createAsteroidBelts' 80,000 u
+        // reach with only its clusters, which ORIGINAL's guard read as "has
+        // belts" — so it never got one. Real belts still block a second build.
+        const existingBelts = asteroidBelts.filter(belt =>
+            belt.userData && belt.userData.galaxyId === galaxyId &&
+            !(_hyAstOn() && belt.userData.isScatterCluster)
         );
         
         if (existingBelts.length > 0) {
@@ -23030,13 +23262,31 @@ function loadAsteroidsForGalaxy(galaxyId) {
     console.log(`Creating asteroid belt for galaxy ${galaxyId} (${galaxyType.name})`);
     
     const beltCount = Math.random() > 0.5 ? 2 : 1;
-    
+    const _hyLaid = [];     // HYBRID: this host's bands so far (no two belts on one ring)
+    const _hyH = galaxyId !== 7 ? _hyAstHoles() : null;   // HYBRID: rocks stay clear of every hole
+
     for (let b = 0; b < beltCount; b++) {
         const beltGroup = new THREE.Group();
-        const asteroidCount = 37 + Math.random() * 75; // Reduced 25% for performance
-        const beltRadius = 1600 + Math.random() * 1000;
-        const beltWidth = 400 + Math.random() * 800;
-        // HYBRID (asteroids: original): the same ring createAsteroidBelts builds,
+        // HYBRID (asteroids: original): 75-112 rocks a belt, as createAsteroidBelts
+        // and ASTEROID_SETTINGS.md (ORIGINAL drew 37-112 here).
+        const asteroidCount = _hyAstOn() ? 75 + Math.random() * 37 : 37 + Math.random() * 75; // Reduced 25% for performance
+        let beltRadius = 1600 + Math.random() * 1000;
+        let beltWidth = 400 + Math.random() * 800;
+        // HYBRID (asteroids: original): the same homes createAsteroidBelts uses —
+        // never on another belt's ring, a galaxy core's ring mapped out with the
+        // galaxy (HY_ASTEROIDS), Sol's drawn as createAsteroidBelts draws it
+        // (5,000-7,000; ORIGINAL's loader drew 1,600-2,600, inside Venus's orbit
+        // at this scale) and mapped onto the Mars-Jupiter lane.
+        const _hyG = (galaxyId !== 7) ? _hyAstCore(blackHole) : null;
+        let _hyR0 = beltRadius;
+        if (_hyAstOn()) {
+            if (galaxyId === 7) { beltRadius = 5000 + Math.random() * 2000; beltWidth = 1000 + Math.random() * 1200; }
+            beltRadius = _hyR0 = _hyAstRing(beltRadius, beltWidth, _hyLaid);
+            _hyLaid.push({ r: beltRadius, w: beltWidth });
+            if (_hyG) { beltRadius = _hyG.map(beltRadius); beltWidth *= _hyG.gs; }
+            else if (galaxyId === 7) { const _s = _hyAstSol(beltRadius, beltWidth); beltRadius = _s.r; beltWidth = _s.w; }
+        }
+        // HYBRID (asteroids: instanced): the same ring createAsteroidBelts builds,
         // in the hole's radii (1,600-2,600 u is inside a scaled core's disc).
         if (_hyRocksOn()) {
             let _r = beltRadius, _w = beltWidth, _yOff = 0;
@@ -23055,39 +23305,23 @@ function loadAsteroidsForGalaxy(galaxyId) {
 
         for (let j = 0; j < asteroidCount; j++) {
             const geomIndex = Math.floor(Math.random() * 3);
-            const geometry = asteroidResources.geometries[geomIndex];
-            
             const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
-            const material = asteroidResources.materials[matIndex];
-            
-            const asteroid = new THREE.Mesh(geometry, material);
-            const scale = 3 + Math.random() * 6;
-            asteroid.scale.setScalar(scale);
-            asteroid.frustumCulled = false;
-            
+            const scale = (3 + Math.random() * 6) * _hyAstK();   // HYBRID: x SIZE_K
+
             const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
             const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
-            const ringHeight = (Math.random() - 0.5) * 200;
-            
-            asteroid.position.set(
-                Math.cos(ringAngle) * ringDistance,
-                ringHeight,
-                Math.sin(ringAngle) * ringDistance
-            );
-            
-            asteroid.rotation.set(
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2,
-                Math.random() * Math.PI * 2
-            );
-            
-            asteroid.userData = {
+            const ringHeight = (Math.random() - 0.5) * 200 * (_hyG ? _hyG.gs : 1);   // HYBRID: galaxy scale
+            if (!_hyAstRingFree(galaxyCenter, ringDistance, ringHeight, _hyH)) continue;   // HYBRID: its orbit crosses a hole's disc
+
+            const orbitSpeed = (0.0005 + Math.random() * 0.001) * _hyAstPace(_hyR0, beltRadius);   // HYBRID: see _hyAstPace
+            const rotationSpeed = (Math.random() - 0.5) * 0.015;
+            const userData = {
                 name: `${galaxyType.name} Asteroid ${j + 1}`,
                 type: 'asteroid',
                 health: 2,
                 maxHealth: 2,
-                orbitSpeed: 0.0005 + Math.random() * 0.001,
-                rotationSpeed: (Math.random() - 0.5) * 0.015,
+                orbitSpeed: orbitSpeed,
+                rotationSpeed: rotationSpeed,
                 beltCenter: galaxyCenter,
                 orbitRadius: ringDistance,
                 orbitPhase: ringAngle,
@@ -23096,9 +23330,13 @@ function loadAsteroidsForGalaxy(galaxyId) {
                 isDestructible: true,
                 beltGroup: beltGroup
             };
-            
-            beltGroup.add(asteroid);
-            planets.push(asteroid);
+
+            const proxy = _spawnAsteroidInstance({
+                geomIdx: geomIndex, matIdx: matIndex, beltGroup: beltGroup,
+                orbitRadius: ringDistance, orbitPhase: ringAngle, ringHeight: ringHeight,
+                orbitSpeed: orbitSpeed, rotSpeed: rotationSpeed, scale: scale, userData: userData
+            });
+            if (proxy) planets.push(proxy);
         }
         
         if (galaxyId === 7) {
@@ -23476,6 +23714,9 @@ function cleanupDistantAsteroids(currentGalaxyId) {
         if (distanceToPlayer > cleanupDistance) {
             // HYBRID: an instanced belt's rocks are scene children, not its own.
             if (belt.userData._hyRocks) _hyRockDropBelt(belt);
+            // HYBRID (asteroids: original): an instancer belt's rocks are
+            // proxies + instances, not children — free them with the belt.
+            if (window.asteroidInstancer && window.asteroidInstancer.dropBelt) window.asteroidInstancer.dropBelt(belt);
             // Remove all asteroids from the belt
             const asteroidCount = belt.children.length;
             
