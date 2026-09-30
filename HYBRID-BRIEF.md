@@ -4,6 +4,51 @@
 **This document governs the hybrid effort.** Where it disagrees with `CLAUDE.md`, `progress.html`
 or `SELF-IMPROVE.md`, this document wins.
 
+## RESUME HERE (saved 2026-09-30, paused by Ben)
+
+**State:** everything is committed and pushed. Latest build **20260927n** on
+`claude/star-explorer-hybrid`. All packages A–M merged. Guard 9/9 at 60 fps; real-input shooting
+4/4 for every asteroid kind; demo soak 0 deaths. Nothing is running.
+
+**Where the work lives**
+- Hybrid checkout: `~/InterstellarSlingshot/.claude/worktrees/hybrid` (a git worktree; the main
+  checkout `~/InterstellarSlingshot` is on `claude/slingshot-assist` and must stay there — it is
+  the reference for the working asteroids).
+- Comparison checkouts: `.claude/worktrees/main-baseline` (origin/main), `.claude/worktrees/nebula-path-fix`
+  (the star-explorer overhaul).
+
+**Restart in a new Terminal**
+```bash
+cd ~/InterstellarSlingshot/.claude/worktrees/hybrid
+sh scripts/serve-all.sh          # :8803 hybrid · :8804 slingshot-assist · :8801 main · :8802 overhaul
+open http://localhost:8803/
+```
+Then either resume the Claude Code session that built this (it was started from `~`):
+```bash
+cd ~ && claude --resume 11c47e80-cf27-4d2b-82a7-c734ae4d1be6
+```
+or start fresh in the hybrid worktree and say: "read HYBRID-BRIEF.md, RESUME HERE, and continue".
+Claude's memory index also points here (`star-explorer-branch.md`).
+
+**How a package is run** (one Opus agent per package, isolated worktree, precise brief):
+`scripts/hybrid-wave.workflow.js` is the saved Workflow script. Launch with the Workflow tool,
+`scriptPath` = that file, `args` = `{"base": "<commit sha>", "packages": ["<key>"]}`. The base
+MUST be a commit sha (never `HEAD`). Package keys: ui craft keepguard enemies fx-audio deepspace
+intro enemyflight sol vista blackholes asteroids asteroids-original demopilot. After it finishes:
+`git merge --no-edit hybrid/<key>`, run `npm run test:syntax`, `node scripts/fn-undef.mjs --new`,
+`node scripts/keep-check.mjs --root . --out .critic/keepcheck`, then `node scripts/bump-build.mjs
+YYYYMMDDx`, commit, push. Never SendMessage a running workflow agent (it forks a second copy).
+
+**Next up, in order**
+1. Enemy density near the player: 21 within 15,000 of the start vs ORIGINAL's 57 (Ben: "lots of
+   enemies"). Spawn placement moved out with the spacing rule.
+2. The guard's intermittent failure (~1 run in 7: slingshot/warp/steering fail together, warp never
+   engages, 0 errors). Cause unknown; may be a real occasional warp fault.
+3. Ben's pending decisions, listed under "Open questions for Ben" and "Open items" below.
+
+**Switches** (`?hy=key:value` on the URL, or `HYBRID.set()` in the console): see
+`js/hybrid-config.js`. Current defaults are Ben's choices as of 2026-09-27.
+
 ## What this is
 
 Two builds exist:
