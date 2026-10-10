@@ -2581,6 +2581,7 @@ const HY_BH = {
     GRID: false,          // the warped grid lines — off (Ben: "get rid of the grid lines")
     OUTER_RING: false,    // the big circle at 6.4 radii — off (Ben: "not necessary")
     SPARKS: 320,          // spark streaks per hole (only drawn when near)
+    SPARKS_ON: false,     // Ben, 2026-10-10: "spinning straight line segment shaped particles ... not needed"
     WELL_RADII: 16,       // gravity / warning / slingshot see the hole within this many radii
     ARRIVE_RADII: [9, 15] // black-hole warp lands this many radii out (plus the critical distance)
 };
@@ -2827,7 +2828,7 @@ function _hyBHTick(renderer, scene, camera) {
     lu.uTime.value = now; lu.uI.value = I; lu.uFace.value = Math.abs(V.n.dot(V.z));
 
     // sparks: thrown off the disc tangentially, more and longer as you close in
-    const on = I > 0.08;
+    const on = HY_BH.SPARKS_ON && I > 0.08;
     f.sparks.visible = on;
     if (on) {
         const st = f.sparkState, arr = f.sparks.geometry.attributes.position.array;

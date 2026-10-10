@@ -250,6 +250,7 @@ Each package lands on its own branch off the hybrid base and is merged by the in
 | 20260927k | Wave 5 — G scale and placement: one size ladder, one spacing rule (`solScale: big`; `HY_SCALE`, `HY_SOL`, `HY_LADDER`). Sol at (9919, 0, 21701); nebulae 28-60k out |
 | 20260927l | Wave 6 — G2 the opening view over Earth's limb (`OPENING_VISTA`, `openingVista`); L asteroids rebuilt and scaled (`HY_ROCKS`, `HY_ROAM`) |
 | 20260927m | Opening view OFF by default (Ben rejected it) |
+| 20261010a | Black holes: spark streaks off (`HY_BH.SPARKS_ON` false) — Ben: "spinning straight line segment shaped particles ... not needed"; everything else kept |
 | 20260927n | M — the original asteroids from `claude/slingshot-assist` (instancer 7269c47 + ORIGINAL builders for every kind; `HY_ASTEROIDS`); L's rebuild behind `asteroids: instanced`; CapsLock target cycling no longer throws |
 
 Shooting test, real input: `node scripts/rock-shoot.mjs --root . --out .critic/rock-shoot` →
