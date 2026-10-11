@@ -4236,6 +4236,7 @@ if (typeof window !== 'undefined') window.addStarCorona = addStarCorona;
 // star. Two detuned low-frequency sines (~14s and ~28s periods) summed,
 // with a per-star random phase so suns don't beat in sync.
 function updateStarCoronas() {
+    if (_hySunState.mesh) updateHySun();   // HYBRID: the local Sun (HY_SUN)
     if (!starCoronas.length) return;
     const t = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
     for (let i = 0; i < starCoronas.length; i++) {
@@ -4291,6 +4292,297 @@ function updateStarCoronas() {
     }
 }
 if (typeof window !== 'undefined') window.updateStarCoronas = updateStarCoronas;
+
+// =============================================================================
+// HYBRID — THE LOCAL SUN (package U). Ben, 2026-10-10: "The local sun needs to
+// look more like it is a bright burning star emitting light."
+// -----------------------------------------------------------------------------
+// The overhaul dressed Sol like every other star: the marbled photosphere
+// (dark starspots, ember limb) plus additive sprites and two BackSide shells,
+// all of it pushed through ACES at exposure 1.2 — so it read as an orange
+// marbled planet with a grey hoop and brown discs round it. Under
+// `solScale: big` (and HY_SUN.ON) Sol gets its own dressing instead:
+//   • PHOTOSPHERE: white-gold core → gold → orange limb (pow(mu) fall-off),
+//     faint bright-only granulation, no starspots. Unlit, not tone mapped.
+//   • CORONA + GLARE: ONE camera-facing quad at the Sun's centre (behind its
+//     disc, so planets in front still hide it). Measured per pixel by the
+//     ray's closest approach to the Sun (in Sun radii), so the corona hugs
+//     the real silhouette at any range: streamers, flame-tongue prominences
+//     at the limb, a slow flicker, a wide glare measured in ANGLE so the Sun
+//     reads from Neptune, and a thin horizontal anamorphic streak (retro).
+//     No DoubleSide/BackSide shells, so nothing washes the screen; the quad
+//     hides inside HY_SUN.HIDE_INSIDE_K radii anyway.
+//   • LIGHT: the PointLight's colour/intensity/range/decay read from here.
+// Tune live: edit window.HY_SUN.* — colours/strengths apply next frame.
+// Every Sun material carries toneMapped = false and log-depth chunks (the main
+// renderer runs logarithmicDepthBuffer).
+const HY_SUN = {
+    ON: true,                    // false = the overhaul's photosphere + corona sprites
+    CORE: 0xfffbea,              // white-hot disc centre
+    GOLD: 0xffc23a,              // mid-disc
+    LIMB: 0xff5a08,              // the limb falls off to this orange
+    LIMB_POW: 0.62,              // limb fall-off exponent on mu (lower = more white disc)
+    BRIGHT: 1.10,                // disc brightness (>1 clips the core to white)
+    GRAIN: 0.12,                 // granulation contrast, bright-only (0 = smooth)
+    CORONA: 0xff9a2e,            // corona / streamer colour
+    CORONA_HOT: 0xfff1c8,        // the bright inner rim right on the limb
+    CORONA_K: 2.6,               // how far streamers reach, Sun radii (quad covers 1.6 x this)
+    STREAMERS: 0.55,             // streamer contrast 0..1
+    PROM: 0xff4d10,              // prominence colour (hot red-orange)
+    PROM_I: 1.5,                 // prominence brightness
+    FLICKER: 0.07,               // corona brightness flicker amplitude
+    FLICKER_HZ: 0.55,            // flicker rate
+    GLARE: 0xffd38a,             // wide glare colour
+    GLARE_I: 0.55,               // glare strength
+    GLARE_ANG: 0.30,             // glare e-fold, radians beyond the limb (wide term; tight term is 0.18 x)
+    GLARE_SPAN: 0.95,            // quad reaches this many radians past the limb
+    GLARE_FAR_MIN: 0.75,         // glare/streak never weaker than this when the Sun is a dot
+    STREAK: 0xffe2a8,            // anamorphic streak colour
+    STREAK_I: 0.55,              // streak strength (0 = off)
+    STREAK_W: 0.0032,            // streak half-thickness (tangent-plane units ~ radians)
+    STREAK_L: 0.42,              // streak e-fold length
+    SPIN: 0.004,                 // corona rotation, rad/s
+    HIDE_INSIDE_K: 1.1,          // hide the corona quad when the camera is inside this many radii
+    LIGHT_COLOR: 0xfff3dc,       // sunlight colour
+    LIGHT_INTENSITY: 3.2,        // PointLight intensity
+    LIGHT_RANGE_K: 1.65,         // PointLight range = Sol's edge x this (linear fall-off to 0 there)
+    LIGHT_DECAY: 1.0,
+    AMBIENT: 0.02,               // Sol's own ambient (x 0x404040)
+};
+if (typeof window !== 'undefined') window.HY_SUN = HY_SUN;
+function _hySunOn() {
+    return HY_SUN.ON && (typeof window === 'undefined' || !window.HYBRID || HYBRID.is('solScale', 'big'));
+}
+
+const _HY_SUN_DISC_VERT = `
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+    varying vec3 vN;
+    varying vec3 vWP;
+    varying vec3 vOP;
+    void main() {
+        vOP = normalize(position);
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWP = wp.xyz;
+        vN = normalize(mat3(modelMatrix) * normal);
+        gl_Position = projectionMatrix * viewMatrix * wp;
+        #include <logdepthbuf_vertex>
+    }
+`;
+const _HY_SUN_DISC_FRAG = `
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    uniform vec3 uCore;
+    uniform vec3 uGold;
+    uniform vec3 uLimb;
+    uniform float uLimbPow;
+    uniform float uBright;
+    uniform float uGrain;
+    uniform float uTime;
+    varying vec3 vN;
+    varying vec3 vWP;
+    varying vec3 vOP;
+    void main() {
+        #include <logdepthbuf_fragment>
+        vec3 N = normalize(vN);
+        vec3 V = normalize(cameraPosition - vWP);
+        float mu = clamp(dot(N, V), 0.0, 1.0);
+        float m = pow(mu, uLimbPow);
+        vec3 col = mix(uLimb, uGold, smoothstep(0.0, 0.55, m));
+        col = mix(col, uCore, smoothstep(0.58, 1.0, m));
+        // bright-only churn in object space (no dark spots: a star, not a planet)
+        vec3 p = vOP * 9.0;
+        float t = uTime * 0.22;
+        float n = sin(p.x * 1.3 + sin(p.y * 1.7 + t)) * 0.5
+                + sin(p.y * 2.9 + sin(p.z * 2.3 - t * 0.8)) * 0.3
+                + sin(p.z * 5.7 + sin(p.x * 4.1 + t * 1.3)) * 0.2;
+        col *= 1.0 + uGrain * n * (0.35 + 0.65 * m);
+        gl_FragColor = vec4(col * uBright, 1.0);
+    }
+`;
+const _HY_SUN_GLOW_VERT = `
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+    uniform float uHalf;
+    varying vec3 vV;
+    varying vec3 vC;
+    void main() {
+        vec4 c = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+        vC = c.xyz;
+        vec4 mv = c + vec4(position.xy * uHalf, 0.0, 0.0);
+        vV = mv.xyz;
+        gl_Position = projectionMatrix * mv;
+        #include <logdepthbuf_vertex>
+    }
+`;
+const _HY_SUN_GLOW_FRAG = `
+    #include <common>
+    #include <logdepthbuf_pars_fragment>
+    uniform float uR;
+    uniform float uTime;
+    uniform float uFlick;
+    uniform float uStreamers;
+    uniform float uPromI;
+    uniform float uGlareI;
+    uniform float uGlareAng;
+    uniform float uStreakI;
+    uniform float uStreakW;
+    uniform float uStreakL;
+    uniform float uSpin;
+    uniform vec3 uCorona;
+    uniform vec3 uCoronaHot;
+    uniform vec3 uProm;
+    uniform vec3 uGlare;
+    uniform vec3 uStreak;
+    varying vec3 vV;
+    varying vec3 vC;
+    void main() {
+        #include <logdepthbuf_fragment>
+        vec3 f = normalize(vV);
+        float d = length(vC);
+        vec3 cd = vC / d;
+        float cosT = clamp(dot(f, cd), -1.0, 1.0);
+        float sinT = sqrt(max(0.0, 1.0 - cosT * cosT));
+        // ray's closest approach to the Sun, in Sun radii
+        float b = cosT > 0.0 ? d * sinT / uR : 1e4;
+        float h = max(b - 1.0, 0.0);
+        float th = acos(cosT);
+        float ths = asin(min(1.0, uR / d));
+        vec2 off = f.xy / max(1e-4, -f.z) - cd.xy / max(1e-4, -cd.z);
+        float a = atan(off.y, off.x) + uTime * uSpin;
+
+        // corona streamers
+        float s1 = sin(a * 5.0 + sin(a * 2.0 + uTime * 0.05) * 2.2 + uTime * 0.02);
+        float s2 = sin(a * 11.0 - uTime * 0.035 + sin(a * 3.0) * 1.5);
+        float s3 = sin(a * 23.0 + uTime * 0.06 + s1 * 1.4);
+        float str = clamp(0.5 + 0.30 * s1 + 0.15 * s2 + 0.08 * s3, 0.0, 1.0);
+        str *= str;
+        float reach = 0.30 + 0.85 * uStreamers * str;
+        float fall = exp(-h / reach);
+        float inner = exp(-h * 16.0);
+        vec3 col = uCorona * (fall * (0.35 + uStreamers * str) * 0.85) * uFlick
+                 + uCoronaHot * inner * 0.95 * uFlick;
+
+        // prominences: flame tongues standing on the limb
+        float pn = 0.5 + 0.5 * sin(a * 17.0 + sin(a * 4.0 + uTime * 0.11) * 3.0 + uTime * 0.04);
+        pn *= 0.5 + 0.5 * sin(a * 7.0 - uTime * 0.07 + 1.3);
+        float ph = 0.012 + 0.11 * pn * pn * pn;
+        float prom = (1.0 - smoothstep(ph * 0.3, ph, h)) * smoothstep(0.10, 0.40, pn);
+        col += uProm * prom * uPromI;
+
+        // wide glare, measured in angle past the limb, so it reads at any range
+        float dth = max(th - ths, 0.0);
+        col += uGlare * uGlareI * (0.62 * exp(-dth / (uGlareAng * 0.18)) + 0.38 * exp(-dth / uGlareAng));
+
+        // anamorphic streak (screen-horizontal, thin: the retro-vector flare)
+        col += uStreak * uStreakI * exp(-abs(off.y) / uStreakW) * exp(-abs(off.x) / uStreakL);
+
+        if (max(col.r, max(col.g, col.b)) < 0.002) discard;
+        gl_FragColor = vec4(col, 1.0);
+    }
+`;
+
+const _hySunState = { mesh: null, disc: null, glow: null, quad: null, light: null, t: 0, last: 0 };
+
+// Swap Sol's dressing for HY_SUN's. Called from the Sun builder in place of
+// addStarCorona(); returns false (caller falls back) when off.
+function _hyDressSun(sun, radius, light) {
+    if (!sun || typeof THREE === 'undefined' || !_hySunOn()) return false;
+    const C = (h) => new THREE.Color(h);
+    const disc = new THREE.ShaderMaterial({
+        uniforms: {
+            uCore: { value: C(HY_SUN.CORE) }, uGold: { value: C(HY_SUN.GOLD) }, uLimb: { value: C(HY_SUN.LIMB) },
+            uLimbPow: { value: HY_SUN.LIMB_POW }, uBright: { value: HY_SUN.BRIGHT },
+            uGrain: { value: HY_SUN.GRAIN }, uTime: { value: 0 }
+        },
+        vertexShader: _HY_SUN_DISC_VERT,
+        fragmentShader: _HY_SUN_DISC_FRAG,
+        depthWrite: true,
+        fog: false
+    });
+    disc.toneMapped = false;
+    // Back-compat: lens-flare tint and other readers use star.material.color.
+    disc.color = C(HY_SUN.CORE).lerp(C(HY_SUN.GOLD), 0.5);
+    if (sun.material && sun.material.dispose) sun.material.dispose();
+    sun.material = disc;
+    // A smooth limb up close (64 x 48 facets show at 1.3 R). Same radius, so
+    // collision / slingshot ranges (geometry.parameters.radius) are unchanged.
+    if (sun.geometry && sun.geometry.parameters && sun.geometry.parameters.widthSegments < 128) {
+        const g0 = sun.geometry;
+        sun.geometry = new THREE.SphereGeometry(g0.parameters.radius, 128, 96);
+        g0.dispose();
+    }
+
+    const glow = new THREE.ShaderMaterial({
+        uniforms: {
+            uHalf: { value: radius * HY_SUN.CORONA_K * 1.6 }, uR: { value: radius },
+            uTime: { value: 0 }, uFlick: { value: 1 }, uStreamers: { value: HY_SUN.STREAMERS },
+            uPromI: { value: HY_SUN.PROM_I }, uGlareI: { value: HY_SUN.GLARE_I }, uGlareAng: { value: HY_SUN.GLARE_ANG },
+            uStreakI: { value: HY_SUN.STREAK_I }, uStreakW: { value: HY_SUN.STREAK_W }, uStreakL: { value: HY_SUN.STREAK_L },
+            uSpin: { value: HY_SUN.SPIN },
+            uCorona: { value: C(HY_SUN.CORONA) }, uCoronaHot: { value: C(HY_SUN.CORONA_HOT) },
+            uProm: { value: C(HY_SUN.PROM) }, uGlare: { value: C(HY_SUN.GLARE) }, uStreak: { value: C(HY_SUN.STREAK) }
+        },
+        vertexShader: _HY_SUN_GLOW_VERT,
+        fragmentShader: _HY_SUN_GLOW_FRAG,
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        depthTest: true,
+        fog: false
+    });
+    glow.toneMapped = false;
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), glow);
+    quad.name = 'hySunCorona';
+    quad.frustumCulled = false;
+    quad.renderOrder = 65;
+    quad.userData.__dbTris = Infinity;     // exempt from the draw budget (2 triangles)
+    sun.add(quad);
+
+    if (light) {
+        light.color.setHex(HY_SUN.LIGHT_COLOR);
+        light.intensity = HY_SUN.LIGHT_INTENSITY;
+        light.distance = Math.max(25000, Math.round((typeof _hySolEdge === 'function' ? _hySolEdge() : 15183) * HY_SUN.LIGHT_RANGE_K));
+        light.decay = HY_SUN.LIGHT_DECAY;
+    }
+    sun.userData._hySun = true;
+    _hySunState.mesh = sun; _hySunState.disc = disc; _hySunState.glow = glow;
+    _hySunState.quad = quad; _hySunState.light = light || null;
+    return true;
+}
+
+const _hySunV = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Per frame (from updateStarCoronas): time, flicker, quad size, hide-inside.
+function updateHySun(dtOverride) {
+    const s = _hySunState;
+    if (!s.mesh || !s.glow || typeof camera === 'undefined' || !camera) return;
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.001;
+    const dt = (typeof dtOverride === 'number') ? dtOverride : (s.last ? Math.min(0.1, now - s.last) : 0.016);
+    s.last = now; s.t += dt;
+    const sun = s.mesh;
+    sun.getWorldPosition(_hySunV);
+    const R = (sun.geometry && sun.geometry.parameters ? sun.geometry.parameters.radius : 650) * (sun.scale ? sun.scale.x : 1);
+    const d = camera.position.distanceTo(_hySunV);
+    s.quad.visible = d > R * HY_SUN.HIDE_INSIDE_K;
+    const u = s.glow.uniforms, du = s.disc.uniforms;
+    u.uTime.value = s.t; du.uTime.value = s.t;
+    const w = 2 * Math.PI * HY_SUN.FLICKER_HZ;
+    const fl = Math.sin(s.t * w) * 0.5 + Math.sin(s.t * w * 2.37 + 1.1) * 0.3 + Math.sin(s.t * w * 0.41 + 2.3) * 0.2;
+    u.uFlick.value = 1 + HY_SUN.FLICKER * fl;
+    const ths = Math.asin(Math.min(1, R / Math.max(d, R)));
+    u.uR.value = R;
+    u.uHalf.value = Math.max(R * HY_SUN.CORONA_K * 1.6, d * Math.tan(Math.min(1.45, ths + HY_SUN.GLARE_SPAN)));
+    // A dot-sized Sun keeps a strong glare (reads from across the system);
+    // a disc filling the view keeps its full glare too — it is the brightest thing there.
+    const far = Math.max(HY_SUN.GLARE_FAR_MIN, Math.min(1, Math.sqrt(ths / 0.12)));
+    u.uGlareI.value = HY_SUN.GLARE_I * far;
+    u.uStreakI.value = HY_SUN.STREAK_I * far;
+    // live tuning from window.HY_SUN
+    u.uStreamers.value = HY_SUN.STREAMERS; u.uPromI.value = HY_SUN.PROM_I; u.uGlareAng.value = HY_SUN.GLARE_ANG;
+    u.uStreakW.value = HY_SUN.STREAK_W; u.uStreakL.value = HY_SUN.STREAK_L; u.uSpin.value = HY_SUN.SPIN;
+    du.uLimbPow.value = HY_SUN.LIMB_POW; du.uBright.value = HY_SUN.BRIGHT; du.uGrain.value = HY_SUN.GRAIN;
+}
+if (typeof window !== 'undefined') { window.updateHySun = updateHySun; window._hySunState = _hySunState; }
 
 // =============================================================================
 // EARTH ENHANCEMENT — procedural surface + cloud shell + atmosphere rim
@@ -8198,8 +8490,14 @@ function _hyLadderSystems(tag) {
         });
         _hyMeasureSystem(g);
         // a system light reaches the new edge
+        // HYBRID (package U): ... and no further than Sol's own rule (edge x
+        // HY_SUN.LIGHT_RANGE_K). Scaling the authored reach by edge/oldEdge
+        // (x22 for the gateway's Dune stars: 3,000 -> 66-79k) let six foreign
+        // stars 43-69k away light Sol's night sides as brightly as the Sun.
         lights.forEach(function (l) {
-            if (l.distance > 0 && l.position.distanceTo(g.center) < 2 && oldEdge > 0) l.distance *= Math.max(1, g.edge / oldEdge);
+            if (l.distance > 0 && l.position.distanceTo(g.center) < 2 && oldEdge > 0) {
+                l.distance = Math.max(l.distance, Math.min(l.distance * g.edge / oldEdge, g.edge * HY_SUN.LIGHT_RANGE_K));
+            }
         });
     });
     console.log('HYBRID scale: ladder re-sized ' + bodies + ' bodies in ' + todo.length + ' systems (' + tag + ')');
@@ -8625,7 +8923,7 @@ function createOptimizedPlanets3D() {
 
         // Local ambient almost zero — vacuum doesn't scatter, so the
         // terminator should be a hard knife-edge between lit and black.
-        const localAmbientLight = new THREE.AmbientLight(0x404040, 0.02);
+        const localAmbientLight = new THREE.AmbientLight(0x404040, _hySunOn() ? HY_SUN.AMBIENT : 0.02);
         if (scene && scene.add) {
             scene.add(localAmbientLight);
         }
@@ -8652,7 +8950,9 @@ function createOptimizedPlanets3D() {
         // Wispy white-hot corona + bright rim + slow alive pulse.
         // Replaces the old tiny 12-unit inner glow sphere which read as
         // a flat dim yellow halo and didn't sell "star".
-        if (typeof addStarCorona === 'function') {
+        // HYBRID (package U): Sol burns with its own dressing (HY_SUN); the
+        // overhaul's photosphere + corona sprites are the fallback.
+        if (!_hyDressSun(sun, _sunR, sunLight) && typeof addStarCorona === 'function') {
             addStarCorona(sun, _sunR, 0xff8833);
         }
 

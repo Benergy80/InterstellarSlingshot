@@ -1342,7 +1342,10 @@ function _updateWhipCharge(fc) {
 
     _whipCharge.shell.position.copy(p);
     _whipCharge.shell.scale.setScalar(1 + B * 0.85 + L * 0.08);
-    _whipCharge.shellMat.opacity = Math.min(0.72, L * 0.38 + B * 0.5);
+    // HYBRID (package U): the local Sun burns its own corona (HY_SUN); a flat
+    // additive BackSide shell over it read as a hard grey disc — the halo and
+    // capture ring still carry the slingshot cue.
+    _whipCharge.shellMat.opacity = (target.userData && target.userData._hySun) ? 0 : Math.min(0.72, L * 0.38 + B * 0.5);
 
     _whipCharge.halo.position.copy(p);
     _whipCharge.halo.scale.setScalar(r * (3.0 + L * 3.8 + B * 3.4));
