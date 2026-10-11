@@ -934,7 +934,12 @@ const galaxyEnemyLimits = {
 // nearer a galaxy core than this many core radii (the disc reaches 5.6, the
 // aurora ring 6.4 — HY_BH). Package R (enemies2) owns the thorough version.
 const HY_ENEMIES = {
-    COUNT_K: 2.0, KEEPOUT_RADII: 6.6, KEEPOUT_SPREAD: 1500,
+    // Ben, 2026-10-11: "black hole enemies need to be a little further from the
+    // black hole centers they are too close so cannot be fought without being
+    // pulled in" — every core ring below moved out ~1.6x (keep-out 6.6 → 10.5,
+    // core ring 6.9-9.5 → 11-15, Vulcans 6.9-9 → 11-14.5, boss 7.2-8.6 → 11.5-13.5,
+    // guardians 7 → 11 radii). Measured pull: see .critic/probe-bhpull.js.
+    COUNT_K: 2.0, KEEPOUT_RADII: 10.5, KEEPOUT_SPREAD: 1500,
     // Sol (galaxy 7): this share of its enemies spawns AROUND SOL'S PLANETS
     // (the Martian pirates of Ben's campaign) instead of anywhere in the
     // scaled region — measured, 83 Sol enemies left only 21 within 15k of the start.
@@ -948,7 +953,7 @@ const HY_ENEMIES = {
     // Every spawn also keeps out of planets and stars (BODY_KEEPOUT_K x R + PAD).
     BODY_KEEPOUT_K: 2.0, BODY_KEEPOUT_PAD: 250,
     CORE_GUARD: 9,                 // per faction galaxy: ships on the core ring (ORIGINAL forced 15 there)
-    CORE_RING: [6.9, 9.5],         // the core ring, in core radii (disc 5.6, aurora 6.4)
+    CORE_RING: [11, 15],           // the core ring, in core radii (disc 5.6, aurora 6.4; was 6.9-9.5)
     SYS_RING_K: [2.4, 4.5],        // a system patrol sits this many star radii out...
     SYS_LIFT: [1400, 2600],        // ...this far above/below the orbit plane (clear of the orbiting planets)
     SYS_SOL_CLEAR: 8000,           // a faction system within Sol's edge + this is not used
@@ -961,11 +966,11 @@ const HY_ENEMIES = {
     SOL_START_AHEAD: [2600, 3300], // u ahead of the start point
     SOL_PLANET_RING: [1.9, 3.2],   // planet radii (+200) a planet patrol circles at
     STATION_SPIN: 0.45,            // u/frame a station circles its host (0 for 'start')
-    VULCAN_RING: [6.9, 9.0],       // Sgr A* radii — the Vulcan patrol (ORIGINAL: 700-1500 u, inside today's radius-900 hole)
-    BOSS_RING: [7.2, 8.6],         // core radii — where a faction's boss appears (on the player's side)
+    VULCAN_RING: [11, 14.5],       // Sgr A* radii — the Vulcan patrol (was 6.9-9; ORIGINAL: 700-1500 u, inside today's radius-900 hole)
+    BOSS_RING: [11.5, 13.5],       // core radii — where a faction's boss appears (on the player's side; was 7.2-8.6)
     BOSS_BODY_K: 3.0,              // a boss never appears nearer a planet/star than this many radii
     PIRATE_BOSS_SUN_K: 4.2,        // the pirate flagship: Sun radii out, on the player's side
-    GUARD_RING: 7.0, GUARD_PAD: 500,   // guardians: core radii + pad (O's default was CLEAR_RADII 6 x R + 600)
+    GUARD_RING: 11.0, GUARD_PAD: 500,  // guardians: core radii + pad (was 7; O's default was CLEAR_RADII 6 x R + 600)
     GUARD_SCALE: 1.6, GUARD_HEALTH_K: 2.5,
     GUARD_ROLES: ['warden', 'ram', 'volley'],
     GUARD_ESCORT: 3,               // escorts with the first guardian only (a boss brings 7)
@@ -22247,8 +22252,14 @@ function loadGuardiansForGalaxy(galaxyId, opts) {
                          (galaxyType.name === 'Quasar' ? 8 :
                          galaxyType.name === 'Dwarf' ? 3 : 5);
     
-    // Guardian ring distance from black hole
-    const guardianOrbitRadius = blackHole.userData.warpThreshold + 100;
+    // Guardian ring distance from black hole.
+    // HYBRID — Ben, 2026-10-11: warpThreshold + 100 is an ORIGINAL-size distance
+    // (120-640 u); on today's 900 u cores it put these guardians INSIDE the
+    // hole ("black hole enemies ... cannot be fought without being pulled in").
+    // Ring them like the campaign's guardians: GUARD_RING core radii + pad.
+    const guardianOrbitRadius = Math.max(blackHole.userData.warpThreshold + 100,
+        (typeof _hyHoleR === 'function' && typeof HY_ENEMIES !== 'undefined')
+            ? _hyHoleR(blackHole) * HY_ENEMIES.GUARD_RING + HY_ENEMIES.GUARD_PAD : 0);
     
     console.log(`🛡️ Spawning ${guardianCount} guardians for galaxy ${galaxyId} (${galaxyType.name})`);
     

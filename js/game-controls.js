@@ -3929,7 +3929,13 @@ function _getBlackHoleAvoidList() {
             const p = planets[i];
             if (!p || !p.userData || p.userData.type !== 'blackhole' || !p.position) continue;
             const radius = (p.geometry && p.geometry.parameters && p.geometry.parameters.radius) || 50;
-            _bhCache.push({ pos: p.position, keepOut: Math.max(radius * 2.5, 50) + 600 });
+            // HYBRID — Ben, 2026-10-11: "black hole enemies ... too close so cannot
+            // be fought without being pulled in." The flight keep-out was 2.5 R + 600
+            // (3.2 R on a 900 u core — INSIDE the 2.7 R event-horizon warning), so a
+            // chase followed a diving enemy into the pull. Now 3/4 of the spawn
+            // keep-out (HY_ENEMIES.KEEPOUT_RADII 10.5 → ~7.9 R), never less than before.
+            const _hyK = (typeof HY_ENEMIES !== 'undefined' && HY_ENEMIES && HY_ENEMIES.KEEPOUT_RADII) ? HY_ENEMIES.KEEPOUT_RADII * 0.75 : 0;
+            _bhCache.push({ pos: p.position, keepOut: Math.max(radius * 2.5 + 600, radius * _hyK, 650) });
         }
     }
     _bhCacheStamp = now;
