@@ -6425,7 +6425,10 @@ function checkForNebulaDeepDiscovery() {
                 playDeepDiscoverySound();
 
                 // Recruit a new wingman from this nebula (Greek-named)
-                if (typeof recruitNebulaWingman === 'function') {
+                // HYBRID campaign (Ben, 2026-10-11): the recruit is already at the
+                // nebula fighting its raiders and joins once they are cleared
+                // (progression.js guardTick) — no free recruit on discovery.
+                if (typeof recruitNebulaWingman === 'function' && !(window.HYBRID && window.HYBRID.is('progression', 'campaign'))) {
                     setTimeout(() => recruitNebulaWingman(nebulaName), 1500);
                 }
 
@@ -6478,7 +6481,10 @@ function checkForNebulaDeepDiscovery() {
                 playDeepDiscoverySound();
 
                 // Recruit a new wingman from this nebula
-                if (typeof recruitNebulaWingman === 'function') {
+                // HYBRID campaign (Ben, 2026-10-11): the recruit is already at the
+                // nebula fighting its raiders and joins once they are cleared
+                // (progression.js guardTick) — no free recruit on discovery.
+                if (typeof recruitNebulaWingman === 'function' && !(window.HYBRID && window.HYBRID.is('progression', 'campaign'))) {
                     setTimeout(() => recruitNebulaWingman(nebulaName), 1500);
                 }
 
@@ -6525,7 +6531,10 @@ function checkForNebulaDeepDiscovery() {
                 playDeepDiscoverySound();
 
                 // Recruit a new wingman from this nebula (Greek-named)
-                if (typeof recruitNebulaWingman === 'function') {
+                // HYBRID campaign (Ben, 2026-10-11): the recruit is already at the
+                // nebula fighting its raiders and joins once they are cleared
+                // (progression.js guardTick) — no free recruit on discovery.
+                if (typeof recruitNebulaWingman === 'function' && !(window.HYBRID && window.HYBRID.is('progression', 'campaign'))) {
                     setTimeout(() => recruitNebulaWingman(nebulaName), 1500);
                 }
 

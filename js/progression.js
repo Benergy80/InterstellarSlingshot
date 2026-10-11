@@ -570,19 +570,33 @@
             case 'NEBULA_VISIT': {
                 if (!C._target || eligibleNebulae().indexOf(C._target) === -1) { C._target = pickTargetNebula(); if (C._target) setGuide(function () { return C._target ? C._target.position.clone() : null; }, 0xffffff, nebulaName(C._target)); }
                 if (!C.nebula) {
-                    const v = detectVisit();
+                    let v = detectVisit();
+                    // Proximity counts as a visit too (the discovery system has its
+                    // own gates): inside 0.6 x the target cloud's size for 2 s.
+                    if (!v && C._target && C._target.position) {
+                        const dT = c.position.distanceTo(C._target.position), szT = (C._target.userData && C._target.userData.size) || 2000;
+                        if (dT < szT * 0.6) { if (!C._nearTargetAt) C._nearTargetAt = now(); else if (now() - C._nearTargetAt > 2000) { const gT = nebulaGalaxy(C._target); if (gT >= 0 && gT < GALAXIES && !C.cleared[gT] && C.usedNebulae.indexOf(C._target) === -1) v = { nebula: C._target, g: gT, revisit: false }; } }
+                        else C._nearTargetAt = 0;
+                    }
                     if (v) {
                         C.nebula = v.nebula; C.nebulaGalaxy = v.g; C.visitAt = now(); C.nebulaName = nebulaName(v.nebula);
                         const allies = ie('allyShips'); C.alliesAtVisit = allies ? allies.length : 0;
-                        if (v.revisit && typeof recruitNebulaWingman === 'function') { try { recruitNebulaWingman(C.nebulaName); } catch (e) {} }
+                        if (v.revisit && !guardOf(v.nebula) && typeof recruitNebulaWingman === 'function') { try { recruitNebulaWingman(C.nebulaName); } catch (e) {} }
                         clearGuide();
                     }
                 } else {
-                    // the discovery recruits its wingman ~1.5 s later: wait for it (max 6 s)
-                    const allies = ie('allyShips');
-                    if ((allies && allies.length > C.alliesAtVisit) || now() - C.visitAt > 6000) {
-                        C.wingmanJoined = !!(allies && allies.length > C.alliesAtVisit);
-                        next();
+                    const G = guardOf(C.nebula);
+                    if (G && !G.none) {
+                        // Ben, 2026-10-11: the raiders must be cleared first; the
+                        // recruit joins then, and only then does the mission line open.
+                        if (G.cleared) { C.wingmanJoined = !!G.defender; next(); }
+                    } else {
+                        // no guards here (a nebula without worlds): the old rule
+                        const allies = ie('allyShips');
+                        if ((allies && allies.length > C.alliesAtVisit) || now() - C.visitAt > 6000) {
+                            C.wingmanJoined = !!(allies && allies.length > C.alliesAtVisit);
+                            next();
+                        }
                     }
                 }
                 break;
@@ -600,6 +614,72 @@
         if (typeof spawnBossForArea !== 'function' || !pos) return;
         const bs = ie('bossSystem'); if (bs) { bs.speciesBossSpawned = bs.speciesBossSpawned || {}; bs.speciesBossSpawned[key] = true; }
         try { spawnBossForArea(7, key + '_boss', areaKey, new THREE.Vector3(pos.x, pos.y, pos.z), { modelGalaxyId: modelG, factionLabel: label }); } catch (e) {}
+    }
+    // ── NEBULA GUARDS ───────────────────────────────────────────────────────
+    // Ben, 2026-10-11: "lets put pirates in each of the nebula systems that
+    // are harassing the locals when you arrive so you have to clear them as
+    // well. the wingman you acquire should be there already fighting the
+    // pirates when you arrive and he joins you once you eliminate the pirates.
+    // there should only be about 5 pirates per nebula." / "the nebula mission
+    // path of discovery opens up once the enemies are defeated as well."
+    // On first arrival (within ARRIVE_K x the cloud's size) a nebula spawns
+    // COUNT raiders of its lore faction beside its biggest world and the
+    // nebula's recruit as a PENDING wingman fighting them. When the raiders
+    // are dead the recruit joins; NEBULA_VISIT then completes and
+    // NEBULA_MISSION draws the line from this nebula to the faction's host.
+    const NEB_GUARD = { COUNT: 6, ARRIVE_K: 2.2 };   // asks for 6, spawns ~5 (the keep-out drops a slot or two)
+    const _guards = {};
+    function hyR(p) { return (typeof _hyBodyR === 'function') ? _hyBodyR(p) : ((p.userData && p.userData.radius) || 100); }
+    function nebWorlds(n) {
+        const P = ie('planets') || [], size = (n.userData && n.userData.size) || 2000, out = [];
+        for (let i = 0; i < P.length; i++) { const p = P[i]; if (p && p.userData && p.userData.type === 'planet' && !p.isAsteroidProxy && !p.userData.isLocal && p.position && p.position.distanceTo(n.position) < size * 1.6) out.push(p); }
+        out.sort(function (a, b) { return hyR(b) - hyR(a); });
+        return out;
+    }
+    function guardOf(n) { return (n && _guards[nebulaName(n)]) || null; }
+    function guardTick() {
+        const c = cam(); if (!c || isDemo()) return;   // the demo keeps its own showcase
+        const NC = ie('nebulaClouds') || [];
+        for (let i = 0; i < NC.length; i++) {
+            const n = NC[i]; if (!n || !n.userData || !n.position) continue;
+            const name = nebulaName(n), size = n.userData.size || 2000;
+            let G = _guards[name];
+            if (!G) {
+                if (c.position.distanceTo(n.position) > size * NEB_GUARD.ARRIVE_K) continue;
+                const worlds = nebWorlds(n);
+                if (!worlds.length) { _guards[name] = { nebula: n, pirates: [], defender: null, cleared: true, none: true }; continue; }
+                const g = nebulaGalaxy(n), GT = ie('galaxyTypes');
+                const faction = (g >= 0 && GT && GT[g]) ? GT[g].faction : 'Hostile';
+                const host = worlds[0];
+                let pirates = [];
+                try { pirates = (typeof window.spawnMissionHost === 'function') ? (window.spawnMissionHost('planet', host.position, faction, NEB_GUARD.COUNT) || []) : []; } catch (e) { pirates = []; }
+                pirates.forEach(function (e, k) { if (e && e.userData) { e.userData.isNebulaPirate = true; e.userData.nebulaName = name; e.userData.name = faction + ' Raider ' + (k + 1); } });
+                let defender = null;
+                try {
+                    const R = hyR(host), pos = host.position.clone().add(new THREE.Vector3(R * 2.4, R * 0.6, R * 1.2));
+                    defender = (typeof recruitNebulaWingman === 'function') ? recruitNebulaWingman(name, pos, { pending: true }) : null;
+                } catch (e) { defender = null; }
+                G = _guards[name] = { nebula: n, pirates: pirates, defender: defender, cleared: pirates.length === 0, spawnedAt: now() };
+                if (pirates.length) {
+                    say('Mission Control - ' + name, faction + ' raiders are harassing the harbour of ' + name +
+                        (defender ? ' — a local pilot, ' + defender.userData.name + ', is holding them off alone. Clear the raiders and they will fly with you.' : '. Clear them, Captain.'));
+                    if (defender && typeof showIncomingTransmission === 'function') {
+                        setTimeout(function () { showIncomingTransmission(defender.userData.name + ' (Comms)', 'Raiders on the harbour — could use a hand out here, Captain!', 'wingman'); }, 3000);
+                    }
+                }
+                continue;
+            }
+            if (G.cleared) continue;
+            if (G.pirates.filter(isAlive).length) continue;
+            G.cleared = true; G.clearedAt = now();
+            const d = G.defender;
+            if (d && d.userData) {
+                d.userData.recruitPending = false; d.userData.aiState = 'patrol'; d.userData.patrolTarget = null;
+                if (typeof showIncomingTransmission === 'function') showIncomingTransmission(d.userData.name + ' (' + (d.userData.roleLabel || 'Wingman') + ') has joined', 'Harbour is clear — ' + name + ' owes you one. Falling in on your wing, Captain.', 'wingman');
+                if (typeof flashEventText === 'function') flashEventText('WINGMAN ACQUIRED', '#66ffcc', d.userData.name + ' · ' + (d.userData.roleLabel || ''));
+                if (typeof playSound === 'function') try { playSound('achievement', 880, 0.4); } catch (e) {}
+            }
+        }
     }
     function detectVisit() {
         const NC = ie('nebulaClouds') || [], c = cam();
@@ -766,6 +846,7 @@
         flowGuide(dtF);
         if ((_frame++ % 15) === 0) {
             try { checkPhase(); } catch (e) { console.warn('campaign tick', e); }
+            try { if (!window.__hyGuardTick || (window.__hyGuardTick = (window.__hyGuardTick + 1) % 20) === 0) guardTick(); } catch (e) { console.warn('nebula guards', e); }
             try { guideTick(false); } catch (e) { /* guide optional */ }
             if (C.idx < P.VICTORY) g.galaxiesCleared = C.clearedOrder.length;
             pumpComms();

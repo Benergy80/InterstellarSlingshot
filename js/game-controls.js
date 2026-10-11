@@ -17307,10 +17307,14 @@ const NEBULA_WINGMAN_ROSTER = [
     { name: 'Wingman Iota',    colorStr: '#88ff88', colorNum: 0x88ff88 },
     { name: 'Wingman Kappa',   colorStr: '#ff6699', colorNum: 0xff6699 }
 ];
-let _nextNebulaWingmanIdx = 0;
+let _nextNebulaWingmanIdx = 1;   // roster[0] is "Wingman Gamma", already one of the three starting wingmen (Ben saw two Gammas)
 
-function recruitNebulaWingman(nebulaName, spawnPos) {
+function recruitNebulaWingman(nebulaName, spawnPos, opts) {
     if (typeof THREE === 'undefined' || typeof scene === 'undefined' || typeof camera === 'undefined') return null;
+    // HYBRID (Ben, 2026-10-11): opts.pending = the recruit is spawned at the
+    // nebula already fighting its raiders; no hail, holds its post
+    // (recruitPending) until progression.js releases it.
+    const _pending = !!(opts && opts.pending);
     if (_nextNebulaWingmanIdx >= NEBULA_WINGMAN_ROSTER.length) return null; // roster exhausted
 
     const recruit = NEBULA_WINGMAN_ROSTER[_nextNebulaWingmanIdx++];
@@ -17389,7 +17393,9 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
         missilesMax: profile.missilesMax,
         lastMissile: 0,
         missileCooldownMs: profile.missileCooldownMs,
-        aiState: 'patrol',
+        aiState: _pending ? 'stranded' : 'patrol',
+        recruitPending: _pending,
+        roleLabel: profile.label,
         patrolTarget: null,
         patrolArriveTime: 0,
         patrolDwellMs: profile.patrolDwellMs,
@@ -17403,17 +17409,17 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
 
     // Hail the player — include the recruit's role so the squad composition
     // is visible at a glance (Aggressor/Defender/Sniper/Scout)
-    if (typeof showIncomingTransmission === 'function') {   // HYBRID: bottom comms channel, squad blue
+    if (!_pending && typeof showIncomingTransmission === 'function') {   // HYBRID: bottom comms channel, squad blue
         showIncomingTransmission(
             recruit.name + ' (' + profile.label + ') has joined',
             'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron, Captain.',
             'wingman');
     }
-    if (typeof flashEventText === 'function') {
+    if (!_pending && typeof flashEventText === 'function') {
         flashEventText('WINGMAN ACQUIRED', '#66ffcc',
             recruit.name + ' · ' + profile.label);
     }
-    if (typeof playSound === 'function') {
+    if (!_pending && typeof playSound === 'function') {
         playSound('achievement', 880, 0.4);
     }
     console.log('🛡️ Recruited ' + recruit.name + ' from ' + (nebulaName || 'nebula'));
@@ -17477,7 +17483,7 @@ function _scanForEnemy(ally) {
             const e = enemies[i];
             if (!e || !e.userData || e.userData.health <= 0) continue;
             const d = ally.position.distanceTo(e.position);
-            if (d < range || (_pp && e.position.distanceTo(_pp) < WINGMAN_JOIN_FIGHT_RANGE)) candidates.push({ ent: e, d });
+            if (d < range || (_pp && !ud.recruitPending && e.position.distanceTo(_pp) < WINGMAN_JOIN_FIGHT_RANGE)) candidates.push({ ent: e, d });
         }
     }
     if (typeof outerInterstellarSystems !== 'undefined') {
@@ -17578,7 +17584,7 @@ function updateAllyShips() {
         // hyperjump near the player rather than stranding them. Keeps the
         // squad together when emergency warp covers tens of thousands of
         // units of interstellar space.
-        if (!playerWarping && ud._wasWarping && distToPlayer > 1500) {   // HYBRID: any state, not only 'follow'
+        if (!playerWarping && ud._wasWarping && distToPlayer > 1500 && !ud.recruitPending) {   // HYBRID: any state, not only 'follow'; never a pending recruit
             _ftlAnchorWingman(ally, playerPos);
             ud._wasWarping = false;
         }
@@ -17625,7 +17631,7 @@ function updateAllyShips() {
         const _burst = !!((gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
                           (gameState.slingshot && gameState.slingshot.active) ||
                           (gameState.blackHoleWarp && gameState.blackHoleWarp.active));
-        if (playerWarping && (ud.aiState !== 'engage' || _burst)) {
+        if (playerWarping && !ud.recruitPending && (ud.aiState !== 'engage' || _burst)) {   // a pending recruit holds its post
             if (_burst && !ud._warpAnchored && distToPlayer > 1500) {
                 _ftlAnchorWingman(ally, playerPos);
                 ud._warpAnchored = true;
@@ -17645,7 +17651,7 @@ function updateAllyShips() {
                 ud.engageTarget = threat;
                 // (the 'engage' line fires on the first SHOT, in _executeEngage —
                 // a contact on the scope is not "moving in")
-            } else if (distToPlayer > 4000) {
+            } else if (ud.recruitPending || distToPlayer > 4000) {
                 // Separated by >4000u — stranded, orbit local planets here
                 ud.aiState = 'stranded';
                 _wingmanTacticalMessage(ud, 'stranded');
@@ -17677,7 +17683,8 @@ function updateAllyShips() {
             }
         } else if (ud.aiState === 'stranded') {
             // Reunion: player came back close enough — resume swarming
-            if (distToPlayer < 1000) {
+            // (a pending recruit holds its post until progression releases it)
+            if (distToPlayer < 1000 && !ud.recruitPending) {
                 ud.aiState = 'patrol';
                 ud.patrolTarget = null;
                 _wingmanTacticalMessage(ud, 'tether');
