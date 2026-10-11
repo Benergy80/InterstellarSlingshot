@@ -432,6 +432,55 @@ function _psMark(name) {
 }
 if (typeof window !== 'undefined') window.__perfSplit = __perfSplit;
 
+// PERF CONSTANTS (package AF smoothfps).
+//   ENEMY_SUBPX_R — an enemy ship whose whole silhouette (hull + glow shells +
+//   exhaust cones + shield, bounding sphere) projects to less than this many
+//   PIXELS of radius is left out of the draw, for that render only. Enemies
+//   were never range-culled (ORIGINAL drew all ~540 too), so at the start ~140
+//   of them sat 20-75k away at 0.01-0.3 px and cost ~950 of ~2,250 draw calls
+//   — every one of them a Mesh (no fixed-size sprite), i.e. no pixel at all.
+//   Gameplay never sees it: .visible is restored right after the render, so
+//   targeting, radar, AI and every `enemy.visible` check read what they did.
+//   Same-frame A/B (cull off vs on, demo at 6/25/45/70/90 s): 0, 0, 1, 0, 0
+//   pixels differ (the one at 18/255), draw calls -30..-52%. At 0.3 px it was
+//   2 pixels at 57/255 in one frame — 0.15 is the invisible setting.
+const HY_PERF = { ENEMY_SUBPX_R: 0.15, SUBPX_ON: true };
+if (typeof window !== 'undefined') window.HY_PERF = HY_PERF;
+const _subpxList = [];
+const _subpxBox = new THREE.Box3();
+const _subpxSph = new THREE.Sphere();
+function _hySubpxCullEnemies() {
+    if (!HY_PERF.SUBPX_ON || typeof enemies === 'undefined' || !enemies || !enemies.length ||
+        !camera || !camera.isPerspectiveCamera || !renderer) return 0;
+    const H = renderer.domElement.height || 720;
+    const k = (H * 0.5) / Math.tan(camera.fov * Math.PI / 360) / HY_PERF.ENEMY_SUBPX_R;
+    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!e || !e.visible || !e.position) continue;
+        const u = e.userData || (e.userData = {});
+        const sc = e.scale.x || 1;
+        if (!u.__pxR || u.__pxRS !== sc) {
+            if (!e.children.length && !e.geometry) continue;
+            _subpxBox.setFromObject(e);
+            if (_subpxBox.isEmpty()) continue;
+            _subpxBox.getBoundingSphere(_subpxSph);
+            u.__pxR = Math.max(_subpxSph.radius, _subpxSph.center.distanceTo(e.position) + _subpxSph.radius * 0.5);
+            u.__pxRS = sc;
+            if (!(u.__pxR > 0)) { u.__pxR = 0; continue; }
+        }
+        // projected radius R*f/d < limit  <=>  (R*k)^2 < d^2
+        const dx = e.position.x - cx, dy = e.position.y - cy, dz = e.position.z - cz;
+        const rk = u.__pxR * k;
+        if (rk * rk < dx * dx + dy * dy + dz * dz) { e.visible = false; _subpxList.push(e); }
+    }
+    return _subpxList.length;
+}
+function _hySubpxRestore() {
+    for (let i = 0; i < _subpxList.length; i++) _subpxList[i].visible = true;
+    _subpxList.length = 0;
+}
+
 // =============================================================================
 // FLOATING ORIGIN — periodic world rebase
 // =============================================================================
@@ -3868,7 +3917,9 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (__perfSplit.on) _psMark('interp+cinematic+crosshair');
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
+    const _subpxHidden = _hySubpxCullEnemies();
     gameRender(scene, camera);
+    if (_subpxHidden) _hySubpxRestore();
     if (typeof perfDebug !== 'undefined') {
         perfDebug.endTimer('render');
         perfDebug.endTimer('total');
