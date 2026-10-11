@@ -1,4 +1,8 @@
 // Outer Interstellar Systems - Two distinct sets of deep space systems
+// HYBRID — Ben, 2026-10-10: "outer systems planets and asteroids ... are
+// jumping". Every motion step here was per FRAME; Sol's planets are dt-scaled
+// (gameState.dtFrames), so under uneven frame times only these hopped.
+function _osDt() { return (typeof gameState !== 'undefined' && gameState.dtFrames > 0) ? gameState.dtFrames : 1; }
 // SET 1: 16 Exotic Core Systems (60,000-75,000 units - Middle Zone) - Supernova/Plasma/Solar Storm cores - ALWAYS VISIBLE
 // SET 2: 12 BORG Patrol Systems (75,000-90,000 units - Outer Zone) - Bright stars with BORG drone patrols
 
@@ -1198,8 +1202,8 @@ function updateOuterSystems() {
         system.children.forEach(child => {
             // ROTATE STARFIELD
             if (child.userData && child.userData.type === 'system_starfield') {
-                child.rotation.y += child.userData.rotationSpeed;
-                child.rotation.x += child.userData.rotationSpeed * 0.5;
+                child.rotation.y += child.userData.rotationSpeed * _osDt();
+                child.rotation.x += child.userData.rotationSpeed * 0.5 * _osDt();
                 if (child.material) {
                     child.material.opacity = opacity * 0.9;
                 }
@@ -1231,7 +1235,7 @@ function updateOuterSystems() {
             // precedence made this always truthy, freezing ALL outer system orbiters.
             if (orbiter.userData.orbitAngle === undefined) return;
 
-            orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed;
+            orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed * _osDt();
 
             let x = Math.cos(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
             let y = 0;
@@ -1254,25 +1258,25 @@ function updateOuterSystems() {
 
             // Rotate planets
             if (orbiter.userData.type === 'outer_planet' && orbiter.userData.rotationSpeed) {
-                orbiter.rotation.y += orbiter.userData.rotationSpeed;
+                orbiter.rotation.y += orbiter.userData.rotationSpeed * _osDt();
             }
 
             // Rotate pulsars
             if (orbiter.userData.type === 'pulsar' && orbiter.userData.rotationSpeed) {
-                orbiter.rotation.y += orbiter.userData.rotationSpeed;
+                orbiter.rotation.y += orbiter.userData.rotationSpeed * _osDt();
             }
 
             // Rotate asteroids
             if (orbiter.userData.type === 'outer_asteroid') {
-                orbiter.rotation.x += orbiter.userData.rotationSpeedX;
-                orbiter.rotation.y += orbiter.userData.rotationSpeedY;
-                orbiter.rotation.z += orbiter.userData.rotationSpeedZ;
+                orbiter.rotation.x += orbiter.userData.rotationSpeedX * _osDt();
+                orbiter.rotation.y += orbiter.userData.rotationSpeedY * _osDt();
+                orbiter.rotation.z += orbiter.userData.rotationSpeedZ * _osDt();
             }
 
             // Rotate BORG cubes and drones
             if ((orbiter.userData.type === 'borg_cube' || orbiter.userData.type === 'borg_drone') && orbiter.userData.rotationSpeed) {
-                orbiter.rotation.x += orbiter.userData.rotationSpeed;
-                orbiter.rotation.y += orbiter.userData.rotationSpeed * 0.7;
+                orbiter.rotation.x += orbiter.userData.rotationSpeed * _osDt();
+                orbiter.rotation.y += orbiter.userData.rotationSpeed * 0.7 * _osDt();
             }
 
             // Rotate cosmic features
@@ -1280,7 +1284,7 @@ function updateOuterSystems() {
                 (orbiter.userData.type === 'crystal_structure' ||
                  orbiter.userData.type === 'dyson_sphere' ||
                  orbiter.userData.type === 'space_whale')) {
-                orbiter.rotation.y += orbiter.userData.rotationSpeed;
+                orbiter.rotation.y += orbiter.userData.rotationSpeed * _osDt();
 
                 // Space whale swimming motion
                 if (orbiter.userData.type === 'space_whale' && orbiter.userData.swimSpeed) {
@@ -1369,7 +1373,7 @@ function updateBorgPatrolCombat() {
 
                     _borgDir.subVectors(playerPos, _borgWorldPos).normalize();
                     const localDir = system.worldToLocal(_borgDir.add(_borgWorldPos)).sub(entity.position).normalize();
-                    entity.position.add(localDir.multiplyScalar(ud.speed));
+                    entity.position.add(localDir.multiplyScalar(ud.speed * _osDt()));
 
                     // Rotate menacingly
                     entity.rotation.x += 0.002;

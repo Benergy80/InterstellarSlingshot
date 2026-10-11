@@ -7,6 +7,11 @@
 if (typeof window.interstellarAsteroids === 'undefined') {
     window.interstellarAsteroids = [];
 }
+// HYBRID: dt-scaled motion (see js/outer-systems.js _osDt) — rock drift and
+// tumble used to step per frame and hopped under uneven frame times.
+if (typeof _osDt !== 'function') {
+    window._osDt = function () { return (typeof gameState !== 'undefined' && gameState.dtFrames > 0) ? gameState.dtFrames : 1; };
+}
 
 // Configuration for interstellar asteroid fields
 const INTERSTELLAR_ASTEROID_CONFIG = {
@@ -303,12 +308,12 @@ function updateInterstellarAsteroids() {
         if (!asteroid || !asteroid.userData) return;
 
         // Apply velocity for roaming movement
-        asteroid.position.add(asteroid.userData.velocity);
+        asteroid.position.addScaledVector(asteroid.userData.velocity, _osDt());
 
         // Apply rotation
-        asteroid.rotation.x += asteroid.userData.rotationSpeed.x;
-        asteroid.rotation.y += asteroid.userData.rotationSpeed.y;
-        asteroid.rotation.z += asteroid.userData.rotationSpeed.z;
+        asteroid.rotation.x += asteroid.userData.rotationSpeed.x * _osDt();
+        asteroid.rotation.y += asteroid.userData.rotationSpeed.y * _osDt();
+        asteroid.rotation.z += asteroid.userData.rotationSpeed.z * _osDt();
     });
 }
 
