@@ -20237,9 +20237,15 @@ async function loadUFOModel() {
         loader.load(
             'models/UFO.glb',
             (gltf) => {
-                ufoModelCache = gltf.scene;
-                console.log('🛸 UFO model loaded');
-                resolve(ufoModelCache);
+                const stock = gltf.scene;
+                const _v2 = !!(window.HYBRID && window.HYBRID.is && window.HYBRID.is('ufoModel', 'v2') && typeof _hyBakeAltModel === 'function');
+                if (!_v2) { ufoModelCache = stock; console.log('🛸 UFO model loaded'); resolve(ufoModelCache); return; }
+                // HYBRID ufoModel: v2 (Ben 2026-10-11) — the new saucer, baked to UFO.glb's size and laid flat (HY_MODEL_POSE)
+                loader.load('models/UFO-v2.glb', (g2) => {
+                    try { ufoModelCache = _hyBakeAltModel(g2.scene, stock, 'UFO-v2', null, (window.HY_MODEL_POSE && window.HY_MODEL_POSE._ufoRawLongest) || 63.3); console.log('🛸 UFO model loaded (v2 hull)'); }
+                    catch (e) { console.warn('⚠️ UFO-v2 bake failed, stock saucer', e); ufoModelCache = stock; }
+                    resolve(ufoModelCache);
+                }, undefined, () => { console.warn('⚠️ UFO-v2.glb not found, stock saucer'); ufoModelCache = stock; resolve(ufoModelCache); });
             },
             undefined,
             (error) => {
@@ -20339,6 +20345,7 @@ function createUFOEnemy(position, systemName, index) {
         // GLB UFOs read as enemies (not the friendly-green default).
         ufo.traverse((child) => {
             if (child.isMesh && child.material) {
+                if (child.userData && child.userData._hyAltMesh) return;   // HYBRID: the v2 saucer keeps its texture
                 if (child.material.isMeshStandardMaterial) {
                     child.material.metalness = 0.85;
                     child.material.roughness = 0.15;
