@@ -50,7 +50,9 @@
         const s = o.scale ? Math.max(o.scale.x, o.scale.y, o.scale.z) : 1;
         return Math.max(r * s, (o.userData && o.userData.radius) || 0);
     }
-    window.spawnGuardians = function spawnGuardians(galaxyId) {
+    // package R (enemies2) defines the real one in js/game-objects.js (roles,
+    // size, escorts); this default only fills in if it is missing.
+    if (typeof window.spawnGuardians !== 'function') window.spawnGuardians = function spawnGuardians(galaxyId) {
         const out = [];
         if (typeof spawnBossForArea !== 'function' || typeof THREE === 'undefined') return out;
         const core = _coreOf(galaxyId);
@@ -499,6 +501,10 @@
             if (own) { DP.splice(DP.indexOf(own), 1); disposeEntry(own); }
             site = pickMissionSite(neb, (C.usedNebulae.length % 2 === 1) ? 'planet' : 'convoy');
             if (site.kind === 'convoy') site.civilians = spawnConvoy(site.site, site.label);
+            // package R: the lore faction's host, swarming the convoy or harassing the planet
+            if (typeof window.spawnMissionHost === 'function') {
+                try { window.spawnMissionHost(site.kind === 'planet' ? 'planet' : 'civilian-fleet', site.site, faction, 9); } catch (e) { /* host optional */ }
+            }
             try { createDiscoveryPathToPosition(neb.position, site.site, color, faction, 'core', g); } catch (e) { /* path optional */ }
             entry = DP[DP.length - 1] || null;
             // same legibility as the guide lines (the mission checker recolours
