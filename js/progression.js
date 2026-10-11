@@ -123,7 +123,7 @@
 
     // ── comms (one at a time, never over the tutorial) ───────────────────────
     const _q = []; let _lastSayAt = 0;
-    function say(title, text) { _q.push({ title: title, text: text, at: now(), phase: C.idx }); }
+    function say(title, text) { _q.push({ title: title, text: text, at: now(), seq: C.log.length }); }
     function pumpComms() {
         if (!_q.length || typeof showIncomingTransmission !== 'function') return;
         const tut = ie('tutorialSystem');
@@ -286,7 +286,7 @@
     function enter(i, how) {
         C.idx = i; C.enteredAt = now();
         // briefings of phases already behind the player are stale
-        for (let k = _q.length - 1; k >= 0; k--) if (_q[k].phase < i - 1) _q.splice(k, 1);
+        for (let k = _q.length - 1; k >= 0; k--) if (_q[k].seq < C.log.length) _q.splice(k, 1);
         C.log.push({ t: Math.round((now() - C.startedAt) / 1000), phase: PHASES[i], how: how || 'event' });
         const fn = ENTER[PHASES[i]]; if (fn) { try { fn(); } catch (e) { console.warn('campaign enter ' + PHASES[i], e); } }
     }
@@ -791,6 +791,9 @@
             if (cur === 'NEBULA_VISIT' && !C.nebula) {
                 const t = C._target || pickTargetNebula(); if (!t) return cur;
                 C.nebula = t; C.nebulaGalaxy = nebulaGalaxy(t); C.nebulaName = nebulaName(t); C.visitAt = now();
+                const al = ie('allyShips'), n0 = al ? al.length : 0;
+                if (typeof recruitNebulaWingman === 'function') { try { recruitNebulaWingman(C.nebulaName); } catch (e) {} }
+                C.wingmanJoined = !!(al && al.length > n0);
             }
             if (cur === 'FACTION_GALAXY') {
                 if (C.galaxy && C.galaxy.step === 'travel') { const core = _coreOf(C.galaxy.g); if (core) snapshotForces(C.galaxy, core); C.galaxy.step = 'forces'; }
