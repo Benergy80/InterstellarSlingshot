@@ -408,6 +408,30 @@ const __perfMeter = {
 };
 if (typeof window !== 'undefined') window.__perf = __perfMeter.out;
 
+// PER-SYSTEM SCRIPT-TIME SPLIT (package AF smoothfps). Off by default and
+// free when off (one boolean test per section). __perfSplit.start(), let it
+// run, then __perfSplit.report(): ms per frame for each consecutive section
+// of animate(), in frame order. The sections partition the frame, so the
+// column sums to the whole animate() wall time (render included).
+const __perfSplit = {
+    on: false, t: 0, frames: 0, acc: Object.create(null),
+    start() { this.acc = Object.create(null); this.frames = 0; this.on = true; return this; },
+    stop() { this.on = false; return this; },
+    report(top) {
+        const n = Math.max(1, this.frames), rows = [];
+        for (const k in this.acc) rows.push([k, +(this.acc[k] / n).toFixed(3)]);
+        if (top) rows.sort((a, b) => b[1] - a[1]);
+        return { frames: this.frames, msPerFrame: rows,
+            total: +(rows.reduce((s, r) => s + r[1], 0)).toFixed(2) };
+    }
+};
+function _psMark(name) {
+    const n = performance.now();
+    __perfSplit.acc[name] = (__perfSplit.acc[name] || 0) + (n - __perfSplit.t);
+    __perfSplit.t = n;
+}
+if (typeof window !== 'undefined') window.__perfSplit = __perfSplit;
+
 // =============================================================================
 // FLOATING ORIGIN — periodic world rebase
 // =============================================================================
@@ -2505,6 +2529,7 @@ function animate(rafTime) {
     if (gameState._slowmoUntil && _ajNow < gameState._slowmoUntil) _dtMs *= 0.5;
     gameState.dtMs = _dtMs;
     gameState.dtFrames = _dtMs / 16.67;
+    if (__perfSplit.on) __perfSplit.t = currentTime;
 
     // FLOATING ORIGIN: rebase the world onto the camera once it drifts far
     // enough for float32 precision to degrade. Runs before any game update
@@ -2551,6 +2576,7 @@ function animate(rafTime) {
         updateCameraView(camera);
     }
     
+    if (__perfSplit.on) _psMark('camView1');
     // Update laser positions to track with ship movement
     if (typeof updateActiveLasers === 'function') {
         updateActiveLasers();
@@ -2568,6 +2594,7 @@ function animate(rafTime) {
         updateThrusterGlow(isThrusting);
     }
 
+    if (__perfSplit.on) _psMark('lasers+thrusterGlow');
     if (gameState.gameOver || !gameState.gameStarted) {
         if (stars) {
             stars.rotation.x += 0.0001;
@@ -2597,16 +2624,19 @@ if (typeof updateNebulaVisibility === 'function') {
     updateNebulaVisibility();
 }
 
+if (__perfSplit.on) _psMark('nebulaVisibility');
 // Update orbit line visibility based on proximity to nebulas/black holes
 if (typeof updateOrbitLineVisibility === 'function') {
     updateOrbitLineVisibility();
 }
 
+if (__perfSplit.on) _psMark('orbitLineVisibility');
 // PERF: distance-cull far planets/asteroids/comets/ships to cut draw calls
 if (typeof updateDistanceCulling === 'function') {
     updateDistanceCulling();
 }
 
+if (__perfSplit.on) _psMark('distanceCulling');
 if (typeof perfDebug !== 'undefined') perfDebug.endTimer('nebulas');
 
 // Update trading ships in nebulas
@@ -2639,6 +2669,7 @@ if (typeof distressBeaconSystem !== 'undefined' && distressBeaconSystem.updateBe
     distressBeaconSystem.updateBeacons();
 }
     
+    if (__perfSplit.on) _psMark('traffic(trade/civ/ufo/sat)');
     // â­ ENHANCED: Animate nebula gas clouds with individual pulsing per cloud
 if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0 && gameState.frameCount % 2 === 0) {
     // OPTIMIZATION: Cache Date.now() once per frame instead of per cloud.
@@ -2692,6 +2723,7 @@ if (typeof nebulaGasClouds !== 'undefined' && nebulaGasClouds.length > 0 && game
     });
 }
 
+if (__perfSplit.on) _psMark('nebulaGasClouds');
 if (typeof asteroidBelts !== 'undefined' && asteroidBelts.length > 0) {
     // Skip orbit/rotation updates for belts that are genuinely far away.
     // Asteroids sit beltRadius(1600-2600) ± beltWidth/2 from the belt
@@ -2742,6 +2774,7 @@ if (typeof window !== 'undefined' && window.asteroidInstancer) {
     window.asteroidInstancer.update();
 }
 
+    if (__perfSplit.on) _psMark('asteroidBelts+instancer');
     // Update interstellar asteroid fields
     if (typeof updateInterstellarAsteroids === 'function') {
         updateInterstellarAsteroids();
@@ -2752,6 +2785,7 @@ if (typeof window !== 'undefined' && window.asteroidInstancer) {
         checkInterstellarAsteroidCollisions();
     }
 
+    if (__perfSplit.on) _psMark('interstellarAsteroids');
     // Update outer systems
 if (typeof updateOuterSystems === 'function') {
     updateOuterSystems();
@@ -2781,6 +2815,7 @@ if (gameState.frameCount % 60 === 0 && typeof outerInterstellarSystems !== 'unde
     });
 }
     
+if (__perfSplit.on) _psMark('outerSystems+borgPatrol');
 // Pulse enemy glow for visibility
 // UPDATED: Handle both simple meshes and GLB model Groups
 // FIXED: Never go completely dark - maintain minimum visibility
@@ -2853,6 +2888,7 @@ if (typeof enemies !== 'undefined' && enemies.length > 0 && gameState.frameCount
     }
 }
 
+    if (__perfSplit.on) _psMark('enemyGlowPulse');
     // Update target lock system
     updateTargetLock();
     
@@ -2861,6 +2897,7 @@ if (typeof updateShieldSystem === 'function') {
     updateShieldSystem();
 }
     
+    if (__perfSplit.on) _psMark('targetLock+shieldSystem');
     // PERFORMANCE: Update active planets less frequently based on performance mode
     const planetUpdateFrequency = gameState.performanceMode === 'minimal' ? 10 : 
                                    gameState.performanceMode === 'optimized' ? 7 : 5;
@@ -2903,6 +2940,7 @@ if (typeof updateShieldSystem === 'function') {
     }
     
   // Rotate local galaxy stars around Sagittarius A*
+if (__perfSplit.on) _psMark('activePlanets+detect+discovery');
 if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
     localGalaxyStars.rotation.y += 0.0003; // Slow rotation around Y-axis
 }
@@ -2926,6 +2964,7 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateWarpSpeedStarfield();
     }
         
+    if (__perfSplit.on) _psMark('planetOrbits+warpStarfield');
     // Update CMB opacity based on distance from Sagittarius A and nebula proximity
     if (gameState.frameCount % 10 === 0 && typeof updateCMBOpacity === 'function') {
         updateCMBOpacity();
@@ -2947,12 +2986,14 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateGalaxyAtmosphere();
     }
 
+    if (__perfSplit.on) _psMark('sky+nebBreathing+galaxyAtmos');
     // Visual flair layer: player trail, warp tunnel, whip preview, lens
     // flares, accretion spirals, rim-glow atmospheres (visual-flair.js)
     if (typeof updateVisualFlair === 'function') {
         updateVisualFlair();
     }
 
+    if (__perfSplit.on) _psMark('visualFlair');
     // Update boss battle skybox with heartbeat pulsing
     if (typeof updateBossSkyboxHeartbeat === 'function') {
         updateBossSkyboxHeartbeat();
@@ -2994,6 +3035,7 @@ if (typeof localGalaxyStars !== 'undefined' && localGalaxyStars) {
         updateEarthClouds();
     }
 
+    if (__perfSplit.on) _psMark('bh+coronas+beams+clouds');
     // PERFORMANCE: Update only expensive effects for active planets (tendrils, glows, etc.)
     activePlanets.forEach((planet) => {
     // FIXED: Only rotate star particles, keep disk stable
@@ -3202,11 +3244,13 @@ if (typeof comets !== 'undefined') {
 // COSMIC FEATURES AND NEBULA ANIMATION - COMPLETE SYSTEM
 // =============================================================================
 
+if (__perfSplit.on) _psMark('activePlanetFx+wormholes+comets');
 // Update cosmic features (pulsars, supernovas, plasma storms, etc.)
 if (typeof updateCosmicFeatures === 'function') {
     updateCosmicFeatures();
 }
 
+if (__perfSplit.on) _psMark('cosmicFeatures');
 // Animate nebula rotation
 if (typeof nebulaClouds !== 'undefined' && nebulaClouds.length > 0) {
     const _nebCamP = (typeof camera !== 'undefined') ? camera.position : null;
@@ -3290,6 +3334,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     checkCosmicFeatureInteractions(camera.position, gameState);
 }
     
+    if (__perfSplit.on) _psMark('nebulaRotation+cosmicInteract');
     // Enhanced enemy behavior update.
     // The AI still RUNS at 30Hz (every 2nd frame) — cheap, and plenty for
     // decisions — but its position/rotation result is captured as an
@@ -3353,6 +3398,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('enemies');
     
+    if (__perfSplit.on) _psMark('enemyAI');
     // Update civilian combat (enemies attacking civilians, distress calls)
     // ~20Hz of wall clock: fleets move per tick, so the interval scales with
     // the measured refresh rate like the enemy/wingman AI above. Floor of 2
@@ -3417,6 +3463,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateBorgBehavior();
     }
 
+    if (__perfSplit.on) _psMark('civ+missiles+fx+borg');
     // Update ally wingmen — every other frame normally, but every frame
     // when the player is warping. updateAllyShips is throttled to 30 Hz
     // for performance, but during emergency warp the player travels
@@ -3477,6 +3524,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         }
     }
 
+    if (__perfSplit.on) _psMark('wingmen');
     // Highlight recorder: rolling ship-state buffer for the victory replay
     if (typeof window !== 'undefined' && window.replaySystem) {
         window.replaySystem.update();
@@ -3494,6 +3542,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         window.applyEnemyBuffs();
     }
 
+    if (__perfSplit.on) _psMark('replay+demo+buffs');
     // Enhanced physics and controls — FIXED TIMESTEP (see _fixedSim above).
     // Key state written by the player/autopilot this frame simply persists
     // across the whole-frame's steps (equivalent to holding the key);
@@ -3529,6 +3578,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     }
     if (typeof perfDebug !== 'undefined') perfDebug.endTimer('physics');
 
+    if (__perfSplit.on) _psMark('physics');
     // PLAYER-SHIP RE-SYNC: physics just moved/rotated the camera, but the
     // updateCameraView call at the top of the frame used the PRE-physics
     // camera — leaving the ship mesh one frame behind (velocity × dt). At a
@@ -3541,6 +3591,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateCameraView(camera);
     }
 
+    if (__perfSplit.on) _psMark('camView2');
     // Shield bubble rides the ship — re-pin it to the freshly synced ship
     // position (its own update ran inside physics, pre-integration).
     if (typeof syncShieldPositionToShip === 'function') {
@@ -3556,27 +3607,32 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         updateShipLocation();
     }
 
+    if (__perfSplit.on) _psMark('shieldSync+location');
     // Update UI every few frames
     if (gameState.frameCount % 2 === 0) {
         if (typeof updateUI === 'function') updateUI();
         if (typeof updateCompass === 'function') updateCompass();
     }
+    if (__perfSplit.on) _psMark('hudUpdateUI+compass');
     // Map updates every 3 frames (~20 Hz) for smooth player marker movement
     if (gameState.frameCount % 3 === 0 && typeof updateGalaxyMap === 'function') {
         updateGalaxyMap();
     }
 
+    if (__perfSplit.on) _psMark('galaxyMap');
     // Distress signal indicator (edge arrow / on-screen reticle) — refresh
     // every 3 frames so it tracks fast camera rotation without DOM thrash.
     if (gameState.frameCount % 3 === 0 && typeof updateDistressIndicator === 'function') {
         updateDistressIndicator();
     }
+    if (__perfSplit.on) _psMark('distressIndicator');
     // Hostile countdown meter + nearest-enemy / boss edge arrows (hudArrows):
     // same cadence as the SOS arrow they sit beside.
     if (gameState.frameCount % 3 === 0 && typeof updateHostileArrows === 'function') {
         updateHostileArrows();
     }
 
+    if (__perfSplit.on) _psMark('hostileArrows');
     // Crosshair targeting moved to the render section (post camera
     // transforms): projecting through the PHYSICS camera while the frame
     // renders through the smoothed/interpolated one put the yellow
@@ -3615,6 +3671,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // PERF METER: game-logic time ends here — renderer.render() is GPU
     // submission (or full CPU rasterization under software rendering), which
     // would swamp the scripting stat with non-logic cost.
+    if (__perfSplit.on) _psMark('atmo+soundtrack');
     const _logicEndMs = performance.now();
 
     // CINEMATIC CHASE CAMERA (demo, third-person): render through a smoothed
@@ -3794,6 +3851,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         try { updateCrosshairTargeting(); } catch (e) {}
     }
 
+    if (__perfSplit.on) _psMark('interp+cinematic+crosshair');
     // PERFORMANCE DEBUG: Time render call
     if (typeof perfDebug !== 'undefined') perfDebug.startTimer('render');
     gameRender(scene, camera);
@@ -3802,6 +3860,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         perfDebug.endTimer('total');
     }
 
+    if (__perfSplit.on) _psMark('render');
     // restore the physics state — the cinematic lag is render-only
     if (_cinSavedQuat) camera.quaternion.copy(_cinSavedQuat);
     if (_cinShipMoved && cameraState.playerShipMesh) {
@@ -3856,6 +3915,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     // measured up to the render call so render cost never pollutes it).
     // Early-return frames (paused, hitstop, game over) are deliberately not
     // sampled — only full gameplay frames feed the quality controller.
+    if (__perfSplit.on) { _psMark('post(restore+drawBudget)'); __perfSplit.frames++; }
     __perfMeter.sample(frameTime, _logicEndMs - currentTime);
 }
 
