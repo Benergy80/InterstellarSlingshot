@@ -2674,7 +2674,11 @@ function updateSlingshotWhip() {
     // the tangent flipped, tangent roughly forward) as aligned too.
     const _aDot = tangent.dot(w.aim);
     const _aSide = tangent.z * w.aim.x - tangent.x * w.aim.z;   // (tangent x aim).y
-    const _crossed = (w._aSide !== undefined) && (_aSide * w._aSide < 0) && _aDot > 0.5;
+    // Only where the 0.97 window was really there to be skipped: the best dot
+    // a horizontal tangent can reach is the aim's horizontal length, so an aim
+    // well out of the orbit plane still releases on the full sweep, as before.
+    const _crossed = (w._aSide !== undefined) && (_aSide * w._aSide < 0) && _aDot > 0.5 &&
+        Math.hypot(w.aim.x, w.aim.z) * Math.hypot(tangent.x, tangent.z) > 0.97;
     w._aSide = _aSide;
     const aligned = _aDot > 0.97 || _crossed;
     const elapsed = elapsedMs;
