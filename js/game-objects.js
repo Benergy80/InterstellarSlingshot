@@ -588,6 +588,13 @@ function getRandomGalaxyPosition(galaxyId) {
 // =============================================================================
 
 function getEnemyPlacementPosition(galaxyId, placementType = 'random') {
+    // HYBRID (package R): place by region — the faction's real core ring and
+    // its star systems (HY_ENEMIES), never the galaxy3DPositions table, which
+    // no longer matches where the cores and systems actually sit.
+    if (typeof _hyEnemyRegionOn === 'function' && _hyEnemyRegionOn()) {
+        const rp = _hyEnemyRegionPos(galaxyId, placementType);
+        if (rp) return _hyEnemyKeepout(rp, galaxyId);
+    }
     let pos;
     switch(placementType) {
         case 'cosmic_feature':
@@ -931,7 +938,38 @@ const HY_ENEMIES = {
     // Sol (galaxy 7): this share of its enemies spawns AROUND SOL'S PLANETS
     // (the Martian pirates of Ben's campaign) instead of anywhere in the
     // scaled region — measured, 83 Sol enemies left only 21 within 15k of the start.
+    // (Only used when region placement below is off.)
     SOL_PLANET_SHARE: 0.75, SOL_NEAR_MIN: 220, SOL_NEAR_MAX: 900,
+
+    // ── package R (enemies2): placement by region ────────────────────────────
+    // Ben: "Enemies and Bosses placement and behavior" + his campaign spec:
+    // Martian pirates in Sol, Vulcans at the Sgr A* black holes, one faction
+    // per galaxy spread across its systems, a boss per phase, guardians.
+    // Every spawn also keeps out of planets and stars (BODY_KEEPOUT_K x R + PAD).
+    BODY_KEEPOUT_K: 2.0, BODY_KEEPOUT_PAD: 250,
+    CORE_GUARD: 9,                 // per faction galaxy: ships on the core ring (ORIGINAL forced 15 there)
+    CORE_RING: [6.9, 9.5],         // the core ring, in core radii (disc 5.6, aurora 6.4)
+    SYS_RING_K: [2.4, 4.5],        // a system patrol sits this many star radii out...
+    SYS_LIFT: [1400, 2600],        // ...this far above/below the orbit plane (clear of the orbiting planets)
+    SYS_SOL_CLEAR: 8000,           // a faction system within Sol's edge + this is not used
+    SGR_SHARE: 0.5,                // galaxy 7 (Vulcan High Command): share at Sgr A*, the rest at the Companion core
+    // Sol: Martian pirate stations, [host, groups of 3]. 'start' = ahead of the
+    // start point, toward Sgr A* (ORIGINAL's opening skirmishers); a planet
+    // name = patrol that planet (the station follows it round its orbit);
+    // 'belt' = the asteroid lane between Mars and Jupiter.
+    SOL_STATIONS: [['start', 2], ['Mercury', 1], ['Venus', 1], ['Earth', 4], ['Mars', 4], ['belt', 2], ['Jupiter', 2]],
+    SOL_START_AHEAD: [2600, 3300], // u ahead of the start point
+    SOL_PLANET_RING: [1.9, 3.2],   // planet radii (+200) a planet patrol circles at
+    STATION_SPIN: 0.45,            // u/frame a station circles its host (0 for 'start')
+    VULCAN_RING: [6.9, 9.0],       // Sgr A* radii — the Vulcan patrol (ORIGINAL: 700-1500 u, inside today's radius-900 hole)
+    BOSS_RING: [7.2, 8.6],         // core radii — where a faction's boss appears (on the player's side)
+    BOSS_BODY_K: 3.0,              // a boss never appears nearer a planet/star than this many radii
+    PIRATE_BOSS_SUN_K: 4.2,        // the pirate flagship: Sun radii out, on the player's side
+    GUARD_RING: 7.0, GUARD_PAD: 500,   // guardians: core radii + pad (O's default was CLEAR_RADII 6 x R + 600)
+    GUARD_SCALE: 1.6, GUARD_HEALTH_K: 2.5,
+    GUARD_ROLES: ['warden', 'ram', 'volley'],
+    GUARD_ESCORT: 3,               // escorts with the first guardian only (a boss brings 7)
+    HOST_COUNT: 9,                 // spawnMissionHost default
 };
 if (typeof window !== 'undefined') window.HY_ENEMIES = HY_ENEMIES;
 // A spawn position beside one of Sol's planets (Mercury..Neptune), or null.
@@ -952,22 +990,229 @@ function _hySolEnemyPos() {
 function _hyEnemyCountK() {
     return (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('enemyPopulation', 'original')) ? HY_ENEMIES.COUNT_K : 1;
 }
-// Push a spawn position out of the core's keep-out ball (along its own radial;
-// a position AT the core gets a random bearing). Returns the position.
-function _hyEnemyKeepout(pos, galaxyId) {
+// Region placement is on with the scaled world and the ORIGINAL population.
+function _hyEnemyRegionOn() {
+    return typeof _hyScaleOn === 'function' && _hyScaleOn() &&
+        !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('enemyPopulation', 'original'));
+}
+function _hyRng(a) { return a[0] + Math.random() * (a[1] - a[0]); }
+function _hyRandDir(ySpread) {
+    const a = Math.random() * Math.PI * 2;
+    return new THREE.Vector3(Math.cos(a), (Math.random() - 0.5) * (ySpread || 0.5), Math.sin(a)).normalize();
+}
+function _hyHoleR(h) { return Math.max((typeof _hyBodyR === 'function') ? _hyBodyR(h) : 0, h.userData.radius || 0, 200); }
+// Sgr A* (the hole at the origin of the local region).
+function _hySgrA() {
+    if (typeof planets === 'undefined') return null;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], u = p && p.userData;
+        if (u && u.type === 'blackhole' && (u.galaxyId === 8 || /Sagittarius/.test(u.name || ''))) return p;
+    }
+    return null;
+}
+function _hyCoreFor(g) {
+    if (typeof planets === 'undefined') return null;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], u = p && p.userData;
+        if (u && u.type === 'blackhole' && u.isGalacticCore && u.galaxyId === g) return p;
+    }
+    return null;
+}
+function _hySolSun() {
+    if (typeof planets === 'undefined') return null;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], u = p && p.userData;
+        if (u && u.isLocal && (u.type === 'star' || u.type === 'sun') && (u.name === 'Sol' || u.name === 'Sun' || u.isLocalStar)) return p;
+    }
+    return null;
+}
+// A faction galaxy's star systems: { star, R, span } — the star (static), its
+// radius and its widest planet orbit. Systems near Sol are left out.
+const _hySysCache = {};
+function _hyFactionSystems(g) {
+    if (typeof planets === 'undefined') return [];
+    const c = _hySysCache[g];
+    if (c && c.n === planets.length) return c.list;
+    const span = new Map();
+    for (let i = 0; i < planets.length; i++) {
+        const u = planets[i] && planets[i].userData;
+        if (!u || u.type !== 'planet' || u.galaxyId !== g || !u.systemCenter) continue;
+        const k = _hyKey(u.systemCenter);
+        span.set(k, Math.max(span.get(k) || 0, u.orbitRadius || 0));
+    }
+    const sol = (typeof window !== 'undefined' && window.localSystemOffset) || null;
+    let solClear = 0;
+    try { solClear = ((typeof _hySolLayout === 'function') ? _hySolLayout().edge : 0) + HY_ENEMIES.SYS_SOL_CLEAR; } catch (e) { solClear = HY_ENEMIES.SYS_SOL_CLEAR; }
+    const list = [];
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], u = p && p.userData;
+        if (!u || u.type !== 'star' || u.galaxyId !== g || u.isLocal) continue;
+        if (sol && p.position.distanceTo(sol) < solClear) continue;
+        const k = _hyKey(u.systemCenter || p.position);
+        list.push({ star: p, R: Math.max(_hyBodyR(p), 200), span: span.get(k) || 0 });
+    }
+    _hySysCache[g] = { n: planets.length, list: list };
+    return list;
+}
+const _hySysRR = {};
+// One group centre for galaxy `g` (placementType as the callers pass it), or null.
+function _hyEnemyRegionPos(g, placementType) {
+    const H = HY_ENEMIES;
+    if (g === 7) {
+        // Vulcan High Command: the Sgr A* region (Sgr A* + the Companion core)
+        const sgr = _hySgrA(), comp = _hyCoreFor(7);
+        const hole = (Math.random() < H.SGR_SHARE ? sgr : comp) || sgr || comp;
+        if (!hole) return null;
+        const ring = placementType === 'black_hole' ? H.CORE_RING : [H.CORE_RING[1], H.CORE_RING[1] * 1.8];
+        return hole.position.clone().addScaledVector(_hyRandDir(0.6), _hyHoleR(hole) * _hyRng(ring));
+    }
+    const core = _hyCoreFor(g);
+    if (placementType === 'black_hole' && core) {
+        return core.position.clone().addScaledVector(_hyRandDir(0.6), _hyHoleR(core) * _hyRng(H.CORE_RING));
+    }
+    const sys = _hyFactionSystems(g);
+    if (sys.length) {
+        // round-robin over the systems so every one gets its share
+        if (_hySysRR[g] === undefined) _hySysRR[g] = Math.floor(Math.random() * sys.length);
+        const s = sys[(_hySysRR[g]++) % sys.length];
+        const rMax = Math.max(s.R * H.SYS_RING_K[1], s.span * 0.9);
+        const r = _hyRng([s.R * H.SYS_RING_K[0], rMax]);
+        const a = Math.random() * Math.PI * 2;
+        const lift = _hyRng(H.SYS_LIFT) * (Math.random() < 0.5 ? -1 : 1);
+        const c = s.star.position;
+        return new THREE.Vector3(c.x + Math.cos(a) * r, c.y + lift, c.z + Math.sin(a) * r);
+    }
+    if (core) return core.position.clone().addScaledVector(_hyRandDir(0.6), _hyHoleR(core) * _hyRng([H.CORE_RING[1], 20]));
+    return null;
+}
+// Push a spawn position out of every black hole's keep-out ball (along its own
+// radial; a position AT the hole gets a random bearing) and — with region
+// placement on — out of every planet, moon and star. Returns the position.
+// opts: { holeK, bodyK, spread } override KEEPOUT_RADII / BODY_KEEPOUT_K / KEEPOUT_SPREAD.
+function _hyEnemyKeepout(pos, galaxyId, opts) {
     if (!pos || typeof planets === 'undefined' || !planets) return pos;
+    const region = _hyEnemyRegionOn();
+    const holeK = (opts && opts.holeK) || HY_ENEMIES.KEEPOUT_RADII;
+    const spread = (opts && opts.spread !== undefined) ? opts.spread : HY_ENEMIES.KEEPOUT_SPREAD;
+    const bodyK = (opts && opts.bodyK) || HY_ENEMIES.BODY_KEEPOUT_K;
     for (let i = 0; i < planets.length; i++) {
         const bh = planets[i];
-        if (!bh || !bh.userData || bh.userData.type !== 'blackhole' || !bh.userData.isGalacticCore) continue;
+        if (!bh || !bh.userData || bh.userData.type !== 'blackhole') continue;
+        // ORIGINAL interim scope: galaxy cores only; region placement: every hole (Sgr A*, gateway too)
+        if (!region && !bh.userData.isGalacticCore) continue;
         const R = (typeof _hyBodyR === 'function') ? _hyBodyR(bh) : (bh.userData.radius || bh.userData.size || 400);
-        const keep = R * HY_ENEMIES.KEEPOUT_RADII;
+        const keep = R * holeK;
         const d = pos.distanceTo(bh.position);
         if (d >= keep) continue;
         const dir = d > 1 ? pos.clone().sub(bh.position).normalize()
                           : new THREE.Vector3(Math.cos(Math.random() * 6.283), (Math.random() - 0.5) * 0.3, Math.sin(Math.random() * 6.283)).normalize();
-        pos.copy(bh.position).addScaledVector(dir, keep + Math.random() * HY_ENEMIES.KEEPOUT_SPREAD);
+        pos.copy(bh.position).addScaledVector(dir, keep + Math.random() * spread);
+    }
+    if (!region) return pos;
+    for (let i = 0; i < planets.length; i++) {
+        const b = planets[i], u = b && b.userData;
+        if (!u || (u.type !== 'planet' && u.type !== 'moon' && u.type !== 'star' && u.type !== 'sun')) continue;
+        const R = _hyBodyR(b); if (!(R > 0)) continue;
+        const wp = (b.parent && b.parent.type !== 'Scene' && b.getWorldPosition) ? b.getWorldPosition(new THREE.Vector3()) : b.position;
+        const keep = R * bodyK + HY_ENEMIES.BODY_KEEPOUT_PAD;
+        const d = pos.distanceTo(wp);
+        if (d >= keep) continue;
+        const dir = d > 1 ? pos.clone().sub(wp).normalize() : _hyRandDir(0.4);
+        pos.copy(wp).addScaledVector(dir, keep + 100);
     }
     return pos;
+}
+
+// ── Stations: a group's patrol centre bound to a host body ──────────────────
+// The centre circles the host at a fixed horizontal radius and height, so a
+// planet's pirates follow it round its orbit and the Vulcans keep circling
+// Sgr A* (ORIGINAL's formation patrol otherwise drifts every group off into
+// space at 0.35-0.6 u/frame, forever). Updated twice a second.
+const _hyStations = [];
+const _hyStationOf = (typeof WeakMap !== 'undefined') ? new WeakMap() : null;
+const _hyStationShips = [];
+let _hyStationLast = 0, _hyStationTimer = null;
+// host: Object3D; centre: world Vector3 now; spin: u/frame along the ring.
+function _hyMakeStation(host, centre, spin) {
+    const off = centre.clone().sub(host.position);
+    const rh = Math.sqrt(off.x * off.x + off.z * off.z);
+    const st = { host: host, rh: rh, ang: Math.atan2(off.z, off.x), y: off.y,
+                 w: (spin && rh > 1) ? spin / rh : 0 };
+    _hyStations.push(st);
+    return st;
+}
+function _hyStationCentre(st, out) {
+    const h = st.host.position;
+    return out.set(h.x + Math.cos(st.ang) * st.rh, h.y + st.y, h.z + Math.sin(st.ang) * st.rh);
+}
+function _hyBindStation(enemy, st) {
+    if (!_hyStationOf || !enemy || !st) return;
+    _hyStationOf.set(enemy, st);
+    _hyStationShips.push(enemy);
+    _hyStationTimerStart();
+}
+function _hyEnemyStationTick() {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const dtF = _hyStationLast ? Math.min(90, (now - _hyStationLast) * 0.06) : 0;
+    _hyStationLast = now;
+    for (let i = 0; i < _hyStations.length; i++) _hyStations[i].ang += _hyStations[i].w * dtF;
+    for (let i = _hyStationShips.length - 1; i >= 0; i--) {
+        const e = _hyStationShips[i];
+        if (!e || !e.userData || e.userData.health <= 0 || !e.parent) { _hyStationShips.splice(i, 1); continue; }
+        const st = _hyStationOf.get(e);
+        if (!st || !st.host || !st.host.parent) continue;
+        if (!e.userData.patrolCenter) e.userData.patrolCenter = new THREE.Vector3();
+        _hyStationCentre(st, e.userData.patrolCenter);
+    }
+    if (!_hyStationShips.length) { _hyStations.length = 0; }
+}
+function _hyStationTimerStart() {
+    if (_hyStationTimer || typeof setInterval === 'undefined') return;
+    _hyStationTimer = setInterval(function () { try { _hyEnemyStationTick(); } catch (e) { /* never break the game */ } }, 500);
+}
+// Sol's Martian pirate stations, one entry per group of 3.
+function _hySolPirateStations() {
+    const H = HY_ENEMIES, out = [];
+    const sol = window.localSystemOffset;
+    const sun = _hySolSun();
+    if (!sol || !sun) return null;
+    const byName = {};
+    for (let i = 0; i < planets.length; i++) {
+        const u = planets[i] && planets[i].userData;
+        if (u && u.isLocal && u.type === 'planet' && u.orbitRadius > 0 && !u.parentPlanet) byName[u.name] = planets[i];
+    }
+    let belt = null; try { belt = _hySolLayout().belt; } catch (e) { belt = null; }
+    const S = (typeof HY_SOL !== 'undefined' && HY_SOL.START) || { x: 1560, y: 150, z: 173 };
+    const start = new THREE.Vector3(sol.x + S.x, sol.y + S.y, sol.z + S.z);
+    const sgr = _hySgrA();
+    const fwd = (sgr ? sgr.position.clone() : new THREE.Vector3()).sub(start); fwd.y = 0; fwd.normalize();
+    const side = new THREE.Vector3(-fwd.z, 0, fwd.x);
+    H.SOL_STATIONS.forEach(function (row) {
+        const kind = row[0], groups = row[1];
+        for (let k = 0; k < groups; k++) {
+            let centre = null, host = sun, spin = H.STATION_SPIN, tag = kind;
+            if (kind === 'start') {
+                centre = start.clone().addScaledVector(fwd, _hyRng(H.SOL_START_AHEAD))
+                    .addScaledVector(side, (k % 2 ? -1 : 1) * (300 + Math.random() * 300))
+                    .add(new THREE.Vector3(0, (Math.random() - 0.5) * 300, 0));
+                spin = 0;
+            } else if (kind === 'belt') {
+                if (!belt) continue;
+                const a = Math.random() * Math.PI * 2, r = _hyRng(belt);
+                centre = sun.position.clone().add(new THREE.Vector3(Math.cos(a) * r, (Math.random() < 0.5 ? -1 : 1) * (250 + Math.random() * 350), Math.sin(a) * r));
+            } else {
+                host = byName[kind];
+                if (!host) continue;
+                const R = _hyBodyR(host);
+                const a = Math.random() * Math.PI * 2 + k * Math.PI;
+                const r = R * _hyRng(H.SOL_PLANET_RING) + 200;
+                centre = host.position.clone().add(new THREE.Vector3(Math.cos(a) * r, (Math.random() - 0.5) * R * 0.8, Math.sin(a) * r));
+            }
+            _hyEnemyKeepout(centre, 7, { spread: 0 });
+            out.push({ centre: centre, station: _hyMakeStation(host, centre, spin), tag: tag });
+        }
+    });
+    return out;
 }
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
@@ -1785,6 +2030,11 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
         console.log(`Boss positioning: Using 2D fallback for galaxy ${galaxyId}`, bossPosition);
     }
     
+    // HYBRID (package R): a boss appears near its faction's core on the
+    // player's side, never inside a disc, a planet or the Sun (HY_ENEMIES.BOSS_*).
+    if (typeof _hyBossSite === 'function') bossPosition = _hyBossSite(galaxyId, placementType, bossPosition, !!overridePosition);
+    const _hyBO = bossOverrides || {};
+
     // PRESERVED: Create boss flagship with all original features
     const bossGeometry = createEnemyGeometry(galaxyId); // PRESERVED: Use proper geometry system
     const shapeData = enemyShapes[galaxyId];
@@ -1812,6 +2062,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
 
     // ENHANCED: Position boss using 3D coordinates
     boss.position.copy(bossPosition);
+    if (_hyBO.scale > 0) boss.scale.multiplyScalar(_hyBO.scale);   // HYBRID: guardians are bigger
 
     // Procedural glow shell — only added when the boss is using fallback
     // geometry. When a GLB model loaded, the glow was a giant torus (or
@@ -1848,7 +2099,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
 
     // PRESERVED: Complete boss userData with all original properties
     boss.userData = {
-        name: `${factionLabel} Overlord`, // (internal placementType no longer leaked into the display name)
+        name: _hyBO.name || `${factionLabel} Overlord`, // (internal placementType no longer leaked into the display name)
         type: 'enemy',
         health: getEnemyHealthForDifficulty(false, true, false), // PRESERVED: Dynamic boss health
         maxHealth: getEnemyHealthForDifficulty(false, true, false),
@@ -1875,6 +2126,10 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
         areaKey: areaKey, // NEW: Track which area this boss belongs to
         placementType: placementType // NEW: Track area type
     };
+    if (_hyBO.healthK > 0) {   // HYBRID: guardians are tougher
+        boss.userData.maxHealth = Math.round(boss.userData.maxHealth * _hyBO.healthK);
+        boss.userData.health = boss.userData.maxHealth;
+    }
 
     // PRESERVED: Ensure boss visibility and prevent frustum culling
     boss.visible = true;
@@ -1885,7 +2140,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
 
     // Spawn-in beat: materialize the hull + letterbox name card
     if (typeof materializeShip === 'function') materializeShip(boss, 800);
-    if (typeof playBossIntro === 'function') {
+    if (typeof playBossIntro === 'function' && !_hyBO.quiet) {
         const _bfac = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId] && galaxyTypes[galaxyId].faction) || null;
         playBossIntro(boss.userData.name, _bfac, boss.userData.galaxyColor);
     }
@@ -1897,12 +2152,15 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
     
     // Spawn the escort swarm — bumped 3 → 7 so the (now 2×-sized) boss
     // arrives with a proper entourage swirling around it.
-    for (let i = 0; i < 7; i++) {
+    const _hySupN = (typeof _hyBO.supports === 'number') ? _hyBO.supports : 7;   // HYBRID: guardians bring fewer
+    for (let i = 0; i < _hySupN; i++) {
         spawnBossSupport(galaxyId, bossPosition, i, areaKey, bossOverrides);
     }
     
     // PRESERVED: Boss warning and audio systems
-    if (typeof showBossWarning === 'function') {
+    if (_hyBO.quiet) {
+        /* HYBRID: second and third guardians arrive without their own card */
+    } else if (typeof showBossWarning === 'function') {
         showBossWarning(boss.userData.name);
     } else {
         console.log(`BOSS SPAWNED: ${boss.userData.name} in ${galaxyType.name} Galaxy!`);
@@ -2406,7 +2664,9 @@ function spawnEliteGuardian(galaxyId, faction, spawnPosition = null) {
     const galaxyType = galaxyTypes[galaxyId];
 
     // Use provided spawn position (where last enemy was killed) or fallback to galaxy center
-    const guardianPosition = spawnPosition ? spawnPosition.clone() : getGalaxy3DPosition(galaxyId);
+    let guardianPosition = spawnPosition ? spawnPosition.clone() : getGalaxy3DPosition(galaxyId);
+    // HYBRID (package R): never inside a hole (the Vulcan boss passes Sgr A*'s centre)
+    if (typeof _hyBossSite === 'function') guardianPosition = _hyBossSite(galaxyId, 'elite_guardian', guardianPosition, true);
     console.log(`📍 Elite Guardian spawning at ${spawnPosition ? 'last kill position' : 'galaxy center'}:`, guardianPosition);
 
     const guardianGeometry = createEnemyGeometry(galaxyId);
@@ -19128,6 +19388,159 @@ function spawnMissionEnemyAt(galaxyId, position) {
 window.spawnMissionEnemyAt = spawnMissionEnemyAt;
 
 // =============================================================================
+// HYBRID (package R) — boss sites, Black Hole Guardians, mission hosts
+// =============================================================================
+// Where a boss appears. Species bosses: the pirate flagship off the Sun on the
+// player's side, the Vulcan boss on Sgr A*'s ring. A faction boss with no
+// caller position: its core's ring (HY_ENEMIES.BOSS_RING) on the player's
+// side. Every site then keeps out of holes, planets and the Sun.
+function _hyBossSite(g, placementType, pos, isOverride) {
+    if (!_hyEnemyRegionOn() || !pos) return pos;
+    const H = HY_ENEMIES;
+    const cam = (typeof camera !== 'undefined' && camera) ? camera.position : null;
+    const toward = function (centre, maxD) {
+        if (cam && cam.distanceTo(centre) < maxD) {
+            const d = cam.clone().sub(centre); d.y = 0;
+            if (d.lengthSq() > 1) return d.normalize();
+        }
+        const r = _hyRandDir(0); r.y = 0; return r.normalize();
+    };
+    let hole = null, site = null;
+    if (placementType === 'martianPirate_boss') {
+        const sun = _hySolSun();
+        if (sun) { site = sun.position.clone().addScaledVector(toward(sun.position, 40000), _hyBodyR(sun) * H.PIRATE_BOSS_SUN_K); site.y += 250; }
+    } else if (placementType === 'vulcanPatrol_boss' || (placementType === 'elite_guardian' && g === 7)) {
+        hole = _hySgrA();
+    } else if (!isOverride) {
+        hole = (g === 7) ? _hySgrA() : _hyCoreFor(g);
+    }
+    if (hole) {
+        const dir = toward(hole.position, 60000);
+        if (placementType === 'elite_guardian') dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.35);   // beside the boss, not on it
+        site = hole.position.clone().addScaledVector(dir, _hyHoleR(hole) * _hyRng(H.BOSS_RING));
+        site.y += (Math.random() - 0.5) * 600;
+    }
+    return _hyEnemyKeepout(site || pos.clone(), g, { holeK: H.BOSS_RING[0], bodyK: H.BOSS_BODY_K, spread: 600 });
+}
+
+// spawnGuardians(galaxyId) → array of guardian ships at that galaxy's core
+// (signature from package O). 2-3 guardians on a ring outside the disc, each
+// bigger and tougher than a boss, each with its own job (updateBossBehavior →
+// _hyGuardianBehavior): 'warden' holds the core and sweeps, 'ram' charges the
+// player after a wind-up, 'volley' keeps range and fires missile volleys.
+function spawnGuardians(galaxyId) {
+    const out = [];
+    if (typeof spawnBossForArea !== 'function' || typeof THREE === 'undefined') return out;
+    const H = HY_ENEMIES;
+    const core = (galaxyId === 7 || galaxyId === 8) ? (_hySgrA() || _hyCoreFor(7)) : _hyCoreFor(galaxyId);
+    let center = core ? core.position.clone() : null;
+    if (!center && typeof getGalaxy3DPosition === 'function') { try { center = getGalaxy3DPosition(galaxyId); } catch (e) { center = null; } }
+    if (!center) return out;
+    const R = core ? _hyHoleR(core) : 900;
+    const ring = R * H.GUARD_RING + H.GUARD_PAD;
+    const gt = (typeof galaxyTypes !== 'undefined' && galaxyTypes[galaxyId]) || { faction: 'Hostile' };
+    const n = 2 + (galaxyId % 2);                       // 2 or 3 guardians
+    // the warden takes the player's side of the core; the others spread round
+    let a0 = Math.random() * Math.PI * 2;
+    if (typeof camera !== 'undefined' && camera) {
+        const d = camera.position.clone().sub(center);
+        if (d.x * d.x + d.z * d.z > 1) a0 = Math.atan2(d.z, d.x);
+    }
+    const stamp = Date.now();
+    for (let i = 0; i < n; i++) {
+        const a = a0 + i * (Math.PI * 2 / n);
+        const pos = new THREE.Vector3(center.x + Math.cos(a) * ring, center.y + (i - 1) * 260, center.z + Math.sin(a) * ring);
+        const role = H.GUARD_ROLES[i % H.GUARD_ROLES.length];
+        const key = galaxyId + '-campaign_guardian_' + i + '_' + stamp;
+        const name = 'Black Hole Guardian ' + (i + 1) + ' (' + gt.faction + ')';
+        let b = null;
+        try {
+            b = spawnBossForArea(galaxyId, 'black_hole_guardian', key, pos, {
+                factionLabel: gt.faction + ' Guardian', name: name,
+                scale: H.GUARD_SCALE, healthK: H.GUARD_HEALTH_K,
+                supports: i === 0 ? H.GUARD_ESCORT : 0, quiet: i > 0
+            });
+        } catch (e) { b = null; }
+        if (b && b.userData) {
+            b.userData.isGuardian = true;
+            b.userData.isCampaignGuardian = true;
+            b.userData.guardianRole = role;
+            // the warden holds the core; the ram and the volley ship come round to the player
+            b.userData.detectionRange = role === 'warden' ? 6500 : 16000;
+            b.userData.patrolCenter = b.position.clone();   // the warden's station
+            out.push(b);
+        }
+    }
+    return out;
+}
+if (typeof window !== 'undefined') window.spawnGuardians = spawnGuardians;
+
+// spawnMissionHost(kind, position, faction, count) → array of enemies.
+// kind 'civilian-fleet': a raiding host circling the convoy nearest `position`;
+// kind 'planet': a host circling the planet nearest `position`.
+// faction: a galaxyTypes[].faction name or a galaxy index. They keep that
+// galaxy's id, model and faction, and fly a patrol round their host until the
+// player arrives (isMissionHost).
+function spawnMissionHost(kind, position, faction, count) {
+    const out = [];
+    if (!position || typeof spawnMissionEnemyAt !== 'function' || typeof THREE === 'undefined') return out;
+    let g = -1;
+    if (typeof faction === 'number') g = faction;
+    else if (typeof galaxyTypes !== 'undefined') {
+        for (let i = 0; i < galaxyTypes.length; i++) if (galaxyTypes[i] && galaxyTypes[i].faction === faction) { g = i; break; }
+    }
+    if (!(g >= 0 && g <= 7)) g = Math.floor(Math.random() * 7);
+    const n = count > 0 ? Math.round(count) : HY_ENEMIES.HOST_COUNT;
+    const site = new THREE.Vector3(position.x, position.y, position.z);
+    let host = null, ringR = 800;
+    if (kind === 'planet' && typeof planets !== 'undefined') {
+        let bd = 9000;
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i], u = p && p.userData;
+            if (!u || (u.type !== 'planet' && u.type !== 'moon') || (p.parent && p.parent.type !== 'Scene')) continue;
+            const d = p.position.distanceTo(site) - _hyBodyR(p);
+            if (d < bd) { bd = d; host = p; }
+        }
+        if (host) ringR = _hyBodyR(host) * 2.3 + 450;
+    } else if (typeof tradingShips !== 'undefined' && tradingShips) {
+        let bd = 5000;
+        for (let i = 0; i < tradingShips.length; i++) {
+            const s = tradingShips[i];
+            if (!s || !s.position || !s.parent) continue;
+            const d = s.position.distanceTo(site);
+            if (d < bd) { bd = d; host = s; }
+        }
+    }
+    const groups = Math.max(1, Math.ceil(n / 3));
+    const base = host ? host.position : site;
+    const fac = (typeof galaxyTypes !== 'undefined' && galaxyTypes[g]) ? galaxyTypes[g].faction : 'Hostile';
+    for (let gi = 0; gi < groups && out.length < n; gi++) {
+        const a = gi * Math.PI * 2 / groups + Math.random() * 0.4;
+        const centre = new THREE.Vector3(base.x + Math.cos(a) * ringR, base.y + (gi % 2 ? 1 : -1) * 160, base.z + Math.sin(a) * ringR);
+        if (kind === 'planet') _hyEnemyKeepout(centre, g, { spread: 0 });
+        const st = host ? _hyMakeStation(host, centre, HY_ENEMIES.STATION_SPIN * 1.4) : null;
+        for (let j = 0; j < 3 && out.length < n; j++) {
+            const e = spawnMissionEnemyAt(g, centre);
+            if (!e) continue;
+            const ja = (j / 3) * Math.PI * 2;
+            e.position.set(centre.x + Math.cos(ja) * 90, centre.y + (Math.random() - 0.5) * 40, centre.z + Math.sin(ja) * 90);
+            const u = e.userData;
+            u.position3D = e.position.clone();
+            u.patrolCenter = centre.clone();
+            u.patrolRadius = 500;
+            u.isMissionHost = true;
+            u.missionHostKind = kind;
+            u.aggression = 0.85 + Math.random() * 0.15;
+            u.name = fac + (kind === 'planet' ? ' Raider' : ' Interceptor');
+            if (st) _hyBindStation(e, st);
+            out.push(e);
+        }
+    }
+    return out;
+}
+if (typeof window !== 'undefined') window.spawnMissionHost = spawnMissionHost;
+
+// =============================================================================
 // UFO ENEMIES - Mysterious aliens patrolling exotic systems with erratic movement
 // =============================================================================
 const ufoEnemies = [];
@@ -20684,7 +21097,9 @@ function createEnemies3D() {
         // enemy count is allowed to exceed enemiesPerGalaxy when needed
         // to satisfy the black-hole minimum — the player should always
         // find significant resistance there.
-        const MIN_BH_ENEMIES = 15;
+        // HYBRID (package R): with region placement the core keeps a guard ring
+        // (HY_ENEMIES.CORE_GUARD) and the rest spread across the galaxy's systems.
+        const MIN_BH_ENEMIES = _hyEnemyRegionOn() ? HY_ENEMIES.CORE_GUARD : 15;
         let i = 0;
         let bhEnemies = 0;
         let cosmicSpawned = false;
@@ -20817,7 +21232,10 @@ function createEnemies3D() {
     // player from the Sol spawn toward the galactic core (where the Vulcans
     // and the liberation set-piece wait). The old full Fibonacci sphere
     // scattered them in every direction — combat wandered instead of led.
-    const patrolGroupCount = 8;
+    // HYBRID (package R): Sol's pirate stations (HY_ENEMIES.SOL_STATIONS) — the
+    // opening skirmishers ahead of the start, then patrols of the inner planets.
+    const _hySt = _hyEnemyRegionOn() ? _hySolPirateStations() : null;
+    const patrolGroupCount = _hySt ? _hySt.length : 8;
     const piratesPerGroup = 3;
     // Martian Pirates patrol the Sol system, so the corridor starts at the
     // Sol-system offset (the origin is Sgr A* — Vulcan turf below).
@@ -20855,6 +21273,7 @@ function createEnemies3D() {
             .addScaledVector(_corridorDir, depth)
             .addScaledVector(_corridorSide, side)
             .addScaledVector(_corridorUp, lift);
+        if (_hySt) groupCenter.copy(_hySt[g].centre);
 
         for (let p = 0; p < piratesPerGroup; p++) {
             pirateIndex++;
@@ -20935,6 +21354,7 @@ function createEnemies3D() {
                 position3D: enemy.position.clone(),
                 hitboxSize: hitboxSize
             };
+            if (_hySt) { enemy.userData.patrolRadius = 450; enemy.userData.station = _hySt[g].tag; _hyBindStation(enemy, _hySt[g].station); }
 
             enemy.visible = true;
             enemy.frustumCulled = true;
@@ -20953,8 +21373,11 @@ function createEnemies3D() {
     const vulcansPerGroup = 3;
     const vulcanGoldenAngle = Math.PI * (3 - Math.sqrt(5));
     let vulcanIndex = 0;
+    // HYBRID (package R): the patrol ring sits outside Sgr A*'s keep-out
+    // (HY_ENEMIES.VULCAN_RING radii) and circles it as a station.
+    const _hySgr = _hyEnemyRegionOn() ? _hySgrA() : null;
     for (let g = 0; g < vulcanGroupCount; g++) {
-        const groupDistance = 700 + Math.random() * 800;
+        const groupDistance = _hySgr ? _hyHoleR(_hySgr) * _hyRng(HY_ENEMIES.VULCAN_RING) : 700 + Math.random() * 800;
         // Fibonacci-lattice sphere: even 3D coverage around Sagittarius A*.
         // Offset starting index so Vulcans don't overlap with Martian Pirates.
         const cosPolar = 1 - 2 * (g + 0.5) / vulcanGroupCount;
@@ -20965,6 +21388,7 @@ function createEnemies3D() {
             cosPolar * groupDistance,
             Math.sin(azimuth) * sinPolar * groupDistance
         );
+        const _hyVSt = _hySgr ? _hyMakeStation(_hySgr, groupCenter.add(_hySgr.position), HY_ENEMIES.STATION_SPIN) : null;
 
         for (let p = 0; p < vulcansPerGroup; p++) {
             vulcanIndex++;
@@ -21067,6 +21491,7 @@ function createEnemies3D() {
                 position3D: enemy.position.clone(),
                 hitboxSize: hitboxSize
             };
+            if (_hyVSt) { enemy.userData.station = 'sgrA'; _hyBindStation(enemy, _hyVSt); }
 
             enemy.visible = true;
             enemy.frustumCulled = true;
