@@ -30,6 +30,7 @@
         enemyPopulation: 'original',   // how many enemies you can see and fight
         enemyAI:         'overhaul',   // advanced behaviours (what enemies decide to do)
         enemyFlight:     'physical',   // how they move: momentum + nose + thrust  'physical' | 'overhaul'
+        wingmanFlight:   'physical',   // Ben 2026-10-11: wingmen fly the enemies' flight model with per-wingman personalities (WINGMAN_FLIGHT, WINGMAN_PERSONALITIES)  'physical' | 'kinematic'
         // — deep space —
         blackHoles:      'original',   // black hole + galaxy-core look
         nebulae:         'combined',   // 'combined' | 'overhaul' | 'original'
@@ -64,8 +65,11 @@
         warpFx:          'calm',       // Ben 2026-10-11: "Emergency Warp animation could be a little less intense" (HY_WARP_FX)  'calm' | 'overhaul'
         targetBracket:   'targeted',   // Ben 2026-10-11: the overhaul's bracket + tag, but only round the targeted enemy  'targeted' | 'overhaul' | 'off'
         demoSteering:    'steady',     // Ben 2026-10-11: the demo keeps its nose on the enemy — no showmanship look/roll nudges in combat  'steady' | 'overhaul'
+        missionControl:  'alert',      // Ben 2026-10-11: campaign Mission Control lines through the big green MISSION COMMAND alert, as on the live branch  'alert' | 'channel'
         // — synthwave branch (claude/synthwave) —
         deathScreen:     'synthwave',  // MISSION FAILED as an arcade sequence (js/synthwave-fx.js)  'synthwave' | 'original'
+        postFx:          'bloom',      // EffectComposer with HDR-threshold bloom: only neon (emissive > 1) glows (js/synthwave-post.js)  'bloom' | 'off'
+        vectorShips:     'edges',      // glowing edge lines + fresnel rim on the ship models (js/synthwave-post.js)  'edges' | 'off'
         haze:            'regional',   // distance haze varies by region: murky in nebulae, clear between galaxies (HY_HAZE)  'regional' | 'global'
         sun:             'burning',    // the local Sun as a burning star emitting light (HY_SUN)  'burning' | 'overhaul'
         outerSystems:    'frontier',   // outer systems rebuilt as the far frontier (HY_OUTER)  'frontier' | 'classic'

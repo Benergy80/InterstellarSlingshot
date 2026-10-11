@@ -126,6 +126,21 @@
     // ── comms (one at a time, never over the tutorial) ───────────────────────
     const _q = []; let _lastSayAt = 0;
     function say(title, text) { _q.push({ title: title, text: text, at: now(), seq: C.log.length }); }
+    // Ben, 2026-10-11: "Mission Control messages are not coming through as they
+    // did in the branch that is currently on the live github pages." That branch
+    // delivered Mission Control through the big green MISSION COMMAND alert
+    // (showMissionCommandAlert: typewriter reveal, hands-free auto-dismiss); the
+    // campaign had been sending them to the small bottom transmission channel.
+    // Under missionControl: alert a 'Mission Control' line uses the alert again
+    // (other campaign voices stay on the channel).
+    function deliver(m) {
+        const mc = /^Mission Control/i.test(m.title || '');
+        const useAlert = mc && window.HYBRID && window.HYBRID.is('missionControl', 'alert') && typeof showMissionCommandAlert === 'function';
+        try {
+            if (useAlert) showMissionCommandAlert(m.title, m.text);
+            else showIncomingTransmission(m.title, m.text, LORE);
+        } catch (e) { /* comms optional */ }
+    }
     function pumpComms() {
         if (!_q.length || typeof showIncomingTransmission !== 'function') return;
         const tut = ie('tutorialSystem');
@@ -133,7 +148,7 @@
         const tutBusy = tut && tut.active && !tut.completed && (now() - head.at) < 75000;
         if (tutBusy || now() - _lastSayAt < 9000) return;
         _q.shift(); _lastSayAt = now();
-        try { showIncomingTransmission(head.title, head.text, LORE); } catch (e) { /* comms optional */ }
+        deliver(head);
     }
 
     // ── world helpers ────────────────────────────────────────────────────────
@@ -836,7 +851,7 @@
             pumpCommsNow();
         }
     }
-    function pumpCommsNow() { _lastSayAt = 0; const tut = ie('tutorialSystem'); if (tut && tut.active && !tut.completed) { const m = _q.pop(); if (m) { try { showIncomingTransmission(m.title, m.text, LORE); } catch (e) {} _lastSayAt = now(); } } else pumpComms(); }
+    function pumpCommsNow() { _lastSayAt = 0; const tut = ie('tutorialSystem'); if (tut && tut.active && !tut.completed) { const m = _q.pop(); if (m) { deliver(m); _lastSayAt = now(); } } else pumpComms(); }
 
     // ── loop ─────────────────────────────────────────────────────────────────
     let _frame = 0;
