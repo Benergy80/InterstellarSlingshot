@@ -136,7 +136,10 @@
 
     // ── world helpers ────────────────────────────────────────────────────────
     function cam() { return ie('camera'); }
-    function sol() { return window.localSystemOffset || null; }
+    // localSystemOffset is a plain {x,y,z} (shifted in place by the floating
+    // origin) — hand out a Vector3 copy
+    const _solV = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+    function sol() { const o = window.localSystemOffset; return (o && _solV) ? _solV.set(o.x, o.y, o.z) : null; }
     function solEdge() {
         try {
             if (window.HYBRID && window.HYBRID.is('solScale', 'big') && typeof window._hySolLayout === 'function') {
@@ -198,6 +201,7 @@
     function grant(phase, label, fn) {
         const g = gs(); if (!g) return;
         try { fn(g); } catch (e) { /* stat optional */ }
+        if (typeof updateMissileUI === 'function') { try { updateMissileUI(); } catch (e) {} }
         C.grants.push({ phase: phase, label: label });
         if (window.arcade && window.arcade.flash) { try { window.arcade.flash('rgba(120,220,255,0.35)', 0.4); } catch (e) {} }
         if (typeof flashEventText === 'function') { try { flashEventText(label.toUpperCase(), '#66ffcc', 'CAMPAIGN REWARD'); } catch (e) {} }
@@ -224,7 +228,16 @@
         if (!line) return null;
         const DP = window.discoveryPaths || ie('discoveryPaths') || [];
         for (let i = DP.length - 1; i >= 0; i--) {
-            if (DP[i] && DP[i].line === line) { const e = DP.splice(i, 1)[0]; line.userData.isCampaignGuide = true; line.userData.__dbTris = Infinity; if (e.particles) e.particles.userData.__dbTris = Infinity; return e; }
+            if (DP[i] && DP[i].line === line) {
+                const e = DP.splice(i, 1)[0];
+                line.userData.isCampaignGuide = true; line.userData.__dbTris = Infinity;
+                // guidance must read at a glance: untone-mapped, brighter near end
+                line.material.toneMapped = false; line.material.opacity = 0.95;
+                const ca = line.geometry.attributes.color;
+                if (ca) { for (let k = 0; k < ca.count; k++) { const b = 0.75 + 0.25 * (k / Math.max(1, ca.count - 1)); ca.setXYZ(k, b, b, b); } ca.needsUpdate = true; }
+                if (e.particles) { e.particles.userData.__dbTris = Infinity; e.particles.material.toneMapped = false; }
+                return e;
+            }
         }
         return { line: line, particles: null };
     }
@@ -375,7 +388,7 @@
 
     const DONE = {
         SOL_PIRATES: function () {
-            grant('SOL_PIRATES', 'Missile racks +2', function (g) { if (g.missiles) { g.missiles.capacity += 2; g.missiles.current = g.missiles.capacity; } });
+            grant('SOL_PIRATES', 'Missiles restocked, warheads +1', function (g) { if (g.missiles) { g.missiles.current = g.missiles.capacity; g.missiles.damage = (g.missiles.damage || 3) + 1; } });
         },
         SOL_BOSS: function () {
             grant('SOL_BOSS', 'Hull plating +25', function (g) { g.maxHull = (g.maxHull || 100) + 25; g.hull = g.maxHull; });
@@ -388,16 +401,16 @@
             C.nebulaSaved++;
             if (C.nebulaSaved === 1) grant('NEBULA_MISSION', 'Overdrive cannons (fire rate up)', function () { C.perm.overdrive = true; });
             else grant('NEBULA_MISSION', 'Energy core +15', function (g) { g.maxEnergy = (g.maxEnergy || 100) + 15; g.energy = g.maxEnergy; });
-            grant('NEBULA_MISSION', 'Missile warheads +1 damage', function (g) { if (g.missiles) g.missiles.damage = (g.missiles.damage || 3) + 1; });
+            grant('NEBULA_MISSION', 'Emergency warp charge +1', function (g) { g.emergencyWarp.available = (g.emergencyWarp.available || 0) + 1; });
         },
         FACTION_GALAXY: function () {
             const g = C.galaxy ? C.galaxy.g : -1;
             if (g >= 0 && !C.cleared[g]) { C.cleared[g] = true; C.clearedOrder.push(g); }
             const gsv = gs(); if (gsv) gsv.galaxiesCleared = C.clearedOrder.length;
-            grant('FACTION_GALAXY', 'Hull +25, warp charges +2, missile racks +2', function (s) {
+            grant('FACTION_GALAXY', 'Hull +25, warp charges +2, missiles restocked', function (s) {
                 s.maxHull = (s.maxHull || 100) + 25; s.hull = s.maxHull;
                 s.emergencyWarp.available = (s.emergencyWarp.available || 0) + 2;
-                if (s.missiles) { s.missiles.capacity += 2; s.missiles.current = s.missiles.capacity; }
+                if (s.missiles) s.missiles.current = s.missiles.capacity;
             });
             if (typeof refreshEnemyDifficulty === 'function') { try { refreshEnemyDifficulty(); } catch (e) {} }
             if (C.clearedOrder.length < GALAXIES) {
