@@ -2058,6 +2058,7 @@ function executeSlingshot() {
             sweep: _omega * 1.6,
             rate: _whipRateTable(_k0),
             dip: _dip,
+            minR: _minR, // periapsis floor — the release line must clear it too (HY_WHIP_EXIT)
             bodyR: planetRadius,
             bh: (_budType === 'blackhole'),
             aim: _aim.clone(),
@@ -2433,6 +2434,52 @@ function _whipProgress(w, u) {
     return tbl[i] + (tbl[i + 1] - tbl[i]) * (x - i);
 }
 
+// ── HYBRID: THE EXIT MUST CLEAR THE BODY (package X, guardflake) ────────────
+// The release fires along 0.65 x aim + 0.35 x tangent. On a full-sweep timeout
+// release (the aim was never reached) that blend can point back THROUGH the
+// body just whipped round: staged 0.6 x range out with the aim along the look
+// direction, the line passed 0.58 R from the centre for every planet on
+// package N's 240-620 band (and 1.0 R on the old ~70 u worlds — always a
+// graze), so the ship hit the surface ~120 ms into the launch ramp: speed
+// 65 -> 0.4, PLANETARY IMPACT. Whether it hit depended only on which way the
+// planet happened to be orbiting — the keep-check flake. The fix bends the
+// launch direction by the SMALLEST angle that keeps the whole line outside
+// the arc's own periapsis floor (minR = 1.7 R, or the black hole's warp
+// threshold x 1.25) times CLEAR_K, so a good aim is untouched and a bad one
+// skims past instead of ploughing in.
+const HY_WHIP_EXIT = { CLEAR_K: 1.0, EPS: 0.03 };
+if (typeof window !== 'undefined') window.HY_WHIP_EXIT = HY_WHIP_EXIT;
+// dir (unit, modified in place): launch direction from point p; c: body centre;
+// clear: the distance the line must keep from c; fallback: a unit vector to
+// bend toward when dir points dead at the centre (the arc tangent).
+function _whipClearLaunch(dir, p, c, clear, fallback) {
+    const tx = c.x - p.x, ty = c.y - p.y, tz = c.z - p.z;
+    const d = Math.sqrt(tx * tx + ty * ty + tz * tz);
+    if (!(d > 1e-6) || !(clear > 0)) return dir;
+    const cx = tx / d, cy = ty / d, cz = tz / d;            // unit toward the centre
+    const along = dir.x * cx + dir.y * cy + dir.z * cz;      // cos(angle to centre)
+    if (along <= 0) return dir;                              // already heading away
+    if (d * Math.sqrt(Math.max(0, 1 - along * along)) >= clear) return dir;  // misses
+    // Perpendicular part of dir (or of the tangent if dir points dead at c).
+    let qx = dir.x - along * cx, qy = dir.y - along * cy, qz = dir.z - along * cz;
+    let ql = Math.sqrt(qx * qx + qy * qy + qz * qz);
+    if (ql < 1e-4 && fallback) {
+        const fa = fallback.x * cx + fallback.y * cy + fallback.z * cz;
+        qx = fallback.x - fa * cx; qy = fallback.y - fa * cy; qz = fallback.z - fa * cz;
+        ql = Math.sqrt(qx * qx + qy * qy + qz * qz);
+    }
+    if (ql < 1e-4) { dir.set(-cx, -cy, -cz); return dir; }   // nothing better: straight out
+    qx /= ql; qy /= ql; qz /= ql;
+    // Inside the clearance sphere already: leave along the surface-parallel
+    // direction (90 deg off the centre). Otherwise sit just outside the cone
+    // of directions that would pass within `clear`.
+    const a = (d <= clear) ? Math.PI / 2
+        : Math.min(Math.PI / 2, Math.asin(clear / d) + HY_WHIP_EXIT.EPS);
+    const ca = Math.cos(a), sa = Math.sin(a);
+    dir.set(cx * ca + qx * sa, cy * ca + qy * sa, cz * ca + qz * sa).normalize();
+    return dir;
+}
+
 // Bell centered on closest approach — drives the radial scoop, the bank, the
 // glow swell and the dilation weight from one shared shape.
 function _whipBell(u, width) {
@@ -2620,12 +2667,24 @@ function updateSlingshotWhip() {
 
     // Launch when the exit tangent aligns with the aim (after at least a
     // third of the arc, so every whip visibly swings) or at full sweep.
-    const aligned = tangent.dot(w.aim) > 0.97;
+    // HYBRID (guardflake): the rail runs on Date.now(), so one long frame
+    // (33-50 ms hitches measured mid-whip) can sweep the tangent ~15 deg —
+    // straight over the 0.97 window, leaving a full-sweep timeout release
+    // aimed anywhere. Count a frame that CROSSED the aim (the aim's side of
+    // the tangent flipped, tangent roughly forward) as aligned too.
+    const _aDot = tangent.dot(w.aim);
+    const _aSide = tangent.z * w.aim.x - tangent.x * w.aim.z;   // (tangent x aim).y
+    const _crossed = (w._aSide !== undefined) && (_aSide * w._aSide < 0) && _aDot > 0.5;
+    w._aSide = _aSide;
+    const aligned = _aDot > 0.97 || _crossed;
     const elapsed = elapsedMs;
     if ((aligned && elapsed > 520) || elapsed >= w.durMs) {
         // Launch: mostly aim, some tangent — physical but predictable
         const launchDir = w.aim.clone().multiplyScalar(0.65)
             .addScaledVector(tangent, 0.35).normalize();
+        // HYBRID (guardflake): never launch back through the body (see HY_WHIP_EXIT).
+        _whipClearLaunch(launchDir, camera.position, bp,
+            (w.minR || (w.bodyR || 0) * 1.7) * HY_WHIP_EXIT.CLEAR_K, tangent);
         // ── THE CRACK IS A RAMP, NOT A TELEPORT ──────────────────────────
         // This was `velocityVector.copy(launchDir).multiplyScalar(w.boost)` —
         // one frame, rail speed → full boost, a step function. A step has no
