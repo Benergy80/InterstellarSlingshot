@@ -418,7 +418,7 @@
         if ((e.key === 'Enter' || e.key === ' ') && document.getElementById('introStartBtn')) teardown('key');
     }
     window.addEventListener('click', onPress, true); state.listeners.push(['click', onPress, true]);
-    window.addEventListener('touchend', onPress, true); state.listeners.push(['touchend', onPress, true]);
+    // (no touchend: fading on touchend would set pointer-events:none before the tap's click lands)
     window.addEventListener('keydown', onKey, true); state.listeners.push(['keydown', onKey, true]);
 
     function teardown(why) {
