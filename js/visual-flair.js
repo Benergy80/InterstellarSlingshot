@@ -1590,6 +1590,27 @@ const _WARP_STYLE = {
     blackhole: { colA: 0xb26bff, colB: 0x3a2bff, len: 1.28, wid: 1.05, white: 0.30, swirl: 0.11, shear: 0.09, chroma: 1.6, tunA: 0xb26bff, tunB: 0x2f1a6b }
 };
 
+// ── HYBRID: SUBTLE SLINGSHOT ────────────────────────────────────────────────
+// Ben, 2026-10-10: "can we tone down the effects when the Gravitational
+// Slingshot is engaged so we can see the swinging around the planet better?"
+// Multipliers on every slingshot effect (release beat in game-physics.js, the
+// streak and debris field envelopes below) under `slingshotFx: subtle`.
+// `?hy=slingshotFx:overhaul` restores the full show. 1 = as the overhaul had it.
+const HY_SLING_FX = {
+    STREAK: 0.30,      // streak-field brightness/kick during the whip and glide
+    DEBRIS: 0.0,       // world-space debris chips (0 = none)
+    PULSE: 0.35,       // chromatic screen pulse at release
+    SHOCK: 0.5,        // shockwave ring on the body
+    SHAKE: 0.35,       // screen shake
+    FOV: 0.4,          // FOV kick
+    STARFIELD: false,  // warp-speed starfield streaks
+    HYPERSPACE: false, // the four hyperspace line bursts
+};
+if (typeof window !== 'undefined') window.HY_SLING_FX = HY_SLING_FX;
+function _hySlingSubtle() {
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('slingshotFx', 'subtle'));
+}
+
 const _wsfStyle = {
     name: '', level: 0, last: 0,
     len: 1, wid: 1, white: 0.8, swirl: 0, chroma: 0,
@@ -2418,6 +2439,9 @@ function _updateWarpStreaks() {
         if (kt >= 1) _wsf.kickAmp = 0;
         else target = Math.max(target, _wsf.kickAmp * Math.pow(1 - kt, 0.55));
     }
+    // HYBRID subtle slingshot: the field stays, at a fraction, so the planet
+    // you are whipping round is what you see (HY_SLING_FX.STREAK).
+    if (_hySlingSubtle() && _warpMode() === 'slingshot') target *= HY_SLING_FX.STREAK;
     if (target <= 0.001 && _wsf.env <= 0.004) {
         if (_wsf.mesh && _wsf.mesh.visible) _wsf.mesh.visible = false;
         _wsf.env = 0;
@@ -2828,6 +2852,7 @@ function _updateWarpDebris() {
         if (kt >= 1) _wdf.kickAmp = 0;
         else target = Math.max(target, _wdf.kickAmp * Math.pow(1 - kt, 0.6));
     }
+    if (_hySlingSubtle() && _warpMode() === 'slingshot') target *= HY_SLING_FX.DEBRIS;   // HYBRID subtle slingshot
     if (target <= 0.001 && _wdf.env <= 0.004) {
         if (_wdf.mesh && _wdf.mesh.visible) _wdf.mesh.visible = false;
         _wdf.env = 0;

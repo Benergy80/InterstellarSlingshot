@@ -58,6 +58,7 @@
         navWarp:         'on',         // O-warp with a nav target flies to it and parks facing it (demo-style arrival)  'on' | 'off'
         progression:     'campaign',   // Ben's campaign (Sol pirates → boss → Sgr A* → nebulae → 8 galaxies)  'campaign' | 'overhaul'
         warpTint:        'sector',     // warp streaks/tunnel coloured by where you are (nebula / Sol / galaxy)  'sector' | 'overhaul'
+        slingshotFx:     'subtle',     // Ben 2026-10-10: tone the whip's flash/streaks/debris down so the swing round the planet reads  'subtle' | 'overhaul'
     };
 
     const KEY = 'hybridSwitches';

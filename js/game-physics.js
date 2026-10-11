@@ -2664,24 +2664,31 @@ function updateSlingshotWhip() {
         // in-plane shock + core flare), a chromatic screen pulse, and the
         // hardest shake of the whole maneuver — all sized off the boost so a
         // black hole hits meaningfully harder than a gas giant.
+        // HYBRID — Ben, 2026-10-10: "tone down the effects when the Gravitational
+        // Slingshot is engaged so we can see the swinging around the planet
+        // better". Under slingshotFx:subtle every release effect below is scaled
+        // by HY_SLING_FX (visual-flair.js); the hyperspace lines and the warp
+        // starfield are skipped. The whip itself (arc, speed) is untouched.
+        const _sfx = (typeof window !== 'undefined' && window.HY_SLING_FX && window.HYBRID &&
+                      window.HYBRID.is('slingshotFx', 'subtle')) ? window.HY_SLING_FX : null;
         if (typeof window !== 'undefined') {
             const _pw = Math.max(0.55, Math.min(1.5, w.boost / 100));
             if (typeof window.whipShockwave === 'function') {
                 window.whipShockwave(body.position, w.color,
-                    Math.max(24, (w.bodyR || 20) * 1.9), _pw);
+                    Math.max(24, (w.bodyR || 20) * 1.9), _pw * (_sfx ? _sfx.SHOCK : 1));
             }
             if (typeof window.whipScreenPulse === 'function') {
-                window.whipScreenPulse(w.color, _pw);
+                window.whipScreenPulse(w.color, _pw * (_sfx ? _sfx.PULSE : 1));
             }
             if (typeof window.whipScreenShake === 'function') {
-                window.whipScreenShake(9 + 7 * _pw, 620);
+                window.whipScreenShake((9 + 7 * _pw) * (_sfx ? _sfx.SHAKE : 1), 620);
             }
         }
         // ── THE RELEASE HAS TO BE SEEN, NOT JUST MEASURED ────────────────
         // FOV impulse, driven through cameraState._warpZoom (see _fovKick):
         // the frame BLOWS open on the launch frame and eases back, instead of
         // the camera system's slow 1.2s widening that read as a zoom-out.
-        _fovKick(Math.max(0.55, Math.min(1.5, w.boost / 100)));
+        _fovKick(Math.max(0.55, Math.min(1.5, w.boost / 100)) * (_sfx ? _sfx.FOV : 1));
         // …and the radial speed-streak field, locked to the VELOCITY vector so
         // it radiates out of the on-screen vanishing point of travel. Without
         // this the background stars stayed discrete stationary dots while the
@@ -2690,7 +2697,7 @@ function updateSlingshotWhip() {
             const _sA = w.bh ? 0xb26bff : (w.color === 0xffcc44 ? 0xffd166 : 0x6be6ff);
             const _sB = w.bh ? 0x35e6ff : (w.color === 0xffcc44 ? 0xff5ccd : 0xff5ccd);
             window.warpStreakBurst(launchDir, w.boost * 60, _sA, _sB,
-                Math.max(0.6, Math.min(1.35, w.boost / 95)));
+                Math.max(0.6, Math.min(1.35, w.boost / 95)) * (_sfx ? _sfx.STREAK : 1));
         }
         // …and the WORLD-SPACE half of the same illusion. Streaks alone are a
         // decal: they ride the camera, so the boost read as a still photograph
@@ -2700,14 +2707,14 @@ function updateSlingshotWhip() {
         // of the launch vector, so the camera physically flies through them —
         // real perspective growth, real streaming past the frame edges — and
         // arms the backdrop parallax that finally unpins the skydomes.
-        if (typeof window !== 'undefined' && typeof window.warpDebrisBurst === 'function') {
+        if (typeof window !== 'undefined' && typeof window.warpDebrisBurst === 'function' && (!_sfx || _sfx.DEBRIS > 0)) {
             const _dA = w.bh ? 0xc9a4ff : (w.color === 0xffcc44 ? 0xffe6a8 : 0x9ff2ff);
             const _dB = w.bh ? 0x6ef0ff : 0xff8ade;
             window.warpDebrisBurst(launchDir, w.boost * 60, _dA, _dB,
-                Math.max(0.6, Math.min(1.3, w.boost / 95)));
+                Math.max(0.6, Math.min(1.3, w.boost / 95)) * (_sfx ? _sfx.DEBRIS : 1));
         }
-        if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true);
-        for (let i = 0; i < 4; i++) setTimeout(() => createHyperspaceEffect(), i * 140);
+        if (!_sfx || _sfx.STARFIELD) { if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true); }
+        if (!_sfx || _sfx.HYPERSPACE) { for (let i = 0; i < 4; i++) setTimeout(() => createHyperspaceEffect(), i * 140); }
         if (typeof showAchievement === 'function') {
             showAchievement('GRAVITY WHIP!',
                 (body.userData.name || 'Gravity assist') + ' → ' +

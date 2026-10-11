@@ -17455,7 +17455,8 @@ function updateAllyShips() {
                 _ftlAnchorWingman(ally, playerPos);
                 ud._warpAnchored = true;
             }
-            if (ud.aiState !== 'follow') _wingmanTacticalMessage(ud, 'follow');
+            // "On your six" only for a real burn — not for flying fast.
+            if (_burst && ud.aiState !== 'follow') _wingmanTacticalMessage(ud, 'follow');
             ud.aiState = 'follow';
             ud.patrolTarget = null;
             ud.engageTarget = null;
@@ -17467,7 +17468,8 @@ function updateAllyShips() {
             if (threat) {
                 ud.aiState = 'engage';
                 ud.engageTarget = threat;
-                _wingmanTacticalMessage(ud, 'engage');
+                // (the 'engage' line fires on the first SHOT, in _executeEngage —
+                // a contact on the scope is not "moving in")
             } else if (distToPlayer > 4000) {
                 // Separated by >4000u — stranded, orbit local planets here
                 ud.aiState = 'stranded';
@@ -17497,7 +17499,6 @@ function updateAllyShips() {
             if (threat && !_burst) {
                 ud.aiState = 'engage';
                 ud.engageTarget = threat;
-                _wingmanTacticalMessage(ud, 'engage');
             }
         } else if (ud.aiState === 'stranded') {
             // Reunion: player came back close enough — resume swarming
@@ -17710,6 +17711,13 @@ function _executeEngage(ally, ud, now) {
     // ── Laser fire: 1000ms cooldown ────────────────────────────────
     if (dist < firingRange && now - ud.lastAttack > 1000) {
         ud.lastAttack = now;
+        // HYBRID (Ben, 2026-10-10: lines must match what is happening right
+        // now): "moving in" is said on the first shot at a target, not when
+        // one appears on the scope.
+        if (ud._engageMsgFor !== ud.engageTarget) {
+            ud._engageMsgFor = ud.engageTarget;
+            _wingmanTacticalMessage(ud, 'engage');
+        }
         const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
         _fireWingmanLaser(ally.position.clone(), enemyPos, color);
 
@@ -18101,12 +18109,12 @@ const WINGMAN_CONTEXT_LINES = {
 const _WINGMAN_CHAT_FIRST_MS = 25000;     // first line this long after the game starts
 const _WINGMAN_CHAT_GAP_MS   = [45000, 80000]; // then every 45-80 s per wingman, staggered
 
-function _wingmanContextOf(threat) {
+function _wingmanContextOf(inBattle) {
     const ctx = { kind: 'deep', nebula: null, faction: null };
     try {
         if (typeof camera === 'undefined') return ctx;
         const cp = camera.position;
-        if (threat) { ctx.kind = 'combat'; }
+        if (inBattle) { ctx.kind = 'combat'; }
         // Inside / over a nebula
         if (typeof nebulaClouds !== 'undefined' && nebulaClouds) {
             let bd = Infinity;
@@ -18170,12 +18178,19 @@ function _wingmanAmbientChatter(ally, ud, now, distToPlayer, threat, playerWarpi
     }
     if (now < ud._chatNext) return;
     if (playerWarping || ud.aiState === 'stranded' || distToPlayer > 3000) return;
-    const ctx = _wingmanContextOf(threat);
-    // Every third line is about the wingman's own home, or a mechanics tip,
-    // whatever the surroundings — that is where the variety comes from.
+    // Only what is happening RIGHT NOW (Ben, 2026-10-10: "they should not say
+    // things like 'moving in' unless we are engaging battle. not in nebulas").
+    // Combat lines need a fight actually under way — this wingman attacking a
+    // target inside 1.5x its firing range, or a shot fired in the last 6 s —
+    // not a contact on the scope. Home lore belongs in a nebula; mechanics
+    // tips in open space; Sol and core banks only there.
+    const _tgt = ud.aiState === 'engage' ? ud.engageTarget : null;
+    const inBattle = !!(_tgt && _tgt.position && ally.position.distanceTo(_tgt.position) < (ud.firingRange || 350) * 1.5) ||
+                     (now - (ud.lastAttack || 0) < 6000);
+    const ctx = _wingmanContextOf(inBattle);
     ud._chatCount++;
     let bank = ctx.kind;
-    if (ctx.kind !== 'combat' && ud._chatCount % 3 === 0) bank = (ud._chatCount % 6 === 0) ? 'home' : 'deep';
+    if (ctx.kind === 'nebula' && ud._chatCount % 2 === 0) bank = 'home';
     const lines = WINGMAN_CONTEXT_LINES[bank] || WINGMAN_CONTEXT_LINES.deep;
     const said = ud._chatSaid[bank] || (ud._chatSaid[bank] = []);
     let pool = lines.map((l, i) => i).filter((i) => said.indexOf(i) < 0);
