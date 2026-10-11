@@ -14529,7 +14529,12 @@ function checkGuardianVictory() {
             // OPTIONAL DEEP-SPACE EXPEDITION: a path opens from this freed
             // core out toward UFO/Borg territory. Explicitly optional — the
             // directive below steers the player to the next nebula instead.
-            if (typeof createDiscoveryPathToPosition === 'function' &&
+            // HYBRID — REMOVED under the campaign. Ben, 2026-10-10: "There
+            // should be no optional expedition when the first galaxy is
+            // liberated. this needs to be removed." The overhaul's offer only
+            // survives under `?hy=progression:overhaul`.
+            const _hyExpedition = !window.HYBRID || window.HYBRID.is('progression', 'overhaul');
+            if (_hyExpedition && typeof createDiscoveryPathToPosition === 'function' &&
                 typeof findGalaxyCoreById === 'function') {
                 const _core = findGalaxyCoreById(g);
                 if (_core) {
