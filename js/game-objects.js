@@ -13386,24 +13386,37 @@ function _aerialFactor(o, d) {
     const ud = o.userData;
     if (!ud) return 0;
     if (ud.type !== 'planet' && ud.type !== 'moon') return 0;
-    // package T: the regional haze field scales both distances (1 when off)
-    const _aeNear = AERIAL_NEAR * _hyHaze.m, _aeScale = AERIAL_SCALE * _hyHaze.m;
-    if (d <= _aeNear) return 0;
+    _aerialCullK = 0;
+    // package T: the regional haze field scales both distances (m = 1 when off).
+    // The COLOUR ramp follows the region; the CULL stays on the global curve
+    // (_aerialCullK = kBase), so the set of drawn — and lit — bodies is exactly
+    // what it was without the field. Letting a clear region draw more bodies
+    // grew the lit set, recompiled programs and hitched the frame (measured:
+    // 50 ms frames mid-slingshot, keep-check row 1 failing 5 runs in 5).
+    const _m = _hyHaze.m;
+    if (d <= AERIAL_NEAR * Math.min(1, _m)) return 0;
     if (_aerialLocalSys !== null && _aerialSystem(o) === _aerialLocalSys) return 0;
-    const k = 1 - Math.exp(-(d - _aeNear) / _aeScale);
+    const _kOf = (mm) => d <= AERIAL_NEAR * mm ? 0 : 1 - Math.exp(-(d - AERIAL_NEAR * mm) / (AERIAL_SCALE * mm));
+    const k = _kOf(_m);
+    const kBase = _m === 1 ? k : _kOf(1);
     // HYBRID: fade by how big the body LOOKS, not only by how far it is. The
     // distance curve was tuned for field worlds (r ~ 60-140); on a 620 u heart
     // world it dims a body that still spans 10-25 deg of the frame to 7-50 %
     // brightness, which reads as a huge black disc. A body wide enough to read
     // as a place keeps its full colour; only the small far ones sink into haze.
+    let sz = 1;
     if (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('farPlanetFade', 'bySize')) {
         const r = ud.radius || ud._pbR || 0;
         const ang = r > 0 ? r / d : 0;             // ~ half the angular size, radians
         const t = Math.min(1, Math.max(0, (ang - AERIAL_SIZE_FADE) / (AERIAL_SIZE_FULL - AERIAL_SIZE_FADE)));
-        return k * (1 - t * t * (3 - 2 * t));
+        sz = 1 - t * t * (3 - 2 * t);
     }
-    return k;
+    _aerialCullK = kBase * sz;
+    return k * sz;
 }
+// The extinction the cull acts on for the body _aerialFactor last scored
+// (package T: always the global curve's, whatever the region).
+let _aerialCullK = 0;
 // Apparent half-size (r/d) below which the distance fade applies in full, and
 // above which a body is left untouched. 0.012 ~ 1.4 deg across, 0.045 ~ 5 deg.
 // Asteroid surface brightness under asteroids:original (1 = ORIGINAL albedo).
@@ -15843,6 +15856,7 @@ function updateDistanceCulling() {
             // inside AERIAL_NEAR, which is everything the player is near.
             const aeD = br > 0 ? Math.sqrt(d2) : 0;
             const aeK = br > 0 ? _aerialFactor(o, aeD) : 0;
+            const aeKc = br > 0 ? _aerialCullK : 0;   // package T: what the cull acts on
             let inRange;
             if (br > 0) {
                 // ANGULAR IS THE WHOLE RULE. No authored range gets a vote on a
@@ -15929,9 +15943,9 @@ function updateDistanceCulling() {
                 ? (o.userData.radius ||
                    (o.geometry && o.geometry.parameters ? o.geometry.parameters.radius : 0) || br)
                 : 0;
-            if (aeK > 0) {
+            if (aeK > 0 || aeKc > 0) {   // package T: a clear region can score 0 where the cull still acts
                 const lim = o.userData._aerialOut ? AERIAL_BACK_K : AERIAL_CULL_K;
-                const out = inRange && aeK >= lim && (ballR * _pxPerAng / aeD) < AERIAL_KEEP_PX;
+                const out = inRange && aeKc >= lim && (ballR * _pxPerAng / aeD) < AERIAL_KEEP_PX;
                 o.userData._aerialOut = out;
                 if (out) inRange = false;
             } else if (o.userData._aerialOut) {
