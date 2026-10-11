@@ -346,6 +346,13 @@
             }, 0x66ccff, 'Vulcan High Command');
         },
         SGR_LIBERATED: function () {
+            // Ben, 2026-10-11: "I cleared SOL and Sagittarius A and it did not
+            // register in the Galaxies Cleared". Galaxy 7 (Sol + Sgr A*, the
+            // Vulcans) counts as cleared here — the Universal map already paints
+            // it freed from this state, and the picker skips cleared galaxies, so
+            // no later mission leads back to the Vulcan core.
+            if (!C.cleared[7]) { C.cleared[7] = true; C.clearedOrder.push(7); }
+            { const gsv = gs(); if (gsv) gsv.galaxiesCleared = C.clearedOrder.length; }
             // the campaign draws its own line; the legacy white Sgr A* → twin line would be a second one
             if (!isDemo() && window.liberationNebulaPath) window.liberationNebulaPath.visible = false;
             say('Mission Control - Sagittarius A* Liberated',

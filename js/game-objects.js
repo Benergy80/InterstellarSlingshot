@@ -13634,6 +13634,19 @@ function _hySolAeSys() {
     _hySolAe = { sun: sun, sys: sys };
     return _hySolAe;
 }
+// Is this body's system one of Sol's neighbours (system centre within
+// HY_SOL_NEIGHBOUR_R of the Sun)? Cached on the shared systemCenter vector.
+const HY_SOL_NEIGHBOUR_R = 100000;
+function _hySysNearSol(o) {
+    const k = _aerialSystem(o);
+    if (!k || typeof k !== 'object' || typeof k.x !== 'number') return false;
+    if (k._hyNearSol !== undefined) return k._hyNearSol;
+    const sun = _hySolAe && _hySolAe.sun;
+    if (!sun) return false;
+    const dx = k.x - sun.position.x, dy = (k.y || 0) - sun.position.y, dz = k.z - sun.position.z;
+    k._hyNearSol = (dx * dx + dy * dy + dz * dz) <= HY_SOL_NEIGHBOUR_R * HY_SOL_NEIGHBOUR_R;
+    return k._hyNearSol;
+}
 function _aerialLocalPass(cx, cy, cz) {
     if (typeof planets === 'undefined' || !planets) { _aerialLocalSys = null; return; }
     const _sa = _hySolAeSys();
@@ -13778,7 +13791,7 @@ if (typeof window !== 'undefined') window.__hyHaze = _hyHaze;
 // How far gone is this body? 0 = untouched, 1 = the void.
 // Stars are exempt: a distant sun is a point of LIGHT, and the reference frames
 // are full of them. It is the lit BODIES that crowd the frame.
-function _aerialFactor(o, d) {
+function _aerialFactor(o, d, br) {
     // Kill switch, so the depth term can be A/B'd against itself inside ONE
     // session. It has to be one session: the nebula field is placed
     // procedurally per boot, so two runs do not share a backdrop and any
@@ -13797,6 +13810,11 @@ function _aerialFactor(o, d) {
     const _m = _hyHaze.m;
     if (d <= AERIAL_NEAR * Math.min(1, _m)) return 0;
     if (_aerialLocalSys !== null && _aerialSystem(o) === _aerialLocalSys) return 0;
+    // HYBRID — Ben, 2026-10-11: "the planets in the smaller systems around SOL are
+    // not appearing … we want them visible from far off." While the ship is in
+    // Sol's sphere, the systems within HY_SOL_NEIGHBOUR_R of the Sun (Alpha, Beta,
+    // the gateway's Dune worlds, 70-85k out) are drawn unhazed like Sol's own.
+    if (_aerialLocalSys !== null && _hySolAe && _aerialLocalSys === _hySolAe.sys && _hySysNearSol(o)) return 0;
     const _kOf = (mm) => d <= AERIAL_NEAR * mm ? 0 : 1 - Math.exp(-(d - AERIAL_NEAR * mm) / (AERIAL_SCALE * mm));
     const k = _kOf(_m);
     const kBase = _m === 1 ? k : _kOf(1);
@@ -13807,7 +13825,13 @@ function _aerialFactor(o, d) {
     // as a place keeps its full colour; only the small far ones sink into haze.
     let sz = 1;
     if (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('farPlanetFade', 'bySize')) {
-        const r = ud.radius || ud._pbR || 0;
+        // The cull's own body radius when the caller has it; else the data's; else
+        // the mesh. Measured 2026-10-11: the Alpha / Beta / Giedi Prime worlds near
+        // Sol carry no userData.radius, scored as size 0 and were fully hazed and
+        // culled at any range ("the planets in the smaller systems around SOL are
+        // not appearing").
+        const r = (br > 0 ? br : 0) || ud.radius || ud._pbR ||
+            (((o.geometry && o.geometry.parameters && o.geometry.parameters.radius) || 0) * ((o.scale && o.scale.x) || 1));
         const ang = r > 0 ? r / d : 0;             // ~ half the angular size, radians
         const t = Math.min(1, Math.max(0, (ang - AERIAL_SIZE_FADE) / (AERIAL_SIZE_FULL - AERIAL_SIZE_FADE)));
         sz = 1 - t * t * (3 - 2 * t);
@@ -16262,7 +16286,7 @@ function updateDistanceCulling() {
             // constants). One sqrt per body per pass, and zero for everything
             // inside AERIAL_NEAR, which is everything the player is near.
             const aeD = br > 0 ? Math.sqrt(d2) : 0;
-            const aeK = br > 0 ? _aerialFactor(o, aeD) : 0;
+            const aeK = br > 0 ? _aerialFactor(o, aeD, br) : 0;
             const aeKc = br > 0 ? _aerialCullK : 0;   // package T: what the cull acts on
             let inRange;
             if (br > 0) {
