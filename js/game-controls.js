@@ -17184,12 +17184,11 @@ function recruitNebulaWingman(nebulaName, spawnPos) {
 
     // Hail the player — include the recruit's role so the squad composition
     // is visible at a glance (Aggressor/Defender/Sniper/Scout)
-    if (typeof showAchievement === 'function') {
-        showAchievement(
-            recruit.name + ' (' + profile.label + ') has joined!',
-            'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron.',
-            true
-        );
+    if (typeof showIncomingTransmission === 'function') {   // HYBRID: bottom comms channel, squad blue
+        showIncomingTransmission(
+            recruit.name + ' (' + profile.label + ') has joined',
+            'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron, Captain.',
+            'wingman');
     }
     if (typeof flashEventText === 'function') {
         flashEventText('WINGMAN ACQUIRED', '#66ffcc',
@@ -17363,6 +17362,8 @@ function updateAllyShips() {
 
         // ── Enemy scan (every call, ~30 Hz) ──────────────────────────────
         const threat = _scanForEnemy(ally);
+        // HYBRID: where-we-are / lore / tips chatter (see WINGMAN_CONTEXT_LINES)
+        _wingmanAmbientChatter(ally, ud, now, distToPlayer, threat, playerWarping);
 
         // ── State transitions ────────────────────────────────────────────
         // Boss-victory celebration takes priority over everything except
@@ -17977,6 +17978,160 @@ function _enqueueWingmanComms(title, text) {
     _wingmanCommsQueue.push({ title, text });
     if (!_wingmanCommsTimer) _drainWingmanComms();
 }
+
+// ═══ HYBRID: CONTEXT CHATTER ═══════════════════════════════════════════════
+// Ben, 2026-10-10: "wingmen should say different things depending on where we
+// are in the universe and what their nebula's lore was. They should give tips
+// for fighting and should explain game mechanics and reward system tips for
+// gaining in speed and weapons and warps."
+// Every line below states something the code actually does (the reward rules
+// live in js/game-physics.js: REP_TIERS, applyNebulaShipUpgrade,
+// awardKillReward; pockets in js/game-core.js; caravan resupply in
+// js/civilian-combat.js). Keep them true when those change.
+// Placeholders: {nebula} the nebula we are in, {faction} the faction holding
+// the core we are at, {home} the wingman's recruiting nebula (Sol for the
+// first three), {homeBackstory} / {homeConnection} / {threat} from NEBULA_LORE.
+const WINGMAN_CONTEXT_LINES = {
+    combat: [
+        'Lead your shots, Captain — fire where they\'ll be, not where they are.',
+        'Shift fires a missile and it tracks on its own. Save them for the bosses.',
+        'Hold Space for a target lock — the reticle leads the shot for you.',
+        'Strafe with A and D while you shoot. A drifting ship is a hard ship to hit.',
+        'Tab raises shields. They drink energy — drop them the moment the lane is clear.',
+        'When a boss spins up a laser sweep, get above or below its plane. Never sit alongside.',
+        'Missile volley inbound — break hard and let them overshoot.',
+        'Finish the one that\'s smoking first. Pirates jump out when they\'re hurt.',
+        'Every kill tops up the energy banks a little. A boss kill refills them and hands you a warp charge.'
+    ],
+    sol: [
+        'Martian pirates, Captain — they work the inner planets. Clear them and their boss will show himself.',
+        'Sol\'s gravity holds us here. Get close to a planet and hit Enter: the slingshot is how we leave this system.',
+        'Sagittarius A is the black hole on the compass. We\'ll need a slingshot to reach it.',
+        'The belt between Mars and Jupiter — those rocks can be shot. Good for a warm-up.',
+        'O is the emergency warp. You only carry a few charges; a boss kill or a reward pocket gives one back.',
+        'Pick a target on the nav panel before you warp and the nav computer parks us right in front of it.'
+    ],
+    core: [
+        '{faction} forces hold this core. Clear the standard ships and the Black Hole Guardians come out.',
+        'Stay out of the warning zone around the hole unless you mean to warp — inside five radii it pulls hard.',
+        'A black-hole transit throws us anywhere in the universe once this sector is liberated. Until then it drops us back here.',
+        'Slingshot the hole itself if you dare, Captain. More speed than any planet gives.',
+        'Liberating a sector earns reputation. At 500 the slingshot costs nothing and recharges in five seconds.'
+    ],
+    nebula: [
+        '{nebula}. {homeless}',
+        'Intel on {nebula}: {threat}',
+        'Chart this nebula deep enough and the ship gets an upgrade — half a unit of top speed and better energy efficiency, every nebula.',
+        'Every nebula we visit can give us another wingman. We\'ll want the full squadron before the harder cores.',
+        'Civilian traffic runs through here. A caravan saved from attack pays a full resupply: hull, energy, missiles and warps.',
+        'The faction this nebula\'s lore names is the one we\'ll be sent after. Read the intel when it comes in.'
+    ],
+    home: [
+        'I came up in {home}, Captain. {homeBackstory}',
+        '{homeConnection}',
+        'Back in {home} we learned the hard way: {threat}'
+    ],
+    deep: [
+        'Double-tap W for a short jump — two seconds of warp for a quarter of the energy. O is the long burn.',
+        'Once you\'ve earned Inertial Coasting, cruising at top speed is free. Only acceleration burns energy.',
+        'Reputation unlocks: Capacitor Cells at 200, Quick-Charge Slingshot at 500, the Trajectory Solver at 1000. Kills and liberations earn it.',
+        'Watch for wormholes. The reward pockets behind them hold missiles, warp charges and hull plating.',
+        'Solar and plasma storms supercharge the banks and refill every warp charge. Worth flying into if the hull can take it.',
+        'Missiles cap at ten. Pockets and rescued caravans are the only ways to restock out here.',
+        'Set a nav target and warp at it — the nav computer cuts the burn and parks us in front of it.'
+    ]
+};
+
+const _WINGMAN_CHAT_FIRST_MS = 25000;     // first line this long after the game starts
+const _WINGMAN_CHAT_GAP_MS   = [45000, 80000]; // then every 45-80 s per wingman, staggered
+
+function _wingmanContextOf(threat) {
+    const ctx = { kind: 'deep', nebula: null, faction: null };
+    try {
+        if (typeof camera === 'undefined') return ctx;
+        const cp = camera.position;
+        if (threat) { ctx.kind = 'combat'; }
+        // Inside / over a nebula
+        if (typeof nebulaClouds !== 'undefined' && nebulaClouds) {
+            let bd = Infinity;
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                const g = nebulaClouds[i];
+                if (!g || !g.position || !g.userData) continue;
+                const d = cp.distanceTo(g.position);
+                if (d < (g.userData.size || 3000) * 2.2 && d < bd) { bd = d; ctx.nebula = g.userData.name || 'this nebula'; }
+            }
+        }
+        // At a galaxy core (within 8 radii of its black hole)
+        if (typeof planets !== 'undefined' && planets) {
+            for (let i = 0; i < planets.length; i++) {
+                const p = planets[i];
+                if (!p || !p.userData || p.userData.type !== 'blackhole' || !p.userData.isGalacticCore) continue;
+                const R = (typeof _hyBodyR === 'function') ? _hyBodyR(p) : (p.userData.radius || p.userData.size || 400);
+                if (cp.distanceTo(p.position) < R * 8) {
+                    const gt = (typeof galaxyTypes !== 'undefined' && typeof p.userData.galaxyId === 'number') ? galaxyTypes[p.userData.galaxyId] : null;
+                    ctx.faction = (gt && gt.faction) || 'Hostile';
+                    break;
+                }
+            }
+        }
+        if (ctx.kind !== 'combat') {
+            if (ctx.nebula) ctx.kind = 'nebula';
+            else if (ctx.faction) ctx.kind = 'core';
+            else if (typeof window !== 'undefined' && window.localSystemOffset) {
+                const o = window.localSystemOffset;
+                if (Math.hypot(cp.x - (o.x || 0), cp.z - (o.z || 0)) < 16000) ctx.kind = 'sol';
+            }
+        }
+    } catch (e) {}
+    return ctx;
+}
+
+function _wingmanFillLine(line, ud, ctx) {
+    const lore = (n) => (typeof getNebulaLore === 'function' && n) ? getNebulaLore(n) : null;
+    const home = ud.recruitedFrom || 'the Sol system';
+    const hl = lore(home);
+    const nl = lore(ctx.nebula);
+    const strip = (s) => String(s || '').replace(/^TACTICAL:\s*/i, '');
+    const out = line
+        .replace('{nebula}', ctx.nebula || 'this nebula')
+        .replace('{faction}', ctx.faction || 'Hostile')
+        .replace('{home}', home)
+        .replace('{homeless}', nl ? nl.backstory : 'Sensors are scrambled in here, Captain — stay close.')
+        .replace('{threat}', strip((nl && nl.threat) || (hl && hl.threat) || 'the clouds hide ambushes.'))
+        .replace('{homeBackstory}', hl ? hl.backstory : 'Flew patrol there before I joined you.')
+        .replace('{homeConnection}', hl ? hl.connection : 'Home is a long way behind us now, Captain. Let\'s make it count.');
+    return out;
+}
+
+function _wingmanAmbientChatter(ally, ud, now, distToPlayer, threat, playerWarping) {
+    if (!ud || typeof gameState === 'undefined' || !gameState.gameStarted || gameState.gameOver) return;
+    if (!ud._chatNext) {
+        const idx = (typeof allyShips !== 'undefined') ? Math.max(0, allyShips.indexOf(ally)) : 0;
+        ud._chatNext = now + _WINGMAN_CHAT_FIRST_MS + idx * 30000;
+        ud._chatSaid = {};
+        ud._chatCount = 0;
+        return;
+    }
+    if (now < ud._chatNext) return;
+    if (playerWarping || ud.aiState === 'stranded' || distToPlayer > 3000) return;
+    const ctx = _wingmanContextOf(threat);
+    // Every third line is about the wingman's own home, or a mechanics tip,
+    // whatever the surroundings — that is where the variety comes from.
+    ud._chatCount++;
+    let bank = ctx.kind;
+    if (ctx.kind !== 'combat' && ud._chatCount % 3 === 0) bank = (ud._chatCount % 6 === 0) ? 'home' : 'deep';
+    const lines = WINGMAN_CONTEXT_LINES[bank] || WINGMAN_CONTEXT_LINES.deep;
+    const said = ud._chatSaid[bank] || (ud._chatSaid[bank] = []);
+    let pool = lines.map((l, i) => i).filter((i) => said.indexOf(i) < 0);
+    if (!pool.length) { said.length = 0; pool = lines.map((l, i) => i); }
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    said.push(pick);
+    const text = _wingmanFillLine(lines[pick], ud, ctx);
+    _enqueueWingmanComms((ud.name || 'Wingman') + ' (Comms)', text);
+    const gap = _WINGMAN_CHAT_GAP_MS[0] + Math.random() * (_WINGMAN_CHAT_GAP_MS[1] - _WINGMAN_CHAT_GAP_MS[0]);
+    ud._chatNext = now + gap;
+}
+if (typeof window !== 'undefined') { window.WINGMAN_CONTEXT_LINES = WINGMAN_CONTEXT_LINES; window._wingmanContextOf = _wingmanContextOf; }
 
 function _wingmanTacticalMessage(ud, kind) {
     if (!ud) return;
