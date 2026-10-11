@@ -182,10 +182,44 @@ async function loadBossModels() {
 // Load player model (Player.glb)
 async function loadPlayerModel() {
     console.log('🚀 === LOADING PLAYER MODEL ===');
-    const path = 'models/Player.glb';
+    // HYBRID playerModel: another hull from models/ (Ben 2026-10-11: "Can we see what
+    // it looks like to use this as the ship model?"). An alternate hull is scaled to
+    // Player.glb's bounding size and centred, inside a wrapper group so the game's own
+    // scaling of the root still applies on top.
+    const _alt = (window.HYBRID && typeof window.HYBRID.get === 'function' && window.HYBRID.get('playerModel')) || 'Player';
+    const path = 'models/' + _alt + '.glb';
 
     try {
-        const model = await loadGLBModel(path);
+        let model = await loadGLBModel(path);
+        if (_alt !== 'Player') {
+            try {
+                const ref = await loadGLBModel('models/Player.glb');
+                const bR = new THREE.Box3().setFromObject(ref), bA = new THREE.Box3().setFromObject(model);
+                const sR = bR.getSize(new THREE.Vector3()), sA = bA.getSize(new THREE.Vector3());
+                const k = Math.max(sR.x, sR.y, sR.z) / Math.max(1e-6, Math.max(sA.x, sA.y, sA.z));
+                const c = bA.getCenter(new THREE.Vector3());
+                // Bake it into the geometry (the game may take the inner node and set its
+                // own scale on it, which a wrapper group would not survive): every mesh's
+                // world transform is applied to its vertices, then the hull is centred and
+                // scaled to Player.glb's longest dimension, and the nodes reset to identity.
+                model.updateWorldMatrix(true, true);
+                // optional yaw (playerModelYaw, degrees) so the hull's nose points +Z like Player.glb
+                const _yawDeg = Number((window.HYBRID && window.HYBRID.get && window.HYBRID.get('playerModelYaw')) || 0) || 0;
+                const _m = new THREE.Matrix4().makeScale(k, k, k)
+                    .multiply(new THREE.Matrix4().makeRotationY(_yawDeg * Math.PI / 180))
+                    .multiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, -c.z));
+                model.traverse((o) => {
+                    if (!o.isMesh || !o.geometry) return;
+                    o.geometry = o.geometry.clone();
+                    o.geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(_m, o.matrixWorld));
+                    o.geometry.computeBoundingBox(); o.geometry.computeBoundingSphere();
+                });
+                model.traverse((o) => { if (o !== model || true) { o.position.set(0, 0, 0); o.quaternion.identity(); o.scale.set(1, 1, 1); } });
+                model.updateWorldMatrix(true, true);
+                model.userData._hyAltHull = { name: _alt, k: k, size: [sA.x, sA.y, sA.z], refSize: [sR.x, sR.y, sR.z] };
+                console.log('🚀 Alternate hull ' + _alt + ': size ' + sA.x.toFixed(1) + 'x' + sA.y.toFixed(1) + 'x' + sA.z.toFixed(1) + ' baked x' + k.toFixed(3) + ' to match Player.glb');
+            } catch (e) { console.warn('alternate hull normalisation skipped', e); }
+        }
 
         // Debug: Log what's in the model
         let meshCount = 0;
