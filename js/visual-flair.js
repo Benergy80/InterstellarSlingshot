@@ -1706,15 +1706,18 @@ function _hySlingSubtle() {
 // the entry/exit screen pulse and shake, the FOV snap, and how many hyperspace
 // line bursts fire. Jumps, slingshots and black-hole transits are untouched.
 // `?hy=warpFx:overhaul` restores the full show.
+// Ben, 2026-10-11 (second notch): "emergency warp should be less intense also."
+// Previous calm values in the comments; the guard's warp row needs the tunnel
+// level >= 0.5, the FOV kick >= 10 deg and the 3D starfield, so those stay above.
 const HY_WARP_FX = {
-    STREAK: 0.65,
-    DEBRIS: 0.5,
-    TUNNEL: 0.7,
-    CHROMA: 0.45,
-    PULSE: 0.6,
-    SHAKE: 0.55,
-    FOV: 0.7,
-    HYPERSPACE: 1,     // line bursts at ignition (was 3)
+    STREAK: 0.4,       // was 0.65 (full show 1)
+    DEBRIS: 0.25,      // was 0.5
+    TUNNEL: 0.55,      // was 0.7 (guard needs >= 0.5)
+    CHROMA: 0.25,      // was 0.45
+    PULSE: 0.4,        // was 0.6
+    SHAKE: 0.35,       // was 0.55
+    FOV: 0.55,         // was 0.7 (guard needs the kick >= 10 deg; measured ~18.6 at 0.7)
+    HYPERSPACE: 0,     // line bursts at ignition (was 1, full show 3)
     // Ben 2026-10-11: "can the short jump warp lines be toned down" — the W-jump's own show
     JUMP_STREAK: 0.4,      // streak burst + envelope (was 0.75 burst, full envelope)
     JUMP_TUNNEL: 0.3,      // half-tunnel strength (was 0.5)

@@ -67,8 +67,10 @@
         targetBracket:   'targeted',   // Ben 2026-10-11: the overhaul's bracket + tag, but only round the targeted enemy  'targeted' | 'overhaul' | 'off'
         demoSteering:    'steady',     // Ben 2026-10-11: the demo keeps its nose on the enemy — no showmanship look/roll nudges in combat  'steady' | 'overhaul'
         missionControl:  'alert',      // Ben 2026-10-11: campaign Mission Control lines through the big green MISSION COMMAND alert, as on the live branch  'alert' | 'channel'
-        playerModel:     'Player',     // the player ship's GLB in models/ (file base name) — ?hy=playerModel:XT-7small previews another hull  'Player' | '<file>'
-        playerModelYaw:  0,            // degrees about Y baked into an alternate hull so its nose points +Z (the game's forward); e.g. 90 or -90
+        playerModel:     'XT-7small',  // Ben 2026-10-11: "keep both versions of the player ship as options, but use the new ship for now" — the player ship's GLB in models/ (file base name); ?hy=playerModel:Player flies the stock vector hull  'XT-7small' | 'Player' | '<file>'
+        playerModelYaw:  90,           // degrees about Y baked into an alternate hull so its nose points +Z (the game's forward); the XT-7 needs 90, Player.glb 0
+        deathScreen:     'synthwave',  // Ben 2026-10-11: "keep the end screen from 8805" — MISSION FAILED as the arcade sequence with the alien beat-line landscape (js/synthwave-fx.js, css/synthwave.css)  'synthwave' | 'original'
+        titleScreen:     'original',   // Ben 2026-10-11: "explore title screens in the spirit of the game over screen" (package AG, js/synthwave-fx.js) — Ben picks  'original' | 'chrome' | 'landscape' | 'poster'
         haze:            'regional',   // distance haze varies by region: murky in nebulae, clear between galaxies (HY_HAZE)  'regional' | 'global'
         sun:             'burning',    // the local Sun as a burning star emitting light (HY_SUN)  'burning' | 'overhaul'
         outerSystems:    'frontier',   // outer systems rebuilt as the far frontier (HY_OUTER)  'frontier' | 'classic'

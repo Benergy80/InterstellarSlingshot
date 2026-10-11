@@ -465,6 +465,10 @@ check('warp', async () => {
     if (typeof oeb === 'function') window.warpExitBeat = function () { beats++; return oeb.apply(this, arguments); };
     const run = async (steerKey) => {
         K.reset(); K.openSpace(); await sleep(600);
+        // The slingshot row's FOV kick is still decaying (0.6 deg per tick) when this row starts;
+        // capturing fov0 mid-decay read 'FOV -7..-12 deg from start after exit' on a build whose
+        // warp lands back at exactly 75 (probe-warpfov.js). Wait for the FOV to stand still first.
+        for (let i = 0, last = cam.fov; i < 50; i++) { await sleep(100); if (Math.abs(cam.fov - last) < 0.05) break; last = cam.fov; }
         const b0 = beats, fov0 = cam.fov; const r = { fov0: +fov0.toFixed(1) }; K.fovReset();
         keys.o = true;
         const t0 = Date.now(); let eng = null, end = null, engV = null, steerAt = null, fmax = 0, tun = 0, sf = false, peak = 0, ramp = false;
