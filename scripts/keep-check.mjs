@@ -374,6 +374,9 @@ check('thrusters', async () => {
         const ship = window.cameraState && window.cameraState.playerShipMesh; if (!ship) return { err: 'no playerShipMesh' };
         const seen = new Set(); let n = 0, nv = 0, e = 0; const ws = new THREE.Vector3();
         const add = (o) => { if (!o || seen.has(o)) return; seen.add(o); const m = o.material;
+            // the hull's always-on light elements (nav lights, strobe, cockpit, panels — package hullfit, 20261012k) are
+            // additive too but not thrust-driven: at idle they read ~48 of 'energy' and drowned the 3x thrust test
+            if (o.name === 'hullLights' || (o.userData && o.userData.isHullLight)) return;
             if (!m || m.blending !== THREE.AdditiveBlending) return; n++;
             for (let q = o; q; q = q.parent) if (!q.visible) return; nv++;
             o.getWorldScale(ws); const op = m.uniforms && m.uniforms.uOpacity ? m.uniforms.uOpacity.value : (m.opacity !== undefined ? m.opacity : 1);
