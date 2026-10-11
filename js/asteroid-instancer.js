@@ -217,6 +217,7 @@
         if (!sys._ready) return;
         const full = sys._dirty;
         const cam = camera.position;
+        const _dtF = (typeof gameState !== 'undefined' && gameState.dtFrames > 0) ? gameState.dtFrames : 1;
         // HYBRID: per-belt frustum test (see _makeMesh).
         camera.updateMatrixWorld();
         _pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
@@ -250,8 +251,9 @@
                 const r = belt.records[i];
                 if (r.dead) continue;
                 if (near) {
-                    if (r.orbitSpeed) r.orbitPhase += r.orbitSpeed;
-                    if (r.rotSpeed) { r.rotY += r.rotSpeed; r.rotX += r.rotSpeed * 0.3; }
+                    // package V: dt-scaled like every other orbit (per-frame steps hopped under uneven frame times)
+                    if (r.orbitSpeed) r.orbitPhase += r.orbitSpeed * _dtF;
+                    if (r.rotSpeed) { r.rotY += r.rotSpeed * _dtF; r.rotX += r.rotSpeed * 0.3 * _dtF; }
                 }
                 _writeMatrix(r);
                 touched[r.combo.key] = r.combo;

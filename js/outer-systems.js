@@ -74,6 +74,15 @@ function _hyOuterU() {
 function createOuterInterstellarSystems() {
     console.log('🌌 Creating outer interstellar systems in deep space...');
 
+    // package V (outer): under solScale:big the outer systems are rebuilt as
+    // the FRONTIER — 28 themed systems on a shell beyond every galaxy and
+    // nebula (HY_OUTER below). ?hy=solScale:overhaul keeps the classic sets.
+    if (_osFrontierOn()) {
+        if (outerInterstellarSystems.length) { console.warn('outer systems already built'); return; }
+        _osBuildFrontier();
+        return;
+    }
+
     // SET 1: Create 16 exotic core systems (40,000-100,000 units)
     console.log('  Creating SET 1: 16 exotic core systems (Supernova/Plasma/Solar)...');
     createExoticCoreSystems();
@@ -730,7 +739,7 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
 // BORG DRONES (Only in BORG patrol systems)
 // =============================================================================
 
-function createBorgCubeForSystem(systemGroup, maxOrbitRadius) {
+function createBorgCubeForSystem(systemGroup, maxOrbitRadius, patrolR) {
     const cubeGroup = new THREE.Group();
     cubeGroup.frustumCulled = false;
 
@@ -790,7 +799,8 @@ function createBorgCubeForSystem(systemGroup, maxOrbitRadius) {
     cubeGroup.add(hitbox);
 
     // Patrol orbit
-    const patrolRadius = 10000 + Math.random() * 5000;
+    // package V: a frontier system passes its own patrol ring (inside its edge)
+    const patrolRadius = patrolR || (10000 + Math.random() * 5000);
     const angle = Math.random() * Math.PI * 2;
     cubeGroup.position.set(
         Math.cos(angle) * patrolRadius,
@@ -1169,6 +1179,733 @@ function createSystemStarfield(maxRadius, systemGroup) {
 }
 
 // =============================================================================
+// THE FRONTIER (package V, Ben 2026-10-10): "Outer Systems need a makeover and
+// should be much further away" and "outer systems planets and asteroids are
+// broken ... jumping ... could use a complete recreate and stars should emit
+// light". Under solScale:big the 28 outer systems are rebuilt here:
+//  - PLACED on a shell beyond every galaxy, nebula and procedural galaxy
+//    (SHELL from Sgr A*, CLEAR of every other place's reach), near the plane.
+//  - THEMED: each a distinct place in the vector style — a dominant colour, a
+//    signature structure (exotic core / Borg cube lattice / crystal garden /
+//    dead star husk), planets on package N's ladder, flat-lit vector chrome.
+//  - LIT by its own star: one PointLight reaching the system's edge with
+//    linear falloff (the light budget in game-objects.js gates it by range),
+//    an emissive, toneMapped=false core + corona.
+//  - SMOOTH: every motion is dt-scaled every frame from the live host group,
+//    initial positions come from the same step (no first-frame snap), nothing
+//    is draw-budget-hidden (__dbTris), no whirling starfield, the Borg cube
+//    glides back to its patrol ring instead of teleporting, and each system
+//    fades between its far beacon dot and its meshes instead of popping.
+// Data shape is the classic one (systemType exotic_core / borg_patrol,
+// orbiters, centerObject, drones, cosmicFeature) so every reader keeps working.
+// Ben: tune the numbers here.
+// =============================================================================
+const HY_OUTER = {
+    SHELL: [310000, 360000],  // system centre distance from Sgr A* (true origin); galaxies reach ~285k, nebulae ~170k, procedural galaxies ~256k
+    LAT: 0.36,                // |sin(latitude)| cap: within ~21 deg of the galactic plane
+    CLEAR: 25000,             // empty space between a frontier system's edge and any other place's reach (and between two frontier systems)
+    TRIES: 600,               // candidate sites per system
+    SHOW: 170000,             // a system's meshes draw inside this range (+8% hysteresis); beyond it, only its beacon
+    FX_RANGE: 60000,          // signature animations (shells, flares, beams) run inside this range
+    BEACON_NEAR: 16000,       // the beacon dot fades out from BEACON_FAR to BEACON_NEAR as the real star takes over
+    BEACON_FAR: 45000,
+    BEACON_PX: 5,
+    LIGHT_I: 2.6,             // star PointLight intensity at the star (linear falloff to the cutoff)
+    LIGHT_REACH_K: 1.3,       // cutoff = system edge x this
+    CORONA_K: 3.6,            // corona sprite diameter = star radius x 2 x this
+    CORONA_FADE_R: [1.4, 3.5],// corona fades out as the camera comes inside these star radii (no screen wash)
+    ORBIT_GAP: [900, 1600],   // extra space between two planet orbits (on top of HY_SCALE.ORBIT_K x the two radii)
+    PLANETS: { borg: [3, 5], exotic: [1, 2], crystal_garden: [2, 3], dead_star: [2, 4] },
+    ROCKS: [26, 38],          // asteroids in an exotic system's ring
+    KEEPOUT_K: 1.8,           // an enemy found inside a frontier body's KEEPOUT_K x radius on first sight is moved out
+    KEEPOUT_LIVE_K: 1.15,     // ...and any enemy found inside the body itself at any time
+    DISCOVER_K: 0.55,         // a system is "discovered" inside this fraction of its edge (min DISCOVER_MIN)
+    DISCOVER_MIN: 6000,
+    MAP_RIM: 47,              // Universal View: systems past the map radius sit on this rim (% of the map from centre)
+};
+if (typeof window !== 'undefined') window.HY_OUTER = HY_OUTER;
+
+// Each theme: dominant colour, star colour, planet palette, light colour.
+const _OS_THEMES = {
+    supernova:      { color: 0xff5a1f, star: 0xffb070, light: 0xff9a50, planets: [0x7a3a22, 0x9a5a3a, 0x5a4a44], label: 'Supernova Remnant' },
+    plasma_storm:   { color: 0xb455ff, star: 0xe2b0ff, light: 0xc890ff, planets: [0x4a3a6a, 0x6a4a8a, 0x3a3a5a], label: 'Plasma Storm' },
+    solar_storm:    { color: 0xffcc22, star: 0xfff2b0, light: 0xffe08a, planets: [0x8a6a2a, 0xaa7a3a, 0x6a5a3a], label: 'Solar Storm' },
+    crystal_garden: { color: 0x33e6ff, star: 0xd8f6ff, light: 0xbfefff, planets: [0x6aaacc, 0x8acce0, 0x4a8aaa], label: 'Crystal Garden' },
+    dead_star:      { color: 0x8aa4d0, star: 0xcfdcff, light: 0x9fb4e0, planets: [0x3a3a40, 0x4a4648, 0x2e3238], label: 'Dead Star' },
+    borg:           { color: 0x33ff66, star: 0xffffff, light: 0xeaffee, planets: [0x8B7355, 0x4A90E2, 0xE86A17, 0x9B59B6, 0x2ECC71, 0xE74C3C, 0x95A5A6], label: 'Borg Patrol Zone' },
+};
+const _OS_EXOTIC_ORDER = ['supernova', 'plasma_storm', 'solar_storm', 'crystal_garden', 'dead_star'];
+
+function _osFrontierOn() { return typeof _hyScaleOn === 'function' && _hyScaleOn() && !!window.HY_LADDER; }
+function _osRand(a, b) { return a + Math.random() * (b - a); }
+function _osPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// Orbit step — the ONE place an orbiter's position is written (creation and
+// every frame), in the system's tilted plane, from its live angle.
+function _osOrbitWrite(o, tiltX, tiltZ) {
+    const u = o.userData;
+    const x = Math.cos(u.orbitAngle) * u.orbitRadius;
+    const y = u.orbitY || 0;
+    const z = Math.sin(u.orbitAngle) * u.orbitRadius;
+    const ry = y * Math.cos(tiltX) - z * Math.sin(tiltX);
+    const rz = y * Math.sin(tiltX) + z * Math.cos(tiltX);
+    const fx = x * Math.cos(tiltZ) - ry * Math.sin(tiltZ);
+    const fy = x * Math.sin(tiltZ) + ry * Math.cos(tiltZ);
+    const c = u.orbitCenter;
+    o.position.set(c.x + fx, c.y + fy, c.z + rz);
+}
+
+let _osGlowTex = null;
+function _osGlowTexture() {
+    if (_osGlowTex) return _osGlowTex;
+    const cv = document.createElement('canvas'); cv.width = cv.height = 128;
+    const g = cv.getContext('2d');
+    const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(255,255,255,1)');
+    gr.addColorStop(0.18, 'rgba(255,255,255,0.75)');
+    gr.addColorStop(0.42, 'rgba(255,255,255,0.22)');
+    gr.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    _osGlowTex = new THREE.CanvasTexture(cv);
+    return _osGlowTex;
+}
+function _osFlat(color, opacity, extra) {
+    return new THREE.MeshBasicMaterial(Object.assign({ color: color, transparent: true, opacity: opacity,
+        blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }, extra || {}));
+}
+function _osLineMat(color, opacity) {
+    return new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: opacity, depthWrite: false, toneMapped: false });
+}
+// A vector equator band on a body (retro chrome), scaled with it.
+function _osEquator(body, R, color, opacity) {
+    const pts = [];
+    for (let i = 0; i <= 96; i++) { const a = i / 96 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * R * 1.02, 0, Math.sin(a) * R * 1.02)); }
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), _osLineMat(color, opacity));
+    l.userData.baseOpacity = opacity;
+    body.add(l);
+    return l;
+}
+
+// ── the star (or exotic core): emissive body + vector shell + corona + light
+function _osStar(g, theme, R, type) {
+    const t = _OS_THEMES[theme];
+    const ud = g.userData;
+    const body = new THREE.Mesh(new THREE.SphereGeometry(R, 48, 32),
+        new THREE.MeshBasicMaterial({ color: t.star, toneMapped: false }));
+    body.userData = {
+        type: type, name: ud.name + (type === 'star' ? ' Star' : ' Core'), systemName: ud.name,
+        location: 'Unexplored Interstellar Space', radius: R,
+        mass: type === 'star' ? 5.0 : 3.0, slingshotMultiplier: type === 'star' ? 4.0 : 3.0,
+        isOuterSystem: true, isFrontierStar: true, theme: theme
+    };
+    g.add(body);
+    ud.centerObject = body;
+    ud._hyR = R;
+    // vector shell: a wire icosahedron just above the surface, slowly turning
+    const shell = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 1.12, 2), _osFlat(t.color, 0.22, { wireframe: true }));
+    shell.userData = { baseOpacity: 0.22, _osSpin: 0.0006 };
+    g.add(shell);
+    // two glow shells (front faces only — invisible from inside, no wash)
+    [[1.35, 0.30], [1.8, 0.13]].forEach(function (s) {
+        const m = new THREE.Mesh(new THREE.SphereGeometry(R * s[0], 32, 24), _osFlat(t.color, s[1]));
+        m.userData.baseOpacity = s[1];
+        g.add(m);
+    });
+    // corona
+    const cor = new THREE.Sprite(new THREE.SpriteMaterial({ map: _osGlowTexture(), color: t.star, transparent: true,
+        opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    cor.scale.setScalar(R * 2 * HY_OUTER.CORONA_K);
+    cor.userData = { baseOpacity: 0.85, _osCorona: true };
+    g.add(cor);
+    ud._osCorona = cor;
+    return body;
+}
+
+function _osLight(g, theme, edge) {
+    const t = _OS_THEMES[theme];
+    const l = new THREE.PointLight(t.light, HY_OUTER.LIGHT_I, edge * HY_OUTER.LIGHT_REACH_K, 1);
+    l.position.set(0, 0, 0);
+    l.userData.isFrontierLight = true;
+    g.add(l);
+    g.userData._osLight = l;
+    return l;
+}
+
+// ── orbiters ────────────────────────────────────────────────────────────────
+function _osOrbiter(g, mesh, ud, orbitR, angle, speed) {
+    mesh.userData = Object.assign({
+        orbitCenter: new THREE.Vector3(0, 0, 0), orbitRadius: orbitR, orbitSpeed: speed, orbitAngle: angle,
+        systemId: g.userData.systemId, systemName: g.userData.name, location: 'Unexplored Interstellar Space',
+        isOuterSystem: true
+    }, ud);
+    g.userData.orbiters.push(mesh);
+    g.add(mesh);
+    return mesh;
+}
+// angular speed so a body keeps a calm along-orbit pace (u/frame) on any ring
+function _osSpeed(orbitR, pace) { return (pace || _osRand(1.2, 2.4)) / Math.max(500, orbitR); }
+
+function _osPlanet(g, theme, orbitR, idx, R) {
+    const t = _OS_THEMES[theme];
+    const col = theme === 'borg' ? _osPick(t.planets) : t.planets[idx % t.planets.length];
+    const mat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.85, metalness: 0.08 });
+    const m = new THREE.Mesh(new THREE.SphereGeometry(R, 40, 28), mat);
+    _osOrbiter(g, m, {
+        type: 'outer_planet', name: g.userData.name + ' ' + String.fromCharCode(65 + idx),
+        radius: R, mass: R / 120, slingshotMultiplier: 1.5, rotationSpeed: (Math.random() - 0.5) * 0.004
+    }, orbitR, Math.random() * Math.PI * 2, _osSpeed(orbitR));
+    m.rotation.z = (Math.random() - 0.5) * 0.5;
+    _osEquator(m, R, t.color, 0.45);
+    if (theme === 'borg' && Math.random() < 0.5) {
+        // an assimilated world: a green wire lattice over the surface
+        const w = new THREE.Mesh(new THREE.SphereGeometry(R * 1.015, 18, 12), _osFlat(0x33ff66, 0.16, { wireframe: true }));
+        w.userData.baseOpacity = 0.16;
+        m.add(w);
+        m.userData.assimilated = true;
+    }
+    return m;
+}
+
+function _osBrownDwarf(g, orbitR, idx) {
+    const R = _osRand(450, 620);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(R, 40, 28),
+        new THREE.MeshStandardMaterial({ color: 0x6a3420, emissive: 0x3a0e04, emissiveIntensity: 0.9, roughness: 0.75, metalness: 0.05 }));
+    _osOrbiter(g, m, {
+        type: 'brown_dwarf', name: g.userData.name + ' Brown Dwarf ' + (idx + 1),
+        radius: R, mass: 0.08 * 3.5, slingshotMultiplier: 1.3
+    }, orbitR, Math.random() * Math.PI * 2, _osSpeed(orbitR, _osRand(1.0, 1.8)));
+    _osEquator(m, R, 0xff6a33, 0.35);
+    return m;
+}
+
+function _osPulsar(g, orbitR, idx) {
+    const R = _osRand(110, 150);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(R, 24, 16), new THREE.MeshBasicMaterial({ color: 0xbff8ff, toneMapped: false }));
+    _osOrbiter(g, m, {
+        type: 'pulsar', name: g.userData.name + ' Pulsar ' + (idx + 1),
+        radius: R, mass: 1.4, slingshotMultiplier: 2.5, rotationSpeed: _osRand(0.03, 0.05)
+    }, orbitR, Math.random() * Math.PI * 2, _osSpeed(orbitR, _osRand(1.4, 2.2)));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(R * 2.2, R * 0.12, 6, 48), _osFlat(0x66eeff, 0.55));
+    ring.rotation.x = Math.PI / 2; ring.userData.baseOpacity = 0.55;
+    m.add(ring);
+    // the lighthouse: two beams off the spin axis, sweeping as it turns
+    const beamGeo = new THREE.CylinderGeometry(R * 0.08, R * 0.6, R * 16, 10, 1, true);
+    beamGeo.translate(0, R * 8.5, 0);
+    [1, -1].forEach(function (s) {
+        const b = new THREE.Mesh(beamGeo, _osFlat(0x88f4ff, 0.22, { side: THREE.DoubleSide }));
+        b.rotation.z = s > 0 ? 0.42 : Math.PI + 0.42;
+        b.userData.baseOpacity = 0.22;
+        m.add(b);
+    });
+    return m;
+}
+
+function _osRockRing(g, orbitR, count, width) {
+    for (let i = 0; i < count; i++) {
+        const a = createOrbitingAsteroid(null, orbitR, i, g);   // classic rock (shootable, ORIGINAL look)
+        const u = a.userData;
+        u.orbitAngle = (i / count) * Math.PI * 2 + Math.random() * 0.12;
+        u.orbitRadius = orbitR + (Math.random() - 0.5) * width;
+        u.orbitY = (Math.random() - 0.5) * width * 0.25;
+        u.orbitSpeed = _osSpeed(u.orbitRadius, _osRand(2.0, 2.8));
+        u.isOuterSystem = true;
+    }
+}
+
+// ── signature structures (static children of the system, slowly animated) ──
+function _osSignature(g, theme, R) {
+    const t = _OS_THEMES[theme];
+    const sig = new THREE.Group();
+    sig.userData = { type: 'frontier_signature', theme: theme, _osSig: true };
+    if (theme === 'supernova') {
+        // remnant filaments: short glowing arcs in a ragged shell 2.4-5 R
+        const pos = [], col = [];
+        const c1 = new THREE.Color(t.color), c2 = new THREE.Color(0xff2a10);
+        for (let i = 0; i < 160; i++) {
+            const d = new THREE.Vector3().randomDirection ? new THREE.Vector3().randomDirection() : new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+            let r = R * _osRand(2.4, 5.0);
+            let p = d.clone().multiplyScalar(r);
+            const tan = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0.3)).normalize();
+            for (let k = 0; k < 4; k++) {
+                const q = p.clone().addScaledVector(tan, R * 0.35).addScaledVector(d, R * (Math.random() - 0.5) * 0.3);
+                pos.push(p.x, p.y, p.z, q.x, q.y, q.z);
+                const c = Math.random() < 0.5 ? c1 : c2;
+                col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+                p = q;
+            }
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        const ls = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }));
+        ls.userData.baseOpacity = 0.7;
+        sig.add(ls);
+        const shock = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 3.2, 3), _osFlat(t.color, 0.12, { wireframe: true }));
+        shock.userData = { baseOpacity: 0.12, _osPulse: 0.05 };
+        sig.add(shock);
+        sig.userData._osSpin = 0.00025;
+    } else if (theme === 'plasma_storm') {
+        // three tilted plasma rings + six plasma blobs riding them
+        for (let i = 0; i < 3; i++) {
+            const rr = R * (1.7 + i * 0.45);
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(rr, R * 0.03, 4, 96), _osFlat(t.color, 0.5));
+            ring.rotation.set(Math.PI / 2 + (i - 1) * 0.55, i * 0.7, 0);
+            ring.userData = { baseOpacity: 0.5, _osSpin: 0.002 * (i % 2 ? -1 : 1) };
+            sig.add(ring);
+        }
+        for (let i = 0; i < 6; i++) {
+            const a = i / 6 * Math.PI * 2;
+            const b = new THREE.Mesh(new THREE.SphereGeometry(R * 0.22, 16, 12), _osFlat(0xd28cff, 0.55));
+            b.position.set(Math.cos(a) * R * 2.0, Math.sin(a * 2) * R * 0.3, Math.sin(a) * R * 2.0);
+            b.userData.baseOpacity = 0.55;
+            sig.add(b);
+        }
+        sig.userData._osSpin = 0.0012;
+    } else if (theme === 'solar_storm') {
+        // twelve flare spikes round the limb, breathing in and out
+        for (let i = 0; i < 12; i++) {
+            const a = i / 12 * Math.PI * 2;
+            const len = R * _osRand(0.9, 1.7);
+            const geo = new THREE.ConeGeometry(R * 0.12, len, 6, 1, true);
+            geo.translate(0, len / 2, 0);
+            const f = new THREE.Mesh(geo, _osFlat(0xffaa22, 0.6));
+            f.position.set(Math.cos(a) * R * 0.95, 0, Math.sin(a) * R * 0.95);
+            f.lookAt(Math.cos(a) * R * 3, (Math.random() - 0.5) * R, Math.sin(a) * R * 3);
+            f.rotateX(Math.PI / 2);
+            f.userData = { baseOpacity: 0.6, _osFlare: Math.random() * 6.28 };
+            sig.add(f);
+        }
+        const halo = new THREE.Mesh(new THREE.TorusGeometry(R * 2.6, R * 0.025, 4, 120), _osFlat(t.color, 0.45));
+        halo.rotation.x = Math.PI / 2; halo.userData.baseOpacity = 0.45;
+        sig.add(halo);
+        sig.userData._osSpin = 0.0008;
+    } else if (theme === 'crystal_garden') {
+        // a garden of outlined crystal shards on a ring round the star
+        const shardMat = new THREE.MeshStandardMaterial({ color: 0x88ddff, emissive: 0x1a6a8a, emissiveIntensity: 0.9, roughness: 0.15, metalness: 0.6, flatShading: true });
+        const edgeMat = _osLineMat(t.color, 0.85);
+        for (let i = 0; i < 18; i++) {
+            const a = i / 18 * Math.PI * 2 + Math.random() * 0.2;
+            const s = R * _osRand(0.12, 0.34);
+            const geo = new THREE.OctahedronGeometry(s, 0);
+            geo.scale(0.6, 1.8, 0.6);
+            const c = new THREE.Mesh(geo, shardMat);
+            const rr = R * _osRand(3.0, 3.8);
+            c.position.set(Math.cos(a) * rr, (Math.random() - 0.5) * R * 0.8, Math.sin(a) * rr);
+            c.rotation.set(Math.random(), Math.random() * 6, Math.random() * 0.6);
+            c.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), edgeMat));
+            sig.add(c);
+        }
+        sig.userData._osSpin = 0.0004;
+    } else if (theme === 'dead_star') {
+        // the husk of the old envelope + a cold debris disc
+        const husk = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 4.6, 2), _osFlat(t.color, 0.1, { wireframe: true }));
+        husk.userData = { baseOpacity: 0.1, _osSpin: -0.0002 };
+        sig.add(husk);
+        const n = 900, pos = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+            const a = Math.random() * Math.PI * 2, rr = R * _osRand(5.5, 9.0);
+            pos[i * 3] = Math.cos(a) * rr; pos[i * 3 + 1] = (Math.random() - 0.5) * R * 0.35; pos[i * 3 + 2] = Math.sin(a) * rr;
+        }
+        const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0x9aa8c0, size: 2.5, sizeAttenuation: false, transparent: true, opacity: 0.8, depthWrite: false, toneMapped: false }));
+        pts.userData.baseOpacity = 0.8;
+        sig.add(pts);
+        sig.userData._osSpin = 0.00015;
+    }
+    g.add(sig);
+    g.userData._osSig = sig;
+    return sig;
+}
+
+// The Borg's signature: a construction lattice of wire cubes, as an orbiter.
+function _osBorgLattice(g, orbitR) {
+    const cell = 300, nx = 5, ny = 2, nz = 5;
+    const pos = [];
+    const P = function (x, y, z) { return [(x - nx / 2) * cell, (y - ny / 2) * cell, (z - nz / 2) * cell]; };
+    const seg = function (a, b) { pos.push(a[0], a[1], a[2], b[0], b[1], b[2]); };
+    for (let x = 0; x <= nx; x++) for (let y = 0; y <= ny; y++) for (let z = 0; z <= nz; z++) {
+        if (x < nx) seg(P(x, y, z), P(x + 1, y, z));
+        if (y < ny) seg(P(x, y, z), P(x, y + 1, z));
+        if (z < nz) seg(P(x, y, z), P(x, y, z + 1));
+    }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    const lat = new THREE.LineSegments(geo, _osLineMat(0x33ff66, 0.6));
+    lat.userData.baseOpacity = 0.6;
+    const grp = new THREE.Group();
+    grp.add(lat);
+    // a few solid "modules" hung in the frame
+    const modMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, emissive: 0x00ff44, emissiveIntensity: 0.25, metalness: 0.9, roughness: 0.3 });
+    for (let i = 0; i < 6; i++) {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(cell * 0.9, cell * 0.9, cell * 0.9), modMat);
+        const p = P(Math.floor(Math.random() * nx) + 0.5, Math.floor(Math.random() * ny) + 0.5, Math.floor(Math.random() * nz) + 0.5);
+        b.position.set(p[0], p[1], p[2]);
+        grp.add(b);
+    }
+    _osOrbiter(g, grp, { type: 'borg_lattice', name: 'Borg Construct [' + g.userData.name + ']', radius: cell * nx * 0.7, mass: 0.01,
+        slingshotMultiplier: 1.0, rotationSpeed: 0.0007 }, orbitR, Math.random() * Math.PI * 2, _osSpeed(orbitR, 0.8));
+    return grp;
+}
+
+// Calm theme-coloured dust instead of the classic whirling starfield.
+function _osDust(g, theme, edge) {
+    const t = _OS_THEMES[theme];
+    const n = 420, pos = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2, rr = edge * Math.sqrt(Math.random()) * 1.05;
+        pos[i * 3] = Math.cos(a) * rr; pos[i * 3 + 1] = (Math.random() - 0.5) * edge * 0.18; pos[i * 3 + 2] = Math.sin(a) * rr;
+    }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: t.color, size: 2, sizeAttenuation: false, transparent: true, opacity: 0.45, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }));
+    pts.userData = { type: 'system_dust', baseOpacity: 0.45, _osSpin: 0.00005 };
+    pts.rotation.set(g.userData.tiltX, 0, g.userData.tiltZ);
+    g.add(pts);
+}
+
+// ── one system ──────────────────────────────────────────────────────────────
+function _osBuildSystem(spec) {
+    const theme = spec.theme, t = _OS_THEMES[theme], isBorg = theme === 'borg';
+    const g = new THREE.Group();
+    g.userData = {
+        name: spec.name, type: 'outer_interstellar_system',
+        systemType: isBorg ? 'borg_patrol' : 'exotic_core', systemId: spec.id,
+        location: 'Unexplored Interstellar Space',
+        centerType: theme, theme: theme, themeLabel: t.label,
+        orbiters: [], discovered: false, systemColor: t.color, scale: 1,
+        tiltX: (Math.random() - 0.5) * 0.5, tiltZ: (Math.random() - 0.5) * 0.5,
+        _frontier: true
+    };
+    if (isBorg) {
+        g.userData.drones = []; g.userData.cosmicFeature = null; g.userData.hasBorg = true;
+        g.userData.starType = 'White';
+    }
+    const L = window.HY_LADDER;
+    const R = _osRand(L.star[0], L.star[1]) * (theme === 'dead_star' ? 0.85 : 1);
+    const coreType = (theme === 'supernova' || theme === 'plasma_storm' || theme === 'solar_storm') ? theme : 'star';
+    _osStar(g, theme, R, coreType);
+    _osSignature(g, theme, R);
+
+    // orbits, innermost first: rule 3 of HY_SCALE (STAR_CLEAR, ORBIT_K) + ORBIT_GAP air
+    const K = (window.HY_SCALE && window.HY_SCALE.ORBIT_K) || 1.2, SC = (window.HY_SCALE && window.HY_SCALE.STAR_CLEAR) || 2.6;
+    let prevO = R * Math.max(SC, theme === 'dead_star' ? 9.5 : theme === 'supernova' ? 5.2 : 4.0), prevR = 0;
+    const next = function (r) { const o = prevO + K * (prevR + r) + _osRand(HY_OUTER.ORBIT_GAP[0], HY_OUTER.ORBIT_GAP[1]); prevO = o; prevR = r; return o; };
+    const plan = [];
+    if (!isBorg) {
+        // a rock ring first, then the classic exotic company and a few worlds
+        plan.push({ k: 'rocks', r: 600 });
+        if (theme !== 'crystal_garden' && theme !== 'dead_star') for (let i = 0; i < 2 + Math.floor(Math.random() * 2); i++) plan.push({ k: 'dwarf', r: 620 });
+        for (let i = 0; i < 1 + Math.floor(Math.random() * 2); i++) plan.push({ k: 'pulsar', r: 150 * 2.2 });
+    }
+    const pc = HY_OUTER.PLANETS[isBorg ? 'borg' : (HY_OUTER.PLANETS[theme] ? theme : 'exotic')];
+    const nPl = pc[0] + Math.floor(Math.random() * (pc[1] - pc[0] + 1));
+    for (let i = 0; i < nPl; i++) plan.push({ k: 'planet', r: _osRand(L.FIELD[0], L.FIELD[1]) });
+    if (isBorg) plan.splice(1 + Math.floor(Math.random() * Math.max(1, plan.length - 1)), 0, { k: 'lattice', r: 1100 });
+    // shuffle everything after the first slot so systems differ
+    for (let i = plan.length - 1; i > 1; i--) { const j = 1 + Math.floor(Math.random() * i); const tmp = plan[i]; plan[i] = plan[j]; plan[j] = tmp; }
+    let iPl = 0, iDw = 0, iPu = 0;
+    plan.forEach(function (p) {
+        const o = next(p.r);
+        if (p.k === 'rocks') { _osRockRing(g, o, Math.round(_osRand(HY_OUTER.ROCKS[0], HY_OUTER.ROCKS[1])), 700); }
+        else if (p.k === 'dwarf') _osBrownDwarf(g, o, iDw++);
+        else if (p.k === 'pulsar') _osPulsar(g, o, iPu++);
+        else if (p.k === 'lattice') _osBorgLattice(g, o);
+        else _osPlanet(g, theme, o, iPl++, p.r);
+        createSystemOrbitLine(null, o, g);
+    });
+    // cosmic feature (classic builder) on its own orbit past the worlds,
+    // enlarged by GEOMETRY so cosmic-features' per-frame scale write cannot
+    // shrink it back
+    const _os4 = function (f) {
+        f.traverse(function (n) {
+            if (n.geometry && !n.geometry.userData._osK) { n.geometry.scale(4, 4, 4); n.geometry.userData._osK = 4; }
+            if (n !== f && n.position) n.position.multiplyScalar(4);
+        });
+    };
+    if (!isBorg || Math.random() < 0.7) {
+        const f = createCosmicFeature(g, prevO);
+        if (f) {
+            _os4(f);
+            f.userData.radius = (f.userData.radius || 100) * 4;
+            f.userData.orbitRadius = next(f.userData.radius);
+            f.userData.orbitSpeed = _osSpeed(f.userData.orbitRadius, 0.9);
+        }
+    }
+    if (theme === 'crystal_garden' && !(g.userData.cosmicFeature && g.userData.cosmicFeature.userData.type === 'crystal_structure')) {
+        // the garden always has its ancient formation
+        const f = createCrystalStructure();
+        _os4(f);
+        Object.assign(f.userData, { orbitCenter: new THREE.Vector3(), systemName: g.userData.name, location: 'Unexplored Interstellar Space',
+            isOuterSystem: true, mass: 1.5, slingshotMultiplier: 2.0, radius: 320 });
+        f.userData.orbitRadius = next(320);
+        f.userData.orbitSpeed = _osSpeed(f.userData.orbitRadius, 0.9);
+        f.userData.orbitAngle = Math.random() * Math.PI * 2;
+        g.userData.orbiters.push(f); g.add(f);
+        if (typeof cosmicFeatures !== 'undefined' && cosmicFeatures.crystalFormations) cosmicFeatures.crystalFormations.push(f);
+    }
+    const edge = prevO + prevR + 2000;
+    g.userData._hyEdge = Math.round(edge);
+    g.userData.maxOrbitRadius = prevO;
+    if (isBorg) createBorgCubeForSystem(g, prevO, edge * _osRand(0.72, 0.92));
+
+    _osDust(g, theme, edge);
+    _osLight(g, theme, edge);
+
+    // first placement from the same step the frame loop uses
+    g.userData.orbiters.forEach(function (o) {
+        if (o.userData.orbitAngle !== undefined) _osOrbitWrite(o, g.userData.tiltX, g.userData.tiltZ);
+    });
+    // drawn like the rest of the vector world: never a draw-budget candidate
+    g.traverse(function (n) {
+        if (n.isMesh || n.isSprite || n.isLine || n.isPoints) n.userData.__dbTris = Infinity;
+        if (n.isLine && n.material && n.material.toneMapped !== false) n.material.toneMapped = false;   // vector lines stay saturated
+    });
+    g.userData._shown = true;
+    return g;
+}
+
+// ── where they go ───────────────────────────────────────────────────────────
+function _osObstacles() {
+    const out = [];
+    const off = window.worldOriginOffset || { x: 0, y: 0, z: 0 };
+    const T = function (p) { return new THREE.Vector3(p.x + off.x, p.y + off.y, p.z + off.z); };
+    if (typeof planets !== 'undefined' && planets) planets.forEach(function (p) {
+        const u = p && p.userData;
+        if (!u) return;
+        if (u.type === 'blackhole') out.push({ c: T(p.position), reach: u._hyGalaxyReach || ((u.radius || 900) * 8) });
+        else if (u.heartWorld) out.push({ c: T(p.position), reach: 6000 });
+    });
+    if (typeof nebulaClouds !== 'undefined' && nebulaClouds) nebulaClouds.forEach(function (n) {
+        if (n && n.position) out.push({ c: T(n.position), reach: (window.HY_SCALE && window.HY_SCALE.NEBULA_REACH) || 16500 });
+    });
+    (window.procGalaxySystems || []).forEach(function (s) {
+        const c = s && (s.center || (s.group && s.group.position));
+        if (c) out.push({ c: T(c), reach: 30000 });
+    });
+    const sol = window.localSystemOffset;
+    if (sol) out.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), reach: 30000 });
+    return out;
+}
+
+function _osSite(edge, slot, nSlots, obstacles, placed) {
+    let best = null, bestGap = -Infinity;
+    for (let t = 0; t < HY_OUTER.TRIES; t++) {
+        const phi = (slot + 0.5 + (Math.random() - 0.5) * 0.8) / nSlots * Math.PI * 2;
+        const sl = (Math.random() * 2 - 1) * HY_OUTER.LAT, cl = Math.sqrt(1 - sl * sl);
+        const r = _osRand(HY_OUTER.SHELL[0], HY_OUTER.SHELL[1]);
+        const c = new THREE.Vector3(Math.cos(phi) * cl * r, sl * r, Math.sin(phi) * cl * r);
+        let gap = Infinity;
+        for (let i = 0; i < obstacles.length; i++) gap = Math.min(gap, c.distanceTo(obstacles[i].c) - obstacles[i].reach - edge);
+        for (let i = 0; i < placed.length; i++) gap = Math.min(gap, c.distanceTo(placed[i].c) - placed[i].edge - edge);
+        if (gap >= HY_OUTER.CLEAR) return c;
+        if (gap > bestGap) { bestGap = gap; best = c; }
+    }
+    console.warn('HYBRID frontier: no fully clear site for slot ' + slot + ' (best gap ' + Math.round(bestGap) + ')');
+    return best;
+}
+
+function _osBuildFrontier() {
+    // 16 exotic places (5 themes in turn) + 12 Borg zones, interleaved round the shell
+    const specs = [];
+    for (let i = 0; i < 16; i++) specs.push({ theme: _OS_EXOTIC_ORDER[i % _OS_EXOTIC_ORDER.length], name: outerSystemNames[i], id: i });
+    for (let i = 0; i < 12; i++) specs.push({ theme: 'borg', name: borgSystemNames[i], id: 16 + i });
+    const order = [];
+    let e = 0, b = 0;
+    while (order.length < specs.length) {
+        if (e < 16) order.push(specs[e++]);
+        if (b < 12 && (order.length % 7 === 2 || order.length % 7 === 4 || order.length % 7 === 6)) order.push(specs[16 + b++]);
+        if (e >= 16 && b < 12) order.push(specs[16 + b++]);
+    }
+    const obstacles = _osObstacles();
+    const off = window.worldOriginOffset || { x: 0, y: 0, z: 0 };
+    const placed = [];
+    order.forEach(function (spec, slot) {
+        const g = _osBuildSystem(spec);
+        const c = _osSite(g.userData._hyEdge, slot, order.length, obstacles, placed);
+        placed.push({ c: c, edge: g.userData._hyEdge });
+        g.position.set(c.x - off.x, c.y - off.y, c.z - off.z);
+        g.userData._hyPlaced = true;
+        g.updateMatrixWorld(true);
+        scene.add(g);
+        outerInterstellarSystems.push(g);
+        console.log('    ' + (spec.theme === 'borg' ? '🟩' : '🌟') + ' ' + spec.name + ': ' + _OS_THEMES[spec.theme].label +
+            ' at ' + Math.round(c.length()) + ' u from Sgr A* (edge ' + g.userData._hyEdge + ')');
+    });
+    // keep the classic order (exotic 0-15 then Borg) for readers that index by it
+    outerInterstellarSystems.sort(function (a, b) { return a.userData.systemId - b.userData.systemId; });
+    _osBuildBeacons();
+    console.log('✅ Frontier: ' + outerInterstellarSystems.length + ' outer systems on a ' + HY_OUTER.SHELL.join('-') + ' u shell');
+}
+
+// ── beacons: one shared point cloud, one dot per system ─────────────────────
+let _osBeacons = null;
+function _osBuildBeacons() {
+    const n = outerInterstellarSystems.length;
+    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    outerInterstellarSystems.forEach(function (s, i) { pos[i * 3] = s.position.x; pos[i * 3 + 1] = s.position.y; pos[i * 3 + 2] = s.position.z; });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({ size: HY_OUTER.BEACON_PX, sizeAttenuation: false, vertexColors: true,
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    pts.frustumCulled = false;
+    pts.name = 'frontierBeacons';
+    pts.userData = { type: 'frontier_beacons', __dbTris: Infinity };
+    scene.add(pts);
+    _osBeacons = pts;
+}
+function _osUpdateBeacons(cp) {
+    if (!_osBeacons) return;
+    const pa = _osBeacons.geometry.attributes.position, ca = _osBeacons.geometry.attributes.color;
+    const c = new THREE.Color();
+    for (let i = 0; i < outerInterstellarSystems.length; i++) {
+        const s = outerInterstellarSystems[i];
+        // positions are written relative to the cloud (a floating-origin rebase moves both)
+        pa.setXYZ(i, s.position.x - _osBeacons.position.x, s.position.y - _osBeacons.position.y, s.position.z - _osBeacons.position.z);
+        const d = s.userData._camD || s.position.distanceTo(cp);
+        const k = Math.max(0, Math.min(1, (d - HY_OUTER.BEACON_NEAR) / (HY_OUTER.BEACON_FAR - HY_OUTER.BEACON_NEAR)));
+        const f = k * k * (3 - 2 * k);
+        c.setHex(s.userData.systemColor || 0xffffff).lerp(new THREE.Color(0xffffff), 0.35).multiplyScalar(f);
+        ca.setXYZ(i, c.r, c.g, c.b);
+    }
+    pa.needsUpdate = true; ca.needsUpdate = true;
+}
+
+// ── frontier keep-out: enemies placed by other code (UFOs, warlords, mission
+// hosts) at a system's centre are moved out of its bodies ───────────────────
+const _osKO = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _osKeepOut() {
+    const lists = [typeof enemies !== 'undefined' ? enemies : null, window.ufoEnemies];
+    for (let s = 0; s < outerInterstellarSystems.length; s++) {
+        const g = outerInterstellarSystems[s], ud = g.userData;
+        if (!ud._frontier) continue;
+        const reach2 = Math.pow(ud._hyEdge * 1.2, 2);
+        for (let l = 0; l < lists.length; l++) {
+            const arr = lists[l];
+            if (!arr) continue;
+            for (let i = 0; i < arr.length; i++) {
+                const e = arr[i];
+                if (!e || !e.position || !e.userData || e.userData.health <= 0 || e.parent === g) continue;
+                if (e.position.distanceToSquared(g.position) > reach2) continue;
+                const first = !e.userData._osKept;
+                e.userData._osKept = true;
+                const bodies = [ud.centerObject].concat(ud.orbiters);
+                for (let b = 0; b < bodies.length; b++) {
+                    const o = bodies[b], ou = o && o.userData;
+                    if (!ou || !ou.radius || ou.type === 'outer_asteroid' || ou.type === 'borg_cube' || ou.type === 'borg_drone') continue;
+                    o.getWorldPosition(_osKO);
+                    const keep = ou.radius * (first ? HY_OUTER.KEEPOUT_K : HY_OUTER.KEEPOUT_LIVE_K) + 150;
+                    const d = e.position.distanceTo(_osKO);
+                    if (d >= keep) continue;
+                    const dir = d > 1 ? e.position.clone().sub(_osKO).normalize() : new THREE.Vector3(1, 0.2, 0).normalize();
+                    const np = _osKO.clone().addScaledVector(dir, ou.radius * HY_OUTER.KEEPOUT_K + 300);
+                    const delta = np.clone().sub(e.position);
+                    e.position.copy(np);
+                    if (e.userData.patrolCenter && e.userData.patrolCenter.add) e.userData.patrolCenter.add(delta);
+                }
+            }
+        }
+    }
+}
+
+// ── discovery (the classic check in game-core spoke through the retired
+// showAchievement; this one speaks on the comms channel) ────────────────────
+function _osDiscover(g, d) {
+    const ud = g.userData;
+    if (ud.discovered) return;
+    if (d > Math.max(HY_OUTER.DISCOVER_MIN, ud._hyEdge * HY_OUTER.DISCOVER_K)) return;
+    ud.discovered = true;
+    const say = window.showIncomingTransmission;
+    if (typeof say === 'function') {
+        try { say('Long Range Survey - ' + ud.name, 'Frontier system charted: ' + (ud.themeLabel || 'Unknown') + '. ' +
+            (ud.hasBorg ? 'Borg signatures on scope - expect a cube on patrol.' : 'Exotic readings across the system.'), 'ship'); } catch (e) {}
+    }
+    console.log('🌌 Discovered frontier system: ' + ud.name);
+}
+
+// ── Universal View markers (called from updateGalaxyMap's universal branch) ─
+let _osMapDots = null, _osMapAt = 0;
+function drawOuterSystemsOnMap(galaxyMap, universeRadius) {
+    if (!galaxyMap || !outerInterstellarSystems.length || !_osFrontierOn()) return;
+    if (!_osMapDots) _osMapDots = [];
+    const off = window.worldOriginOffset || { x: 0, y: 0, z: 0 };
+    _osMapAt = performance.now();
+    outerInterstellarSystems.forEach(function (s, i) {
+        let el = _osMapDots[i];
+        if (!el || !el.parentNode) {
+            el = document.createElement('div');
+            el.className = 'frontier-map-dot';
+            el.style.cssText = 'position:absolute;width:7px;height:7px;transform:translate(-50%,-50%) rotate(45deg);pointer-events:none;z-index:7;';
+            galaxyMap.appendChild(el);
+            _osMapDots[i] = el;
+        }
+        const ud = s.userData;
+        const x = s.position.x + off.x, z = s.position.z + off.z;
+        let mx = (x / universeRadius) * 50, my = (z / universeRadius) * 50;
+        const rr = Math.sqrt(mx * mx + my * my);
+        const rim = rr > HY_OUTER.MAP_RIM;
+        if (rim) { mx *= HY_OUTER.MAP_RIM / rr; my *= HY_OUTER.MAP_RIM / rr; }
+        const col = '#' + ('000000' + (ud.systemColor || 0xffffff).toString(16)).slice(-6);
+        el.style.left = (50 + mx) + '%';
+        el.style.top = (50 + my) + '%';
+        el.style.background = ud.discovered ? col : 'transparent';
+        el.style.border = '1px solid ' + col;
+        el.style.boxShadow = '0 0 6px ' + col;
+        el.style.opacity = rim ? '0.85' : '1';
+        el.title = ud.name + ' — ' + (ud.themeLabel || 'Outer System') + (rim ? ' (frontier, off-map)' : '');
+        el.style.display = 'block';
+    });
+}
+function _osHideMapDots() {
+    if (!_osMapDots || performance.now() - _osMapAt < 1500) return;
+    for (let i = 0; i < _osMapDots.length; i++) if (_osMapDots[i] && _osMapDots[i].style.display !== 'none') _osMapDots[i].style.display = 'none';
+}
+if (typeof window !== 'undefined') window.drawOuterSystemsOnMap = drawOuterSystemsOnMap;
+
+// The nearest frontier systems as nav destinations (their star / core).
+function outerSystemDestinations(n) {
+    if (!outerInterstellarSystems.length || typeof camera === 'undefined') return [];
+    const cp = camera.position;
+    return outerInterstellarSystems.slice().sort(function (a, b) { return a.position.distanceTo(cp) - b.position.distanceTo(cp); })
+        .slice(0, n || 2).map(function (s) { return s.userData.centerObject; }).filter(Boolean);
+}
+if (typeof window !== 'undefined') window.outerSystemDestinations = outerSystemDestinations;
+
+// ── per-frame frontier update for one system ────────────────────────────────
+const _osWP = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+function _osUpdateFrontier(system, cp, dtF, tSec) {
+    const ud = system.userData;
+    const d = system.position.distanceTo(cp);
+    ud._camD = d;
+    const show = ud._shown ? d < HY_OUTER.SHOW * 1.08 : d < HY_OUTER.SHOW;
+    if (show !== ud._shown) { system.visible = show; ud._shown = show; }
+    if (show) _osDiscover(system, d);
+    if (!show) return;
+    const near = d < ud._hyEdge + HY_OUTER.FX_RANGE;
+    // corona never washes the screen: fade it as the camera nears the star
+    const cor = ud._osCorona, R = ud._hyR || 700;
+    if (cor) {
+        const a = HY_OUTER.CORONA_FADE_R;
+        const k = Math.max(0, Math.min(1, (d / R - a[0]) / (a[1] - a[0])));
+        cor.material.opacity = cor.userData.baseOpacity * k;
+        cor.visible = k > 0.01;
+    }
+    if (!near) return;
+    // signature + chrome animation, dt-scaled
+    for (let i = 0; i < system.children.length; i++) {
+        const c = system.children[i], cu = c.userData;
+        if (!cu) continue;
+        if (cu._osSpin) { c.rotation.y += cu._osSpin * dtF; }
+        if (cu._osSig) {
+            for (let k = 0; k < c.children.length; k++) {
+                const s = c.children[k], su = s.userData;
+                if (su._osSpin) s.rotation.z += su._osSpin * dtF;
+                if (su._osPulse) s.scale.setScalar(1 + su._osPulse * Math.sin(tSec * 0.6));
+                if (su._osFlare !== undefined) s.scale.set(1, 0.75 + 0.35 * Math.sin(tSec * 1.7 + su._osFlare), 1);
+            }
+        }
+    }
+}
+
+// =============================================================================
 // ANIMATION (Updates both system types)
 // =============================================================================
 
@@ -1176,15 +1913,23 @@ function updateOuterSystems() {
     if (!camera || !camera.position) return;
 
     const playerPos = camera.position;
+    const dtF = _osDt();
+    const fc = (typeof gameState !== 'undefined' && gameState.frameCount) || 0;
+    const tSec = performance.now() * 0.001;
 
     outerInterstellarSystems.forEach(system => {
         if (!system.userData || !system.userData.orbiters) return;
 
+        const tiltX = system.userData.tiltX || 0;
+        const tiltZ = system.userData.tiltZ || 0;
+
+        if (system.userData._frontier) {
+            // package V: range, corona, discovery and signature animation
+            _osUpdateFrontier(system, playerPos, dtF, tSec);
+        } else {
         // Distance-based opacity - different for each set
         const systemDist = system.position.distanceTo(playerPos);
-        const blurStart = 15000;
-        const blurMax = 65000;
-        
+
         let opacity = 1.0;
 
         if (system.userData.systemType === 'exotic_core') {
@@ -1213,15 +1958,12 @@ function updateOuterSystems() {
             }
         }
 
-        const tiltX = system.userData.tiltX || 0;
-        const tiltZ = system.userData.tiltZ || 0;
-
         // Update all children
         system.children.forEach(child => {
             // ROTATE STARFIELD
             if (child.userData && child.userData.type === 'system_starfield') {
-                child.rotation.y += child.userData.rotationSpeed * _osDt();
-                child.rotation.x += child.userData.rotationSpeed * 0.5 * _osDt();
+                child.rotation.y += child.userData.rotationSpeed * dtF;
+                child.rotation.x += child.userData.rotationSpeed * 0.5 * dtF;
                 if (child.material) {
                     child.material.opacity = opacity * 0.9;
                 }
@@ -1246,73 +1988,59 @@ function updateOuterSystems() {
                 }
             }
         });
+        }
 
-        // Update orbiters (planets, drones, cosmic features, brown dwarfs, pulsars, asteroids)
+        // Update orbiters (planets, drones, cosmic features, brown dwarfs, pulsars, asteroids).
+        // Every orbiter advances every frame, dt-scaled, shown or not, so nothing
+        // snaps when it comes back into view; the position is written by the one
+        // orbit step the builders also used (_osOrbitWrite).
         system.userData.orbiters.forEach(orbiter => {
+            const u = orbiter.userData;
             // BUGFIX: was `if (!orbiter.userData.orbitAngle !== undefined)` — operator
             // precedence made this always truthy, freezing ALL outer system orbiters.
-            if (orbiter.userData.orbitAngle === undefined) return;
+            if (u.orbitAngle === undefined) return;
 
-            orbiter.userData.orbitAngle += orbiter.userData.orbitSpeed * _osDt();
+            u.orbitAngle += u.orbitSpeed * dtF;
 
-            let x = Math.cos(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
-            let y = 0;
-            let z = Math.sin(orbiter.userData.orbitAngle) * orbiter.userData.orbitRadius;
-
-            // Apply system tilt
-            const rotatedX = x;
-            const rotatedY = y * Math.cos(tiltX) - z * Math.sin(tiltX);
-            const rotatedZ = y * Math.sin(tiltX) + z * Math.cos(tiltX);
-
-            const finalX = rotatedX * Math.cos(tiltZ) - rotatedY * Math.sin(tiltZ);
-            const finalY = rotatedX * Math.sin(tiltZ) + rotatedY * Math.cos(tiltZ);
-            const finalZ = rotatedZ;
-
-            orbiter.position.set(
-                orbiter.userData.orbitCenter.x + finalX,
-                orbiter.userData.orbitCenter.y + finalY,
-                orbiter.userData.orbitCenter.z + finalZ
-            );
-
-            // Rotate planets
-            if (orbiter.userData.type === 'outer_planet' && orbiter.userData.rotationSpeed) {
-                orbiter.rotation.y += orbiter.userData.rotationSpeed * _osDt();
+            if (u._rejoin) {
+                // package V: a Borg cube back from a chase glides onto its patrol
+                // ring over REJOIN frames instead of teleporting there
+                _osOrbitWrite(orbiter, tiltX, tiltZ);
+                const rj = u._rejoin;
+                rj.t = Math.min(1, rj.t + dtF / 360);
+                const k = rj.t * rj.t * (3 - 2 * rj.t);
+                orbiter.position.lerpVectors(rj.from, orbiter.position, k);
+                if (rj.t >= 1) delete u._rejoin;
+            } else {
+                _osOrbitWrite(orbiter, tiltX, tiltZ);
             }
 
-            // Rotate pulsars
-            if (orbiter.userData.type === 'pulsar' && orbiter.userData.rotationSpeed) {
-                orbiter.rotation.y += orbiter.userData.rotationSpeed * _osDt();
-            }
-
-            // Rotate asteroids
-            if (orbiter.userData.type === 'outer_asteroid') {
-                orbiter.rotation.x += orbiter.userData.rotationSpeedX * _osDt();
-                orbiter.rotation.y += orbiter.userData.rotationSpeedY * _osDt();
-                orbiter.rotation.z += orbiter.userData.rotationSpeedZ * _osDt();
-            }
-
-            // Rotate BORG cubes and drones
-            if ((orbiter.userData.type === 'borg_cube' || orbiter.userData.type === 'borg_drone') && orbiter.userData.rotationSpeed) {
-                orbiter.rotation.x += orbiter.userData.rotationSpeed * _osDt();
-                orbiter.rotation.y += orbiter.userData.rotationSpeed * 0.7 * _osDt();
-            }
-
-            // Rotate cosmic features
-            if (orbiter.userData.rotationSpeed &&
-                (orbiter.userData.type === 'crystal_structure' ||
-                 orbiter.userData.type === 'dyson_sphere' ||
-                 orbiter.userData.type === 'space_whale')) {
-                orbiter.rotation.y += orbiter.userData.rotationSpeed * _osDt();
-
+            const type = u.type;
+            if ((type === 'outer_planet' || type === 'pulsar' || type === 'borg_lattice') && u.rotationSpeed) {
+                orbiter.rotation.y += u.rotationSpeed * dtF;
+            } else if (type === 'outer_asteroid') {
+                orbiter.rotation.x += u.rotationSpeedX * dtF;
+                orbiter.rotation.y += u.rotationSpeedY * dtF;
+                orbiter.rotation.z += u.rotationSpeedZ * dtF;
+            } else if ((type === 'borg_cube' || type === 'borg_drone') && u.rotationSpeed) {
+                orbiter.rotation.x += u.rotationSpeed * dtF;
+                orbiter.rotation.y += u.rotationSpeed * 0.7 * dtF;
+            } else if (u.rotationSpeed &&
+                (type === 'crystal_structure' || type === 'dyson_sphere' || type === 'space_whale')) {
+                orbiter.rotation.y += u.rotationSpeed * dtF;
                 // Space whale swimming motion
-                if (orbiter.userData.type === 'space_whale' && orbiter.userData.swimSpeed) {
-                    const swimTime = Date.now() * 0.001;
-                    orbiter.rotation.z = Math.sin(swimTime * orbiter.userData.swimSpeed) * 0.2;
-                    orbiter.rotation.x = Math.sin(swimTime * orbiter.userData.swimSpeed * 1.3) * 0.15;
+                if (type === 'space_whale' && u.swimSpeed) {
+                    orbiter.rotation.z = Math.sin(tSec * u.swimSpeed) * 0.2;
+                    orbiter.rotation.x = Math.sin(tSec * u.swimSpeed * 1.3) * 0.15;
                 }
             }
         });
     });
+
+    if (_osFrontierOn()) {
+        if (fc % 6 === 0) _osUpdateBeacons(playerPos);
+        if (fc % 30 === 0) { _osKeepOut(); _osHideMapDots(); }
+    }
 }
 
 // =============================================================================
@@ -1329,6 +2057,11 @@ function updateBorgPatrolCombat() {
 
     const playerPos = camera.position;
     const now = Date.now();
+    const dtF = _osDt();   // package V: every Borg motion dt-scaled
+    const say = function (title, msg) {   // showAchievement is retired: Borg comms go out on the ship channel
+        if (typeof window.showIncomingTransmission === 'function') { try { window.showIncomingTransmission(title, msg, 'ship'); return; } catch (e) {} }
+        if (typeof showAchievement === 'function') showAchievement(title, msg, true);
+    };
 
     outerInterstellarSystems.forEach(system => {
         if (!system.userData || !system.userData.hasBorg || !system.userData.drones) return;
@@ -1355,9 +2088,7 @@ function updateBorgPatrolCombat() {
                 // they've encountered a BORG threat.
                 if (distance < 10000 && !ud.warningShown) {
                     ud.warningShown = true;
-                    if (typeof showAchievement === 'function') {
-                        showAchievement('⚠️ CRITICAL ALERT', 'Massive BORG vessel detected! Extreme threat level!', true);
-                    }
+                    say('⚠️ CRITICAL ALERT', 'Massive BORG vessel detected! Extreme threat level!');
                     if (typeof playSound === 'function') playSound('boss');
                 }
 
@@ -1375,9 +2106,7 @@ function updateBorgPatrolCombat() {
                     ];
                     const msg = msgs[Math.floor(Math.random() * msgs.length)];
                     const threat = distance < 2000 ? 'IMMINENT THREAT' : 'INCOMING THREAT';
-                    if (typeof showAchievement === 'function') {
-                        showAchievement(`⚠️ BORG TRANSMISSION [${threat}]`, msg, true);
-                    }
+                    say(`⚠️ BORG TRANSMISSION [${threat}]`, msg);
                 }
 
                 // Pursuit: when player within detection range, break orbit and pursue
@@ -1394,9 +2123,9 @@ function updateBorgPatrolCombat() {
                     entity.position.add(localDir.multiplyScalar(ud.speed * _osDt()));
 
                     // Rotate menacingly
-                    entity.rotation.x += 0.002;
-                    entity.rotation.y += 0.003;
-                    entity.rotation.z += 0.001;
+                    entity.rotation.x += 0.002 * dtF;
+                    entity.rotation.y += 0.003 * dtF;
+                    entity.rotation.z += 0.001 * dtF;
 
                     // Spawn drones when player is close
                     if (distance < 5000 && ud.droneCount < ud.maxDrones && now - ud.lastDroneSpawn > 2000) {
@@ -1415,6 +2144,9 @@ function updateBorgPatrolCombat() {
                     ud.warningShown = false;
                     if (ud._savedOrbitAngle !== undefined) {
                         ud.orbitAngle = ud._savedOrbitAngle;
+                        // package V: glide back onto the patrol ring (updateOuterSystems)
+                        // instead of snapping there from wherever the chase ended
+                        ud._rejoin = { from: entity.position.clone(), t: 0 };
                         delete ud._savedOrbitAngle;
                     }
                 }
@@ -1443,7 +2175,7 @@ function updateBorgPatrolCombat() {
                         );
                         const localTarget = system.worldToLocal(_borgDir.clone());
                         const dir = localTarget.sub(drone.position).normalize();
-                        drone.position.add(dir.multiplyScalar(drone.userData.speed));
+                        drone.position.add(dir.multiplyScalar(drone.userData.speed * dtF));
                     } else {
                         // Orbit cube
                         entity.getWorldPosition(_borgDir);
@@ -1453,7 +2185,7 @@ function updateBorgPatrolCombat() {
                         _borgDir.y += Math.sin(orbitAngle * 0.5) * 30;
                         const localOrbit = system.worldToLocal(_borgDir.clone());
                         const oDir = localOrbit.sub(drone.position).normalize();
-                        drone.position.add(oDir.multiplyScalar(drone.userData.speed * 0.5));
+                        drone.position.add(oDir.multiplyScalar(drone.userData.speed * 0.5 * dtF));
                     }
 
                     // Drone fires at player
@@ -1470,7 +2202,7 @@ function updateBorgPatrolCombat() {
             if (distance < 3500) {
                 _borgDir.subVectors(playerPos, _borgWorldPos).normalize();
                 const localDir = system.worldToLocal(_borgDir.add(_borgWorldPos)).sub(entity.position).normalize();
-                entity.position.add(localDir.multiplyScalar(entity.userData.speed || 3.0));
+                entity.position.add(localDir.multiplyScalar((entity.userData.speed || 3.0) * dtF));
 
                 if (distance < 300 && now - (entity.userData.lastAttack || 0) > 1500) {
                     entity.userData.lastAttack = now;
