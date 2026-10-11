@@ -375,6 +375,35 @@ manoeuvres that look ahead. Package J: black holes bigger, ORIGINAL effects kept
 added, intensity ramping with proximity. Package G, Part 2: outer systems and every star join one
 size ladder.
 
+## Requirements, round 3 (Ben, verbatim, 2026-10-10)
+
+Sent while testing build 20261010a. Each is a package (N–T below) or already landed in 20261010b.
+
+1. "in the old game you could see nebulas clearly. in the new game it is harder to tell how can we bring back the old while keeping the new." → package S (nebula2)
+2. "in the new game the demo player warps to nebulas and stops in front of a big awesome planet. how can we give the human player the ability to do that also so it looks cool when they warp also?" → package P (navwarp)
+3. "How can we fix the way the wingmen look when warping?" → LANDED 20261010b (every wingman, dogfighting ones included, drops into follow formation on a real warp burn; far ones FTL-hop into formation once per warp; FTL re-anchor at warp end). Measured before: an engaged wingman fell from 700 u ahead to 3,300 u behind in 6 s of O-warp.
+4. "We still want the communication texts, they should come in through the same interface as the other incoming messages at the bottom of the screen. Civilians signals in a different color. I think an earlier build had that." → LANDED 20261010b (`showIncomingTransmission` channels: wingman `#8fd3ff`, civilian `#d08cff`, distress yellow, lore cyan, ship orange; wingman comms and civilian-combat notices route through it).
+5. "The warp effects should change colors depending on where you are in the universe and not just be in the purple and pink spectrum." → package T (warpfx)
+6. "Orbit lines are not working in the local Sol system from the get go but we need them to work." → package T (warpfx). Measured: Sol's 8 rings exist (r 1,394–14,675, opacity 0.3) but are ±2 u thick — sub-pixel at that scale — and `createOrbitLines()` re-runs on galaxy load and can rebuild the list without them (one run: 422 lines, 0 for Sol).
+7. "Asteroid fields should behave and be placed as they were in versions of the game from earlier this year. these are too fast. Look at branches from Feb" → LANDED 20261010b for pace: Feb 2026 (`feature/gameplay-improvements` a44151c, in main) orbited belt rocks at 0.0005–0.0015 rad/frame on 1,600–2,600 u rings (~2 u/frame); the hybrid's Sol belt measured 17.8 u/frame. Now `PACE_REF 2100 / r`. Placement: Feb put Sol's belt at 1,600–2,600 from Sol = between Mars (973) and Jupiter (3,328) of that build; the hybrid's Sol belt sits in the same Mars–Jupiter lane of the scaled system (4,666–5,166). Galaxy belts: Feb 1,600–2,600 from the core; hybrid 6.4–7.6 core radii (the core is 900 now). Kept proportional.
+8. "deloy sub agents to work on 1 Building Game Progression 2 Black Hole Systems placements 3 Enemies and Bosses placement and behavior 4 Planet Scales and placements (all planets should be similar in size to nebula planets) universe may need to be bigger to space things out." → packages O, Q, R, N. "deploy subagents for all original tasks also."
+
+### Ben's campaign spec (verbatim, 2026-10-10) — package O (progression)
+
+> Okay, when the game starts, you are battling Martian pirates in the local Sol galaxy system, which has Earth and Jupiter and Mars, etc. And after defeating the Martian enemies in your local system you fight their boss. If you defeat their boss a dotted line appears pointing to Sagittarius A and the player should be instructed to then proceed to the black holes where the Vulcan enemies are and defeat them as well. Once those enemies are defeated you have liberated that system and a dotted line appears leading to a nearby nebula for the player to follow. At this point the black holes open for warping anywhere in the game (until then it just warps back to the Sagittarius A region). After visiting a nebula and acquiring a wingman a mission for the player opens up and a dotted line leading from that nebula to a remote location where a host of enemies awaits. The enemies could be swarming a civilian fleet or harassing a planet. The enemies should be the same ones being spoken about in the lore of the nebula where you unlocked the mission. Upon defeating these enemies you save the nebula. You are then ordered to take out the rest of that faction's forces at one of the other Black Hole galaxies. Black Hole Guardians appear once all the standard enemies are cleared, and only after defeating the guardians is that galaxy cleared. Players should receive progressive power ups and incentives as well as additional weapons. Once all 8 black hole galaxies are cleared the player wins the game. Optional missions include fighting the Borg and saving trading vessels. The more nebulas you visit the more wingmen you can get, which is important for taking on some of the harder Black Hole enemies. Gravitational Slingshots should play a big role in getting from the Sol System to Sagittarius A. Player should be bound by gravity to SOL and should not be able to fly to Sag A without using slingshot.
+
+### Packages N–T (2026-10-10)
+
+| key | package | wave |
+|---|---|---|
+| scale2 | N — planet scale: every planet sized like the nebula planets; universe spaced out | 1 |
+| progression | O — the campaign above (`progression: campaign`) | 1 |
+| navwarp | P — player O-warp arrives and parks like the demo (`navWarp: on`) | 1 |
+| bhplace | Q — black hole system placements | 2 |
+| enemies2 | R — enemies and bosses: placement and behaviour | 2 |
+| nebula2 | S — nebulae clearly visible (ORIGINAL swirl inside the overhaul cloud) | 2 |
+| warpfx | T — warp colours by sector (`warpTint: sector`) + Sol orbit lines from the start | 3 |
+
 ## Open questions for Ben
 
 1. **Invisible messages.** In ORIGINAL, `showAchievement` messages (wingman comms, "Target Hit!",

@@ -56,6 +56,7 @@
         solScale:        'big',        // Sol planets + Sun sized like other systems  'big' | 'overhaul'
         openingVista:    'off',        // Ben, 2026-09-27: "the new starting view is bad, revert."  'on' | 'off'
         navWarp:         'on',         // O-warp with a nav target flies to it and parks facing it (demo-style arrival)  'on' | 'off'
+        progression:     'campaign',   // Ben's campaign (Sol pirates → boss → Sgr A* → nebulae → 8 galaxies)  'campaign' | 'overhaul'
         warpTint:        'sector',     // warp streaks/tunnel coloured by where you are (nebula / Sol / galaxy)  'sector' | 'overhaul'
     };
 
