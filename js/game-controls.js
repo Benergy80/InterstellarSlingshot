@@ -7104,6 +7104,7 @@ function _scheduleCommsAutoDismiss(textEl, overflowed) {
 if (typeof window !== 'undefined') window.__commsTypewriter = _typewriterReveal;
 
 function showMissionCommandAlert(title, text, isVictoryMessage = false, channelColor = null) {
+    if (typeof _mcIsMissionControl === 'function' && _mcIsMissionControl(title)) _mcHoldUntil = Date.now() + HY_MC.HOLD_MS;   // Mission Control holds the panel
     const alertElement = document.getElementById('missionCommandAlert');
     const titleElement = alertElement ? alertElement.querySelector('h2') : null;
     const textElement = document.getElementById('missionCommandText');
@@ -7235,7 +7236,36 @@ if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
 const _HY_COMMS_COLORS = { distress: '#ffd633', lore: '#00e5ff', ship: '#ff9a33', wingman: '#8fd3ff', civilian: '#d08cff' };
 if (typeof window !== 'undefined') window._HY_COMMS_COLORS = _HY_COMMS_COLORS;
 
+// Ben, 2026-10-11: "Mission Control messages are not coming through as they did
+// in the branch that is currently on the live github pages." Every comms voice
+// (wingman chatter, civilians, distress, lore) shares this ONE panel with
+// Mission Control, and the hybrid added a lot of voices the live branch did not
+// have — measured: a campaign Mission Control line was replaced by a wingman's
+// chatter within ~10 s. A Mission Control line now HOLDS the panel for
+// HY_MC.HOLD_MS; other transmissions queue behind it (latest per channel) and
+// play once the hold ends.
+const HY_MC = { HOLD_MS: 14000, MAX_DEFERRED: 4 };
+if (typeof window !== 'undefined') window.HY_MC = HY_MC;
+let _mcHoldUntil = 0, _mcDeferred = [], _mcDeferredTimer = null;
+function _mcIsMissionControl(title) { return /^mission control/i.test(String(title || '')); }
+function _mcFlushDeferred() {
+    _mcDeferredTimer = null;
+    if (Date.now() < _mcHoldUntil) { _mcDeferredTimer = setTimeout(_mcFlushDeferred, _mcHoldUntil - Date.now() + 50); return; }
+    const m = _mcDeferred.shift();
+    if (!m) return;
+    showIncomingTransmission(m.title, m.text, m.factionColor);
+    if (_mcDeferred.length) _mcDeferredTimer = setTimeout(_mcFlushDeferred, 9000);
+}
 function showIncomingTransmission(title, text, factionColor) {
+    if (!_mcIsMissionControl(title) && Date.now() < _mcHoldUntil) {
+        // Mission Control has the panel: keep the newest line per channel for later.
+        const key = (typeof factionColor === 'string' ? factionColor : '') + '|' + String(title || '').replace(/\d+/g, '');
+        _mcDeferred = _mcDeferred.filter((m) => m.key !== key);
+        _mcDeferred.push({ key: key, title: title, text: text, factionColor: factionColor });
+        if (_mcDeferred.length > HY_MC.MAX_DEFERRED) _mcDeferred.shift();
+        if (!_mcDeferredTimer) _mcDeferredTimer = setTimeout(_mcFlushDeferred, _mcHoldUntil - Date.now() + 50);
+        return;
+    }
     // Classify the comms channel -> colour. An explicit channel name wins;
     // otherwise the sender's title decides. (Direct command briefings stay
     // mission-control green.)
