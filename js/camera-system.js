@@ -105,11 +105,15 @@ function initCameraSystem(camera, scene) {
             playerModel.frustumCulled = false;
 
             // Apply optimized self-lit material to all meshes
+            // HYBRID playerModel: an alternate hull keeps its own textured GLB material
+            // (the flat cyan below is the stock vector hull's look).
+            const _altHull = !!(typeof modelCache !== 'undefined' && modelCache.player && modelCache.player.userData && modelCache.player.userData._hyAltHull);
             playerModel.traverse((child) => {
                 if (child.isMesh) {
                     // CRITICAL: Make each mesh visible
                     child.visible = true;
                     child.frustumCulled = false;
+                    if (_altHull) { child.renderOrder = 100; child.castShadow = false; child.receiveShadow = false; child.material.needsUpdate = true; return; }
 
                     // Optimized self-illuminated material - simpler for better performance
                     child.material = new THREE.MeshBasicMaterial({

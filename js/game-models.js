@@ -2527,9 +2527,13 @@ function _runPlayerHullUpgradeLoop() {
         const wantBloom = !window.HYBRID || window.HYBRID.is('thrusters', 'overhaul');
         let hullMeshes = 0;
 
+        // An alternate hull (playerModel switch) keeps its own textured GLB material —
+        // the rim-lit cyan swap below is authored for the UV-less stock hull.
+        const _altHull = !!(typeof modelCache !== 'undefined' && modelCache.player && modelCache.player.userData && modelCache.player.userData._hyAltHull);
         mesh.traverse((child) => {
             if (child.isMesh && child.material && child.material.blending !== THREE.AdditiveBlending) {
                 hullMeshes++;
+                if (_altHull) { child.material.needsUpdate = true; return; }
                 if (!swapHull) {
                     // ORIGINAL rendered with no tone mapping; the overhaul's
                     // ACES curve turns the flat 0x00ffff hull teal-grey.
