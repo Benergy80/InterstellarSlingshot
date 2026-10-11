@@ -19,7 +19,9 @@
         // whole additive star field (its overlaps sum past 1.0) and cost a full
         // frame (16.7 → 33 ms on the headless GPU). Softer, higher threshold,
         // quarter-res mips, and the composer only in the normal quality tier.
-        STRENGTH: 0.5, RADIUS: 0.35, THRESHOLD: 1.35, BLOOM_DIV: 4,
+        // 20261012c: the grey wash was the bloom pass tone-mapping an already tone-mapped
+        // buffer (ACES runs in the materials) — fixed below; sweep chose 0.45 / 0.3 / 2.2.
+        STRENGTH: 0.45, RADIUS: 0.3, THRESHOLD: 2.2, BLOOM_DIV: 4,
         TIER_COOLDOWN_MS: 60000,
         HDR_K: 3.0,              // neon multiplier that lifts a colour over the threshold
         EDGE_ANGLE: 25,          // EdgesGeometry threshold angle (deg)
@@ -56,6 +58,10 @@
             const composer = rt ? new THREE.EffectComposer(renderer, rt) : new THREE.EffectComposer(renderer);
             const renderPass = new THREE.RenderPass(scene, camera);
             const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(Math.max(1, w / SW_POST.BLOOM_DIV), Math.max(1, h / SW_POST.BLOOM_DIV)), SW_POST.STRENGTH, SW_POST.RADIUS, P.halfFloat ? SW_POST.THRESHOLD : 0.85);
+            // The renderer runs ACES tone mapping in the materials, so the buffer is
+            // already tone-mapped; the pass's screen blit (a MeshBasicMaterial) must not
+            // tone-map it again — measured: that double pass was the grey wash.
+            if (bloom.basic) { bloom.basic.toneMapped = false; bloom.basic.needsUpdate = true; }
             composer.addPass(renderPass); composer.addPass(bloom);
             composer.setSize(w, h);
             P.composer = composer; P.renderPass = renderPass; P.bloom = bloom; P.rt = rt; P.w = w; P.h = h; P.pr = pr;
@@ -118,6 +124,7 @@
         if (!root || !linesReady() || root.userData._swEdges) return 0;
         const mat = new THREE.LineMaterial({ color: 0xffffff, linewidth: SW_POST.EDGE_WIDTH, transparent: true, opacity: SW_POST.EDGE_OPACITY, depthWrite: false });
         mat.color.copy(hdr(hex));
+        mat.toneMapped = false;   // stays ×3 in the half-float buffer, over the bloom threshold
         mat.resolution.set(window.innerWidth, window.innerHeight);
         E.lineMats.push(mat);
         let n = 0;
@@ -176,7 +183,7 @@
             for (let i = 0; i < activeLasers.length; i++) {
                 const L = activeLasers[i];
                 [L && L.material, L && L.glowMaterial, L && L.mesh && L.mesh.material].forEach((m) => {
-                    if (m && m.color && !m.userData._swHdr) { m.userData._swHdr = true; m.color.multiplyScalar(SW_POST.HDR_K); }
+                    if (m && m.color && !m.userData._swHdr) { m.userData._swHdr = true; m.color.multiplyScalar(SW_POST.HDR_K); m.toneMapped = false; m.needsUpdate = true; }
                 });
             }
         }

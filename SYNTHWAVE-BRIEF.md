@@ -55,7 +55,15 @@ deploy other agents as needed."
 - W1: headless death at 6 s → overlay at 11 s (after the ship's own death animation), tally, CONTINUE 7 at 16 s,
   GAME OVER + INSERT COIN at 27 s, 0 errors (`.critic/probe-gameover.js`).
 - W2 first cut (strength 0.8, threshold 1.0, half-res mips): composer on, half-float OK, player + 3 wingmen
-  edged (4 line materials), BUT the additive star field summed past 1.0 and bloomed the whole frame, and the
-  frame cost doubled on the headless GPU (16.7 → 33 ms median, 60 → 30 fps). Retune 20261012b: strength 0.5,
-  radius 0.35, threshold 1.35, quarter-res mips, composer only in the `normal` quality tier with a 60 s
-  cool-down after a tier drop, buffer keeps the renderer's output encoding.
+  edged (4 line materials), but the whole frame went grey. Root cause (20261012c): the renderer runs ACES
+  filmic tone mapping inside the materials, so the buffer is already tone-mapped and the bloom pass's screen
+  blit (a MeshBasicMaterial) tone-mapped it AGAIN — a double ACES is a grey wash; not the bloom, not the
+  encoding (the renderer's output is linear). Fix: `bloom.basic.toneMapped = false`; the neon materials (edge
+  LineMaterial, lasers) are `toneMapped = false` so their ×3 colour stays over the threshold. Sweep of
+  (0.5/0.35/1.35, 0.45/0.3/2.2, 0.35/0.3/3.0) → 0.45 / 0.3 / 2.2: plain-render contrast back, neon edges glow,
+  stars do not. Quarter-res mips; composer only in the `normal` quality tier with a 60 s cool-down after a tier
+  drop. Cost on this headless GPU is unreadable while agent Chromes share it (30 fps either way in those
+  windows; one clean window read 60 fps / 16.7 ms with the composer on) — re-measure alone.
+- Ben, 2026-10-11, on :8805: "so far the new branch is not looking great and we will likely abandon it
+  because 8803 is so perfect. however we will give it some time". Plan: finish this W2 tune, then pause;
+  W1 (Mission Failed) and the edge lines are switchable and cherry-pick cleanly to the hybrid if wanted.
