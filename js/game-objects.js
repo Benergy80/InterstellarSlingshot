@@ -13261,6 +13261,119 @@ function _aerialLocalPass(cx, cy, cz) {
     else if (_aerialLocalSys !== null && (best !== _aerialLocalSys || bestD2 > AERIAL_LOCAL_OUT)) _aerialLocalSys = null;
 }
 
+// ── HYBRID package T: REGIONAL HAZE ─────────────────────────────────────────
+// Ben, 2026-10-10: "Some distance blurring for further universes may be good
+// or some areas of the universe it is harder to see far and other places it is
+// very clear". The haze above was one global curve. Here a smooth visibility
+// field v (0 = murky, 1 = crystal clear) is sampled at the camera once per
+// culling pass: a few seeded low-frequency value-noise octaves over TRUE world
+// position, pulled murky inside a nebula and dusty near a galaxy core, pushed
+// clear in the open space between galaxies. v scales the aerial-extinction
+// distances (AERIAL_NEAR / AERIAL_SCALE) and scene.fog's near/far, so far
+// bodies fade sooner in a murky region and stay sharp in a clear one.
+// farPlanetFade: bySize still exempts bodies that are big on screen. Off with
+// HY_HAZE.ON = false (and under farPlanetFade: overhaul, the overhaul's curve).
+const HY_HAZE = {
+    ON: true,
+    SEED: 0x5eed7,
+    OCTAVES: [[70000, 0.55], [28000, 0.30], [11000, 0.15]],   // [wavelength (x _hyU), weight]
+    CONTRAST: 2.4,          // stretch of the noise sum about 0.5, so regions differ clearly
+    NEB_IN: 0.7, NEB_OUT: 1.8, NEB_MURK: 0.85,   // nebula: full murk inside 0.7 x size, none past 1.8 x
+    CORE_IN: 8, CORE_OUT: 30, CORE_DUST: 0.55,  // galaxy core dust, in core radii
+    REACH: 50000,           // x _hyU: past VOID_IN..VOID_OUT x REACH from every core = open deep space
+    VOID_IN: 0.9, VOID_OUT: 1.4,
+    M_MURKY: 0.45, M_CLEAR: 3.0,      // multiplier on AERIAL_NEAR / AERIAL_SCALE (geometric in v)
+    FOG_MURKY: 0.40, FOG_CLEAR: 1.5,  // multiplier on scene.fog near / far (geometric in v)
+    EASE: 0.18              // per pass (~6 Hz): crossing a boundary takes ~1 s, never a snap
+};
+if (typeof window !== 'undefined') window.HY_HAZE = HY_HAZE;
+const _hyHaze = { v: -1, m: 1, fogK: 1, fogNear: 0, fogFar: 0, parts: null };
+function _hyHazeOn() {
+    return HY_HAZE.ON && typeof window !== 'undefined' && !!window.HYBRID && window.HYBRID.is('farPlanetFade', 'bySize');
+}
+function _hyHash3(i, j, k) {
+    let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1) ^ Math.imul(k, 0x9e3779b1) ^ HY_HAZE.SEED;
+    h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+    h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+function _hyValueNoise(x, y, z) {
+    const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+    const s = (t) => t * t * (3 - 2 * t);
+    const fx = s(x - xi), fy = s(y - yi), fz = s(z - zi);
+    const L = (a, b, t) => a + (b - a) * t;
+    const c = (dx, dy, dz) => _hyHash3(xi + dx, yi + dy, zi + dz);
+    return L(L(L(c(0, 0, 0), c(1, 0, 0), fx), L(c(0, 1, 0), c(1, 1, 0), fx), fy),
+             L(L(c(0, 0, 1), c(1, 0, 1), fx), L(c(0, 1, 1), c(1, 1, 1), fx), fy), fz);
+}
+const _hySmooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+// Visibility at a scene-space position (current coordinates). 0 murky .. 1 clear.
+function _hyHazeField(px, py, pz) {
+    const U = (typeof window !== 'undefined' && typeof window._hyU === 'function') ? window._hyU() : 1;
+    const off = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+    const tx = px + off.x, ty = py + off.y, tz = pz + off.z;   // TRUE coords: the field does not move on a rebase
+    let n = 0, wsum = 0;
+    for (let i = 0; i < HY_HAZE.OCTAVES.length; i++) {
+        const L = HY_HAZE.OCTAVES[i][0] * U, w = HY_HAZE.OCTAVES[i][1];
+        n += w * _hyValueNoise(tx / L + i * 17.3, ty / L - i * 5.1, tz / L + i * 9.7); wsum += w;
+    }
+    n /= wsum;
+    let v = Math.min(1, Math.max(0, 0.5 + (n - 0.5) * HY_HAZE.CONTRAST));
+    const noise = v;
+    // galaxy cores: dusty near, and "between galaxies" = far from every core
+    let dust = 0, coreD = Infinity;
+    if (typeof planets !== 'undefined' && planets) {
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i]; const ud = p && p.userData;
+            if (!ud || !ud.isGalacticCore || !p.position) continue;
+            const R = (ud.radius || 900) * (p.scale ? Math.max(p.scale.x, 1) : 1);
+            const dx = p.position.x - px, dy = p.position.y - py, dz = p.position.z - pz;
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (d < coreD) coreD = d;
+            dust = Math.max(dust, 1 - _hySmooth(HY_HAZE.CORE_IN, HY_HAZE.CORE_OUT, d / R));
+        }
+    }
+    v *= 1 - HY_HAZE.CORE_DUST * dust;
+    // nebulae: murky inside
+    let neb = 0;
+    if (typeof nebulaClouds !== 'undefined' && nebulaClouds) {
+        for (let i = 0; i < nebulaClouds.length; i++) {
+            const nb = nebulaClouds[i]; const ud = nb && nb.userData;
+            if (!ud || !(ud.size > 0) || !nb.position) continue;
+            const S = ud.size * (nb.scale ? Math.max(nb.scale.x, nb.scale.y, nb.scale.z) : 1);
+            const dx = nb.position.x - px, dy = nb.position.y - py, dz = nb.position.z - pz;
+            neb = Math.max(neb, 1 - _hySmooth(HY_HAZE.NEB_IN, HY_HAZE.NEB_OUT, Math.sqrt(dx * dx + dy * dy + dz * dz) / S));
+        }
+    }
+    v *= 1 - HY_HAZE.NEB_MURK * neb;
+    // open deep space between galaxies (and outside every nebula): crystal clear
+    const voidW = _hySmooth(HY_HAZE.VOID_IN, HY_HAZE.VOID_OUT, coreD / (HY_HAZE.REACH * U)) * (1 - neb);
+    v += (1 - v) * voidW;
+    return { v: v, noise: noise, dust: dust, neb: neb, voidW: voidW, coreD: Math.round(coreD) };
+}
+if (typeof window !== 'undefined') window.hyHazeAt = function (p) { p = p || camera.position; return _hyHazeField(p.x, p.y, p.z); };
+// Once per culling pass: ease the camera's visibility, derive the multipliers,
+// and drive scene.fog (its untouched near/far captured the first time).
+function _hyHazePass(cx, cy, cz) {
+    const fog = (typeof scene !== 'undefined' && scene) ? scene.fog : null;
+    if (fog && !_hyHaze.fogNear && fog.near > 0) { _hyHaze.fogNear = fog.near; _hyHaze.fogFar = fog.far; }
+    if (!_hyHazeOn()) {
+        if (_hyHaze.m !== 1 || _hyHaze.fogK !== 1) {
+            _hyHaze.m = 1; _hyHaze.fogK = 1;
+            if (fog && _hyHaze.fogNear) { fog.near = _hyHaze.fogNear; fog.far = _hyHaze.fogFar; }
+        }
+        return;
+    }
+    const h = _hyHazeField(cx, cy, cz);
+    _hyHaze.parts = h;
+    _hyHaze.v = _hyHaze.v < 0 ? h.v : _hyHaze.v + (h.v - _hyHaze.v) * HY_HAZE.EASE;
+    const v = _hyHaze.v;
+    _hyHaze.m = HY_HAZE.M_MURKY * Math.pow(HY_HAZE.M_CLEAR / HY_HAZE.M_MURKY, v);
+    _hyHaze.fogK = HY_HAZE.FOG_MURKY * Math.pow(HY_HAZE.FOG_CLEAR / HY_HAZE.FOG_MURKY, v);
+    if (fog && _hyHaze.fogNear) { fog.near = _hyHaze.fogNear * _hyHaze.fogK; fog.far = _hyHaze.fogFar * _hyHaze.fogK; }
+}
+if (typeof window !== 'undefined') window.__hyHaze = _hyHaze;
+
 // How far gone is this body? 0 = untouched, 1 = the void.
 // Stars are exempt: a distant sun is a point of LIGHT, and the reference frames
 // are full of them. It is the lit BODIES that crowd the frame.
@@ -13273,22 +13386,37 @@ function _aerialFactor(o, d) {
     const ud = o.userData;
     if (!ud) return 0;
     if (ud.type !== 'planet' && ud.type !== 'moon') return 0;
-    if (d <= AERIAL_NEAR) return 0;
+    _aerialCullK = 0;
+    // package T: the regional haze field scales both distances (m = 1 when off).
+    // The COLOUR ramp follows the region; the CULL stays on the global curve
+    // (_aerialCullK = kBase), so the set of drawn — and lit — bodies is exactly
+    // what it was without the field. Letting a clear region draw more bodies
+    // grew the lit set, recompiled programs and hitched the frame (measured:
+    // 50 ms frames mid-slingshot, keep-check row 1 failing 5 runs in 5).
+    const _m = _hyHaze.m;
+    if (d <= AERIAL_NEAR * Math.min(1, _m)) return 0;
     if (_aerialLocalSys !== null && _aerialSystem(o) === _aerialLocalSys) return 0;
-    const k = 1 - Math.exp(-(d - AERIAL_NEAR) / AERIAL_SCALE);
+    const _kOf = (mm) => d <= AERIAL_NEAR * mm ? 0 : 1 - Math.exp(-(d - AERIAL_NEAR * mm) / (AERIAL_SCALE * mm));
+    const k = _kOf(_m);
+    const kBase = _m === 1 ? k : _kOf(1);
     // HYBRID: fade by how big the body LOOKS, not only by how far it is. The
     // distance curve was tuned for field worlds (r ~ 60-140); on a 620 u heart
     // world it dims a body that still spans 10-25 deg of the frame to 7-50 %
     // brightness, which reads as a huge black disc. A body wide enough to read
     // as a place keeps its full colour; only the small far ones sink into haze.
+    let sz = 1;
     if (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('farPlanetFade', 'bySize')) {
         const r = ud.radius || ud._pbR || 0;
         const ang = r > 0 ? r / d : 0;             // ~ half the angular size, radians
         const t = Math.min(1, Math.max(0, (ang - AERIAL_SIZE_FADE) / (AERIAL_SIZE_FULL - AERIAL_SIZE_FADE)));
-        return k * (1 - t * t * (3 - 2 * t));
+        sz = 1 - t * t * (3 - 2 * t);
     }
-    return k;
+    _aerialCullK = kBase * sz;
+    return k * sz;
 }
+// The extinction the cull acts on for the body _aerialFactor last scored
+// (package T: always the global curve's, whatever the region).
+let _aerialCullK = 0;
 // Apparent half-size (r/d) below which the distance fade applies in full, and
 // above which a body is left untouched. 0.012 ~ 1.4 deg across, 0.045 ~ 5 deg.
 // Asteroid surface brightness under asteroids:original (1 = ORIGINAL albedo).
@@ -15647,6 +15775,7 @@ function updateDistanceCulling() {
     if (typeof window === 'undefined' || !window.__aerialOff) {
         _aerialLocalPass(camera.position.x, camera.position.y, camera.position.z);
     }
+    try { _hyHazePass(camera.position.x, camera.position.y, camera.position.z); } catch (e) { /* haze optional */ }
 
     const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
 
@@ -15727,6 +15856,7 @@ function updateDistanceCulling() {
             // inside AERIAL_NEAR, which is everything the player is near.
             const aeD = br > 0 ? Math.sqrt(d2) : 0;
             const aeK = br > 0 ? _aerialFactor(o, aeD) : 0;
+            const aeKc = br > 0 ? _aerialCullK : 0;   // package T: what the cull acts on
             let inRange;
             if (br > 0) {
                 // ANGULAR IS THE WHOLE RULE. No authored range gets a vote on a
@@ -15813,9 +15943,9 @@ function updateDistanceCulling() {
                 ? (o.userData.radius ||
                    (o.geometry && o.geometry.parameters ? o.geometry.parameters.radius : 0) || br)
                 : 0;
-            if (aeK > 0) {
+            if (aeK > 0 || aeKc > 0) {   // package T: a clear region can score 0 where the cull still acts
                 const lim = o.userData._aerialOut ? AERIAL_BACK_K : AERIAL_CULL_K;
-                const out = inRange && aeK >= lim && (ballR * _pxPerAng / aeD) < AERIAL_KEEP_PX;
+                const out = inRange && aeKc >= lim && (ballR * _pxPerAng / aeD) < AERIAL_KEEP_PX;
                 o.userData._aerialOut = out;
                 if (out) inRange = false;
             } else if (o.userData._aerialOut) {
@@ -16032,6 +16162,10 @@ function updateOrbitLineVisibility() {
     // PERF: Only check every 30 frames instead of every frame
     _orbitVisibilityFrameCount++;
     if (_orbitVisibilityFrameCount % 30 !== 0) return;
+
+    // HYBRID package T: one ring per orbiting planet, at its current radius and
+    // centre, whatever createOrbitLines() last rebuilt (game-core.js).
+    if (typeof _hyOrbitLineSync === 'function') { try { _hyOrbitLineSync(); } catch (e) { /* rings optional */ } }
     
     if (typeof orbitLines === 'undefined' || orbitLines.length === 0) return;
     if (typeof camera === 'undefined') return;

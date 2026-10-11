@@ -1131,6 +1131,16 @@ function destroyAsteroidByCollision(asteroid) {
 // - Galaxy discovery system integration
 // - Safe positioning with collision avoidance
 
+// HYBRID package T (`warpTint: sector`): the base colour pair a warp call site
+// hands warpStreakBurst / warpDebrisBurst, so the post-warp coast wears the
+// sector colours too. Falls back to the caller's fixed pair (a0, b0) when the
+// tint is off, for black holes, or before visual-flair.js has loaded.
+function _hyWarpPair(mode, a0, b0) {
+    const t = (typeof window !== 'undefined' && typeof window._hyWarpTintFor === 'function')
+        ? window._hyWarpTintFor(mode) : null;
+    return t ? [t.a, t.b] : [a0, b0];
+}
+
 function transitionToRandomLocation(sourceBlackHole, transitType) {
     const _isWormhole = (transitType === 'wormhole');
     console.log((_isWormhole ? 'WORMHOLE' : 'BLACK HOLE') + ' WARP INITIATED from:', sourceBlackHole);
@@ -1195,8 +1205,8 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         if (typeof window.warpStreakBurst === 'function' && typeof camera !== 'undefined') {
             const _td = new THREE.Vector3();
             camera.getWorldDirection(_td);
-            window.warpStreakBurst(_td, 7200,
-                _isWormhole ? 0xc9a4ff : 0xb26bff, 0x35e6ff, 1.25);
+            const _bp = _hyWarpPair('blackhole', _isWormhole ? 0xc9a4ff : 0xb26bff, 0x35e6ff);   // holes keep violet
+            window.warpStreakBurst(_td, 7200, _bp[0], _bp[1], 1.25);
         }
     }
 
@@ -2716,7 +2726,8 @@ function updateSlingshotWhip() {
         if (typeof window !== 'undefined' && typeof window.warpStreakBurst === 'function') {
             const _sA = w.bh ? 0xb26bff : (w.color === 0xffcc44 ? 0xffd166 : 0x6be6ff);
             const _sB = w.bh ? 0x35e6ff : (w.color === 0xffcc44 ? 0xff5ccd : 0xff5ccd);
-            window.warpStreakBurst(launchDir, w.boost * 60, _sA, _sB,
+            const _sp = _hyWarpPair(w.bh ? 'blackhole' : 'slingshot', _sA, _sB);   // package T
+            window.warpStreakBurst(launchDir, w.boost * 60, _sp[0], _sp[1],
                 Math.max(0.6, Math.min(1.35, w.boost / 95)) * (_sfx ? _sfx.STREAK : 1));
         }
         // …and the WORLD-SPACE half of the same illusion. Streaks alone are a
@@ -2730,7 +2741,8 @@ function updateSlingshotWhip() {
         if (typeof window !== 'undefined' && typeof window.warpDebrisBurst === 'function' && (!_sfx || _sfx.DEBRIS > 0)) {
             const _dA = w.bh ? 0xc9a4ff : (w.color === 0xffcc44 ? 0xffe6a8 : 0x9ff2ff);
             const _dB = w.bh ? 0x6ef0ff : 0xff8ade;
-            window.warpDebrisBurst(launchDir, w.boost * 60, _dA, _dB,
+            const _dp = _hyWarpPair(w.bh ? 'blackhole' : 'slingshot', _dA, _dB);   // package T
+            window.warpDebrisBurst(launchDir, w.boost * 60, _dp[0], _dp[1],
                 Math.max(0.6, Math.min(1.3, w.boost / 95)) * (_sfx ? _sfx.DEBRIS : 1));
         }
         if (!_sfx || _sfx.STARFIELD) { if (typeof toggleWarpSpeedStarfield === 'function') toggleWarpSpeedStarfield(true); }
@@ -3614,8 +3626,9 @@ if (frameDistance > 0.01) { // Only track significant movement
                     window.warpTunnelBurst(0.5, 700, false);
                 }
                 if (typeof window.warpStreakBurst === 'function') {
+                    const _jp = _hyWarpPair('jump', 0x6be6ff, 0xff5ccd);   // package T
                     window.warpStreakBurst(capturedForwardDirection, capturedBoostSpeed * 60,
-                        0x6be6ff, 0xff5ccd, 0.75);
+                        _jp[0], _jp[1], 0.75);
                 }
             }
 
@@ -3729,12 +3742,14 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
                 window.warpTunnelBurst(1, 1500, false);
             }
             if (typeof window.warpStreakBurst === 'function') {
+                const _ep = _hyWarpPair('emergency', 0x6be6ff, 0xff5ccd);   // package T
                 window.warpStreakBurst(capturedForwardDirection, capturedBoostSpeed * 60,
-                    0x6be6ff, 0xff5ccd, 1.2);
+                    _ep[0], _ep[1], 1.2);
             }
             if (typeof window.warpDebrisBurst === 'function') {
+                const _ed = _hyWarpPair('emergency', 0x9ff2ff, 0xff8ade);   // package T
                 window.warpDebrisBurst(capturedForwardDirection, capturedBoostSpeed * 60,
-                    0x9ff2ff, 0xff8ade, 1.1);
+                    _ed[0], _ed[1], 1.1);
             }
         }
 

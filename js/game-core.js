@@ -1309,6 +1309,50 @@ function monitorPerformance() {
 // ORBIT LINES SYSTEM - FIXED AND ENHANCED
 // =============================================================================
 
+// HYBRID package T: orbit-ring constants. Sol's rings run 2.7k-27k at the big
+// scale; a fixed +-2 u band is sub-pixel there, so the half-width scales with
+// radius (HALF_K) and the ORIGINAL width stays the floor.
+const HY_ORBIT_LINE = {
+    HALF_K: 0.0028,             // half-width = max(floor, radius x HALF_K)
+    LOCAL_OPACITY: 0.45,        // Sol rings (ORIGINAL 0.3 / 0.4)
+    SYNC_REBUILD_FRAMES: 300,   // _hyOrbitLineSync rebuilds one planet's ring at most this often
+    R_TOL: 0.002,               // radius match tolerance (fraction of radius)
+    C_TOL: 0.002,               // centre match tolerance (fraction of radius)
+    LOCAL_EDGE: true,           // add a 1-px LineLoop to each local (Sol) ring
+    EDGE_OPACITY: 0.6
+};
+if (typeof window !== 'undefined') window.HY_ORBIT_LINE = HY_ORBIT_LINE;
+function _hyOrbitHalfWidth(r, floor) {
+    return Math.max(floor || 2, (r || 0) * HY_ORBIT_LINE.HALF_K);
+}
+// Sol's rings are seen nearly edge-on from the start (camera 150 u above the
+// plane, nearest ring ~1,150 u away): even the wider band projects to under a
+// pixel there and breaks up into dashes. A 1-px LineLoop on the same circle
+// (a child of the band, so it shares its visibility and transform) keeps every
+// local ring a continuous line at any distance. Local rings only: +16 draws.
+function _hyOrbitAddEdge(orbitLine, color, opacity, r, segs) {
+    if (!HY_ORBIT_LINE.LOCAL_EDGE) return;
+    const pts = [];
+    for (let i = 0; i < segs; i++) {
+        const a = i / segs * Math.PI * 2;
+        pts.push(new THREE.Vector3(Math.cos(a) * r, Math.sin(a) * r, 0));   // RingGeometry's XY plane
+    }
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    const m = new THREE.LineBasicMaterial({ color: color, transparent: true, opacity: opacity, depthWrite: false });
+    m.toneMapped = false;
+    const edge = new THREE.LineLoop(g, m);
+    edge.userData = { isOrbitEdge: true, __dbTris: Infinity };
+    orbitLine.add(edge);
+}
+function _hyOrbitDisposeChildren(line) {
+    if (!line || !line.children) return;
+    line.children.slice().forEach(function (c) {
+        if (c.geometry) c.geometry.dispose();
+        if (c.material) c.material.dispose();
+        line.remove(c);
+    });
+}
+
 function createOrbitLines() {
     console.log('Creating orbit lines...');
     
@@ -1319,6 +1363,7 @@ function createOrbitLines() {
         } else if (scene) {
             scene.remove(line);
         }
+        _hyOrbitDisposeChildren(line);   // package T: the ring's 1-px edge
         if (line.geometry) line.geometry.dispose();
         if (line.material) line.material.dispose();
     });
@@ -1339,9 +1384,12 @@ function createOrbitLines() {
         // Create orbit geometry - segment count scales with radius so
         // big orbits (Neptune ~19k) read as smooth circles instead of
         // visible polygons, without over-tessellating tiny moon orbits.
+        // HYBRID package T: half-width grows with radius (HY_ORBIT_LINE) so the
+        // big Sol rings are not sub-pixel; the ORIGINAL +-2 stays the floor.
+        const _hw = _hyOrbitHalfWidth(orbitRadius, 2);
         const orbitGeometry = new THREE.RingGeometry(
-            orbitRadius - 2, // Inner radius
-            orbitRadius + 2, // Outer radius
+            orbitRadius - _hw, // Inner radius
+            orbitRadius + _hw, // Outer radius
             Math.min(220, Math.max(64, Math.round(orbitRadius / 40))) // Segments (radius-scaled)
         );
         
@@ -1359,10 +1407,11 @@ function createOrbitLines() {
         const orbitMaterial = new THREE.MeshBasicMaterial({
             color: orbitColor,
             transparent: true,
-            opacity: 0.3,
+            opacity: planet.userData.isLocal ? HY_ORBIT_LINE.LOCAL_OPACITY : 0.3,
             side: THREE.DoubleSide,
             depthWrite: false
         });
+        orbitMaterial.toneMapped = false;   // flat HUD green, not ACES-dulled
         
         const orbitLine = new THREE.Mesh(orbitGeometry, orbitMaterial);
         
@@ -1378,12 +1427,14 @@ function createOrbitLines() {
             planetName: planet.userData.name,
             orbitRadius: orbitRadius,
             isOrbitLine: true,
-            galaxyId: planet.userData.galaxyId
+            galaxyId: planet.userData.galaxyId,
+            planet: planet          // package T: _hyOrbitLineSync matches by object
         };
         // HYBRID: orbit rings are HUD ("Orbits ON"), not decoration. The draw
         // budget hid every ring under 150 triangles — the inner Sol rings — and
         // swapped them in and out as the view turned.
         if (!window.HYBRID || !window.HYBRID.is('hud', 'overhaul')) orbitLine.userData.__dbTris = Infinity;
+        if (planet.userData.isLocal) _hyOrbitAddEdge(orbitLine, orbitColor, HY_ORBIT_LINE.EDGE_OPACITY, orbitRadius, orbitGeometry.parameters.thetaSegments);
 
         scene.add(orbitLine);
         orbitLines.push(orbitLine);
@@ -1496,7 +1547,7 @@ function _handleWormholeEntry(mouth) {
 if (typeof window !== 'undefined') window._handleWormholeEntry = _handleWormholeEntry;
 
 // FIXED: Helper function to create a single orbit line - NO MOON ORBITS
-function createSingleOrbitLine(planet, isLocal) {
+function createSingleOrbitLine(planet, isLocal, noTilt) {
     try {
         const orbitRadius = planet.userData.orbitRadius;
         let systemCenter;
@@ -1512,7 +1563,7 @@ function createSingleOrbitLine(planet, isLocal) {
         }
         
         // FIXED: Adjust orbit line thickness based on distance and type
-        const baseThickness = isLocal ? 3 : 2;
+        const baseThickness = _hyOrbitHalfWidth(orbitRadius, isLocal ? 3 : 2);   // package T
         const orbitGeometry = new THREE.RingGeometry(
             orbitRadius - baseThickness, // Inner radius
             orbitRadius + baseThickness, // Outer radius
@@ -1533,10 +1584,11 @@ function createSingleOrbitLine(planet, isLocal) {
         const orbitMaterial = new THREE.MeshBasicMaterial({
             color: orbitColor,
             transparent: true,
-            opacity: isLocal ? 0.4 : 0.3, // MORE TRANSPARENT: Local orbits 0.4, distant 0.3
+            opacity: isLocal ? HY_ORBIT_LINE.LOCAL_OPACITY : 0.3, // package T: local 0.45, distant 0.3
             side: THREE.DoubleSide,
             depthWrite: false // Prevent z-fighting
         });
+        orbitMaterial.toneMapped = false;   // flat HUD colour, not ACES-dulled
         
         const orbitLine = new THREE.Mesh(orbitGeometry, orbitMaterial);
         
@@ -1548,7 +1600,7 @@ orbitLine.rotation.x = Math.PI / 2; // Rotate to horizontal plane
 if (planet.userData.isLocalGateway && planet.userData.orbitalTilt) {
     orbitLine.rotation.y += planet.userData.orbitalTilt.z; // Z-tilt affects Y-rotation
     orbitLine.rotation.z += planet.userData.orbitalTilt.x; // X-tilt affects Z-rotation
-} else if (!isLocal) {
+} else if (!isLocal && !noTilt) {   // package T: the orbit sync draws untilted rings, like createOrbitLines
     // Add small random tilt for distant galaxies
     orbitLine.rotation.y += (Math.random() - 0.5) * 0.2;
     orbitLine.rotation.z += (Math.random() - 0.5) * 0.2;
@@ -1564,10 +1616,12 @@ if (planet.userData.isLocalGateway && planet.userData.orbitalTilt) {
             isOrbitLine: true,
             isLocal: isLocal,
             galaxyId: planet.userData.galaxyId,
-            isPlanetOrbit: true // Flag to distinguish from moon orbits
+            isPlanetOrbit: true, // Flag to distinguish from moon orbits
+            planet: planet       // package T: _hyOrbitLineSync matches by object
         };
         // HYBRID: never a draw-budget candidate (see createOrbitLines).
         if (!window.HYBRID || !window.HYBRID.is('hud', 'overhaul')) orbitLine.userData.__dbTris = Infinity;
+        if (isLocal) _hyOrbitAddEdge(orbitLine, orbitColor, HY_ORBIT_LINE.EDGE_OPACITY, orbitRadius, orbitGeometry.parameters.thetaSegments);
 
         scene.add(orbitLine);
         orbitLines.push(orbitLine);
@@ -1580,6 +1634,72 @@ if (planet.userData.isLocalGateway && planet.userData.orbitalTilt) {
         return false;
     }
 }
+
+// ── HYBRID package T: SOL ORBIT LINES FROM THE GET-GO ───────────────────────
+// Ben, 2026-10-10: "Orbit lines are not working in the local Sol system from
+// the get go but we need them to work." createOrbitLines() is re-run on galaxy
+// load and can rebuild the list while Sol's layout is still being written (one
+// measured run: 422 lines, none for Sol). This keeps exactly one ring per
+// orbiting planet (moons excluded), with the planet's current radius and
+// centre: missing rings are created, mismatched or duplicate ones replaced.
+// Called from updateOrbitLineVisibility (game-objects.js) on its 30-frame tick.
+const _hyOrbitSyncAt = new WeakMap();   // planet -> frame of its last rebuild
+function _hyOrbitDropLine(line) {
+    if (!line) return;
+    if (line.parent) line.parent.remove(line);
+    _hyOrbitDisposeChildren(line);
+    if (line.geometry) line.geometry.dispose();
+    if (line.material) line.material.dispose();
+}
+function _hyOrbitLineSync() {
+    if (typeof planets === 'undefined' || !planets || typeof scene === 'undefined' || !scene) return 0;
+    if (!Array.isArray(orbitLines)) return 0;
+    const frame = (typeof gameState !== 'undefined' && gameState.frameCount) || 0;
+    const byPlanet = new Map(), byName = new Map();
+    for (let i = 0; i < orbitLines.length; i++) {
+        const l = orbitLines[i]; const ud = l && l.userData;
+        if (!ud) continue;
+        if (ud.planet) {
+            let a = byPlanet.get(ud.planet); if (!a) byPlanet.set(ud.planet, a = []); a.push(l);
+        } else if (ud.planetName) {
+            let a = byName.get(ud.planetName); if (!a) byName.set(ud.planetName, a = []); a.push(l);
+        }
+    }
+    const drop = new Set();
+    let made = 0;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i]; const pu = p && p.userData;
+        if (!pu || !(pu.orbitRadius > 0) || !pu.systemCenter || pu.parentPlanet) continue;
+        const r = pu.orbitRadius, c = pu.systemCenter;
+        const cands = (byPlanet.get(p) || []).concat(byName.get(pu.name) || []);
+        let keep = null;
+        for (let k = 0; k < cands.length; k++) {
+            const l = cands[k];
+            if (drop.has(l)) continue;
+            const okR = Math.abs((l.userData.orbitRadius || 0) - r) <= Math.max(1, r * HY_ORBIT_LINE.R_TOL);
+            const dx = l.position.x - c.x, dy = l.position.y - c.y, dz = l.position.z - c.z;
+            const okC = Math.sqrt(dx * dx + dy * dy + dz * dz) <= Math.max(1, r * HY_ORBIT_LINE.C_TOL);
+            if (!keep && okR && okC && l.parent) keep = l;
+            else if (l.userData.planet === p || !l.userData.planet) drop.add(l);   // stale or duplicate
+        }
+        if (keep) { if (!keep.userData.planet) keep.userData.planet = p; continue; }
+        const last = _hyOrbitSyncAt.get(p);
+        if (last !== undefined && frame - last < HY_ORBIT_LINE.SYNC_REBUILD_FRAMES) {
+            cands.forEach(function (l) { drop.delete(l); });   // not yet: leave what is there
+            continue;
+        }
+        _hyOrbitSyncAt.set(p, frame);
+        if (createSingleOrbitLine(p, !!pu.isLocal, true)) made++;
+    }
+    if (drop.size) {
+        drop.forEach(_hyOrbitDropLine);
+        orbitLines = orbitLines.filter(function (l) { return !drop.has(l); });
+    }
+    const st = window.__hyOrbitSync || (window.__hyOrbitSync = { calls: 0, made: 0, dropped: 0 });
+    st.calls++; st.made += made; st.dropped += drop.size;
+    return made;
+}
+if (typeof window !== 'undefined') window._hyOrbitLineSync = _hyOrbitLineSync;
 
 // Force orbit lines creation function
 function forceCreateOrbitLines() {
