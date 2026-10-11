@@ -265,6 +265,29 @@ try {
         const steadyFrom = rec.findIndex((r) => r[0] >= rec[press][0] + 700);
         result.turn = { whole: stats(rec), steadyTurn: stats(rec.slice(steadyFrom, rel)), onsetAndRelease: { onset: stats(rec.slice(press, steadyFrom)), release: stats(rec.slice(rel, rel + 60)) } };
         await writeFile(join(OUT, `${NAME}-turnrec.json`), JSON.stringify(rec));
+    } else if (JOB === 'profile') {
+        // CPU profile of PLAY mode at the start spot (or --spots fight): self time per function
+        await skipToPlay();
+        await page.waitForTimeout(1500);
+        await page.evaluate(KEEP, false);
+        await page.waitForTimeout(2000);
+        const cdp = await page.context().newCDPSession(page);
+        await cdp.send('Profiler.enable');
+        await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
+        await cdp.send('Profiler.start');
+        await page.waitForTimeout(SECS * 1000);
+        const { profile } = await cdp.send('Profiler.stop');
+        const byId = new Map(profile.nodes.map((n) => [n.id, n]));
+        const self = new Map();
+        const dts = profile.timeDeltas; let total = 0;
+        for (let i = 0; i < profile.samples.length; i++) {
+            const n = byId.get(profile.samples[i]); const cf = n.callFrame;
+            const key = `${cf.functionName || '(anon)'} ${(cf.url || '').split('/').pop().split('?')[0]}:${cf.lineNumber + 1}`;
+            const dt = (dts[i] || 0) / 1000; total += dt;
+            self.set(key, (self.get(key) || 0) + dt);
+        }
+        const secs = SECS;
+        result.profile = { totalMs: Math.round(total), msPerSecond: Object.fromEntries([...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => [k, Math.round(v / secs * 10) / 10])) };
     } else if (JOB === 'spots') {
         await skipToPlay();
         await page.waitForTimeout(1500);
