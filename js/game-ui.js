@@ -1668,12 +1668,22 @@ function updateCrosshairTargeting() {
     // elementFromPoint already skips it — no need for the old
     // hide-then-restore visibility toggle (which forced a reflow
     // every call).
-    const elementUnder = document.elementFromPoint(gameState.mouseX, gameState.mouseY);
-    const isOverUI = elementUnder && elementUnder.closest('.ui-panel');
+    // PERF (package AF): elementFromPoint forces a synchronous style + layout
+    // flush of everything the HUD wrote this frame — measured ~17 ms/s of main
+    // thread when called every frame. The answer only changes when the mouse
+    // moves (or a panel moves under a still mouse), so hit-test on a move and
+    // otherwise every 10th call (~6 Hz).
+    const _ct = updateCrosshairTargeting;
+    _ct._hitN = (_ct._hitN || 0) + 1;
+    if (gameState.mouseX !== _ct._hitX || gameState.mouseY !== _ct._hitY || _ct._hitN >= 10) {
+        _ct._hitN = 0; _ct._hitX = gameState.mouseX; _ct._hitY = gameState.mouseY;
+        const elementUnder = document.elementFromPoint(gameState.mouseX, gameState.mouseY);
+        _ct._hitOverUI = !!(elementUnder && elementUnder.closest('.ui-panel'));
+    }
 
     // Only write these styles when the over-UI state actually flips —
     // avoids a style recalc on every 20Hz tick.
-    const _overUI = !!isOverUI;
+    const _overUI = !!_ct._hitOverUI;
     if (_overUI !== updateCrosshairTargeting._lastOverUI) {
         updateCrosshairTargeting._lastOverUI = _overUI;
         if (_overUI) {
