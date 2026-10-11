@@ -16032,6 +16032,10 @@ function updateOrbitLineVisibility() {
     // PERF: Only check every 30 frames instead of every frame
     _orbitVisibilityFrameCount++;
     if (_orbitVisibilityFrameCount % 30 !== 0) return;
+
+    // HYBRID package T: one ring per orbiting planet, at its current radius and
+    // centre, whatever createOrbitLines() last rebuilt (game-core.js).
+    if (typeof _hyOrbitLineSync === 'function') { try { _hyOrbitLineSync(); } catch (e) { /* rings optional */ } }
     
     if (typeof orbitLines === 'undefined' || orbitLines.length === 0) return;
     if (typeof camera === 'undefined') return;
