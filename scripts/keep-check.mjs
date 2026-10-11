@@ -173,6 +173,9 @@ const HELPERS = `(() => {
     Object.keys(keys).forEach((k) => { if (keys[k] === true) keys[k] = false; });
     if (gs.slingshot) Object.assign(gs.slingshot, { active: false, postSlingshot: false, timeRemaining: 0, exitRamp: null });
     gs.slingshotWhip = null; gs.slingshotLaunchRamp = null; gs.slingshotCooldownUntil = 0;
+    // A stale nav target (left by the demo) would steer the open glide (warpHold:open guidance)
+    // and skew rows 1/4; the rows measure the unguided whip and warp.
+    gs.currentTarget = null; gs._hyNavWarp = null;
     Object.assign(gs.emergencyWarp, { active: false, transitioning: false, postWarp: false, exitRamp: null, isJump: false, autoBraking: false });
     gs.emergencyWarp.available = Math.max(5, gs.emergencyWarp.available || 0);
     gs.energy = 100; gs.hull = gs.maxHull || 100; gs.gameOver = false;
