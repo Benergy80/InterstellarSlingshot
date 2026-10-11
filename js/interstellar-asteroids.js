@@ -214,6 +214,7 @@ function createInterstellarAsteroid(position, size, velocity, fieldIndex, astero
         ),
         generation: 0,  // Track how many times it's been broken
         denseField: cheap,  // dense-galaxy-field asteroid → tighter cull range
+        _bornAt: (typeof performance !== 'undefined') ? performance.now() : 0,   // package V: see checkInterstellarAsteroidCollisions
     };
     asteroid.frustumCulled = true; // off-screen ones skip drawing
     // HYBRID (asteroids: original): the mesh is SIZE_K bigger; userData.size
@@ -414,6 +415,13 @@ function checkInterstellarAsteroidCollisions() {
 
     if (window.asteroidCollisionFrameCounter % 5 !== 0) return;  // Check every 5 frames
 
+    // package V (outer): rocks "jumping" — two fragments of one break are born
+    // overlapping, so they collided on the next check and shattered again, a
+    // cascade of pops down to dust. A rock younger than SETTLE_MS, or a pair
+    // already moving apart, does not collide.
+    const SETTLE_MS = 4000;
+    const _now = (typeof performance !== 'undefined') ? performance.now() : 0;
+
     for (let i = 0; i < interstellarAsteroids.length; i++) {
         const asteroidA = interstellarAsteroids[i];
         if (!asteroidA || !asteroidA.userData) continue;
@@ -427,6 +435,12 @@ function checkInterstellarAsteroidCollisions() {
             const collisionDistance = asteroidA.userData.size * (asteroidA.scale.x || 1) + asteroidB.userData.size * (asteroidB.scale.x || 1);   // HYBRID: x mesh scale
 
             if (distance < collisionDistance) {
+                if (_now - (asteroidA.userData._bornAt || 0) < SETTLE_MS || _now - (asteroidB.userData._bornAt || 0) < SETTLE_MS) continue;
+                const va = asteroidA.userData.velocity, vb = asteroidB.userData.velocity;
+                if (va && vb) {
+                    const sx = asteroidB.position.x - asteroidA.position.x, sy = asteroidB.position.y - asteroidA.position.y, sz = asteroidB.position.z - asteroidA.position.z;
+                    if ((vb.x - va.x) * sx + (vb.y - va.y) * sy + (vb.z - va.z) * sz > 0) continue;   // separating
+                }
                 // Collision detected!
                 handleAsteroidCollision(asteroidA, asteroidB);
                 break;  // Only handle one collision per asteroid per frame
