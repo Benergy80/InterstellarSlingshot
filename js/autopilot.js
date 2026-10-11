@@ -666,7 +666,12 @@
       const _ty = _cp.y + (_woo ? _woo.y : 0);
       const _tz = _cp.z + (_woo ? _woo.z : 0);
       const _distFromOrigin = Math.sqrt(_tx * _tx + _ty * _ty + _tz * _tz);
-      if (_distFromOrigin > 140000) {
+      // HYBRID (guardflake): the boundary grows with the universe (package N's
+      // UNIVERSE_K 1.85 -> 259k). At a flat 140k the black-hole galaxies
+      // (cores 152-184k from Sgr A* since package Q) sat OUTSIDE it, so the
+      // demo was recalled from them, and a keep-check park staged in open
+      // space ~157k out braked for 90 s and never warped.
+      if (_distFromOrigin > 140000 * (typeof window._hyU === 'function' ? window._hyU() : 1)) {
         if (!ap._originDummy) ap._originDummy = { position: new THREE.Vector3(0, 0, 0), userData: { name: 'Galactic Center' } };
         // The galactic center's CURRENT-frame position is -worldOriginOffset.
         ap._originDummy.position.set(_woo ? -_woo.x : 0, _woo ? -_woo.y : 0, _woo ? -_woo.z : 0);

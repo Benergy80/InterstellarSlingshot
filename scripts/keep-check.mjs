@@ -324,11 +324,18 @@ check('park', async () => {
     K.openSpace(); gs.velocityVector.set(0, 0, 0);
     const parks0 = dp.arrivalParks; D.unlockWarp(); D.goPhase('warpToNebulaCluster');
     const t0 = Date.now(); let warped = false;
-    const trace = [];
+    const trace = [], status = [];
     // Nebulae sit 28-60k out since the scale package, so the leg is long: allow 90 s.
     while (Date.now() - t0 < 90000) {
         await sleep(250); if (gs.emergencyWarp.active) warped = true; if (dp.arrivalParks > parks0) break;
         if (!trace.length || trace[trace.length - 1][1] !== dp.phase) trace.push([Math.round((Date.now() - t0) / 100) / 10, dp.phase, ie('enemies').length]);
+        // Every ~3 s: what the pilot says it is doing and the warp gate's inputs
+        // (evidence for a leg that never warps).
+        if (Date.now() - (K._pkS || 0) > 3000 && status.length < 40) { K._pkS = Date.now(); const ap = D.ap || {}, ew = gs.emergencyWarp;
+            let sh = null; try { sh = !!ie('shieldSystem').active; } catch (x) { /* optional */ }
+            status.push([Math.round((Date.now() - t0) / 100) / 10, ap.statusText || null, { sh, av: ew.available, act: !!ew.active, tr: !!ew.transitioning,
+                kills: ap.enemiesKilled, en: Math.round(gs.energy), sp: (ap.slingshotPlanet && ap.slingshotPlanet.userData && ap.slingshotPlanet.userData.name) || null,
+                tried: !!ap._slingshotTried, sling: !!(gs.slingshot && gs.slingshot.active), whip: !!gs.slingshotWhip }]); }
         // Moving to open space can cross into another galaxy's range, and the
         // game then loads that galaxy's enemies — 200-odd of them, which drag the
         // pilot into a fight. This check is about the PARK, so keep them stashed.
@@ -339,7 +346,7 @@ check('park', async () => {
     }
     const parkMs = dp.arrivalParks > parks0 ? Date.now() - t0 : null;
     await sleep(600);   // let the park settle a beat, as a viewer would see it
-    const out = { parked: parkMs !== null, parkMs, warped, park: dp.lastArrivalPark, phase: dp.phase, trace: trace.slice(0, 20) };
+    const out = { parked: parkMs !== null, parkMs, warped, park: dp.lastArrivalPark, phase: dp.phase, trace: trace.slice(0, 20), status };
     const as = gs._arrivalSubject;
     if (as && as.obj) {
         const wp = as.obj.getWorldPosition(new THREE.Vector3()); const fwd = cam.getWorldDirection(new THREE.Vector3());
@@ -415,6 +422,10 @@ check('slingshot', async () => {
         const a0 = K.additiveVisible(), fov0 = cam.fov, v0 = gs.velocityVector.length(); K.fovReset();
         ie('executeSlingshot')();
         Object.assign(r, { entry: +v0.toFixed(2), captured: !!gs.slingshot.active, fov0: +fov0.toFixed(1) });
+        // What the whip aims at: a stale nav target (left by the demo) moves the aim.
+        { const _w = gs.slingshotWhip, _t = gs.currentTarget;
+          r.navTarget = (_t && _t.userData && _t.userData.name) || (_t ? 'unnamed' : null);
+          if (_w && _w.aim) r.aim = [_w.aim.x, _w.aim.y, _w.aim.z].map((x) => +x.toFixed(3)); }
         const t0 = Date.now(); let rel = null, relV = null, relC = null, peak = 0, fmax = 0, amax = 0, trail = false, ramp = false, whip = false;
         // Per-100 ms samples: what the ship is doing against the body through
         // the whip and the first second of the glide (evidence for a flake).
@@ -424,7 +435,7 @@ check('slingshot', async () => {
             await sleep(100); gs.hull = gs.maxHull || 100;
             const v = gs.velocityVector.length(); peak = Math.max(peak, v); fmax = Math.max(fmax, cam.fov); amax = Math.max(amax, K.additiveVisible());
             if (r.samples.length < 80) r.samples.push({ t: Date.now() - t0, v: +v.toFixed(1), dR: +(cam.position.distanceTo(body.getWorldPosition(new THREE.Vector3())) / _bR).toFixed(2),
-                whip: !!gs.slingshotWhip, act: !!gs.slingshot.active, post: !!gs.slingshot.postSlingshot, x: !!keys.x, w: !!keys.w, tr: gs.slingshot.timeRemaining | 0 });
+                whip: !!gs.slingshotWhip, act: !!gs.slingshot.active, post: !!gs.slingshot.postSlingshot, x: !!keys.x, w: !!keys.w, tr: gs.slingshot.timeRemaining | 0, dying: !!(gs.playerDying || gs.gameOver) });
             try { if (ie('_whipTrail')) trail = true; } catch (x) { /* optional */ }
             if (gs.slingshotWhip) whip = true; if (gs.slingshotLaunchRamp) ramp = true;
             if (rel === null && whip && !gs.slingshotWhip) { rel = Date.now() - t0; relV = gs.velocityVector.clone().normalize();
