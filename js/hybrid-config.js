@@ -52,6 +52,7 @@
         notifications:   'original',   // also retires the wingman-message popup panel
         praiseText:      'original',
         intro:           'original',   // title screen, countdown, launch sequence
+        hudArrows:       'original',   // Ben 2026-10-11: galaxy hostile countdown meter + nearest-enemy / boss edge arrows in the ORIGINAL SOS-arrow style  'original' | 'overhaul' (none)
         // — new in the hybrid —
         solScale:        'big',        // Sol planets + Sun sized like other systems  'big' | 'overhaul'
         openingVista:    'off',        // Ben, 2026-09-27: "the new starting view is bad, revert."  'on' | 'off'

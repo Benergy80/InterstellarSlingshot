@@ -5752,6 +5752,223 @@ if (typeof window !== 'undefined') {
 }
 
 // =============================================================================
+// HOSTILE COUNTDOWN METER + ENEMY / BOSS EDGE ARROWS  (hybrid — hudArrows)
+// =============================================================================
+// Ben, 2026-10-11: "Each galaxy should have an enemy countdown meter and the
+// arrows around the edges of the screen that point towards the nearest enemy
+// would be good. Bosses could have their own arrow and so could SOS signals."
+// / "like they were before" / "we want them visible from far off".
+// ORIGINAL had ONE edge arrow (the SOS arrow above, kept as it is) and a
+// 3,000-unit "Hostiles in Region" line (detectEnemiesInRegion, kept). It never
+// had a galaxy meter or enemy/boss arrows, so these are built from those two
+// ORIGINAL pieces: the meter is a SHIP STATUS line in the detector's red with a
+// thin bar like the Reputation bar; the arrows are the SOS arrow's ▲ glyph,
+// placement and behaviour (edge-clamped, hidden while the target is on
+// screen) in the ORIGINAL alert colours (HOSTILES DETECTED #ff5555, BOSS
+// DETECTED #ff3df0). Both read the whole galaxy / any range, not 3,000 u.
+// hudArrows: 'original' (default) | 'overhaul' (none of this — the overhaul's
+// own short-range canvas chevrons ride notifications: overhaul).
+const HY_HUD_ARROWS = {
+    SCAN_MS: 250,      // re-pick the nearest enemy / boss, recount the meter
+    REGION_MS: 1000,   // which galaxy (or Sol) the ship is in
+    EDGE_K: 0.42,      // ORIGINAL SOS arrow margin (fraction of the viewport)
+    ENEMY: { id: 'hostileEdgeArrow', color: '#ff5555', glow: 'rgba(255,85,85,0.9)',  glyph: 40, label: 'HOSTILE' },
+    BOSS:  { id: 'bossEdgeArrow',    color: '#ff3df0', glow: 'rgba(255,61,240,0.9)', glyph: 54, label: 'BOSS' },
+    CLEARED_COLOR: '#22c55e',          // ORIGINAL map "LIBERATED" green
+    // ORIGINAL's SOS arrow sits at z-index 60, but its edge positions (42 % out
+    // from centre) fall under the HUD panels (z 600) and the title header (900),
+    // so at the left/right/top edges it was drawn and never seen. All three
+    // arrows ride above the panels and header, below the achievement popup (950)
+    // and the pause overlay (1000). They are pointer-events:none.
+    Z: 905,
+};
+if (typeof window !== 'undefined') window.HY_HUD_ARROWS = HY_HUD_ARROWS;
+
+function _hyHudArrowsOn() { return !window.HYBRID || HYBRID.is('hudArrows', 'original'); }
+
+const _hyEA = {
+    v: new THREE.Vector3(), fwd: new THREE.Vector3(), right: new THREE.Vector3(),
+    up: new THREE.Vector3(), to: new THREE.Vector3(), Y: new THREE.Vector3(0, 1, 0),
+    enemy: null, boss: null, region: null, cores: null, coresAt: 0, max: Object.create(null),
+};
+
+function _hyEnsureEdgeArrow(spec) {
+    let el = document.getElementById(spec.id);
+    if (el) return el;
+    // Same element as the ORIGINAL distressEdgeArrow, recoloured.
+    const box = spec.glyph + 16;
+    el = document.createElement('div');
+    el.id = spec.id;
+    el.style.cssText = [
+        'position:fixed', 'left:50%', 'top:50%',
+        'width:' + box + 'px', 'height:' + box + 'px', 'margin:-' + (box / 2) + 'px 0 0 -' + (box / 2) + 'px',
+        'pointer-events:none', 'z-index:' + HY_HUD_ARROWS.Z, 'display:none',
+        'transform-origin:center center',
+        'color:' + spec.color, 'opacity:0.8',
+        'filter:drop-shadow(0 0 8px ' + spec.glow + ')',
+        'font-family:monospace', 'font-size:11px', 'text-align:center',
+        'line-height:1', 'user-select:none'
+    ].join(';');
+    el.innerHTML =
+        '<div style="font-size:' + spec.glyph + 'px;line-height:' + spec.glyph + 'px">▲</div>' +
+        '<div class="hy-edge-label" style="margin-top:2px;text-shadow:0 0 4px rgba(0,0,0,0.9)">' + spec.label + '</div>';
+    document.body.appendChild(el);
+    return el;
+}
+
+// The ORIGINAL SOS arrow's placement (updateDistressIndicator), as a helper.
+// Returns false (and hides the arrow) when the target is on screen.
+function _hyPlaceEdgeArrow(el, pos, label) {
+    const camPos = camera.position, E = _hyEA;
+    E.v.copy(pos).project(camera);
+    camera.getWorldDirection(E.fwd);
+    E.to.subVectors(pos, camPos);
+    const inFront = E.fwd.dot(E.to) > 0;
+    const onScreen = inFront && E.v.x > -1 && E.v.x < 1 && E.v.y > -1 && E.v.y < 1;
+    if (onScreen) { _setStyle(el, 'display', 'none'); return false; }
+    let dx, dy;
+    if (inFront) {
+        dx = E.v.x; dy = -E.v.y;
+    } else {
+        E.right.crossVectors(E.fwd, E.Y).normalize();
+        E.up.crossVectors(E.right, E.fwd).normalize();
+        dx = E.to.dot(E.right); dy = -E.to.dot(E.up);
+        const m = Math.max(Math.abs(dx), Math.abs(dy)) || 1;
+        dx /= m; dy /= m;
+    }
+    const halfW = window.innerWidth * 0.5, halfH = window.innerHeight * 0.5;
+    const marginX = Math.min(halfW - 60, HY_HUD_ARROWS.EDGE_K * window.innerWidth);
+    const marginY = Math.min(halfH - 60, HY_HUD_ARROWS.EDGE_K * window.innerHeight);
+    const sx = marginX / Math.max(Math.abs(dx) || 1e-3, 1e-3);
+    const sy = marginY / Math.max(Math.abs(dy) || 1e-3, 1e-3);
+    const scale = Math.min(sx, sy);
+    _setStyle(el, 'left', (halfW + dx * scale) + 'px');
+    _setStyle(el, 'top', (halfH + dy * scale) + 'px');
+    _setStyle(el, 'transform', 'rotate(' + (Math.atan2(dy, dx) + Math.PI / 2) + 'rad)');
+    _setStyle(el, 'display', 'block');
+    const lbl = el.lastChild;
+    if (lbl) _setText(lbl, label);
+    return true;
+}
+
+function _hyDistLabel(d) { return d < 1000 ? Math.round(d) + 'u' : (d / 1000).toFixed(1) + 'k u'; }
+
+function _hyBossTier(u) { return !!(u && (u.isBoss || u.isEliteGuardian)); }
+
+// Region the ship is in: Sol (inside its area sphere) or the nearest galactic
+// core within getCurrentGalaxyId's reach (same rule, without its console-logging
+// fallback). null = deep space.
+function _hyHudRegion() {
+    const now = performance.now(), E = _hyEA, camPos = camera.position;
+    const lso = window.localSystemOffset;
+    const solR = (typeof window._hySolAreaRadius === 'function' && window._hySolAreaRadius()) || 0;
+    if (lso && solR > 0) {
+        const dx = camPos.x - lso.x, dy = camPos.y - lso.y, dz = camPos.z - lso.z;
+        if (dx * dx + dy * dy + dz * dz < solR * solR) return { key: 'sol', sol: true, name: 'Sol System', solR };
+    }
+    if (!E.cores || now - E.coresAt > 10000) {
+        E.coresAt = now;
+        E.cores = (typeof planets !== 'undefined' ? planets : []).filter(p => p && p.userData &&
+            p.userData.type === 'blackhole' && p.userData.isGalacticCore === true && typeof p.userData.galaxyId === 'number');
+    }
+    if (!(window.HYBRID && HYBRID.is('solScale', 'big'))) {
+        const g = (typeof getCurrentGalaxyId === 'function') ? getCurrentGalaxyId() : -1;
+        return g >= 0 ? { key: 'g' + g, g, solR, name: ((typeof galaxyTypes !== 'undefined' && galaxyTypes[g]) ? galaxyTypes[g].name + ' Galaxy' : 'Galaxy ' + (g + 1)) } : null;
+    }
+    let best = -1, bestD = 50000 * ((typeof window._hyU === 'function') ? window._hyU() : 1);
+    if (typeof window._hyGalaxyReachMax === 'function') bestD = Math.max(bestD, window._hyGalaxyReachMax() * 1.15);
+    for (let i = 0; i < E.cores.length; i++) {
+        const d = camPos.distanceTo(E.cores[i].position);
+        if (d < bestD) { bestD = d; best = E.cores[i].userData.galaxyId; }
+    }
+    if (best < 0) return null;
+    const gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[best] : null;
+    return { key: 'g' + best, g: best, solR, name: gt ? gt.name + ' Galaxy' : 'Galaxy ' + (best + 1) };
+}
+
+// Live hostiles in a region: Sol = every live enemy inside Sol's sphere;
+// a galaxy = its own (userData.galaxyId) outside Sol's sphere.
+function _hyCountRegion(region) {
+    if (!region || typeof enemies === 'undefined') return 0;
+    const lso = window.localSystemOffset, r2 = region.solR > 0 ? region.solR * region.solR : -1;
+    let n = 0;
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i], u = e && e.userData;
+        if (!u || !(u.health > 0) || !e.position) continue;
+        let inSol = false;
+        if (lso && r2 > 0) {
+            const dx = e.position.x - lso.x, dy = e.position.y - lso.y, dz = e.position.z - lso.z;
+            inSol = dx * dx + dy * dy + dz * dz < r2;
+        }
+        if (region.sol ? inSol : (u.galaxyId === region.g && !inSol)) n++;
+    }
+    return n;
+}
+
+function _hyUpdateHostileMeter(show) {
+    const box = document.getElementById('galaxyHostileMeter');
+    if (!box) return;
+    const E = _hyEA;
+    if (!show || !E.region) { box.classList.add('hidden'); return; }
+    const key = E.region.key, n = _hyCountRegion(E.region);
+    E.max[key] = Math.max(E.max[key] || 0, n);
+    const total = E.max[key];
+    if (!total) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    const cleared = n === 0;
+    _setStyle(box, 'color', cleared ? HY_HUD_ARROWS.CLEARED_COLOR : 'rgba(255, 100, 100, 0.95)');
+    _setText(document.getElementById('galaxyHostileLabel'), E.region.name + ' Hostiles: ');
+    _setText(document.getElementById('galaxyHostileCount'), cleared ? 'CLEARED' : String(n));
+    _setText(document.getElementById('galaxyHostileTotal'), cleared ? '' : ' / ' + total);
+    const bar = document.getElementById('galaxyHostileBar');
+    _setStyle(bar, 'width', (100 * n / total).toFixed(1) + '%');
+    _setStyle(bar, 'background', cleared ? HY_HUD_ARROWS.CLEARED_COLOR : HY_HUD_ARROWS.ENEMY.color);
+}
+
+function updateHostileArrows() {
+    if (typeof camera === 'undefined' || typeof enemies === 'undefined' || typeof gameState === 'undefined') return;
+    const on = _hyHudArrowsOn() && gameState.gameStarted && !gameState.gameOver && !gameState.paused;
+    const ea = _hyEnsureEdgeArrow(HY_HUD_ARROWS.ENEMY), ba = _hyEnsureEdgeArrow(HY_HUD_ARROWS.BOSS);
+    const E = _hyEA;
+    // Lift the ORIGINAL SOS arrow + reticle (built by updateDistressIndicator)
+    // out from under the panels too; 'overhaul' leaves them at their own z.
+    const _sosZ = _hyHudArrowsOn() ? String(HY_HUD_ARROWS.Z) : '60';
+    _setStyle(document.getElementById('distressEdgeArrow'), 'zIndex', _sosZ);
+    _setStyle(document.getElementById('distressReticle'), 'zIndex', _sosZ);
+    if (!on) {
+        _setStyle(ea, 'display', 'none'); _setStyle(ba, 'display', 'none');
+        _hyUpdateHostileMeter(false);
+        return;
+    }
+    if (_uiThrottle('hyHudRegion', HY_HUD_ARROWS.REGION_MS)) E.region = _hyHudRegion();
+    if (_uiThrottle('hyHudScan', HY_HUD_ARROWS.SCAN_MS)) {
+        // Nearest live enemy and nearest live boss, at ANY range.
+        const camPos = camera.position;
+        let bE = null, dE = Infinity, bB = null, dB = Infinity;
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i], u = e && e.userData;
+            if (!u || !(u.health > 0) || !e.position || !e.parent) continue;
+            const d = camPos.distanceToSquared(e.position);
+            if (_hyBossTier(u)) { if (d < dB) { dB = d; bB = e; } }
+            else if (d < dE) { dE = d; bE = e; }
+        }
+        E.enemy = bE; E.boss = bB;
+        _hyUpdateHostileMeter(true);
+    }
+    const camPos = camera.position;
+    if (E.enemy && E.enemy.userData.health > 0) {
+        _hyPlaceEdgeArrow(ea, E.enemy.position, HY_HUD_ARROWS.ENEMY.label + ' · ' + _hyDistLabel(camPos.distanceTo(E.enemy.position)));
+    } else _setStyle(ea, 'display', 'none');
+    if (E.boss && E.boss.userData.health > 0) {
+        _hyPlaceEdgeArrow(ba, E.boss.position, HY_HUD_ARROWS.BOSS.label + ' · ' + _hyDistLabel(camPos.distanceTo(E.boss.position)));
+    } else _setStyle(ba, 'display', 'none');
+}
+
+if (typeof window !== 'undefined') {
+    window.updateHostileArrows = updateHostileArrows;
+}
+
+// =============================================================================
 // ORBIT LINES VISIBILITY CONTROL - INTEGRATED WITH CORE SYSTEM
 // =============================================================================
 
