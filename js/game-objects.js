@@ -16672,17 +16672,41 @@ function updateOrbitLineVisibility() {
         // orbit lines with no planets around").
         const _so = (typeof window !== 'undefined' && window.localSystemOffset) || null;
         const _isSolRing = (p) => { const c = p.userData.systemCenter; return !!(_so && c && Math.abs(c.x - _so.x) < 1 && Math.abs(c.z - _so.z) < 1); };
+        const _toggleOn = (typeof orbitLinesVisible === 'undefined') ? true : !!orbitLinesVisible;
         for (let i = 0; i < orbitLines.length; i++) {
             const line = orbitLines[i]; if (!line || !line.userData || !line.material) continue;
             const p = line.userData.planet;
-            if (!p || !p.userData || _isSolRing(p)) continue;
+            if (!p || !p.userData) continue;
+            // Ben, 2026-10-11: "Rings should not be distance culled unless planets
+            // are." A ring is hidden exactly when its planet is range-culled, and
+            // shown again when the planet is — only ever undoing its own hide, so
+            // the player's Orbits toggle keeps its word.
+            const _culled = !!p.userData._distCulled;
+            if (_culled) { if (line.visible) { line.visible = false; line.userData._hyRingHidden = true; } }
+            else if (line.userData._hyRingHidden) { line.userData._hyRingHidden = false; line.visible = _toggleOn; }
+            if (_isSolRing(p)) continue;
+            // The overhaul's ring polish ("the newer version"): additive blending so
+            // a sub-pixel sliver dims instead of sparkling, no fog grey, and fainter
+            // when seen edge-on. Colour stays what createOrbitLines chose (green for
+            // the gateway's local systems).
+            if (!line.userData._orbitPolished) {
+                line.userData._orbitPolished = true;
+                line.material.blending = THREE.AdditiveBlending;
+                line.material.depthWrite = false;
+                line.material.fog = false;
+                line.material.needsUpdate = true;
+                line.renderOrder = 2;
+            }
             if (line.userData._baseOpacity === undefined) line.userData._baseOpacity = line.material.opacity;
             p.getWorldPosition(_wp);
             const d = _wp.distanceTo(camera.position);
             let k = 0;
             try { k = (typeof _aerialFactor === 'function') ? _aerialFactor(p, d) : 0; } catch (e) { k = 0; }
             const f = Math.max(HY_ORBIT_FADE.FLOOR, 1 - HY_ORBIT_FADE.DEPTH * Math.max(0, Math.min(1, k)));
-            line.material.opacity = line.userData._baseOpacity * f;
+            const _sd = camera.position.distanceTo(line.position);
+            const _cosTilt = Math.abs(camera.position.y - line.position.y) / Math.max(1e-3, _sd);
+            const _tilt = 0.22 + 0.78 * Math.max(0, Math.min(1, (_cosTilt - 0.015) / (0.30 - 0.015)));
+            line.material.opacity = line.userData._baseOpacity * f * _tilt;
             if (line.userData.edge && line.userData.edge.material) line.userData.edge.material.opacity = (line.userData._edgeBase || (line.userData._edgeBase = line.userData.edge.material.opacity)) * f;
         }
     }
