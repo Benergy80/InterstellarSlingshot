@@ -1017,21 +1017,25 @@ function populateTargets() {
                 destinations.push(window._navTwinNebulaDest);
             }
         }
+        // package V (outer): the two nearest frontier systems (their star / core,
+        // a child of the system group — distances below use world positions)
+        if (typeof window.outerSystemDestinations === 'function') destinations.push(...window.outerSystemDestinations(2));
+        const _dw = new THREE.Vector3();
+        const _dDist = (o) => (o.parent && !o.parent.isScene && o.getWorldPosition) ? camera.position.distanceTo(o.getWorldPosition(_dw)) : camera.position.distanceTo(o.position);
         if (destinations.length) {
-            destinations.sort((a, b) =>
-                camera.position.distanceTo(a.position) - camera.position.distanceTo(b.position));
+            destinations.sort((a, b) => _dDist(a) - _dDist(b));
             const header = document.createElement('div');
             header.className = 'text-xs text-purple-300 font-bold mt-2 mb-1 px-1';
             header.style.letterSpacing = '2px';
             header.textContent = '— DESTINATIONS · WHIP / WARP —';
             container.appendChild(header);
             destinations.slice(0, 9).forEach(obj => {
-                const dist = camera.position.distanceTo(obj.position);
+                const dist = _dDist(obj);
                 const div = document.createElement('div');
                 div.className = 'planet-card rounded-lg p-2 cursor-auto transition-all duration-300';
                 if (gameState.currentTarget === obj) div.classList.add('selected');
                 const label = obj.userData.type === 'nebula_cluster'
-                    ? 'Nebula Cluster' : 'Galaxy Core';
+                    ? 'Nebula Cluster' : (obj.userData.isFrontierStar ? 'Frontier System' : 'Galaxy Core');
                 div.innerHTML =
                     '<div class="flex justify-between items-center">' +
                     '<div><h4 class="font-bold text-purple-300 text-xs">' + (obj.userData.name || 'Destination') + '</h4>' +
@@ -4663,6 +4667,8 @@ mapDotPool.releaseAll();
         mx: 50 + (x / universeRadius) * 50,
         my: 50 + (z / universeRadius) * 50
     });
+    // package V (outer): the frontier systems (outer-systems.js draws them; past the map radius they sit on the rim)
+    if (typeof window.drawOuterSystemsOnMap === 'function') { try { window.drawOuterSystemsOnMap(galaxyMap, universeRadius); } catch (e) {} }
     const playerProj = projectXZ(playerX, playerZ);
     const clampedX = Math.max(5, Math.min(95, playerProj.mx));
     const clampedZ = Math.max(5, Math.min(95, playerProj.my));
