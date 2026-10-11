@@ -17282,6 +17282,8 @@ function _pickPatrolWaypoint(excludePos, attractPos) {
 }
 
 // Scan for the nearest alive hostile within detection range of this ally
+// An enemy this close to the PLAYER is every wingman's business (see _scanForEnemy).
+const WINGMAN_JOIN_FIGHT_RANGE = 2500;
 function _scanForEnemy(ally) {
     const ud = ally.userData;
     const role = _roleFor(ally);
@@ -17291,12 +17293,16 @@ function _scanForEnemy(ally) {
     // Role.pickTarget then picks based on the wingman's specialty (closest,
     // boss/highest-HP for snipers, closest-to-player for defenders, etc).
     const candidates = [];
+    // HYBRID — Ben, 2026-10-10: "Wingmen should be fighting with player". An
+    // enemy inside the PLAYER's fight (within WINGMAN_JOIN_FIGHT_RANGE of the
+    // ship) is a candidate even when it is outside the wingman's own range.
+    const _pp = (typeof camera !== 'undefined') ? camera.position : null;
     if (typeof enemies !== 'undefined') {
         for (let i = 0; i < enemies.length; i++) {
             const e = enemies[i];
             if (!e || !e.userData || e.userData.health <= 0) continue;
             const d = ally.position.distanceTo(e.position);
-            if (d < range) candidates.push({ ent: e, d });
+            if (d < range || (_pp && e.position.distanceTo(_pp) < WINGMAN_JOIN_FIGHT_RANGE)) candidates.push({ ent: e, d });
         }
     }
     if (typeof outerInterstellarSystems !== 'undefined') {
@@ -17485,9 +17491,13 @@ function updateAllyShips() {
                 }
                 // else stay in follow until close enough or fully stranded
             }
-            if (threat && !playerWarping) {
+            // HYBRID: fast cruise (>= 4 u/frame) counts as "warping" above, so
+            // wingmen could never join a fight while the player flew at full
+            // speed. Only a real burn keeps them in formation.
+            if (threat && !_burst) {
                 ud.aiState = 'engage';
                 ud.engageTarget = threat;
+                _wingmanTacticalMessage(ud, 'engage');
             }
         } else if (ud.aiState === 'stranded') {
             // Reunion: player came back close enough — resume swarming
@@ -17574,8 +17584,10 @@ function updateAllyShips() {
             }
         }
 
-        // ── Shield bubble: visible during combat engagement ──────────────
-        _updateAllyShield(ally, ud.aiState === 'engage' && ud.engageTarget);
+        // ── Shield bubble: up whenever an enemy is inside detection range,
+        // not only once engaged. HYBRID — Ben, 2026-10-10: "should shield up
+        // when enemies are in detection range".
+        _updateAllyShield(ally, !!(threat || (ud.aiState === 'engage' && ud.engageTarget)));
 
         // ── Idle asteroid target practice ────────────────────────────────
         // When not engaging an enemy, wingmen occasionally blast a nearby

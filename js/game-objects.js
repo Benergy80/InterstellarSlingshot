@@ -581,15 +581,25 @@ function getRandomGalaxyPosition(galaxyId) {
 // =============================================================================
 
 function getEnemyPlacementPosition(galaxyId, placementType = 'random') {
+    let pos;
     switch(placementType) {
         case 'cosmic_feature':
-            return getEnemyPositionNearCosmicFeature(galaxyId);
+            pos = getEnemyPositionNearCosmicFeature(galaxyId); break;
         case 'black_hole':
-            return getEnemyPositionNearBlackHole(galaxyId);
+            pos = getEnemyPositionNearBlackHole(galaxyId); break;
         case 'random':
         default:
-            return getRandomPositionInGalaxy3D(galaxyId);
+            pos = getRandomPositionInGalaxy3D(galaxyId);
     }
+    // HYBRID: Sol's pirates mostly work the planets (HY_ENEMIES.SOL_PLANET_SHARE).
+    if (galaxyId === 7 && typeof _hyScaleOn === 'function' && _hyScaleOn() &&
+        typeof HY_ENEMIES !== 'undefined' && Math.random() < HY_ENEMIES.SOL_PLANET_SHARE) {
+        const sp = (typeof _hySolEnemyPos === 'function') ? _hySolEnemyPos() : null;
+        if (sp) pos = sp;
+    }
+    // HYBRID: never inside a core's keep-out ball (HY_ENEMIES.KEEPOUT_RADII) —
+    // the "near black hole" ring above was sized for ORIGINAL's small holes.
+    return (typeof _hyEnemyKeepout === 'function') ? _hyEnemyKeepout(pos, galaxyId) : pos;
 }
 
 function getEnemyPositionNearCosmicFeature(galaxyId) {
@@ -879,6 +889,55 @@ const enemyShapes = {
 const galaxyEnemyLimits = {
     0: 24, 1: 30, 2: 20, 3: 26, 4: 18, 5: 28, 6: 36, 7: 20  // Doubled — spread in 2-3 ship groups
 };
+// HYBRID — Ben, 2026-10-10: "There should be way more enemies. enemies are too
+// close to the black holes now that the black holes are so big."
+// COUNT_K multiplies every galaxy's limit (ORIGINAL had 57 within 15k of the
+// start; the scaled world thinned that to 21). KEEPOUT_RADII: no enemy spawns
+// nearer a galaxy core than this many core radii (the disc reaches 5.6, the
+// aurora ring 6.4 — HY_BH). Package R (enemies2) owns the thorough version.
+const HY_ENEMIES = {
+    COUNT_K: 2.0, KEEPOUT_RADII: 6.6, KEEPOUT_SPREAD: 1500,
+    // Sol (galaxy 7): this share of its enemies spawns AROUND SOL'S PLANETS
+    // (the Martian pirates of Ben's campaign) instead of anywhere in the
+    // scaled region — measured, 83 Sol enemies left only 21 within 15k of the start.
+    SOL_PLANET_SHARE: 0.75, SOL_NEAR_MIN: 220, SOL_NEAR_MAX: 900,
+};
+if (typeof window !== 'undefined') window.HY_ENEMIES = HY_ENEMIES;
+// A spawn position beside one of Sol's planets (Mercury..Neptune), or null.
+function _hySolEnemyPos() {
+    if (typeof planets === 'undefined' || !planets) return null;
+    const hosts = [];
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (p && p.userData && p.userData.isLocal && p.userData.type === 'planet' && p.userData.orbitRadius > 0 && !p.userData.parentPlanet) hosts.push(p);
+    }
+    if (!hosts.length) return null;
+    const host = hosts[Math.floor(Math.random() * hosts.length)];
+    const R = (typeof _hyBodyR === 'function') ? _hyBodyR(host) : (host.userData.radius || 100);
+    const r = R * 1.6 + HY_ENEMIES.SOL_NEAR_MIN + Math.random() * (HY_ENEMIES.SOL_NEAR_MAX - HY_ENEMIES.SOL_NEAR_MIN);
+    const a = Math.random() * Math.PI * 2;
+    return new THREE.Vector3(host.position.x + Math.cos(a) * r, host.position.y + (Math.random() - 0.5) * r * 0.5, host.position.z + Math.sin(a) * r);
+}
+function _hyEnemyCountK() {
+    return (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('enemyPopulation', 'original')) ? HY_ENEMIES.COUNT_K : 1;
+}
+// Push a spawn position out of the core's keep-out ball (along its own radial;
+// a position AT the core gets a random bearing). Returns the position.
+function _hyEnemyKeepout(pos, galaxyId) {
+    if (!pos || typeof planets === 'undefined' || !planets) return pos;
+    for (let i = 0; i < planets.length; i++) {
+        const bh = planets[i];
+        if (!bh || !bh.userData || bh.userData.type !== 'blackhole' || !bh.userData.isGalacticCore) continue;
+        const R = (typeof _hyBodyR === 'function') ? _hyBodyR(bh) : (bh.userData.radius || bh.userData.size || 400);
+        const keep = R * HY_ENEMIES.KEEPOUT_RADII;
+        const d = pos.distanceTo(bh.position);
+        if (d >= keep) continue;
+        const dir = d > 1 ? pos.clone().sub(bh.position).normalize()
+                          : new THREE.Vector3(Math.cos(Math.random() * 6.283), (Math.random() - 0.5) * 0.3, Math.sin(Math.random() * 6.283)).normalize();
+        pos.copy(bh.position).addScaledVector(dir, keep + Math.random() * HY_ENEMIES.KEEPOUT_SPREAD);
+    }
+    return pos;
+}
 
 // FIXED: Boss system initialization - SINGLE DECLARATION
 // ENHANCED: Area-based boss and elite guardian system
@@ -20186,7 +20245,7 @@ function createEnemies3D() {
         console.log(`Creating enemies for galaxy ${g} (${galaxyType.name}) at 3D position:`, galaxy3DCenter);
         
         // Spawn enemies scattered throughout the galaxy
-        const enemiesPerGalaxy = galaxyEnemyLimits[g];
+        const enemiesPerGalaxy = Math.round(galaxyEnemyLimits[g] * _hyEnemyCountK());   // HYBRID: HY_ENEMIES.COUNT_K
         if (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies) {
             gameState.currentGalaxyEnemies[g] = enemiesPerGalaxy;
         }
@@ -23406,7 +23465,7 @@ function loadEnemiesForGalaxy(galaxyId) {
     console.log(`Spawning enemies for galaxy ${galaxyId} (${galaxyType.name}) at 3D position:`, galaxy3DCenter);
     
     // Spawn enemies for this galaxy
-    const enemiesPerGalaxy = galaxyEnemyLimits[galaxyId];
+    const enemiesPerGalaxy = Math.round(galaxyEnemyLimits[galaxyId] * _hyEnemyCountK());   // HYBRID: HY_ENEMIES.COUNT_K
     if (typeof gameState !== 'undefined' && gameState.currentGalaxyEnemies) {
         gameState.currentGalaxyEnemies[galaxyId] = enemiesPerGalaxy;
     }
