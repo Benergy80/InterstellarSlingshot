@@ -60,6 +60,14 @@
     get driving() { return ap.active && !ap.paused; },
     get paused() { return ap.paused; },
     get navStatus() { return ap._navStatus || null; },
+    // package Y: the campaign director's leg (null when the showcase flies)
+    get campaignLeg() {
+      if (!_dirExists() || !ap._dir) return null;
+      const D = ap._dir;
+      return { on: _dirOn(), state: D.state, leg: D.leg, sub: D.sub, target: D.target || null, targetDist: D.targetDist || null,
+               whipBody: D.whip && D.whip.body && D.whip.body.userData ? D.whip.body.userData.name : null,
+               whips: D.whips.slice(), states: D.states.slice(), log: D.log.slice(-20) };
+    },
     get phase() { return ap.phase; },
     // Last executed warp arrival cut-off, and how many have fired this run.
     // Read-only proof that the cut path RUNS (it logged zero executions across
@@ -711,7 +719,8 @@
         ap.phase !== 'combat' &&
         ap.phase !== 'fightBorg' &&
         ap.phase !== 'blackHoleWarp' &&
-        ap.phase !== 'followDiscoveryPath') {
+        ap.phase !== 'followDiscoveryPath' &&
+        !_dirGliding()) {
       const _navHostile = navDetectedEnemy();
       // Don't interrupt the locked warp cycle — physics owns velocity
       // and braking is futile. coastToNebulaCluster already breaks off
@@ -733,6 +742,9 @@
     // (the proximity magnet below only reaches 25k). Keep the flag through
     // warp-locked transits (physics owns the velocity then) and consume it
     // silently if we're already fighting.
+    if (typeof gameState !== 'undefined' && gameState._pendingBossEngage && _dirOn()) {
+      gameState._pendingBossEngage = false;   // package Y: the director engages bosses as campaign targets
+    }
     if (typeof gameState !== 'undefined' && gameState._pendingBossEngage) {
       if (ap.phase === 'bossEngage' || ap.phase === 'combat' || ap.phase === 'fightBorg') {
         gameState._pendingBossEngage = false;
@@ -749,7 +761,7 @@
     // into the set-piece fight from any explore/travel phase. Excluded:
     // phases that ARE the fight, warp-locked transits (physics owns the
     // velocity), and pre-game. Throttled — it's a full enemies scan.
-    if (fc % 30 === 0 &&
+    if (fc % 30 === 0 && !_dirOn() &&
         ap.phase !== 'init' && ap.phase !== 'combat' &&
         ap.phase !== 'bossEngage' && ap.phase !== 'fightBorg' &&
         ap.phase !== 'blackHoleWarp' &&
@@ -872,6 +884,9 @@
     // nebulae (soak: 0 warps, 0 parks in 180 s).
     if ((ap.phase === 'combat' || ap.phase === 'bossEngage') && _solBudgetOut()) { _solBudgetLeave(); return; }
 
+    // package Y: the campaign director picks the leg and owns the phase
+    _campaignDirect();
+
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
@@ -888,6 +903,7 @@
       case 'approachBorg':             phaseApproachBorg();           break;
       case 'fightBorg':                phaseFightBorg();              break;
       case 'mineAsteroids':            phaseMineAsteroids();          break;
+      case 'campaign':                 phaseCampaign();               break;
       default:                         goPhase('init');
     }
 
@@ -2404,6 +2420,9 @@
     return Math.hypot(camera.position.x - (o.x || 0), camera.position.z - (o.z || 0)) <= edge * 1.2;
   }
   function _solBudgetOut() {
+    // package Y: the budget existed only because the showcase never left Sol;
+    // the campaign director clears Sol properly
+    if (_dirExists()) return false;
     if (ap._solFightDone) return false;
     if (!ap._solFightT0) ap._solFightT0 = Date.now();
     if (!_demoInSol()) return false;
@@ -2414,6 +2433,548 @@
     ap.combatTarget = null;
     setStatus('Sol patrol complete — making for the nebulae');
     goPhase('warpToNebulaCluster');
+  }
+
+  // ─── CAMPAIGN DIRECTOR (package Y, democampaign) ──────────────────────────
+  // Ben, 2026-10-11: "The demo player needs to clear the SOL system and then
+  // use a gravitational slingshot to get to Sagittarius A before proceeding
+  // with Nebula missions and clearing other black hole galaxies."
+  // When the campaign runs (js/progression.js, `progression: campaign`) the
+  // demo follows window.__campaign.state instead of the showcase sequence:
+  // each campaign state maps to a LEG, flown by the 'campaign' phase below
+  // (hunts, the gravity whip toward Sgr A*, arrivals through navigateTo)
+  // and by the existing phases it hands off to (combat, warpToNebulaCluster
+  // + coastToNebulaCluster, followDiscoveryPath). Any other phase the
+  // showcase drifts into is redirected back to 'campaign'. Without a
+  // campaign (?hy=progression:overhaul) the showcase runs unchanged.
+  const HY_DIRECTOR = {
+    ENGAGE: 4500,          // hand the target to 'combat' inside this (combat owns the chase:
+                           // its drift-recovery dash catches a target that runs; measured,
+                           // a fleeing Vulcan held a navigateTo approach at ~4,300 u for 4 min)
+    STALE_MS: 40000,       // a target the hunt has not closed on in this long is skipped …
+    SKIP_MS: 60000,        // … for this long
+    APPROACH: 3500,        // navigateTo combat-approach zone (no jumps/warps inside)
+    WARP_MIN: 22000,       // a hunt leg may burn an O-warp charge beyond this
+    SNAP_FRAMES: 10,       // director snapshot refresh (frames)
+    WHIP_REL_K: 0.92,      // trigger the whip inside this x getSlingshotRange
+    WHIP_GRAZE_K: 0.75,    // the approach aims this x range off the body's centre (outside keep-out)
+    WHIP_LEAD_MS: 15000,   // … and leads the planet's orbital motion by up to this
+    WHIP_MAX_BODY_SPEED: 2.5, // u/frame: a whip body orbiting faster than this outruns the ship (cruise 4)
+    ESCAPE_K: 2.0,         // fly straight out when any planet / moon / star is inside this x its radius
+    WHIP_LEG_MS: 90000,    // give up on a whip planet after this long
+    WHIP_TRIES: 4,         // refusals (arc / exit leg / cooldown) before the next planet
+    WHIP_GIANT_BONUS: 20000, // score bonus (in units of approach distance x 0.5) for a giant (R >= 400) whip body
+    GLIDE_MS: 14000,       // hands off after a whip release while still fast
+    SGR_ARRIVE: 6500,      // TO_SGR_A arrival radius (campaign SGR_ARRIVE is 9,000)
+    GALAXY_ARRIVE: 12000,  // FACTION_GALAXY travel arrival (campaign: 18,000)
+    BH_FIGHT_MIN_K: 4.0,   // never chase a target inside this x a black hole's radius
+  };
+  if (typeof window !== 'undefined') window.HY_DIRECTOR = HY_DIRECTOR;
+  const _SOL_PLANET_RE = /^(Mercury|Venus|Earth|Mars|Jupiter|Saturn|Uranus|Neptune)$/;
+  function _dirExists() {
+    return !!(typeof window !== 'undefined' && window.__campaign && window.HYBRID &&
+              window.HYBRID.is('progression', 'campaign'));
+  }
+  // The director drives unless a test hook staged a showcase phase (keep-check
+  // row 3 stages warpToNebulaCluster through __warpdiag.goPhase) or the
+  // campaign is over.
+  function _dirOn() {
+    if (!_dirExists()) return false;
+    if (Date.now() < (ap._directorYieldUntil || 0)) return false;
+    return window.__campaign.state !== 'VICTORY';
+  }
+  function _dirSnap() {
+    const fc = (typeof gameState !== 'undefined' && gameState.frameCount) || 0;
+    const st = window.__campaign.state;
+    if (!ap._dirS || fc - ap._dirSF >= HY_DIRECTOR.SNAP_FRAMES || ap._dirS.state !== st || fc < ap._dirSF) {
+      try { ap._dirS = window.__campaign.director; } catch (e) { ap._dirS = null; }
+      ap._dirSF = fc;
+    }
+    return ap._dirS;
+  }
+  function _dirState() {
+    if (!ap._dir) ap._dir = { state: null, leg: null, sub: null, t0: 0, log: [], whips: [], tried: [], states: [] };
+    return ap._dir;
+  }
+  function _dirLog(what) {
+    const D = _dirState();
+    D.log.push({ t: Math.round((Date.now() - (ap._dirT0 || Date.now())) / 1000), state: D.state, leg: D.leg, what: what });
+    if (D.log.length > 80) D.log.shift();
+  }
+  function _dirNear(list) {
+    const cp = camPos(); let best = null, bd = Infinity;
+    for (let i = 0; i < (list || []).length; i++) {
+      const e = list[i]; if (!e || !e.position || !e.userData || e.userData.health <= 0) continue;
+      const d = cp.distanceTo(e.position); if (d < bd) { bd = d; best = e; }
+    }
+    return best;
+  }
+  // The black hole whose danger sphere a point sits in (combat must not drag
+  // the demo across a horizon: black holes are outside the planet keep-out).
+  function _dirBHAt(pos) {
+    if (typeof planets === 'undefined' || !pos) return null;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i]; const ud = p && p.userData;
+      if (!ud || ud.type !== 'blackhole' || !p.position) continue;
+      const R = _keepoutBodyR(p) || 400;
+      if (p.position.distanceTo(pos) < R * HY_DIRECTOR.BH_FIGHT_MIN_K) return p;
+    }
+    return null;
+  }
+  // Which campaign state needs which leg, and the showcase phases that leg
+  // may run. Transit phases (combat, mining detour, post-warp coast) are
+  // always allowed — they hand back through returnPhase / the redirect.
+  const _DIR_BASE = ['campaign', 'combat', 'mineAsteroids', 'coastAfterWarp', 'blackHoleWarp'];
+  const _DIR_NEB = _DIR_BASE.concat(['warpToNebulaCluster', 'coastToNebulaCluster']);
+  const _DIR_PATH = _DIR_BASE.concat(['followDiscoveryPath']);
+  function _dirLegFor(S) {
+    if (!S) return { leg: 'hold', allow: _DIR_BASE };
+    switch (S.state) {
+      case 'SOL_PIRATES': return { leg: 'solPirates', allow: _DIR_BASE };
+      case 'SOL_BOSS': return { leg: 'solBoss', allow: _DIR_BASE };
+      case 'TO_SGR_A': return { leg: 'whipToSgrA', allow: _DIR_BASE };
+      case 'SGR_VULCANS': return { leg: 'sgrVulcans', allow: _DIR_BASE };
+      case 'SGR_LIBERATED':
+      case 'NEBULA_VISIT': {
+        const T = S.target, G = S.guard;
+        if (G && !G.cleared && G.pirates.length) return { leg: 'nebulaRaiders', allow: _DIR_BASE };
+        if (T && T.position) {
+          const size = (T.userData && T.userData.size) || 2000;
+          if (camPos().distanceTo(T.position) > size * (S.guardArriveK || 2.2)) return { leg: 'nebulaTravel', allow: _DIR_NEB };
+          return { leg: 'nebulaVisit', allow: _DIR_BASE };
+        }
+        return { leg: 'hold', allow: _DIR_BASE };
+      }
+      case 'NEBULA_MISSION': {
+        const M = S.mission;
+        // the host's fight drifts: stay on it while any of it is within 12,000
+        const near = M && (M.enemies.concat(M.boss ? [M.boss] : [])).some((e) => e.position && camPos().distanceTo(e.position) < 12000);
+        if (M && M.site && !near && camPos().distanceTo(M.site) > 6000) return { leg: 'missionPath', allow: _DIR_PATH };
+        return { leg: 'missionHost', allow: _DIR_BASE };
+      }
+      case 'FACTION_GALAXY': {
+        const GX = S.galaxy;
+        if (!GX) return { leg: 'hold', allow: _DIR_BASE };
+        return { leg: GX.step === 'travel' ? 'galaxyTravel' : (GX.step === 'forces' ? 'galaxyForces' : 'galaxyGuardians'), allow: _DIR_BASE };
+      }
+      default: return { leg: 'hold', allow: _DIR_BASE };
+    }
+  }
+  function _dirTransitLocked() {
+    const ew = gameState.emergencyWarp || {};
+    return !!(ew.active || ew.transitioning || (gameState.slingshot && gameState.slingshot.active) ||
+              gameState.slingshotWhip || gameState.isBlackHoleWarping || _burnCommitted());
+  }
+  // A whip glide is in progress: nothing may break off into combat (the
+  // glide's velocity follows the nose).
+  function _dirGliding() {
+    return !!(_dirOn() && ap.phase === 'campaign' && ap._dir && ap._dir.leg === 'whipToSgrA' &&
+              (ap._dir.sub === 'whipped' || ap._dir.sub === 'gliding'));
+  }
+  // Runs every frame before the dispatch: track the campaign state, pick the
+  // leg, and pull the pilot back into 'campaign' from any phase the leg does
+  // not use (never mid-warp / mid-whip).
+  function _campaignDirect() {
+    if (!_dirOn() || ap.phase === 'init') return;
+    const S = _dirSnap(); if (!S) return;
+    const D = _dirState();
+    if (!ap._dirT0) ap._dirT0 = Date.now();
+    const L = _dirLegFor(S);
+    if (D.state !== S.state) {
+      D.state = S.state; D.leg = null; D.tried = []; D.whip = null;
+      D.stateAt = Date.now();
+      D.states.push({ state: S.state, t: Math.round((Date.now() - ap._dirT0) / 1000), kills: ap.enemiesKilled });
+    }
+    if (D.leg !== L.leg) { D.leg = L.leg; D.sub = null; D.t0 = Date.now(); _dirLog('leg'); }
+    // A FINISHED ARRIVAL MUST NOT HOLD THE NEXT LEG. The arrival park keeps its
+    // subject after the beat and re-arms a keep-out hold (w/b overruled) every
+    // time the ship closes on it again — measured r3/r4/m1: whip approaches,
+    // the nebula visit and the mission line crawling at 0.4-0.9 u/frame
+    // "cruising" for minutes because the next destination lay past the body
+    // the last warp parked at. Once the park's beat is over (12 s, or it is
+    // only the keep-out re-arm) the director releases the subject; the
+    // keep-out guard (_keepoutGuard) still owns collision safety.
+    const _as = gameState._arrivalSubject, _ew = gameState.emergencyWarp || {};
+    if (_as && _as._parkT0 && !_ew.active && !_ew.transitioning && !_parkOwnsBeat() &&
+        (_as._keepOut || Date.now() - _as._parkT0 >= PARK_MAX_MS)) {
+      if (_clearArrivalSubject()) { D.releasedSubjects = (D.releasedSubjects || 0) + 1; }
+    }
+    if (L.allow.indexOf(ap.phase) === -1 && !_dirTransitLocked()) {
+      ap.returnPhase = 'campaign';
+      goPhase('campaign');
+    }
+  }
+  // The nebula the campaign wants (for warpToNebulaCluster / the coast's
+  // re-route), only while the director is flying a nebula leg.
+  function _dirNebula() {
+    if (!_dirOn() || !ap._dir || ap._dir.leg !== 'nebulaTravel') return null;
+    const S = _dirSnap();
+    return (S && S.target && S.target.position) ? S.target : null;
+  }
+
+  // Hunt: nearest target of a list. Inside ENGAGE → 'combat' (returns here);
+  // otherwise a closed-loop approach through navigateTo. Empty list → fly to
+  // `fallback` (a position or object) if given, else brake and hold.
+  function _dirHunt(list, label, fallback, fallbackR) {
+    const D = _dirState();
+    const now = Date.now();
+    if (!D.skip) D.skip = new Map();
+    // a target on a black hole's lip is left for later (the horizon warp), and
+    // one the hunt could not close on is skipped for a while
+    const ok = (e) => e && e.position && !_dirBHAt(e.position) && !((D.skip.get(e) || 0) > now);
+    let t = _dirNear((list || []).filter(ok));
+    if (t) {
+      const d0 = camPos().distanceTo(t.position);
+      if (D.huntObj !== t || now - (D.huntLast || 0) > 2000) { D.huntObj = t; D.huntBest = d0; D.huntAt = now; }
+      else if (d0 < D.huntBest - 400) { D.huntBest = d0; D.huntAt = now; }
+      else if (now - D.huntAt > HY_DIRECTOR.STALE_MS) {
+        D.skip.set(t, now + HY_DIRECTOR.SKIP_MS); D.huntObj = null;
+        _dirLog('skip ' + ((t.userData && t.userData.name) || 'target') + ' (not closing)');
+        t = _dirNear((list || []).filter(ok));
+      }
+      D.huntLast = now;
+    }
+    if (!t) {
+      D.target = null;
+      if (fallback) {
+        const fp = fallback.position || fallback;
+        const d = camPos().distanceTo(fp);
+        const st = navigateTo(fallback, { arriveRadius: fallbackR || 1500, arriveSpeed: 1.5, boost: true,
+          allowJump: true, allowWarp: d > HY_DIRECTOR.WARP_MIN });
+        setStatus('CAMPAIGN · ' + label + ' — ' + (st === 'arrived' ? 'holding' : 'regrouping') + ' (' + (d | 0) + ' u)');
+      } else {
+        if (gameState.velocityVector && gameState.velocityVector.length() > 0.5) keys().x = true;
+        setStatus('CAMPAIGN · ' + label + ' — scanning');
+      }
+      return 'empty';
+    }
+    const d = camPos().distanceTo(t.position);
+    D.target = (t.userData && t.userData.name) || 'hostile'; D.targetDist = d | 0;
+    if (d < HY_DIRECTOR.ENGAGE) {
+      ap.combatTarget = t;
+      ap.combatMissileFired = false;
+      ap.returnPhase = 'campaign';
+      gameState.currentTarget = t;
+      setStatus('CAMPAIGN · ' + label + ' — engaging ' + D.target);
+      goPhase('combat');
+      return 'engage';
+    }
+    const st = navigateTo(t, { arriveRadius: 1500, arriveSpeed: 6, boost: true,
+      allowJump: d > 4500, allowWarp: d > HY_DIRECTOR.WARP_MIN,
+      approachRange: HY_DIRECTOR.APPROACH, approachSpeed: 9.5 });
+    setStatus('CAMPAIGN · ' + label + ' — ' + (st === 'warping' ? 'warp' : st === 'jumping' ? 'jump' : 'intercept') +
+              ' → ' + D.target + ' (' + (d | 0) + ' u · ' + (list || []).length + ' left)');
+    return st;
+  }
+
+  // ── whipToward(target, label, W): the reusable gravity-whip leg ───────────
+  // Factored out of phaseWarpToNebulaCluster's gravity-whip block: pick a
+  // body, approach inside getSlingshotRange x WHIP_REL_K, set the nav target
+  // to `target` (executeSlingshot's release aims at gameState.currentTarget,
+  // `_aim`) and whip; then hands off for the glide. Returns 'approach' |
+  // 'whipped' | 'gliding' | 'done' | 'failed'. W is caller-owned state:
+  //   W.pick(W.tried) -> body | null   chooses the next whip body
+  function whipToward(target, label, W) {
+    if (!target || !target.position) return 'failed';
+    if (W.releasedAt) {
+      const sp = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+      const live = !!(gameState.slingshotWhip || (gameState.slingshot && gameState.slingshot.active) || gameState.slingshotLaunchRamp);
+      W.maxSpeed = Math.max(W.maxSpeed || 0, sp);
+      if (gameState.slingshotWhip) W.sawWhip = true;
+      if (live || (Date.now() - W.releasedAt < HY_DIRECTOR.GLIDE_MS && sp > 10)) {
+        if (!gameState.slingshotWhip && window.orientTowardsTarget) window.orientTowardsTarget(target);
+        gameState.currentTarget = target;
+        setStatus('CAMPAIGN · GRAVITY WHIP → ' + label + ' · ' + (sp * 1000 | 0) + ' km/s');
+        return 'gliding';
+      }
+      return 'done';
+    }
+    if (!W.body || !W.body.position) {
+      W.body = W.pick(W.tried);
+      W.bodyAt = Date.now(); W.refusals = 0; W.pv = null;
+      if (!W.body) return 'failed';
+      _dirLog('whip body ' + (W.body.userData && W.body.userData.name));
+    }
+    const sp = W.body;
+    const name = (sp.userData && sp.userData.name) || 'body';
+    const dist = camPos().distanceTo(sp.position);
+    const rng = (typeof window.getSlingshotRange === 'function') ? window.getSlingshotRange(sp) : 600;
+    if (Date.now() - W.bodyAt > HY_DIRECTOR.WHIP_LEG_MS || W.refusals >= HY_DIRECTOR.WHIP_TRIES) {
+      _dirLog('whip body dropped ' + name + ' (' + (W.refusals >= HY_DIRECTOR.WHIP_TRIES ? 'refused' : 'timeout') + ')');
+      W.tried.push(sp); W.body = null;
+      return 'approach';
+    }
+    if (dist > rng * HY_DIRECTOR.WHIP_REL_K) {
+      // INTERCEPT, DON'T CHASE — AND GRAZE, DON'T DIVE. Measured (r3, w2): the
+      // Sol worlds orbit at ~8 u/frame, twice the ship's cruise, so a leg that
+      // flies AT the planet arrives (warp + park) and then watches it pull away
+      // (Saturn 2,568 -> 8,958 u in 40 s at 0.9 u/frame); and a line through
+      // the centre puts the keep-out sphere on the velocity line, so the guard
+      // steers / brakes off it. So: measure the planet's velocity, lead it
+      // (up to WHIP_LEAD_MS), and aim GRAZE_K x range to the destination's
+      // side of its path: the line passes through the slingshot ring.
+      const now = Date.now();
+      const o = window.localSystemOffset || { x: 0, y: 0, z: 0 };
+      if (!W.pv) { W.pv = new THREE.Vector3(); W.pvRel = sp.position.clone().sub(o); W.pvAt = now; }
+      if (now - W.pvAt > 400) {
+        // measured in Sol's frame, so a floating-origin rebase is not a jump
+        const rel = sp.position.clone().sub(o);
+        W.pv.subVectors(rel, W.pvRel).divideScalar(now - W.pvAt);   // u per ms
+        W.pvRel.copy(rel); W.pvAt = now;
+      }
+      if (!W.aimPt) W.aimPt = { position: new THREE.Vector3(), userData: { name: name + ' slingshot ring' } };
+      {
+        const pvLen = W.pv.length();
+        if (pvLen * 16.67 > HY_DIRECTOR.WHIP_MAX_BODY_SPEED * 1.4 && now - W.bodyAt > 2000) {
+          _dirLog('whip body dropped ' + name + ' (orbits at ' + (pvLen * 16.67).toFixed(1) + ' u/frame)');
+          W.tried.push(sp); W.body = null; return 'approach';
+        }
+        const leadMs = Math.min(HY_DIRECTOR.WHIP_LEAD_MS, dist / 0.24);   // 0.24 u/ms = cruise 4 u/frame
+        const aim = W.aimPt.position.copy(sp.position).addScaledVector(W.pv, leadMs);
+        // side offset: perpendicular to the planet's path (or the line of
+        // sight when it is not moving), toward the destination
+        const axis = pvLen > 1e-4 ? W.pv.clone().divideScalar(pvLen) : sp.position.clone().sub(camPos()).normalize();
+        const n = target.position.clone().sub(sp.position);
+        n.addScaledVector(axis, -n.dot(axis));
+        if (n.lengthSq() < 1e-6) n.set(0, 1, 0).cross(axis);
+        aim.addScaledVector(n.normalize(), rng * HY_DIRECTOR.WHIP_GRAZE_K);
+      }
+      const dAim = camPos().distanceTo(W.aimPt.position);
+      // far out the planet itself is the destination (a warp / jump can stage
+      // it as the arrival subject); close in, the lead/graze point
+      const st = navigateTo(dist > rng * 4 ? sp : W.aimPt, { arriveRadius: dist > rng * 4 ? rng * 2.5 : 120, arriveSpeed: 4, boost: true,
+        // no dashes on the final approach: a dash overshoots a moving aim
+        // point and the ship yo-yos round it (measured w4: Saturn 5.3-7.4k for 90 s)
+        allowJump: dist > rng * 4, allowWarp: dAim > HY_DIRECTOR.WARP_MIN });
+      setStatus('CAMPAIGN · gravity-whip approach → ' + name + ' (' + (dist | 0) + ' u, ' + st + ') — then ' + label);
+      return 'approach';
+    }
+    // In the well: aim the release at the destination and whip.
+    gameState.currentTarget = target;
+    // Hold off (in the well, nose on the body) while something other than the
+    // geometry says no — a live park beat, the 5 s whip cooldown, low energy
+    // — so those never count against the body. Measured r6: Earth and Mars
+    // were dropped on four park deferrals each, and the second drop left the
+    // ship parked at 1.5 R in Mars's path.
+    const body0 = (typeof findSlingshotTarget === 'function') ? findSlingshotTarget() : null;
+    const notYet = _parkOwnsBeat() || gameState.energy < 20 ||
+      Date.now() < (gameState.slingshotCooldownUntil || 0) || Date.now() < (W.retryAt || 0) || !body0;
+    if (notYet) {
+      if (window.orientTowardsTarget) window.orientTowardsTarget(sp);
+      if (!body0) keys().w = true;   // not quite in the ring yet: ease in
+      setStatus('CAMPAIGN · in ' + name + '\'s well — lining up the whip → ' + label);
+      return 'approach';
+    }
+    if (triggerSlingshot()) {
+      W.releasedAt = Date.now();
+      W.whipBody = (body0 && body0.userData && body0.userData.name) || name;
+      if (gameState.slingshotWhip) W.sawWhip = true;
+      ap.warpStartedAt = Date.now();
+      ap.warpsUsed++;
+      _dirLog('whip at ' + W.whipBody);
+      setStatus('CAMPAIGN · GRAVITY WHIP around ' + W.whipBody + ' → ' + label);
+      return 'whipped';
+    }
+    W.refusals++;
+    W.retryAt = Date.now() + 1500;
+    _dirLog('whip refused at ' + name + ' (' + W.refusals + ')');
+    return 'approach';
+  }
+  // LAST-DITCH: a body closing on the ship inside ESCAPE_K x its radius gets
+  // the ship flown straight out. The keep-out guard reads the SHIP's velocity
+  // against still spheres; a planet that orbits into a slow ship is outside
+  // its model (measured r6: Mars swept a waiting ship from 1.54 R to impact).
+  function _dirEscape() {
+    if (typeof planets === 'undefined') return false;
+    const cp = camPos();
+    let hit = null, worst = Infinity, hitPos = null;
+    if (!ap._dirEscW) ap._dirEscW = new THREE.Vector3();
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i];
+      if (!p || !p.position || !_keepoutApplies(p)) continue;
+      const R = _keepoutBodyR(p); if (!R) continue;
+      // parented moons carry LOCAL positions — read the world one
+      const wp = (p.parent && !p.parent.isScene) ? p.getWorldPosition(ap._dirEscW) : p.position;
+      const k = wp.distanceTo(cp) / R;
+      if (k < HY_DIRECTOR.ESCAPE_K && k < worst) { worst = k; hit = p; hitPos = wp.clone(); }
+    }
+    if (!hit) return false;
+    if (!ap._dirEscPt) ap._dirEscPt = { position: new THREE.Vector3(), userData: { name: 'clear space' } };
+    const out = cp.clone().sub(hitPos); if (out.lengthSq() < 1) out.set(0, 1, 0);
+    ap._dirEscPt.position.copy(hitPos).addScaledVector(out.normalize(), _keepoutBodyR(hit) * (HY_DIRECTOR.ESCAPE_K + 1.5));
+    navigateTo(ap._dirEscPt, { arriveRadius: 100, arriveSpeed: 4, boost: true, allowJump: false, allowWarp: false });
+    keys().w = true; keys().x = false;
+    if (_dirState().escapeFrom !== hit) { _dirState().escapeFrom = hit; _dirLog('escape ' + ((hit.userData && hit.userData.name) || 'body') + ' at ' + worst.toFixed(2) + ' R'); }
+    setStatus('CAMPAIGN · clearing ' + ((hit.userData && hit.userData.name) || 'body') + ' (' + worst.toFixed(1) + ' R)');
+    return true;
+  }
+  // A Sol world's orbital speed in u/frame. Measured this build (Sol at
+  // ORBIT_MULT 2): Mercury 1.0, Venus 0.95, Earth 1.15, Mars 1.66, Jupiter
+  // 5.3, Saturn 9.2, Uranus 17, Neptune 25 — = |orbitSpeed| x orbitRadius x
+  // 0.05 for every one of them. The ship cruises at 4, so the outer giants
+  // outrun it: an approach arrives (warp + park) and watches the planet pull
+  // away (Neptune 7,004 -> 18,381 u in 8 s), and a moving giant sweeping
+  // through a parked ship is a collision the keep-out guard cannot see.
+  function _dirBodySpeed(p) {
+    const ud = p && p.userData; if (!ud) return 0;
+    return Math.abs(ud.orbitSpeed || 0) * (ud.orbitRadius || 0) * 0.05;
+  }
+  // The Sol planet that gives the best release toward `dest`: on the
+  // destination's side of the Sun (the exit line then never crosses it),
+  // giants first, then the nearest.
+  function _dirPickSolWhip(S, dest, tried) {
+    if (typeof planets === 'undefined' || !S || !S.sol || !dest) return null;
+    const sol = S.sol, toD = dest.position.clone().sub(sol).normalize(), cp = camPos();
+    let best = null, bs = -Infinity, bestAny = null, ba = -Infinity;
+    for (let i = 0; i < planets.length; i++) {
+      const p = planets[i]; const ud = p && p.userData;
+      if (!ud || !_SOL_PLANET_RE.test(ud.name || '') || !p.position) continue;
+      if (tried.indexOf(p) !== -1) continue;
+      if (_dirBodySpeed(p) > HY_DIRECTOR.WHIP_MAX_BODY_SPEED) continue;   // cannot be caught
+      const rel = p.position.clone().sub(sol); const r = rel.length(); if (r < 1) continue;
+      const align = rel.divideScalar(r).dot(toD);
+      const R = _keepoutBodyR(p) || 100;
+      const score = align * 30000 + R * 15 + (R >= 400 ? HY_DIRECTOR.WHIP_GIANT_BONUS : 0) - cp.distanceTo(p.position) * 0.5;
+      if (align > 0.15 && score > bs) { bs = score; best = p; }
+      if (align > -0.3 && score > ba) { ba = score; bestAny = p; }
+    }
+    return best || bestAny;
+  }
+
+  function phaseCampaign() {
+    if (!_dirOn()) { goPhase('findLocalEnemies'); return; }
+    ensureThirdPerson();
+    const S = _dirSnap(); const D = _dirState();
+    if (!S) { setStatus('CAMPAIGN · waiting for orders'); return; }
+    // never while the whip rail owns the ship (the arc passes ~1.7 R by design)
+    if (!_dirTransitLocked() && !(D.leg === 'whipToSgrA' && (D.sub === 'whipped' || D.sub === 'gliding')) && _dirEscape()) return;
+    if (D.escapeFrom) D.escapeFrom = null;
+    switch (D.leg) {
+      case 'solPirates': {
+        ensureShieldsFor('travel');
+        _dirHunt(S.pirates, 'Sol pirates', S.pirateBoss || null);
+        return;
+      }
+      case 'solBoss': {
+        const B = S.pirateBoss;
+        let list = (B && typeof enemies !== 'undefined') ? enemies.filter((e) => e && e.userData && e.userData.health > 0 &&
+          e.userData.isBossSupport && e.position.distanceTo(B.position) < 6000) : [];
+        if (B && !list.length) list = [B];
+        if (!B) list = S.pirates;
+        _dirHunt(list, 'Pirate flagship', null);
+        return;
+      }
+      case 'whipToSgrA': {
+        ensureShieldsFor('travel');
+        const sgr = S.sgrA; if (!sgr) { setStatus('CAMPAIGN · no Sagittarius A* on scope'); return; }
+        if (!D.whip) D.whip = { tried: D.tried };
+        D.whip.pick = (tried) => _dirPickSolWhip(_dirSnap() || S, sgr, tried);
+        if (D.sub !== 'cruise') {
+          const r = whipToward(sgr, 'Sagittarius A*', D.whip);
+          D.sub = r;
+          if (r === 'whipped') D.whips.push({ body: D.whip.whipBody, t: Math.round((Date.now() - ap._dirT0) / 1000), state: S.state });
+          if ((r === 'gliding' || r === 'done') && D.whips.length) {
+            const w = D.whips[D.whips.length - 1];
+            w.sawWhip = !!D.whip.sawWhip; w.maxSpeed = +(D.whip.maxSpeed || 0).toFixed(1);
+          }
+          if (r === 'whipped' || r === 'gliding' || r === 'approach') return;
+          // 'done' (released) or 'failed' (no whip body left): fly in
+          D.sub = 'cruise';
+          _dirLog(r === 'done' ? 'whip released' : 'no whip body — cruising');
+        }
+        const d = camPos().distanceTo(sgr.position);
+        const st = navigateTo(sgr, { arriveRadius: HY_DIRECTOR.SGR_ARRIVE, arriveSpeed: 3, boost: true,
+          allowJump: true, allowWarp: true });
+        setStatus('CAMPAIGN · Sagittarius A* — ' + st + ' (' + (d | 0) + ' u)');
+        return;
+      }
+      case 'sgrVulcans': {
+        const list = S.vulcans.length ? S.vulcans : (S.vulcanBoss ? [S.vulcanBoss] : []);
+        const sgr = S.sgrA;
+        let hold = null;
+        if (sgr) {
+          if (!ap._dirSgrHold) ap._dirSgrHold = { position: new THREE.Vector3(), userData: { name: 'Sagittarius A* perimeter' } };
+          const R = _keepoutBodyR(sgr) || 900;
+          const dir = camPos().clone().sub(sgr.position); dir.y = 0;
+          if (dir.lengthSq() < 1) dir.set(1, 0, 0);
+          ap._dirSgrHold.position.copy(sgr.position).addScaledVector(dir.normalize(), R * 7.5);
+          hold = ap._dirSgrHold;
+        }
+        _dirHunt(list, 'Vulcan blockade', hold, 1500);
+        return;
+      }
+      case 'nebulaTravel': {
+        // the existing nebula leg, aimed at the campaign's nebula
+        ensureShieldsFor('travel');
+        ap.currentNebula = S.target; ap.orbitTarget = null;
+        setStatus('CAMPAIGN · course to ' + ((S.target.userData && (S.target.userData.mythicalName || S.target.userData.name)) || 'nebula'));
+        goPhase('warpToNebulaCluster');
+        return;
+      }
+      case 'nebulaRaiders': {
+        _dirHunt(S.guard.pirates, 'Nebula raiders', S.target, 2000);
+        return;
+      }
+      case 'nebulaVisit': {
+        // inside the guard ring: fly into the cloud so the visit counts
+        const T = S.target; if (!T) return;
+        const size = (T.userData && T.userData.size) || 2000;
+        const d = camPos().distanceTo(T.position);
+        // aim at the near rim of the visit sphere (0.45 x size on our side),
+        // not the centre: the heart world sits near the centre, and a line at
+        // it ends in the keep-out brake (measured r4: 30 s+ at 0.4 u/frame)
+        if (!ap._dirVisitPt) ap._dirVisitPt = { position: new THREE.Vector3(), userData: { name: 'nebula heart' } };
+        const rim = camPos().clone().sub(T.position);
+        if (rim.lengthSq() < 1) rim.set(1, 0, 0);
+        ap._dirVisitPt.position.copy(T.position).addScaledVector(rim.normalize(), size * 0.45);
+        const st = navigateTo(ap._dirVisitPt, { arriveRadius: Math.max(200, size * 0.08), arriveSpeed: 2, boost: true, allowJump: true, allowWarp: false });
+        setStatus('CAMPAIGN · entering ' + ((T.userData && (T.userData.mythicalName || T.userData.name)) || 'nebula') + ' — ' + st + ' (' + (d | 0) + ' u)');
+        return;
+      }
+      case 'missionPath': {
+        ensureShieldsFor('travel');
+        const M = S.mission;
+        if (M && M.entry && M.entry.line) {
+          ap._followingPath = M.entry;
+          setStatus('CAMPAIGN · following the mission line');
+          goPhase('followDiscoveryPath');
+          return;
+        }
+        setStatus('CAMPAIGN · awaiting mission line');
+        return;
+      }
+      case 'missionHost': {
+        const M = S.mission;
+        if (!M) { setStatus('CAMPAIGN · awaiting mission'); return; }
+        let list = M.enemies.slice();
+        if (M.boss) list.push(M.boss);
+        if (!list.length && typeof enemies !== 'undefined') {
+          list = enemies.filter((e) => e && e.userData && e.userData.health > 0 && e.position.distanceTo(M.site) < 5000);
+        }
+        _dirHunt(list, 'Mission host', { position: M.site, userData: { name: 'Mission site' } }, 1500);
+        return;
+      }
+      case 'galaxyTravel': {
+        ensureShieldsFor('travel');
+        const core = S.galaxy.core; if (!core) { setStatus('CAMPAIGN · galaxy core not found'); return; }
+        const d = camPos().distanceTo(core.position);
+        const st = navigateTo(core, { arriveRadius: HY_DIRECTOR.GALAXY_ARRIVE, arriveSpeed: 3, boost: true, allowJump: true, allowWarp: true });
+        setStatus('CAMPAIGN · ' + ((core.userData && core.userData.name) || 'galaxy core') + ' — ' + st + ' (' + (d | 0) + ' u)');
+        return;
+      }
+      case 'galaxyForces': {
+        _dirHunt(S.galaxy.forces, 'Faction forces', S.galaxy.core, HY_DIRECTOR.GALAXY_ARRIVE);
+        return;
+      }
+      case 'galaxyGuardians': {
+        _dirHunt(S.galaxy.guardians, 'Black Hole Guardians', S.galaxy.core, HY_DIRECTOR.GALAXY_ARRIVE);
+        return;
+      }
+      default: {
+        if (gameState.velocityVector && gameState.velocityVector.length() > 0.5) keys().x = true;
+        setStatus('CAMPAIGN · ' + String(S.state || '').replace(/_/g, ' ').toLowerCase() + ' — standing by');
+      }
+    }
   }
 
   function phaseFindLocalEnemies() {
@@ -2612,6 +3173,7 @@
       // hijacked followDiscoveryPath (combat→kill→back to Vulcans near
       // the nebula instead of resuming the path to the revealed sector).
       const MISSION_RETURN_PHASES = new Set([
+        'campaign',
         'followDiscoveryPath',
         'bossEngage',
         'coastToNebulaCluster',
@@ -3227,7 +3789,10 @@
     // that broke this round fired at Prometheus Nebula 1,759 u away. Drop it
     // and pick a real leg (the fallbacks below still allow a short one when
     // there is genuinely nothing further out).
-    if (ap.currentNebula && ap.currentNebula.position &&
+    // package Y: under the campaign director the leg flies to the campaign's nebula
+    const _dirNeb = _dirNebula();
+    if (_dirNeb && ap.currentNebula !== _dirNeb) { ap.currentNebula = _dirNeb; ap.orbitTarget = null; }
+    if (ap.currentNebula && ap.currentNebula.position && ap.currentNebula !== _dirNeb &&
         camPos().distanceTo(ap.currentNebula.position) < TRAVEL_LEG_MIN_DIST) {
       ap.currentNebula = null;
       ap.orbitTarget = null;
@@ -3466,7 +4031,7 @@
             // mid-warp, switch target so we coast into the closer one instead.
             // (Suppressed while returning to a nebula of origin for a second
             // discovery path — that trip has a specific destination.)
-            const nearer = ap._originReturnActive ? null : nearestNebula();
+            const nearer = (ap._originReturnActive || _dirNebula()) ? null : nearestNebula();
             if (nearer && nearer !== ap.currentNebula) {
               const dCur  = camPos().distanceTo(ap.currentNebula.position);
               const dAlt  = camPos().distanceTo(nearer.position);
@@ -3539,7 +4104,7 @@
     // Don't pass by nebulas: if a closer nebula appears post-warp, switch
     // to it instead of overshooting toward the original target.
     // (Suppressed while returning to a nebula of origin for a second path.)
-    const _altNeb = ap._originReturnActive ? null : nearestNebula();
+    const _altNeb = (ap._originReturnActive || _dirNebula()) ? null : nearestNebula();
     if (_altNeb && _altNeb !== ap.currentNebula) {
       const dCur = camPos().distanceTo(ap.currentNebula.position);
       const dAlt = camPos().distanceTo(_altNeb.position);
@@ -8463,7 +9028,7 @@
     // straight to the phase the demo would have reached on its own — the phase
     // then chooses its own destination, fires its own trigger and flies its own
     // leg, so what gets measured is the shipping path, only sooner.
-    D.goPhase = function (p) { goPhase(p); return ap.phase; };
+    D.goPhase = function (p) { ap._directorYieldUntil = Date.now() + 120000; goPhase(p); return ap.phase; };
     D.ap = ap;
     // WHY DID THIS LEG STAGE NOTHING? Runs the staging rules over every body
     // in front of the ship and reports the first rule each one failed, using
