@@ -24503,6 +24503,11 @@ function _spawnAsteroidInstance(o) {
 // =============================================================================
 const HY_ASTEROIDS = {
     SIZE_K: 3,             // every asteroid kind x this (1 = ORIGINAL's sizes)
+    // Ben 2026-10-11: 'Where did the asteroid belts go in 8803' — with Sol's orbits x2 the belt lane
+    // moved to 18-20k from the Sun (7-9k from Earth's orbit) and the same ~100 rocks spread over twice
+    // the circumference: sparse and sub-pixel. Sol's belts get more rocks and bigger ones.
+    SOL_COUNT_K: 3.0,      // Sol belt rock count x this (lane circumference grew ~3x)
+    SOL_SIZE_K: 1.6,       // Sol belt rock size x this on top of SIZE_K
     CORE_MIN_RADII: 6.4,   // no galaxy rock nearer its core than this (disc 5.6, CLEAR_RADII 6)
     HOLE_CLEAR: 7,         // a free field's edge keeps this many hole radii from any black hole
     BODY_CLEAR_K: 3,       // ...and this many body radii from any planet, star or moon
@@ -24691,7 +24696,7 @@ function createAsteroidBelts() {
             const beltGroup = new THREE.Group();
 
             // PLENTIFUL: 50-150 asteroids
-            const asteroidCount = 75 + Math.random() * 37; // Reduced 25% for performance
+            let asteroidCount = 75 + Math.random() * 37; // Reduced 25% for performance
 
             // CLOSER: 800-2000 units from black hole
         	let beltRadius = 1600 + Math.random() * 1000;
@@ -24711,6 +24716,7 @@ function createAsteroidBelts() {
                     const _lane = _hySolLayout().belt;
                     beltRadius = (_lane[0] + _lane[1]) / 2;
                     beltWidth = _lane[1] - _lane[0];
+                    asteroidCount = Math.round(asteroidCount * (HY_ASTEROIDS.SOL_COUNT_K || 1));   // Ben 2026-10-11: the belt must read from Earth's orbit
                 }
             }
             // HYBRID (solScale:big): 1,600-2,600 u is inside a scaled core's
@@ -24745,7 +24751,7 @@ function createAsteroidBelts() {
     // goes into `planets` for targeting/collision/mining.
     const geomIndex = Math.floor(Math.random() * 3);
     const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
-    const scale = (3 + Math.random() * 6) * _hyAstK(); // Was 1-5, now 3-9 (HYBRID: x SIZE_K)
+    const scale = (3 + Math.random() * 6) * _hyAstK() * ((galaxyIndex === 7 && _hyScaleOn()) ? (HY_ASTEROIDS.SOL_SIZE_K || 1) : 1); // Was 1-5, now 3-9 (HYBRID: x SIZE_K; Sol x SOL_SIZE_K)
 
     const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
     const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;

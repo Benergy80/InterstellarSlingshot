@@ -3168,10 +3168,15 @@ function _hySlingNavTick(forwardDirection, dtF) {
     const range = T.to.length();
     if (!(range > 1)) return;
     T.to.divideScalar(range);
-    // Bend the glide onto the target (direction only; speed is untouched).
+    // Bend the glide onto the target (direction only; speed is untouched) —
+    // unless the pilot is steering: a held look key owns the heading (the
+    // glide assist slaves the camera to velocity, so guidance here would cancel
+    // the pilot's yaw; keep-check row 4 measured 9.2° → 5.9° with a stale target).
+    const _k = (typeof keys !== 'undefined') ? keys : null;
+    const _steering = !!(_k && (_k.left || _k.right || _k.up || _k.down || _k.q || _k.e));
     T.dir.copy(vel).normalize();
     const angle = Math.acos(Math.max(-1, Math.min(1, T.dir.dot(T.to))));
-    if (angle > 1e-4) {
+    if (angle > 1e-4 && !_steering) {
         T.axis.crossVectors(T.dir, T.to);
         if (T.axis.lengthSq() > 1e-10) {
             T.axis.normalize();
