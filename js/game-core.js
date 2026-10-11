@@ -3556,6 +3556,11 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
     if (gameState.frameCount % 3 === 0 && typeof updateDistressIndicator === 'function') {
         updateDistressIndicator();
     }
+    // Hostile countdown meter + nearest-enemy / boss edge arrows (hudArrows):
+    // same cadence as the SOS arrow they sit beside.
+    if (gameState.frameCount % 3 === 0 && typeof updateHostileArrows === 'function') {
+        updateHostileArrows();
+    }
 
     // Crosshair targeting moved to the render section (post camera
     // transforms): projecting through the PHYSICS camera while the frame
