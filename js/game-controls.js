@@ -5003,6 +5003,7 @@ function _efOn() {
     return !!(typeof window !== 'undefined' && window.HYBRID && !window.HYBRID.is('enemyFlight', 'overhaul'));
 }
 function _efClass(ud) {
+    if (ud.guardianRole === 'ram') return ENEMY_FLIGHT.elite;   // HYBRID (package R): a rammer needs the thrust
     if (ud.isBoss) return ENEMY_FLIGHT.boss;
     if (ud.isBossSupport) return ENEMY_FLIGHT.support;
     if (ud.isEliteGuardian || ud.isBlackHoleGuardian) return ENEMY_FLIGHT.elite;
@@ -5576,7 +5577,8 @@ function updateEnemyBehavior() {
             if (typeof _updateEnemyCombatFeel === 'function') {
                 _updateEnemyCombatFeel(enemy);
             }
-        } else if (isLocal && (enemy.userData.isMartianPirate || enemy.userData.isVulcanPatrol)) {
+        } else if ((isLocal && (enemy.userData.isMartianPirate || enemy.userData.isVulcanPatrol)) || enemy.userData.isMissionHost) {
+            // (HYBRID package R: a nebula mission host also patrols round its convoy / planet)
             // Idle Pirates / Vulcans should ALWAYS be moving, not loitering.
             // Run a formation-flight patrol that slowly drifts the whole
             // group's patrol centre through space so they read as ships
@@ -6067,6 +6069,11 @@ function updateBossBehavior(enemy, playerPos, speed) {
     // Bosses use more complex movement patterns
     const time = Date.now() * 0.001;
     const distance = enemy.position.distanceTo(playerPos);
+    // HYBRID (package R): Black Hole Guardians fly their own role
+    if (enemy.userData.guardianRole && typeof _hyGuardianBehavior === 'function') {
+        _hyGuardianBehavior(enemy, playerPos, speed, distance);
+        return;
+    }
 
     // Standoff scales with the (now 2×) hull so the boss circles OUTSIDE
     // the player's personal space instead of parking inside it at 120u.
@@ -6186,10 +6193,14 @@ function _updateBossSpecials(boss, playerPos, distance) {
     const now = Date.now();
     if (!ud._nextVolleyAt) ud._nextVolleyAt = now + 6000 + Math.random() * 4000;
     if (!ud._nextSweepAt) ud._nextSweepAt = now + 12000 + Math.random() * 5000;
+    // HYBRID (package R): role knobs (guardians) + a telegraph that went stale
+    const _hyK = ud.specialK || 1;
+    if (ud._tele && now > ud._tele.until + 1500 && typeof _hyTeleCancel === 'function') _hyTeleCancel(boss);
 
     // MISSILE VOLLEY — 5 homing bolts, staggered, every 11-16 s
-    if (now >= ud._nextVolleyAt && distance > 250 && distance < 3500) {
-        ud._nextVolleyAt = now + 11000 + Math.random() * 5000;
+    if (!ud.noVolley && now >= ud._nextVolleyAt && distance > 250 && distance < (ud.volleyRange || 3500) &&
+        (typeof _hyBossTelegraph !== 'function' || _hyBossTelegraph(boss, 'volley', now))) {
+        ud._nextVolleyAt = now + (11000 + Math.random() * 5000) * _hyK;
         for (let i = 0; i < 5; i++) {
             setTimeout(() => _spawnBossMissile(boss), i * 170);
         }
@@ -6200,8 +6211,10 @@ function _updateBossSpecials(boss, playerPos, distance) {
 
     // SPINNING LASER SWEEP — 3 beams rotating around the boss for 3.5 s,
     // every 14-19 s, only triggers (and only hurts) at close range
-    if (now >= ud._nextSweepAt && distance < 1600) {
-        ud._nextSweepAt = now + 14000 + Math.random() * 5000;
+    if (!ud.noSweep && now >= ud._nextSweepAt && distance < 1600 &&
+        (!ud._tele || ud._tele.kind === 'sweep') &&
+        (typeof _hyBossTelegraph !== 'function' || _hyBossTelegraph(boss, 'sweep', now))) {
+        ud._nextSweepAt = now + (14000 + Math.random() * 5000) * _hyK;
         ud._sweepUntil = now + 3500;
         ud._sweepAngle = Math.random() * Math.PI * 2;
         if (typeof showAchievement === 'function') {
@@ -6253,6 +6266,162 @@ function _updateBossSpecials(boss, playerPos, distance) {
             }
         }
     }
+}
+
+// =============================================================================
+// HYBRID (package R) — readable boss telegraphs + Black Hole Guardian roles
+// =============================================================================
+// Every boss special (missile volley, laser sweep, guardian ram) now winds up
+// for HY_TELEGRAPH.MS first: a flat neon wireframe shell pulses round the hull
+// (no texture — the ORIGINAL vector look) and, once per SAY_GAP, the ship's
+// computer names the move on the comms channel. ORIGINAL fired them unannounced
+// (its showAchievement warnings are never displayed).
+const HY_TELEGRAPH = {
+    MS: 1100,
+    COLORS: { volley: 0xffcc00, sweep: 0xff2244, ram: 0xff6a00 },
+    SAY_GAP: 15000, SAY_RANGE: 5000,
+};
+const HY_GUARD = {
+    RAM_SPEED_K: 5.0,        // x the boss engage speed during a charge...
+    RAM_SPEED_MIN: 16,       // ...but at least this many u per AI tick (30 Hz) — the flight model caps it
+    RAM_MS: 4000,            // charge length (ends early once past the player)
+    RAM_GAP: [7000, 10000],  // between charges
+    RAM_DAMAGE: 12,          // hull, before shield reduction
+    WARDEN_LEASH: 1500,      // furthest a warden leans off its station toward the player
+    VOLLEY_RANGE: 4500,
+};
+if (typeof window !== 'undefined') { window.HY_TELEGRAPH = HY_TELEGRAPH; window.HY_GUARD = HY_GUARD; }
+let _hyTeleSaidAt = 0;
+const _hyGV1 = new THREE.Vector3(), _hyGV2 = new THREE.Vector3(), _hyGV3 = new THREE.Vector3();
+function _hyTeleShell(boss) {
+    const ud = boss.userData;
+    if (ud._teleShell && ud._teleShell.parent === boss) return ud._teleShell;
+    const ws = new THREE.Vector3();
+    try { boss.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
+    const r = Math.max(60, (ud.hitboxSize || 200) * 0.6);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xff2244, wireframe: true, transparent: true, opacity: 0.8,
+        blending: THREE.AdditiveBlending, depthWrite: false });
+    mat.toneMapped = false;
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), mat);
+    m.userData.baseS = r / Math.max(0.0001, Math.abs(ws.x));
+    m.userData.isGlowLayer = true;          // skipped by hull/shield/telegraph measurements
+    m.userData.isTelegraphShell = true;
+    m.userData.__dbTris = Infinity;         // never hidden by the draw budget
+    m.raycast = function () {};
+    m.frustumCulled = false;
+    m.visible = false;
+    m.scale.setScalar(m.userData.baseS);
+    boss.add(m);
+    ud._teleShell = m;
+    return m;
+}
+function _hyTeleSay(boss, kind, now) {
+    if (now - _hyTeleSaidAt < HY_TELEGRAPH.SAY_GAP) return;
+    if (typeof camera === 'undefined' || boss.position.distanceTo(camera.position) > HY_TELEGRAPH.SAY_RANGE) return;
+    _hyTeleSaidAt = now;
+    const n = boss.userData.name || 'The flagship';
+    const txt = kind === 'volley' ? n + ' is spooling a missile volley — keep moving, they home in.'
+        : kind === 'sweep' ? n + ' is charging a laser sweep — get clear of its hull.'
+        : n + ' is lining up a ram — side-step when it lunges.';
+    try { if (typeof showIncomingTransmission === 'function') showIncomingTransmission('Tactical Warning', txt, 'ship'); } catch (e) { /* comms optional */ }
+}
+// Wind-up for `kind`. Returns true once the wind-up is complete (fire now).
+function _hyBossTelegraph(boss, kind, now) {
+    if (typeof window === 'undefined' || !window.HYBRID) return true;
+    const ud = boss.userData;
+    if (!ud._tele || ud._tele.kind !== kind) {
+        ud._tele = { kind: kind, t0: now, until: now + HY_TELEGRAPH.MS };
+        _hyTeleSay(boss, kind, now);
+    }
+    ud._telegraphing = true;
+    const t = ud._tele, shell = _hyTeleShell(boss);
+    if (now < t.until) {
+        const p = (now - t.t0) / HY_TELEGRAPH.MS;
+        const k = 0.35 + 0.65 * Math.abs(Math.sin(p * Math.PI * (2 + 4 * p)));
+        shell.visible = true;
+        shell.material.color.setHex(HY_TELEGRAPH.COLORS[kind] || 0xff2244).multiplyScalar(k);
+        shell.scale.setScalar(shell.userData.baseS * (1 + 0.18 * p));
+        return false;
+    }
+    _hyTeleCancel(boss);
+    return true;
+}
+function _hyTeleCancel(boss) {
+    const ud = boss.userData;
+    ud._tele = null; ud._telegraphing = false;
+    if (ud._teleShell) ud._teleShell.visible = false;
+}
+
+// Black Hole Guardian roles (spawnGuardians in js/game-objects.js sets
+// userData.guardianRole). Movement writes are intents — the flight model
+// (enemyFlight: physical, ENEMY_FLIGHT.boss) flies them with momentum.
+function _hyGuardianBehavior(enemy, playerPos, speed, distance) {
+    const ud = enemy.userData, now = Date.now(), time = now * 0.001;
+    const ph = ud.circlePhase || 0;
+    if (ud.guardianRole === 'warden') {
+        // holds the core: circles its station, leans toward the player, sweeps
+        ud.specialK = 0.75;
+        const st = ud.patrolCenter || enemy.position;
+        const toP = _hyGV1.subVectors(playerPos, st);
+        const lean = Math.min(HY_GUARD.WARDEN_LEASH, toP.length() * 0.35);
+        if (toP.lengthSq() > 1) toP.normalize();
+        const tgt = _hyGV2.copy(st).addScaledVector(toP, lean);
+        tgt.x += Math.cos(time * 0.5 + ph) * 350; tgt.z += Math.sin(time * 0.5 + ph) * 350;
+        const dir = _hyGV3.subVectors(tgt, enemy.position), dl = dir.length();
+        if (dl > 20) enemy.position.addScaledVector(dir.divideScalar(dl), Math.min(dl, speed * 0.8));
+        if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+        return;
+    }
+    if (ud.guardianRole === 'ram') {
+        ud.noVolley = true;
+        const hb = ud.hitboxSize || 300;
+        if (!ud._ramState) { ud._ramState = 'stalk'; ud._ramNext = now + 5000 + Math.random() * 3000; }
+        if (ud._ramState === 'stalk') {
+            const standoff = 1800, ang = time * 0.5 + ph;
+            const tgt = _hyGV2.set(playerPos.x + Math.cos(ang) * standoff, playerPos.y + Math.sin(ang * 0.4) * 300, playerPos.z + Math.sin(ang) * standoff);
+            const dir = _hyGV3.subVectors(tgt, enemy.position), dl = dir.length();
+            if (dl > 20) enemy.position.addScaledVector(dir.divideScalar(dl), Math.min(dl, speed));
+            if (now >= ud._ramNext && distance < 3200 && distance > 600) ud._ramState = 'windup';
+            else if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+        } else if (ud._ramState === 'windup') {
+            // hold and bring the nose round onto the player
+            enemy.position.addScaledVector(_hyGV1.subVectors(playerPos, enemy.position).normalize(), speed * 0.15);
+            if (_hyBossTelegraph(enemy, 'ram', now)) {
+                ud._ramState = 'charge';
+                ud._ramDir = _hyGV1.subVectors(playerPos, enemy.position).normalize().clone();
+                ud._ramUntil = now + HY_GUARD.RAM_MS; ud._ramHit = false;
+            }
+        } else {
+            enemy.position.addScaledVector(ud._ramDir, Math.max(HY_GUARD.RAM_SPEED_MIN, speed * HY_GUARD.RAM_SPEED_K));
+            const past = _hyGV1.subVectors(enemy.position, playerPos).dot(ud._ramDir) > 600;
+            if (!ud._ramHit && enemy.position.distanceTo(playerPos) < hb * 0.5 + 90) {
+                ud._ramHit = true;
+                const inv = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+                if (!inv && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                    const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                    gameState.hull = Math.max(0, gameState.hull - HY_GUARD.RAM_DAMAGE * (1 - red));
+                    if (gameState.velocityVector) gameState.velocityVector.addScaledVector(ud._ramDir, 0.8);
+                    if (typeof createEnhancedScreenDamageEffect === 'function') createEnhancedScreenDamageEffect(enemy.position);
+                }
+            }
+            if (now > ud._ramUntil || past) { ud._ramState = 'stalk'; ud._ramNext = now + HY_GUARD.RAM_GAP[0] + Math.random() * (HY_GUARD.RAM_GAP[1] - HY_GUARD.RAM_GAP[0]); }
+        }
+        return;
+    }
+    // 'volley': keeps range and fires volleys often; no sweep
+    ud.specialK = 0.55; ud.noSweep = true; ud.volleyRange = HY_GUARD.VOLLEY_RANGE;
+    const standoff = 1700 + Math.sin(time * 0.3 + ph) * 300;
+    const away = _hyGV1.subVectors(enemy.position, playerPos);
+    if (away.lengthSq() > 1) away.normalize();
+    if (distance > standoff * 1.25) enemy.position.addScaledVector(away, -speed);
+    else if (distance < standoff * 0.8) enemy.position.addScaledVector(away, speed * 0.9);
+    else {
+        const ang = time * 0.45 + ph;
+        const tgt = _hyGV2.set(playerPos.x + Math.cos(ang) * standoff, playerPos.y + Math.sin(ang * 0.3) * 400, playerPos.z + Math.sin(ang) * standoff);
+        const dir = _hyGV3.subVectors(tgt, enemy.position), dl = dir.length();
+        if (dl > 20) enemy.position.addScaledVector(dir.divideScalar(dl), Math.min(dl, speed * 0.7));
+    }
+    if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
 }
 
 // Support ship behavior
