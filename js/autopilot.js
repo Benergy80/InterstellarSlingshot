@@ -728,7 +728,9 @@
         ap.phase !== 'fightBorg' &&
         ap.phase !== 'blackHoleWarp' &&
         ap.phase !== 'followDiscoveryPath' &&
-        !(ap._bossHunt && ap.phase === 'bossEngage') &&   // HYBRID boss hunt: the chase is not interrupted by strays
+        // HYBRID boss hunt: the chase is not interrupted by strays — neither the
+        // showcase's bossEngage nor the director's campaign phase flying a live hunt
+        !(ap._bossHunt && (ap.phase === 'bossEngage' || (ap.phase === 'campaign' && _bossAlive(ap._bossHunt.boss)))) &&
         !_dirGliding()) {
       const _navHostile = navDetectedEnemy();
       // Don't interrupt the locked warp cycle — physics owns velocity
