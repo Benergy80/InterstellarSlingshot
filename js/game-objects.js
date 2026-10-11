@@ -459,7 +459,8 @@ function getGalaxy3DPosition(galaxyId) {
     const galaxyData = galaxy3DPositions[galaxyId];
     if (!galaxyData) return new THREE.Vector3(0, 0, 0);
     
-    const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+    // package N (scale2): x the universe factor (HY_SCALE.UNIVERSE_K)
+    const universeRadius = 100000 * ((typeof _hyU === 'function') ? _hyU() : 1); // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     const distance = galaxyData.distance * universeRadius;
     const phi = galaxyData.phi;
     const theta = galaxyData.theta;
@@ -539,7 +540,7 @@ function getRandomGalaxyPosition(galaxyId) {
     const mapPos = galaxyMapPositions[galaxyId];
     
     // Enhanced 3D spherical distribution instead of flat
-    const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+    const universeRadius = 100000 * ((typeof _hyU === 'function') ? _hyU() : 1); // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     
     // Convert 2D map position to 3D spherical coordinates
     const phi = mapPos.x * Math.PI * 2; // Azimuthal angle (0 to 2π)
@@ -669,8 +670,11 @@ function getGalaxyMapPosition(galaxyId) {
 // Generate spherical coordinates for true 3D galaxy distribution
 function generateSphericalGalaxyPositions() {
     const galaxySphericalPositions = [];
-    const minRadius = 25000; // Minimum distance from Sagittarius A*
-    const maxRadius = 75000; // Maximum distance for outer galaxies
+    // package N (scale2): x the universe factor (HY_SCALE.UNIVERSE_K) — the
+    // galaxies' systems grew ~1.85x with the size ladder, so the cores spread too
+    const _u = (typeof _hyU === 'function') ? _hyU() : 1;
+    const minRadius = 25000 * _u; // Minimum distance from Sagittarius A*
+    const maxRadius = 75000 * _u; // Maximum distance for outer galaxies
     
     galaxyTypes.forEach((galaxyType, index) => {
         // Skip local galaxy (index 7) - it's at the center with Sagittarius A*
@@ -1685,7 +1689,7 @@ function spawnBossForArea(galaxyId, placementType, areaKey, overridePosition, bo
             return;
         }
         
-        const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+        const universeRadius = 100000 * ((typeof _hyU === 'function') ? _hyU() : 1); // Increased to accommodate exotic/borg systems (up to 85k units) with margins
         
         const galaxyX = (mapPos.x - 0.5) * universeRadius * 2;
         const galaxyZ = (mapPos.y - 0.5) * universeRadius * 2;
@@ -7045,7 +7049,7 @@ function calculateBlackHoleRotationSpeed(galaxyType, galaxyId, position) {
     
     // Distance from galactic center affects speed (closer = faster)
     const distanceFromCenter = Math.sqrt(position.x * position.x + position.z * position.z);
-    const universeRadius = 100000; // Increased to accommodate exotic/borg systems (up to 85k units) with margins
+    const universeRadius = 100000 * ((typeof _hyU === 'function') ? _hyU() : 1); // Increased to accommodate exotic/borg systems (up to 85k units) with margins
     const normalizedDistance = Math.min(distanceFromCenter / universeRadius, 1.0);
     
     // Speed decreases with distance from center (inverse relationship)
@@ -7144,17 +7148,30 @@ function _hyScaleOn() {
 const HY_SCALE = {
     PLACE_K: 8,              // rule 1: centre gap >= PLACE_K x (R1 + R2)
     EDGE_MARGIN: 0.15,       // rule 2: keep-clear = EDGE x (1 + EDGE_MARGIN)
-    ORBIT_K: 1.5,            // rule 3: orbit gap >= ORBIT_K x (reach1 + reach2) (1.0 = moon systems touch at conjunction)
+    // package N (scale2): 1.5 -> 1.2. Planets roughly doubled (HY_LADDER), so
+    // a gap of 1.2 x the two reaches still leaves 20% of air between two moon
+    // systems at conjunction while the worlds read bigger against their orbits.
+    ORBIT_K: 1.2,            // rule 3: orbit gap >= ORBIT_K x (reach1 + reach2) (1.0 = moon systems touch at conjunction)
     STAR_CLEAR: 2.6,         // rule 3: first orbit >= STAR_CLEAR x star radius (+ its reach)
     SOL_BEARING: { x: 0.4157, z: 0.9095 },  // Sol's direction from Sgr A* (was (8000,0,4800)-ish)
     SOL_SGR_GAP: 1000,       // extra clear space between Sol's keep-clear and Sgr A*'s
+    // package N (scale2): every body roughly doubled, every system ~1.85x
+    // wider, so the universe's own distances grow by this one factor: galaxy
+    // cores from Sgr A*, nebula bands and footprints, outer systems, the
+    // procedural shell, and the ranges that look across them (camera far
+    // plane, culling, galaxy reach). _hyU() reads it (1 under solScale:overhaul).
+    UNIVERSE_K: 1.85,
     // The eight named nebulae, from Sol: the near five / the twin pair / the far
-    // one. ORIGINAL kept them 20,000-45,000 from the core (28-41k from Sol).
-    NEBULA_BANDS: [[28000, 41000], [42000, 50000], [52000, 60000]],
-    NEBULA_REACH: 9000,      // a nebula's footprint for spacing: cloud + heart world + inner systems
+    // one. ORIGINAL kept them 20,000-45,000 from the core (28-41k from Sol);
+    // x UNIVERSE_K (Sol's own edge is now 26k, not 15k).
+    NEBULA_BANDS: [[52000, 76000], [78000, 92000], [96000, 111000]],
+    NEBULA_REACH: 16500,     // a nebula's footprint for spacing: cloud + heart world + inner systems (9,000 x UNIVERSE_K)
     SOLVE_ITERS: 120,
 };
 if (typeof window !== 'undefined') window.HY_SCALE = HY_SCALE;
+// The universe factor (package N): 1 under ?hy=solScale:overhaul.
+function _hyU() { return _hyScaleOn() ? HY_SCALE.UNIVERSE_K : 1; }
+if (typeof window !== 'undefined') window._hyU = _hyU;
 
 // Sol's EDGE (outermost orbit + reach). The size ladder (Part 1) supplies the
 // scaled layout; without it this is today's Neptune + Triton.
@@ -7254,11 +7271,13 @@ function _hyCollectSystems() {
 // R = the system's main body, edge = outermost orbit + reach (rule 2).
 function _hyMeasureSystem(g) {
     g.R = g.star ? _hyBodyR(g.star) : 0;
+    g.big = g.R;   // the largest non-moon body anywhere in the system (rule 1, per body)
     let edge = g.R;
     g.members.forEach(function (p) {
         const u = p.userData;
         if (u.parentPlanet) return;
         const r = _hyBodyR(p);
+        g.big = Math.max(g.big, r);
         g.R = Math.max(g.R, g.star ? 0 : r);
         edge = Math.max(edge, (u.orbitRadius > 0 ? u.orbitRadius : p.position.distanceTo(g.center)) + _hyReach(p));
     });
@@ -7279,11 +7298,24 @@ function _hyReach(p) {
 }
 
 // Rules 1 + 2 between two nodes { c, R, edge, own, body }.
+// package N (scale2): rule 1 now holds BODY to body, not only centre to centre:
+// a node's `ext` is how far from its centre one of its bodies can sit (a
+// system's edge; 0 for a lone world or hole) and `big` its largest body, so
+// two systems keep ext1 + ext2 + PLACE_K x (big1 + big2) — measured before,
+// planets of neighbouring systems sat 3.8-7 x (R1 + R2) from a heart world.
 function _hyReq(a, b) {
     const m = 1 + HY_SCALE.EDGE_MARGIN;
     if (a.own && a.own === b.body) return b.edge + a.edge * m;
     if (b.own && b.own === a.body) return a.edge + b.edge * m;
-    return Math.max(HY_SCALE.PLACE_K * (a.R + b.R), (a.edge + b.edge) * m);
+    const body = _hyScaleOn()
+        ? (a.ext || 0) + (b.ext || 0) + HY_SCALE.PLACE_K * ((a.big || a.R) + (b.big || b.R)) : 0;
+    return Math.max(HY_SCALE.PLACE_K * (a.R + b.R), (a.edge + b.edge) * m, body);
+}
+// Sol as a solver node: centre, Sun, edge, and its largest world.
+function _hySolNode(c) {
+    let big = _hySunR();
+    if (_hyScaleOn()) HY_SOL.planets.forEach(function (row) { big = Math.max(big, row[1]); });
+    return { c: c, R: _hySunR(), edge: _hySolEdge(), ext: _hySolEdge(), big: big, fixed: true };
 }
 function _hySolve(nodes) {
     const d = new THREE.Vector3();
@@ -7351,7 +7383,7 @@ function _hyPlaceSystems(tag) {
     const col = _hyCollectSystems();
     const nodes = [];
     const sol = (typeof window !== 'undefined' && window.localSystemOffset) || _hySolCenter();
-    nodes.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), R: _hySunR(), edge: _hySolEdge(), fixed: true });
+    nodes.push(_hySolNode(new THREE.Vector3(sol.x, sol.y, sol.z)));
     // Black holes by the same rule. Only the Companion Core is close enough to
     // another hole to need it (it rode 0.9 x CLEAR_RADII x (R1 + R2) above
     // Sgr A*): it moves straight out along the same line, dressing and all.
@@ -7380,7 +7412,7 @@ function _hyPlaceSystems(tag) {
     });
     const mov = [];
     col.systems.forEach(function (g) {
-        const n = { c: g.center.clone(), R: g.R, edge: g.edge, own: g.own, fixed: g.placed, g: g };
+        const n = { c: g.center.clone(), R: g.R, edge: g.edge, ext: g.edge, big: g.big, own: g.own, fixed: g.placed, g: g };
         nodes.push(n);
         if (!g.placed) mov.push(n);
     });
@@ -7493,6 +7525,13 @@ function _hyInstallScaleHooks() {
     _wrapAfter('createOptimizedPlanets3D', function () {
         if (typeof _hyLadderSystems === 'function') _hyLadderSystems('core');
         _hyPlaceSystems('core');
+        // package N (scale2): the far plane grows with the universe (250,000 x
+        // UNIVERSE_K) so the far galaxies, outer systems and procedural shell
+        // stay inside it. Logarithmic depth keeps the near field precise.
+        if (typeof camera !== 'undefined' && camera && camera.isPerspectiveCamera) {
+            const far = Math.round(250000 * _hyU());
+            if (camera.far < far) { camera.far = far; camera.updateProjectionMatrix(); }
+        }
     });
     _wrapAfter('createExoticCoreNebulas', function () { _hySpaceNebulae(); });
     _wrapAfter('createEnhancedPlanetClustersInNebulas', function () {
@@ -7520,20 +7559,26 @@ function _hyInstallScaleHooks() {
 // the slingshot pulls exactly as hard at the same distance.
 // =============================================================================
 const HY_SOL = {
-    SUN: 300,
-    START: { x: 720, y: 120, z: 80 },   // the player's start, relative to Sol
-    START_GAP: 600,                     // clear space between the start point and the first orbit's inner edge
-    BELT_WIDTH: 500,                    // the asteroid lane between Mars and Jupiter
+    // package N (scale2), Ben: "all planets should be similar in size to
+    // nebula planets". The nebula worlds the player parks in front of are
+    // the heart worlds (620); every planet now sits in 240-620 and the Sun
+    // at the foot of the star class (650). The start point keeps 2.45 Sun
+    // radii (was 300 / (720, 120, 80)); moons keep their planet's
+    // proportion, orbits <= 3.5 planet radii (HY_LADDER.MOON_ORBIT_MAX).
+    SUN: 650,
+    START: { x: 1560, y: 260, z: 173 },  // the player's start, relative to Sol (2.45 Sun radii)
+    START_GAP: 900,                     // clear space between the start point and the first orbit's inner edge
+    BELT_WIDTH: 900,                    // the asteroid lane between Mars and Jupiter
     // name: [radius, rings?, { moon: [radius, orbit from the planet's centre] }]
     planets: [
-        ['Mercury', 70,  false, {}],
-        ['Venus',   120, false, {}],
-        ['Earth',   130, false, { Luna: [40, 520] }],
-        ['Mars',    85,  false, { Phobos: [16, 220], Deimos: [14, 320] }],
-        ['Jupiter', 280, false, { Io: [32, 460], Europa: [28, 580], Ganymede: [42, 760], Callisto: [38, 960] }],
-        ['Saturn',  240, true,  { Enceladus: [20, 660], Titan: [48, 1080] }],
-        ['Uranus',  170, true,  { Titania: [28, 720] }],
-        ['Neptune', 160, false, { Triton: [28, 480] }],
+        ['Mercury', 250, false, {}],
+        ['Venus',   380, false, {}],
+        ['Earth',   400, false, { Luna: [100, 1200] }],
+        ['Mars',    290, false, { Phobos: [46, 640], Deimos: [40, 900] }],
+        ['Jupiter', 620, false, { Io: [70, 1050], Europa: [62, 1300], Ganymede: [94, 1650], Callisto: [86, 1950] }],
+        ['Saturn',  560, true,  { Enceladus: [46, 1450], Titan: [110, 1900] }],
+        ['Uranus',  450, true,  { Titania: [74, 1450] }],
+        ['Neptune', 430, false, { Triton: [75, 1150] }],
     ],
     RING_K: 2.45,                       // Sol ring planes reach 2.45 radii (addPlanetRings outerK)
 };
@@ -7604,31 +7649,39 @@ function _hyApplySolLayout(localPlanets) {
 // system is re-sized onto one ladder (moons < planets < giants < stars <
 // black holes) and re-laid by HY_SCALE rule 3, then placed by rules 1-2:
 //
-//   class    radius (world units)    who
-//   moon     16 - 60                 every moon (keeps its planet's proportion)
-//   planet   70 - 200                field worlds, Sol's rocky planets
-//   giant    220 - 620               field giants top out at FIELD_MAX (330);
-//                                    Jupiter 280, Saturn 240; heart worlds 620
-//   star     300 - 560               every star (Sol 300, held by the start point)
+//   class    radius (world units)    who            (package N, was 16-60 / 70-200 / 220-620 / 300-560)
+//   moon     40 - 150                every moon (keeps its planet's proportion)
+//   planet   240 - 450               field worlds, Sol's rocky planets (Earth 400)
+//   giant    450 - 620               field giants top out at FIELD max (620);
+//                                    Jupiter 620, Saturn 560; heart worlds 620
+//   star     650 - 880               every star (Sol 650, held by the start point)
 //   hole     405 - 1215 (shadow)     HY_BH; disc to 5.6 radii (2,268 - 6,804)
 //
 // Within a family (nebula / galaxy / gateway / local) sizes keep their order:
 // the smallest star of a family maps to the bottom of the star class, the
-// largest to the top; planets likewise onto 70-FIELD_MAX. Procedural galaxies
-// (already 200-700 stars, 100-450 planets) are the reference and untouched.
+// largest to the top; planets likewise onto FIELD. Procedural galaxies join the
+// same classes in proc-galaxies.js (hyPlanetR / hyStarR / hyMoonR), outer
+// systems in outer-systems.js.
 // Mass and gravity stay as they were (the slingshot is tuned on them).
 // =============================================================================
 const HY_LADDER = {
-    moon:   [16, 60],
-    planet: [70, 200],
-    giant:  [220, 620],
-    star:   [300, 560],
-    FIELD:  [70, 330],       // where a re-sized system's planets land (planet + lower giant)
-    MOON_MAX_OF_PLANET: 0.4, // a moon is never more than this fraction of its planet
-    MOON_ORBIT_MIN: 1.8,     // moon orbits, in planet radii (Sol's moons sit at 3.4-4.5)
-    MOON_ORBIT_MAX: 4.5,
-    OUTER_K: 3.5,            // outer interstellar systems (outer-systems.js): sizes and orbits x this
-    OUTER_STAR_K: 2.25,      // ...their bright stars (225-338; the 2.5x glow shell stays < 900 u)
+    // package N (scale2): Ben, "all planets should be similar in size to
+    // nebula planets". Measured before: every family's planets 70-330 (median
+    // 127-149) beside the 620 heart worlds the player parks in front of. Now
+    // the whole planet class is 240-620 (the heart world at its top), and the
+    // classes around it moved with it: moons < planets < stars, black holes
+    // (HY_BH, unchanged) still the largest at 900-1215 for a galaxy core.
+    moon:   [40, 150],
+    planet: [240, 450],
+    giant:  [450, 620],
+    star:   [650, 880],
+    FIELD:  [240, 620],      // where a re-sized system's planets land (planet + giant)
+    MOON_MAX_OF_PLANET: 0.35, // a moon is never more than this fraction of its planet
+    MOON_ORBIT_MIN: 1.8,     // moon orbits, in planet radii (Sol's moons sit at 2.2-3.4)
+    MOON_ORBIT_MAX: 3.5,
+    OUTER_K: 3.5,            // outer interstellar systems (outer-systems.js): exotic-core sizes and orbits x this
+    OUTER_ORBIT_K: 4.5,      // ...the Borg systems' planet orbits (their planets join FIELD, their stars the star class)
+    OUTER_STAR_K: 2.25,      // ...their bright stars under solScale:overhaul's fallback only
 };
 if (typeof window !== 'undefined') window.HY_LADDER = HY_LADDER;
 
@@ -7746,6 +7799,7 @@ function _hyLadderSystems(tag) {
             moons.forEach(function (mo) { maxRatio = Math.max(maxRatio, (mo.userData.orbitRadius || 0) / r0); });
             const M0 = HY_LADDER.MOON_ORBIT_MIN, M1 = HY_LADDER.MOON_ORBIT_MAX;
             const squeeze = maxRatio > M1 ? (M1 - M0) / Math.max(1e-3, maxRatio - M0) : 1;
+            const _mo1 = [];
             moons.forEach(function (mo) {
                 const mu = mo.userData;
                 const mr1 = Math.max(HY_LADDER.moon[0],
@@ -7753,14 +7807,21 @@ function _hyLadderSystems(tag) {
                 _hyResizeBody(mo, mr1);
                 if (mu.orbitRadius > 0) {
                     const ratio = mu.orbitRadius / r0;
-                    const o1 = r1 * Math.max(M0, ratio > M0 ? M0 + (ratio - M0) * squeeze : ratio);
-                    const km = o1 / mu.orbitRadius;
-                    mu.orbitRadius = o1;
-                    if (mo.parent === m) mo.position.multiplyScalar(km);
+                    _mo1.push({ mo: mo, r: mr1, o: r1 * Math.max(M0, ratio > M0 ? M0 + (ratio - M0) * squeeze : ratio) });
                 }
                 mu._hyLadder = true;
                 bodies++;
             });
+            // package N (scale2): neighbouring moons never touch at conjunction
+            // (some builders spaced them 8 u apart — at ladder size they overlapped)
+            _mo1.sort(function (a, b) { return a.o - b.o; });
+            for (let i = 0; i < _mo1.length; i++) {
+                if (i === 0) _mo1[i].o = Math.max(_mo1[i].o, r1 + _mo1[i].r * 2);
+                else _mo1[i].o = Math.max(_mo1[i].o, _mo1[i - 1].o + HY_SCALE.ORBIT_K * (_mo1[i - 1].r + _mo1[i].r));
+                const mu = _mo1[i].mo.userData, km = _mo1[i].o / mu.orbitRadius;
+                mu.orbitRadius = _mo1[i].o;
+                if (_mo1[i].mo.parent === m) _mo1[i].mo.position.multiplyScalar(km);
+            }
             if (m.userData.orbitRadius > 0) orbiters.push(m);
             m.userData._hyLadder = true;
         });
@@ -7799,16 +7860,25 @@ function _hyPlaceOuterSystems() {
     if (!O.length) return 0;
     const nodes = [];
     const sol = window.localSystemOffset || _hySolCenter();
-    nodes.push({ c: new THREE.Vector3(sol.x, sol.y, sol.z), R: _hySunR(), edge: _hySolEdge(), fixed: true });
+    nodes.push(_hySolNode(new THREE.Vector3(sol.x, sol.y, sol.z)));
     const col = _hyCollectSystems();
     col.holes.forEach(function (h) {
         nodes.push({ c: h.position.clone(), R: _hyBodyR(h), edge: HY_BH.CLEAR_RADII * _hyBodyR(h), fixed: true });
     });
-    col.systems.forEach(function (g) { nodes.push({ c: g.center.clone(), R: g.R, edge: g.edge, fixed: true }); });
+    col.systems.forEach(function (g) { nodes.push({ c: g.center.clone(), R: g.R, edge: g.edge, ext: g.edge, big: g.big, fixed: true }); });
+    // package N (scale2): and against the heart worlds and the nebula clouds,
+    // which the outer shell (now 83-166k) can reach
+    planets.forEach(function (p) {
+        if (p && p.userData && p.userData.heartWorld) nodes.push({ c: p.position.clone(), R: _hyBodyR(p), edge: _hyReach(p), fixed: true, body: p });
+    });
+    if (typeof nebulaClouds !== 'undefined' && nebulaClouds) nebulaClouds.forEach(function (nb) {
+        if (nb && nb.position) nodes.push({ c: nb.position.clone(), R: 0, edge: HY_SCALE.NEBULA_REACH, fixed: true });
+    });
     const mov = [];
     O.forEach(function (s) {
         if (!s || !s.position || s.userData._hyPlaced) return;
-        const n = { c: s.position.clone(), R: s.userData._hyR || 0, edge: s.userData._hyEdge || 4000, fixed: false, s: s };
+        const n = { c: s.position.clone(), R: s.userData._hyR || 0, edge: s.userData._hyEdge || 4000,
+            ext: s.userData._hyEdge || 4000, big: Math.max(s.userData._hyR || 0, HY_LADDER.FIELD[1]), fixed: false, s: s };
         nodes.push(n); mov.push(n);
     });
     _hySolve(nodes);
@@ -7860,7 +7930,7 @@ function createOptimizedPlanets3D() {
         // it reads as a proper star without dominating the system; mass
         // / gravity (userData below) deliberately unchanged so slingshot
         // physics stay the same.
-        // HYBRID (solScale:big): the Sun's radius comes from HY_SOL (300).
+        // HYBRID (solScale:big): the Sun's radius comes from HY_SOL (650, package N).
         const _sunR = _hySunR();
         const sunGeometry = new THREE.SphereGeometry(_sunR, _sunR > 80 ? 64 : 32, _sunR > 80 ? 48 : 32);
         const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff44 });
@@ -7874,7 +7944,9 @@ function createOptimizedPlanets3D() {
         // the AU-proportional layout — bumped range to 25k so Neptune
         // still receives ~0.7 effective intensity with decay 1.0,
         // which matches its real-world dim sunlight).
-        const sunLight = new THREE.PointLight(0xfff5d0, 3.0, 25000, 1.0);
+        // package N (scale2): the reach follows Sol's edge (25,000 was 1.65 x
+        // the 15,183 edge; keep that ratio so Neptune keeps its share of light).
+        const sunLight = new THREE.PointLight(0xfff5d0, 3.0, _hyScaleOn() ? Math.max(25000, Math.round(_hySolEdge() * 1.65)) : 25000, 1.0);
         sunLight.position.copy(sun.position);
         sunLight.castShadow = false;
         
@@ -8637,7 +8709,11 @@ for (let i = 0; i < _core8StarCount; i++) {
 // so the later black-hole try-block can still see it.
 const localGatewayPosition = {
     x: localSystemOffset.x + 2600,
-    y: localSystemOffset.y - 32000,
+    // package N (scale2): below Sol's (now 26k) keep-clear sphere plus the
+    // gateway's own clear radius, never closer than the old 32,000
+    y: localSystemOffset.y - (_hyScaleOn()
+        ? Math.max(32000, Math.round(_hySolEdge() * (1 + HY_SCALE.EDGE_MARGIN) + HY_BH.CLEAR_RADII * HY_BH.SIZE * HY_BH.REL.gateway + 4000))
+        : 32000),
     z: localSystemOffset.z + 2000
 };
 if (typeof window !== 'undefined') window.localGatewayPosition = localGatewayPosition;
@@ -11017,9 +11093,9 @@ if (Math.random() < moonProbability) {
     if (typeof camera !== 'undefined' && camera) {
         try {
             // HYBRID (solScale:big): 160 u out is inside the scaled Sun; use the
-            // start point resetCameraToGamePosition() sets (Sol + 720, 120, 80).
+            // start point resetCameraToGamePosition() sets (Sol + HY_SOL.START).
             const earthInitialPosition = _hyScaleOn()
-                ? new THREE.Vector3(localSystemOffset.x + 720, localSystemOffset.y + 120, localSystemOffset.z + 80)
+                ? new THREE.Vector3(localSystemOffset.x + HY_SOL.START.x, localSystemOffset.y + HY_SOL.START.y, localSystemOffset.z + HY_SOL.START.z)
                 : new THREE.Vector3(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
             camera.position.copy(earthInitialPosition);
             camera.lookAt(new THREE.Vector3(0, 0, 0));

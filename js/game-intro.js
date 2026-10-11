@@ -3823,6 +3823,11 @@ function resetCameraToGamePosition() {
     const earthY = localSystemOffset.y;
     const earthZ = localSystemOffset.z;
     camera.position.set(earthX + earthOrbitOffset, earthY + 120, earthZ + earthOrbitOffset);
+    // package N (scale2): the start point is HY_SOL.START (2.45 Sun radii,
+    // game-objects.js) — the Sun grew to 650, so (720, 120, 80) is inside its keep-out.
+    if (typeof HY_SOL !== 'undefined' && typeof _hyScaleOn === 'function' && _hyScaleOn()) {
+        camera.position.set(localSystemOffset.x + HY_SOL.START.x, localSystemOffset.y + HY_SOL.START.y, localSystemOffset.z + HY_SOL.START.z);
+    }
     // Open the game facing Sagittarius A* (galactic center at the origin)
     // so the player's first view is the heart of the Milky Way — Earth
     // and Sol still sit just behind/below the camera and are easy to

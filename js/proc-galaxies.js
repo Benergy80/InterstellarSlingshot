@@ -198,6 +198,30 @@
         TOAST_HOLD_MS: 7000
     };
 
+    // HYBRID package N (scale2): the procedural shell joins the one size
+    // ladder (HY_LADDER, game-objects.js) — planets onto FIELD 240-620, stars
+    // onto the star class 650-880, moons onto 40-150 — and its distances grow
+    // by the universe factor (HY_SCALE.UNIVERSE_K). Off (factor 1, sizes as
+    // authored) under ?hy=solScale:overhaul.
+    function hyOn() {
+        return typeof window !== 'undefined' && typeof window._hyU === 'function' &&
+            window._hyU() > 1 && !!window.HY_LADDER;
+    }
+    function hyMap(r, a0, a1, cls) {
+        var t = Math.max(0, Math.min(1, (r - a0) / (a1 - a0)));
+        return cls[0] + t * (cls[1] - cls[0]);
+    }
+    function hyPlanetR(r) { return hyOn() ? hyMap(r, 34, 470, window.HY_LADDER.FIELD) : r; }
+    function hyStarR(r) { return hyOn() ? hyMap(r, 189, 708, window.HY_LADDER.star) : r; }
+    function hyMoonR(r) { return hyOn() ? hyMap(r, 12, 74, window.HY_LADDER.moon) : r; }
+    function hyApplyUniverse() {
+        if (PG._hyU) return;
+        var u = hyOn() ? window._hyU() : 1;
+        PG._hyU = u;
+        ['SHELL_INNER', 'SHELL_OUTER', 'VISIBLE_RANGE', 'DETAIL_RANGE', 'BODY_CULL_RANGE', 'BODY_CULL_FLOOR']
+            .forEach(function (k) { PG[k] = Math.round(PG[k] * u); });
+    }
+
     // -------------------------------------------------------------------------
     // SEEDED PRNG — mulberry32
     // -------------------------------------------------------------------------
@@ -1147,7 +1171,9 @@
         // Moon tints wander further than a planet's (±0.14 of the arc) and are
         // rolled independently per moon, so a three-moon retinue reads as three
         // captured rocks rather than three copies of one.
-        var radius = opts.radius || Math.max(12, Math.min(74, pr * (0.09 + rand() * 0.15)));
+        var radius = opts.radius ? hyMoonR(opts.radius)
+            : (hyOn() ? Math.max(window.HY_LADDER.moon[0], Math.min(window.HY_LADDER.moon[1], pr * (0.09 + rand() * 0.15)))
+                      : Math.max(12, Math.min(74, pr * (0.09 + rand() * 0.15))));
         var mat = makeBodyMaterial(sys, rand, arch, (rand() - 0.5) * 0.28);
         var geo = new THREE.SphereGeometry(radius, LOD_SEGS[0][0], LOD_SEGS[0][1]);
         var mesh = new THREE.Mesh(geo, mat);
@@ -1195,7 +1221,7 @@
 
     function buildPlanet(sys, rand, index, orbitRadius, zone) {
         var arch = rollArchetype(rand, zone, sys.archMul);
-        var radius = span(rand, arch.radius);
+        var radius = hyPlanetR(span(rand, arch.radius));
         // A gas giant must never out-size the sun it orbits.
         if (arch.id === 0 && sys.primaryRadius) {
             radius = Math.min(radius, sys.primaryRadius * 0.86);
@@ -1485,8 +1511,8 @@
         // a ~50x span the player can actually feel from the cockpit.
         var starScale = layout.starScale;
         if (sys.binary) {
-            sys.primaryRadius = (280 + rand() * 140) * starScale;
-            var secondary = (220 + rand() * 120) * starScale;
+            sys.primaryRadius = hyStarR((280 + rand() * 140) * starScale);
+            var secondary = hyStarR((220 + rand() * 120) * starScale);
             // Radii FIRST, separation second. The tight-binary layout asks for
             // suns 520u apart and two 340u suns at 520u separation are welded
             // together; the floor keeps a full star's width of sky between the
@@ -1501,7 +1527,7 @@
             sys.stars[1].mesh.userData.name = name + ' Secondary';
         } else {
             sys.binarySeparation = 0;
-            sys.primaryRadius = (380 + rand() * 220) * starScale;
+            sys.primaryRadius = hyStarR((380 + rand() * 220) * starScale);
             sys.stars.push(buildStar(sys, rand, sys.primaryRadius, new THREE.Vector3(0, 0, 0)));
         }
 
@@ -2023,6 +2049,7 @@
     function initProcGalaxies(seedOverride) {
         if (initialized) return systems.length;
         if (typeof THREE === 'undefined') return 0;
+        hyApplyUniverse();
         var sc = activeScene();
         if (!sc) {
             console.warn('PROC-GALAXY: no scene yet, init skipped');
@@ -2075,6 +2102,7 @@
         // Fibonacci-sphere placement with jitter: even coverage of the shell,
         // so no matter which way the player leaves the core they find one.
         var golden = Math.PI * (3 - Math.sqrt(5));
+        var hyObstacles = null;   // HYBRID package N: built once, below
         for (var i = 0; i < count; i++) {
             var y = 1 - (i / Math.max(1, count - 1)) * 2;
             y *= 0.72;                                    // bias toward the plane
@@ -2117,6 +2145,42 @@
                 if (dir.lengthSq() > 1e-6) {
                     dir.normalize().multiplyScalar(PG.SHELL_INNER - reach);
                     built.center.add(dir);
+                    resyncSystem(built);
+                }
+            }
+            // HYBRID package N: the authored outer systems (Borg / exotic
+            // cores) and the far nebula systems reach into this shell once
+            // everything scales with the universe; keep each procedural system
+            // body-clear of them (HY_SCALE rule 1: envelope + PLACE_K x the two
+            // largest bodies), pushed straight away from the offender.
+            if (hyOn() && window.HY_SCALE) {
+                if (!hyObstacles) {
+                    hyObstacles = [];
+                    (window.outerInterstellarSystems || []).forEach(function (os) {
+                        if (os && os.position && os.userData) hyObstacles.push({ p: os.position, ext: os.userData._hyEdge || 4000,
+                            big: Math.max(os.userData._hyR || 0, window.HY_LADDER.FIELD[1]) });
+                    });
+                    (planetsArray() || []).forEach(function (b) {
+                        var bu = b && b.userData;
+                        if (!bu || bu.isProcedural || (bu.type !== 'star' && bu.type !== 'planet') || bu.parentPlanet) return;
+                        var br = (b.geometry && b.geometry.parameters && b.geometry.parameters.radius) || bu.radius || 0;
+                        if (br >= 200) hyObstacles.push({ p: b.position, ext: 0, big: br });
+                    });
+                }
+                var myBig = Math.max(built.primaryRadius || 0, window.HY_LADDER.FIELD[1]);
+                for (var pass = 0; pass < 3; pass++) {
+                    var movedAny = false;
+                    for (var oi = 0; oi < hyObstacles.length; oi++) {
+                        var ob = hyObstacles[oi];
+                        var need = built.envelope + ob.ext + window.HY_SCALE.PLACE_K * (myBig + ob.big);
+                        var away = built.center.clone().sub(ob.p);
+                        var dd = away.length();
+                        if (dd >= need) continue;
+                        if (dd < 1) away.set(1, 0, 0); else away.multiplyScalar(1 / dd);
+                        built.center.addScaledVector(away, need - dd + 1);
+                        movedAny = true;
+                    }
+                    if (!movedAny) break;
                     resyncSystem(built);
                 }
             }

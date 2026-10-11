@@ -147,7 +147,9 @@ function _ensureAtmosphericFog() {
     _fogMixColor = new THREE.Color();
 
     if (!scene.fog) {
-        scene.fog = new THREE.Fog(atmosphericConfig.colorA, atmosphericConfig.fogNear, atmosphericConfig.fogFar);
+        // package N (scale2): fog distances x the universe factor (HY_SCALE.UNIVERSE_K)
+        const _u = (typeof window !== 'undefined' && typeof window._hyU === 'function') ? window._hyU() : 1;
+        scene.fog = new THREE.Fog(atmosphericConfig.colorA, atmosphericConfig.fogNear * _u, atmosphericConfig.fogFar * _u);
     }
     _fogInitialized = true;
     console.log('🌌 Synthwave atmospheric fog engaged:', atmosphericConfig.fogNear, '→', atmosphericConfig.fogFar, 'units');
