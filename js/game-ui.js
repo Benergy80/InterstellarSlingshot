@@ -4004,7 +4004,7 @@ const HY_UNIMAP = {
     ENEMY_CELL_PX: 6,            // hostile bucket size (CSS px)
     CORE_NEAR: 30000,            // "in <galaxy>" zone radius around a core
     OUTER_NEAR: 20000,           // "at <frontier system>" zone radius
-    GLYPH: { core: 4.2, sgr: 4.6, sol: 3.4, nebula: 2.6, nebulaFaint: 1.1, outer: 2.6, player: 6.5, wing: 1.6, sos: 2.4, objective: 4.2, reticle: 5.5, hostile: 2.2 },
+    GLYPH: { core: 4.2, sgr: 4.6, sol: 3.4, nebula: 2.6, nebulaFaint: 1.1, outer: 2.6, player: 6.5, wing: 1.6, sos: 2.4, objective: 4.2, reticle: 5.5, hostile: 2.2, boss: 4.0 },
     FONT: "7px 'Share Tech Mono', monospace",
     COL: {
         ring: 'rgba(0,200,255,0.30)', ringText: 'rgba(120,210,255,0.75)',
@@ -4012,9 +4012,12 @@ const HY_UNIMAP = {
         nebula: '#ff5ad2', charted: '#39ff8a', faint: 'rgba(255,90,210,0.40)',
         borg: '#33ff55', hostile: '#ff3344', cleared: '#39ff8a',
         player: '#00ff96', wing: '#8fd3ff', sos: '#ff2a2a', reticle: '#ffcc33', objective: '#ffffff',
+        boss: '#ff3cf0',
         text: '#bfefff', shade: 'rgba(0,0,20,0.85)',
     },
     ABBR: ['FED', 'KLG', 'REB', 'ROM', 'EMP', 'CAR', 'SITH', 'VUL'],
+    LEGEND_H: 34,                // the legend box under the disc, both views (two lines of the glyph key)
+    LEGEND_FONT: '10px',         // glyph-key font so the key fits two lines at the pinned panel width
 };
 if (typeof window !== 'undefined') window.HY_UNIMAP = HY_UNIMAP;
 
@@ -4115,15 +4118,27 @@ function _hyUniLegend(on) {
         _hyUni.legendOrig = _hyUni.legendEl.innerHTML;
     }
     const el = _hyUni.legendEl, want = on ? 'uni' : 'gal';
+    if (!el.dataset.hyLocked) {
+        // Ben 2026-10-11: "Universal View and Galactic View UI panels should be the
+        // same size when switching between them." The glyph key wrapped to two
+        // lines and widened the panel (measured 267x358 vs 292x375). Both views
+        // now share one two-line legend box; the panel width is pinned in
+        // css/styles.css (.ui-panel.bottom-right).
+        el.dataset.hyLocked = '1';
+        el.style.height = HY_UNIMAP.LEGEND_H + 'px';
+        el.style.overflow = 'hidden';
+        el.style.lineHeight = '1.35';
+    }
     if (el.dataset.hyMode === want) return;
     el.dataset.hyMode = want;
+    el.style.fontSize = on ? HY_UNIMAP.LEGEND_FONT : '';
     if (!on) { el.innerHTML = _hyUni.legendOrig; return; }
     const C = HY_UNIMAP.COL;
     const s = function (c, g, t) { return '<span style="color:' + c + '">' + g + '</span>' + t; };
-    el.innerHTML = s(C.hostile, '◎', 'held ') + s(C.cleared, '◎', 'freed ') + s(C.nebula, '○', 'nebula') +
-        s(C.charted, '✓', 'charted ') + s('#ffaa55', '◇', 'frontier ') + s(C.borg, '□', 'Borg<br>') +
+    el.innerHTML = s(C.hostile, '◎', 'held ') + s(C.cleared, '◎', 'freed ') + s(C.nebula, '○', 'nebula ') +
+        s(C.charted, '✓', 'charted ') + s('#ffaa55', '◇', 'frontier ') + s(C.borg, '□', 'Borg ') +
         s(C.objective, '◌', 'objective ') + s(C.reticle, '⌜⌟', 'target ') + s(C.sos, '●', 'SOS ') +
-        s(C.hostile, '✕', 'hostiles ') + s(C.wing, '•', 'wingmen');
+        s(C.hostile, '✕', 'hostiles ') + s(C.boss, '◆', 'boss ') + s(C.wing, '•', 'wingmen');
 }
 
 function _hyUniStaticSig() {
@@ -4384,6 +4399,20 @@ function _hyDrawUniversalMap(galaxyMap) {
             const x = b.x / b.n, y = b.y / b.n, s = GL.hostile * (b.n >= 6 ? 1.6 : b.n >= 2 ? 1.25 : 1) * (b.boss ? 1.4 : 1);
             ctx.beginPath(); ctx.moveTo(x - s, y - s); ctx.lineTo(x + s, y + s); ctx.moveTo(x + s, y - s); ctx.lineTo(x - s, y + s); ctx.stroke();
         });
+        // Ben 2026-10-11: "when bosses spawn they need to appear on the map" — every
+        // live boss-tier enemy at ANY range, a pulsing diamond (the chart's projection
+        // already pins anything beyond the range rings to the rim), tagged BOSS.
+        ctx.lineWidth = 1.4;
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i], u = e && e.userData; if (!u || !(u.health > 0) || !e.position) continue;
+            if (!(u.isBoss || u.isEliteGuardian)) continue;
+            G.proj(e.position.x + woo.x, e.position.z + woo.z, Q);
+            const x = Q.x, y = Q.y, s = GL.boss * (0.85 + 0.3 * pulse);
+            ctx.strokeStyle = C.boss; ctx.fillStyle = C.boss;
+            ctx.beginPath(); ctx.moveTo(x, y - s); ctx.lineTo(x + s, y); ctx.lineTo(x, y + s); ctx.lineTo(x - s, y); ctx.closePath();
+            ctx.globalAlpha = 0.35 + 0.4 * pulse; ctx.fill(); ctx.globalAlpha = 1; ctx.stroke();
+            label('BOSS', x, y - s - 5, C.boss);
+        }
     }
     // wingmen
     if (typeof allyShips !== 'undefined') {
@@ -4651,6 +4680,17 @@ if (typeof outerInterstellarSystems !== 'undefined') {
                     distance: distance,
                     isBoss: enemy.userData.isBoss
                 });
+            } else if (enemy.userData.isBoss || enemy.userData.isEliteGuardian) {
+                // Ben 2026-10-11: bosses appear on the map when they spawn — at any
+                // range, pinned to the radar's rim in their true bearing.
+                nearbyObjects.push({
+                    position: enemy.position,
+                    type: 'enemy',
+                    name: enemy.userData.name,
+                    distance: distance,
+                    isBoss: true,
+                    offScale: true
+                });
             }
         });
         
@@ -4762,8 +4802,13 @@ if (typeof outerInterstellarSystems !== 'undefined') {
             const relativeX = (obj.position.x - camera.position.x) / radarRange;
             const relativeZ = (obj.position.z - camera.position.z) / radarRange;
             
-            const screenX = 50 + relativeX * 50; // Scale to fit map
-            const screenZ = 50 + relativeZ * 50;
+            let screenX = 50 + relativeX * 50; // Scale to fit map
+            let screenZ = 50 + relativeZ * 50;
+            if (obj.offScale) {   // a boss beyond the radar range: on the rim, true bearing
+                const _r = Math.hypot(relativeX, relativeZ) || 1;
+                screenX = 50 + (relativeX / _r) * 44;
+                screenZ = 50 + (relativeZ / _r) * 44;
+            }
             
             // Only show if within map bounds
             if (screenX >= 5 && screenX <= 95 && screenZ >= 5 && screenZ <= 95) {
@@ -4798,6 +4843,7 @@ if (obj.type === 'ally') {
 } else if (obj.type === 'enemy') {
     dotColor = obj.isBoss ? '#ff00ff' : '#ff4444';
     dotSize = obj.isBoss ? '8px' : '6px';
+    if (obj.offScale) dot.title = (obj.name || 'Boss') + ' (' + Math.round(obj.distance) + 'u)';
 } else if (obj.type === 'civilian_ship') {
     dotColor = obj.underAttack ? '#ffaa00' : '#00ff88';  // Orange if under attack, green otherwise
     dotSize = '5px';

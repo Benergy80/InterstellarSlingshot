@@ -13603,8 +13603,48 @@ function _aerialSystem(o) {
 const AERIAL_LOCAL_IN = 3000 * 3000;
 const AERIAL_LOCAL_OUT = 4500 * 4500;
 let _aerialLocalSys = null;
+// HYBRID — Ben, 2026-10-11: "sol system planets need to be visible from further
+// away." Sol's worlds sit 11-52k apart since the orbits doubled, so the 3,000 u
+// adoption band dropped the local exemption the moment the ship left Earth's
+// neighbourhood and the inner worlds hazed out mid-system. Inside Sol's own
+// sphere (its edge + margin) the whole system counts as local.
+let _hySolAe = null;
+function _hySolAeSys() {
+    if (_hySolAe) return _hySolAe;
+    if (typeof planets === 'undefined' || !planets) return null;
+    let sun = null;
+    for (let i = 0; i < planets.length; i++) {
+        const o = planets[i];
+        if (o && o.userData && o.userData.isLocalStar) { sun = o; break; }
+    }
+    if (!sun) return null;
+    let sys = _aerialSystem(sun);
+    if (!sys) {
+        // The Sun publishes no system key of its own (measured: _aerialSystem(sun)
+        // null while Earth's is the shared systemCenter) — take its planets'.
+        for (let i = 0; i < planets.length; i++) {
+            const o = planets[i], u = o && o.userData;
+            if (!u || u.type !== 'planet') continue;
+            const k = _aerialSystem(o);
+            if (k && typeof k === 'object' && typeof k.x === 'number' &&
+                Math.abs(k.x - sun.position.x) < 2000 && Math.abs(k.z - sun.position.z) < 2000) { sys = k; break; }
+        }
+    }
+    if (!sys) return null;
+    _hySolAe = { sun: sun, sys: sys };
+    return _hySolAe;
+}
 function _aerialLocalPass(cx, cy, cz) {
     if (typeof planets === 'undefined' || !planets) { _aerialLocalSys = null; return; }
+    const _sa = _hySolAeSys();
+    if (_sa && _sa.sys && typeof window !== 'undefined' && typeof window._hySolAreaRadius === 'function') {
+        const _sr = window._hySolAreaRadius();
+        if (_sr) {
+            _cullWorldPos(_sa.sun);
+            const dx = _cullWP.x - cx, dy = _cullWP.y - cy, dz = _cullWP.z - cz;
+            if (dx * dx + dy * dy + dz * dz <= _sr * _sr) { _aerialLocalSys = _sa.sys; return; }
+        }
+    }
     let bestD2 = Infinity, best = null;
     for (let i = 0; i < planets.length; i++) {
         const o = planets[i];

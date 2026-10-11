@@ -61,6 +61,14 @@
     get paused() { return ap.paused; },
     get navStatus() { return ap._navStatus || null; },
     get phase() { return ap.phase; },
+    // HYBRID boss hunt (HY_BOSS_HUNT): the live hunt, and the last one closed.
+    get bossHunt() {
+      const h = ap._bossHunt;
+      return h ? { name: h.name, from: h.from, why: h.why, ms: Date.now() - h.t0, alive: _bossAlive(h.boss),
+        dist: (h.boss && h.boss.position) ? Math.round(camPos().distanceTo(h.boss.position)) : null } : null;
+    },
+    get lastBossHunt() { return ap._lastBossHunt || null; },
+    get bossHunts() { return { started: ap._bossHunts || 0, done: ap._bossHuntsDone || 0 }; },
     // Last executed warp arrival cut-off, and how many have fired this run.
     // Read-only proof that the cut path RUNS (it logged zero executions across
     // 17 ramped exits before the guidance fix) — the same record the
@@ -711,7 +719,8 @@
         ap.phase !== 'combat' &&
         ap.phase !== 'fightBorg' &&
         ap.phase !== 'blackHoleWarp' &&
-        ap.phase !== 'followDiscoveryPath') {
+        ap.phase !== 'followDiscoveryPath' &&
+        !(ap._bossHunt && ap.phase === 'bossEngage')) {   // HYBRID boss hunt: the chase is not interrupted by strays
       const _navHostile = navDetectedEnemy();
       // Don't interrupt the locked warp cycle — physics owns velocity
       // and braking is futile. coastToNebulaCluster already breaks off
@@ -735,13 +744,22 @@
     // silently if we're already fighting.
     if (typeof gameState !== 'undefined' && gameState._pendingBossEngage) {
       if (ap.phase === 'bossEngage' || ap.phase === 'combat' || ap.phase === 'fightBorg') {
+        // Already fighting: open the hunt on the new boss so the fight is seen
+        // through and the interrupted mission step resumes after it.
         gameState._pendingBossEngage = false;
-      } else if (ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' &&
-                 ap.phase !== 'warpToNebulaCluster' && ap.phase !== 'coastToNebulaCluster') {
+        _bossHuntStart(_bossHuntPick(null), 'spawn-in-fight');
+      } else if (ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' && !_bossDivertLocked()) {
+        // HYBRID boss hunt (Ben 2026-10-11): a boss that appears is pursued until
+        // defeated before the path of discovery continues — from any phase, at
+        // any range. A lit burn or a locked coast only defers this (flag kept).
         gameState._pendingBossEngage = false;
-        setStatus('Boss signature detected — diverting to engage');
-        transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
-        goPhase('bossEngage');
+        const _hb = _bossHuntPick(null);
+        if (_hb) {
+          _bossHuntStart(_hb, 'spawn');
+          setStatus('Boss signature detected — diverting to engage');
+          transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
+          goPhase('bossEngage');
+        }
       }
     }
 
@@ -749,24 +767,50 @@
     // into the set-piece fight from any explore/travel phase. Excluded:
     // phases that ARE the fight, warp-locked transits (physics owns the
     // velocity), and pre-game. Throttled — it's a full enemies scan.
-    if (fc % 30 === 0 &&
-        ap.phase !== 'init' && ap.phase !== 'combat' &&
-        ap.phase !== 'bossEngage' && ap.phase !== 'fightBorg' &&
-        ap.phase !== 'blackHoleWarp' &&
-        ap.phase !== 'warpToNebulaCluster' && ap.phase !== 'coastToNebulaCluster' &&
-        typeof enemies !== 'undefined') {
+    // HYBRID boss hunt: the scan now runs in every phase but init — it also
+    // notices a boss APPEARING (newly alive within APPEAR_R), keeps a live
+    // hunt on its boss from any non-fight phase, and closes a hunt whose boss
+    // died while the demo was busy with an escort. The divert itself still
+    // waits for a locked transit to end (_bossDivertLocked).
+    if (fc % 30 === 0 && ap.phase !== 'init' && typeof enemies !== 'undefined') {
       const _cp = camPos();
+      const _seen = ap._bossSeen || (ap._bossSeen = new Set());
+      const _seeded = !!ap._bossSeenSeeded; ap._bossSeenSeeded = true;
+      const _fighting = ap.phase === 'combat' || ap.phase === 'bossEngage' || ap.phase === 'fightBorg';
+      const _canDivert = !_fighting && ap.phase !== 'blackHoleWarp' && !_bossDivertLocked();
+      let _pull = null, _why = null;
       for (let i = 0; i < enemies.length; i++) {
         const e = enemies[i];
-        if (!e || !e.userData || e.userData.health <= 0) continue;
-        if (!e.userData.isBoss && !e.userData.isEliteGuardian) continue;
+        if (!_bossTier(e)) continue;
+        if (!_bossAlive(e)) { _seen.delete(e); continue; }
+        const _isNew = _seeded && !_seen.has(e);
+        _seen.add(e);
+        if (_pull) continue;
+        const d = _cp.distanceTo(e.position);
         // 25k reach (was 15k): a combat overshoot can strand the demo
         // 16k+ from a wounded boss — the magnet must still pull it back.
-        if (_cp.distanceTo(e.position) > 25000) continue;
+        if (d <= HY_BOSS_HUNT.MAGNET_R) { _pull = e; _why = 'magnet'; }
+        else if (_isNew && d <= HY_BOSS_HUNT.APPEAR_R) { _pull = e; _why = 'appeared'; }
+      }
+      if (ap._bossHunt && !_bossAlive(ap._bossHunt.boss)) {
+        const _hn = _bossHuntResolve();
+        if (_hn && _hn !== 'default') {
+          if (_fighting) ap.returnPhase = _hn;          // this fight returns to the interrupted step
+          else if (ap.phase !== _hn) goPhase(_hn);
+        }
+      } else if (ap._bossHunt && _canDivert) {
+        goPhase('bossEngage');
+      } else if (ap._bossHunt && ap.phase === 'combat' && ap.combatTarget !== ap._bossHunt.boss &&
+                 !(ap.combatTarget && ap.combatTarget.userData && ap.combatTarget.userData.isBossSupport)) {
+        // A stray dogfight yields to the hunt; bossEngage picks the escort or the boss itself.
+        goPhase('bossEngage');
+      } else if (_pull && _canDivert) {
+        _bossHuntStart(_pull, _why);
         setStatus('Boss signature detected — diverting to engage');
         transmit('TACTICAL', 'Boss-class signature detected!\nDiverting to engage.');
         goPhase('bossEngage');
-        break;
+      } else if (_pull && _fighting) {
+        _bossHuntStart(_pull, _why);
       }
     }
 
@@ -870,7 +914,7 @@
     // boss engagement — the pirate flagship spawns once enough pirates die,
     // and a demo that then fights it for the rest of the run never shows the
     // nebulae (soak: 0 warps, 0 parks in 180 s).
-    if ((ap.phase === 'combat' || ap.phase === 'bossEngage') && _solBudgetOut()) { _solBudgetLeave(); return; }
+    if ((ap.phase === 'combat' || ap.phase === 'bossEngage') && !ap._bossHunt && _solBudgetOut()) { _solBudgetLeave(); return; }
 
     // Dispatch
     switch (ap.phase) {
@@ -2623,7 +2667,11 @@
       ]);
       const localAlive = _countLocalEnemies();
       let nextPhaseAfterKill;
-      if (ap.returnPhase && MISSION_RETURN_PHASES.has(ap.returnPhase)) {
+      if (ap._bossHunt && _bossAlive(ap._bossHunt.boss)) {
+        // HYBRID boss hunt: the boss outranks the next local — back to it.
+        nextPhaseAfterKill = 'bossEngage';
+        ap.returnPhase = 'bossEngage';
+      } else if (ap.returnPhase && MISSION_RETURN_PHASES.has(ap.returnPhase)) {
         // Mission step — resume it.
         nextPhaseAfterKill = ap.returnPhase;
       } else if (localAlive > 0) {
@@ -2642,7 +2690,7 @@
       // 70% chance (was 40) to detour to an asteroid showcase before
       // resuming, with a wider search; otherwise route directly to the
       // next phase. The next-phase decision is committed via _mineReturnPhase.
-      if (Math.random() < 0.70 && _findNearestAsteroid(1600)) {
+      if (!ap._bossHunt && Math.random() < 0.70 && _findNearestAsteroid(1600)) {
         ap._mineReturnPhase = nextPhaseAfterKill;
         ap._mineShotsLeft = 4;
         setTimeout(() => { if (ap.active) goPhase('mineAsteroids'); }, 1000);
@@ -2957,6 +3005,90 @@
     // phase will still be fine — we keep chasing.
   }
 
+  // ─── BOSS HUNT (HYBRID) ──────────────────────────────────────────────────
+  // Ben, 2026-10-11: "When a boss appears the demo player should pursue the
+  // boss until defeated before proceeding with the path of discovery."
+  // A boss that appears — spawnBossForArea's _pendingBossEngage, the 25k
+  // magnet, or a boss-tier enemy newly alive within APPEAR_R — opens a HUNT:
+  // the phase it interrupted is remembered (with its discovery-path snapshot),
+  // bossEngage chases THAT boss at any range (O-warp legs when far), the Sol
+  // fight budget and the 60 s not-closing abandon stand down, and when the
+  // boss is dead the interrupted phase is resumed. A lit burn or a locked
+  // coast only defers the divert. MAX_MS is the only way out of a hunt that
+  // cannot be won. demoPilot.bossHunt exposes the live record.
+  const HY_BOSS_HUNT = {
+    APPEAR_R: 60000,      // a boss newly alive within this is "a boss appeared"
+    MAGNET_R: 25000,      // any live boss within this pulls the demo in (as before)
+    MAX_MS: 300000,       // hard cap on one hunt
+    RESUME: {             // interrupted phase → phase to resume after the boss
+      followDiscoveryPath: 'followDiscoveryPath',
+      warpToNebulaCluster: 'warpToNebulaCluster',
+      coastToNebulaCluster: 'warpToNebulaCluster',
+      orbitNebulaPlanet: 'orbitNebulaPlanet',
+      gotoBlackHoleGalaxy: 'gotoBlackHoleGalaxy',
+      approachBorg: 'approachBorg',
+      findLocalEnemies: 'findLocalEnemies'
+    }
+  };
+  function _bossTier(e) {
+    return !!(e && e.userData && (e.userData.isBoss || e.userData.isEliteGuardian));
+  }
+  function _bossAlive(e) {
+    return !!(e && e.userData && e.userData.health > 0 && e.parent);
+  }
+  // Physics owns the ship: a lit burn with a staged arrival, an active warp,
+  // a whip or its glide. The divert waits for the stick to come back.
+  function _bossDivertLocked() {
+    if (_burnCommitted()) return true;
+    const ew = gameState.emergencyWarp, sl = gameState.slingshot;
+    return !!((ew && (ew.active || ew.transitioning)) || (sl && sl.active) || gameState.slingshotWhip);
+  }
+  function _bossHuntPick(prefer) {
+    if (_bossAlive(prefer)) return prefer;
+    if (typeof bossSystem !== 'undefined' && _bossTier(bossSystem.activeBoss) && _bossAlive(bossSystem.activeBoss)) return bossSystem.activeBoss;
+    let best = null, bestD = Infinity;
+    if (typeof enemies !== 'undefined') {
+      const cp = camPos();
+      for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (!_bossTier(e) || !_bossAlive(e)) continue;
+        const d = cp.distanceTo(e.position);
+        if (d < bestD) { bestD = d; best = e; }
+      }
+    }
+    return best;
+  }
+  function _bossHuntStart(boss, why) {
+    if (!boss) return;
+    if (ap._bossHunt) {
+      if (!_bossAlive(ap._bossHunt.boss) && _bossAlive(boss)) ap._bossHunt.boss = boss;
+      return;
+    }
+    const inFight = ap.phase === 'combat' || ap.phase === 'bossEngage' || ap.phase === 'fightBorg';
+    const from = inFight ? (ap.returnPhase || 'findLocalEnemies')
+      : (ap.phase === 'mineAsteroids' ? (ap._mineReturnPhase || 'findLocalEnemies') : ap.phase);
+    ap._bossHunt = { boss: boss, from: from, path: ap._followingPath || null, t0: Date.now(), why: why,
+      name: (boss.userData && boss.userData.name) || 'boss' };
+    ap._bossHunts = (ap._bossHunts || 0) + 1;
+    console.log('🎯 BOSS HUNT (' + why + ') → ' + ap._bossHunt.name + ', then resume ' + from);
+  }
+  // Ends the hunt when its boss is gone (or on force / the cap). Returns the
+  // phase to resume, 'default' for the phase's own fall-through, or null while
+  // the hunt is still on.
+  function _bossHuntResolve(force) {
+    const h = ap._bossHunt;
+    if (!h) return null;
+    const alive = _bossAlive(h.boss);
+    if (alive && !force && Date.now() - h.t0 < HY_BOSS_HUNT.MAX_MS) return null;
+    ap._bossHunt = null;
+    ap._bossHuntsDone = (ap._bossHuntsDone || 0) + 1;
+    ap._lastBossHunt = { name: h.name, from: h.from, why: h.why, ms: Date.now() - h.t0, defeated: !alive };
+    const next = alive ? 'default' : (HY_BOSS_HUNT.RESUME[h.from] || 'default');
+    if (next === 'followDiscoveryPath' && h.path) ap._followingPath = h.path;
+    console.log('🎯 BOSS HUNT over (' + (alive ? 'given up' : h.name + ' defeated') + ') → ' + next);
+    return next;
+  }
+
   // ─── Boss engagement — after clearing local hostiles, hunt the area boss
   // the game spawned (bossSystem.activeBoss or any enemy with isBoss). Falls
   // through to warpToNebulaCluster when no boss is around within 12 s, so
@@ -2967,7 +3099,16 @@
     ensureThirdPerson();
 
     let boss = null;
-    if (typeof bossSystem !== 'undefined' && bossSystem.activeBoss &&
+    // HYBRID boss hunt: THIS boss, at any range; resume the interrupted phase
+    // the moment it is gone (other bosses open hunts of their own).
+    if (ap._bossHunt) {
+      if (_bossAlive(ap._bossHunt.boss)) boss = ap._bossHunt.boss;
+      else {
+        const _hn = _bossHuntResolve();
+        if (_hn && _hn !== 'default') { goPhase(_hn); return; }
+      }
+    }
+    if (!boss && typeof bossSystem !== 'undefined' && bossSystem.activeBoss &&
         bossSystem.activeBoss.userData && bossSystem.activeBoss.userData.health > 0) {
       boss = bossSystem.activeBoss;
     }
@@ -3100,12 +3241,13 @@
     if (dist < ap._bossBestRange - 500) {
       ap._bossBestRange = dist;
       ap._bossBestT0 = Date.now();
-    } else if (Date.now() - ap._bossBestT0 > 60000) {
+    } else if (Date.now() - ap._bossBestT0 > (ap._bossHunt ? HY_BOSS_HUNT.MAX_MS : 60000)) {
       ap._bossChaseAbandons = (ap._bossChaseAbandons || 0) + 1;
       console.log('🛑 BOSS CHASE ABANDONED — ' + Math.round(dist) +
-        'u and not closing for 60s (best ' + Math.round(ap._bossBestRange) + 'u)');
+        'u and not closing (best ' + Math.round(ap._bossBestRange) + 'u)');
       ap._bossBestT0 = null;
-      goPhase('warpToNebulaCluster');
+      const _hn = ap._bossHunt ? _bossHuntResolve(true) : null;
+      goPhase(_hn && _hn !== 'default' ? _hn : 'warpToNebulaCluster');
       return;
     }
 
@@ -8151,7 +8293,7 @@
     // pirates at Sol the showcase never left (soaks: 0 warps, 0 parks). The
     // pirates are still fought when they come to the ship; the demo just
     // stops chasing them and makes for the nebulae.
-    if ((name === 'combat' || name === 'bossEngage') && ap._solFightDone && _demoInSol()) return;
+    if ((name === 'combat' || name === 'bossEngage') && ap._solFightDone && _demoInSol() && !ap._bossHunt) return;
     console.log('🤖 autopilot →', name);
     ap.phase = name;
     ap.phaseStart = Date.now();
@@ -8178,7 +8320,11 @@
     }
     // Drop the discovery-path snapshot the moment we leave the follow
     // phase so a stale reference can't be reused on a later trigger.
-    if (name !== 'followDiscoveryPath') {
+    // …but NOT across a fight or a mining detour taken from the path: those
+    // return to followDiscoveryPath, which bailed to warpToNebulaCluster on a
+    // null snapshot — the demo fought ONE enemy at the path's end and left.
+    if (name !== 'followDiscoveryPath' && name !== 'combat' && name !== 'bossEngage' &&
+        name !== 'fightBorg' && name !== 'mineAsteroids') {
       ap._followingPath = null;
     }
     // Re-arm the emergency-warp budget each time the demo enters the follow
@@ -8223,6 +8369,9 @@
     ap._evadeKey = null;
     ap._followingPath = null;
     ap._followedPathLines = [];
+    ap._bossHunt = null;
+    ap._bossSeen = null;
+    ap._bossSeenSeeded = false;
     ap._originReturnActive = false;
     ap._prevCombatTarget = null;
     ap._prevCombatDist = undefined;

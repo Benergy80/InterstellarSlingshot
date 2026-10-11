@@ -106,6 +106,12 @@ body.ui-mode {
 }
 
 .ui-panel.bottom-right {
+    /* Ben 2026-10-11: the map panel keeps ONE size in Galactic and Universal view.
+       Pinned to its Galactic-view size (measured 264 px border-box; 268 keeps
+       the You / Target / Compass row on one line) so the Universal glyph key
+       wraps inside it instead of widening the panel; the legend box height is
+       pinned in js/game-ui.js (_hyUniLegend). */
+    width: 268px;
     transform: perspective(1000px) rotateY(-6deg) rotateX(3deg) translateZ(5px);
             backdrop-filter: blur(2px);  /* ADD THIS LINE */
     border-radius: 20px 0 0 20px;
