@@ -2739,6 +2739,8 @@ function updateSlingshotWhip() {
             camera.quaternion.copy(_whipTmpQ);
         }
         gameState.slingshot.timeRemaining = gameState.slingshot.duration;
+        gameState.slingshot._heldMs = 0;      // HYBRID warpHold:open (HY_WARP_HOLD)
+        gameState.slingshot._dropWhy = null;
         gameState.slingshotWhip = null;
         if (typeof window !== 'undefined') {
             window.__whipDilation = 0;
@@ -3098,6 +3100,106 @@ const HY_NAVWARP = {
 };
 if (typeof window !== 'undefined') window.HY_NAVWARP = HY_NAVWARP;
 
+// ── OPEN-ENDED WARPS (HYBRID warpHold:open) ──────────────────────────────
+// Ben, 2026-10-11: "Emergency warps should last as long as needed. Same with
+// gravitational slingshots. ... Player should drop out of warp immediately
+// when X is pressed or when destination is reached (when targeting with the
+// Navigation System)."
+// The O-warp burn and the glide after a whip no longer run out on a stopwatch:
+// _hyWarpHoldTick keeps their timers off zero until X is pressed, a cut from
+// anywhere (nav-warp arrival, the slingshot arrival below) writes zero, or the
+// safety ceiling. Jumps (W double-tap) keep their 2 s dash but X ends them
+// too. The demo pilot keeps its own arrival cut and stopwatch (it has no X
+// key), so this applies to the human player only.
+const HY_WARP_HOLD = {
+    MAX_MS: 600000,              // safety ceiling on an open burn / glide (10 min)
+    FLOOR_MS: 1000,              // the timer is kept at least this far from zero while held open
+    GUIDE_RATE: [0.015, 0.07],   // glide guidance toward the nav target: rad/frame floor, ceiling
+    GUIDE_GAIN: 0.25             // ...proportional to the remaining angle
+};
+if (typeof window !== 'undefined') window.HY_WARP_HOLD = HY_WARP_HOLD;
+function _hyWarpOpen() {
+    if (typeof window === 'undefined' || !window.HYBRID || !window.HYBRID.is('warpHold', 'open')) return false;
+    const dp = window.demoPilot;
+    return !(dp && (dp.driving !== undefined ? dp.driving : dp.active));
+}
+if (typeof window !== 'undefined') window._hyWarpOpen = _hyWarpOpen;
+// Once per frame for each owner (emergencyWarp, slingshot), BEFORE its timer
+// is decremented. A timer already at zero is a cut from elsewhere and stands.
+function _hyWarpHoldTick(owner, isSling, keys, dtMs) {
+    if (!owner || !owner.active || !_hyWarpOpen()) return;
+    if (isSling && (gameState.slingshotWhip || gameState.slingshotLaunchRamp)) return;   // the arc and the crack keep their clocks
+    if (!(owner.timeRemaining > 0)) return;
+    if (keys && keys.x) { owner.timeRemaining = 0; owner._dropWhy = 'x'; return; }
+    if (!isSling && owner.isJump) return;   // a jump is a dash: the clock still ends it
+    owner._heldMs = (owner._heldMs || 0) + dtMs;
+    if (owner._heldMs > HY_WARP_HOLD.MAX_MS) { owner.timeRemaining = 0; owner._dropWhy = 'ceiling'; return; }
+    if (owner.timeRemaining < HY_WARP_HOLD.FLOOR_MS + dtMs) owner.timeRemaining = HY_WARP_HOLD.FLOOR_MS + dtMs;
+}
+
+// ── SLINGSHOT GLIDE → NAV DESTINATION (HYBRID warpHold:open + navWarp:on) ──
+// With a nav target locked, the glide after a whip is a journey with an end:
+// velocity is bent onto the target (pure pursuit at a proportional rate, the
+// same shape as _applyWarpGuidance) and the glide is cut so its 1 s exit ramp
+// runs out CUT_K x outside the nav-warp standoff, where the nav computer's
+// park takes over — a nav record staged straight into its 'ramp' phase,
+// flagged `sl` so _hyNavWarpTick reads the slingshot's flags, not the warp's.
+let _hySlTmp = null;
+function _hySlingNavTick(forwardDirection, dtF) {
+    if (typeof gameState === 'undefined') return;
+    const sl = gameState.slingshot;
+    if (!sl || !sl.active || gameState.slingshotWhip || gameState.slingshotLaunchRamp) return;
+    if (!_hyWarpOpen() || !_hyNavWarpOn()) return;
+    const tgt = gameState.currentTarget;
+    if (!tgt || !tgt.position || _hyNWIsHostile(tgt)) return;
+    if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
+    const vel = gameState.velocityVector;
+    if (!vel || vel.lengthSq() < 1e-6) return;
+    if (!_hySlTmp) _hySlTmp = { to: new THREE.Vector3(), dir: new THREE.Vector3(), axis: new THREE.Vector3(), pos: new THREE.Vector3() };
+    const T = _hySlTmp;
+    const obj = _hyNWPickSubject(tgt);
+    if (!obj || !obj.position || !obj.parent) return;
+    const pos = _hyNWWorldPos(obj, T.pos);
+    T.to.subVectors(pos, camera.position);
+    const range = T.to.length();
+    if (!(range > 1)) return;
+    T.to.divideScalar(range);
+    // Bend the glide onto the target (direction only; speed is untouched).
+    T.dir.copy(vel).normalize();
+    const angle = Math.acos(Math.max(-1, Math.min(1, T.dir.dot(T.to))));
+    if (angle > 1e-4) {
+        T.axis.crossVectors(T.dir, T.to);
+        if (T.axis.lengthSq() > 1e-10) {
+            T.axis.normalize();
+            const rate = Math.min(HY_WARP_HOLD.GUIDE_RATE[1], Math.max(HY_WARP_HOLD.GUIDE_RATE[0], angle * HY_WARP_HOLD.GUIDE_GAIN));
+            const speed = vel.length();
+            vel.applyAxisAngle(T.axis, Math.min(angle, rate * (dtF || 1))).normalize().multiplyScalar(speed);
+        }
+    }
+    if (gameState._hyNavWarp) return;   // an arrival is already staged
+    const R = _hyNWBodyR(obj);
+    const stand = _hyNWStandoff(obj, R);
+    const speed = vel.length();
+    const minV = gameState.minVelocity || 0.4, maxV = gameState.maxVelocity || 4;
+    const toSpeed = Math.min(Math.max(sl.entrySpeed > 0 ? sl.entrySpeed : minV, minV * 2), maxV);
+    const rampDist = Math.max(0, 60 * (0.25 * speed + 0.75 * toSpeed) + speed * 2);
+    if (range - stand * HY_NAVWARP.CUT_K > rampDist) return;
+    sl.timeRemaining = 0;
+    sl._dropWhy = 'arrival';
+    const nav = {
+        obj: obj, target: tgt, R: R, stand: stand, phase: 'ramp', t0: Date.now(), sl: true,
+        name: (obj.userData && obj.userData.name) || (tgt.userData && tgt.userData.name) || 'target',
+        fwd: null, held: _hyNWHeld(), range0: range, minRange: range, offDeg0: 0,
+        _baseBoost: null, _boost: null, _behindMs: 0, _lastRange: range,
+        tv: new THREE.Vector3(), lastPos: pos.clone(), cutRange: range, cutMs: 0
+    };
+    gameState.autoNavigating = false;
+    gameState.autoNavOrienting = false;
+    gameState._hyNavWarp = nav;
+    _hyNWLog('sling-cut', nav, Math.round(range) + '/' + Math.round(stand));
+    console.log('🧭 Slingshot arrival: ' + nav.name + ' at ' + Math.round(range) + ' u, park ' + Math.round(stand) + ' u');
+}
+
 const _hyNWTmp = { a: null, b: null, c: null, d: null, proxy: null };
 function _hyNWVecs() {
     if (!_hyNWTmp.a && typeof THREE !== 'undefined') {
@@ -3234,8 +3336,8 @@ function _hyNavWarpTick(forwardDirection, dtF) {
     // Yield to anything else that takes the ship: a slingshot, a jump or a
     // new warp over a park, death; and hand the stick back after HOLD_MS.
     const _sl = gameState.slingshot;
-    if ((_sl && _sl.active) || gameState.slingshotWhip) { _hyNWFinish(nav, 'slingshot'); return; }
-    if (ew.isJump) { _hyNWFinish(nav, 'jump'); return; }
+    if (gameState.slingshotWhip || (!nav.sl && _sl && _sl.active)) { _hyNWFinish(nav, 'slingshot'); return; }
+    if (ew.isJump && (ew.active || ew.transitioning || ew.autoBraking)) { _hyNWFinish(nav, 'jump'); return; }
     if ((nav.phase === 'park' || nav.phase === 'hold') && (ew.active || ew.transitioning)) { _hyNWFinish(nav, 'new-warp'); return; }
     if (gameState.gameOver) { _hyNWFinish(nav, 'game-over'); return; }
     if (nav.phase === 'hold' && Date.now() - nav.holdT0 > HY_NAVWARP.HOLD_MS) { _hyNWFinish(nav, 'hold-done'); return; }
@@ -3282,7 +3384,7 @@ function _hyNavWarpTick(forwardDirection, dtF) {
         if (!ew.active) {
             // Camera hand-off before ignition: ignite along the nose as it is NOW.
             if (ew.transitioning) { if (nav.fwd && forwardDirection) nav.fwd.copy(forwardDirection); }
-            else _hyNWFinish(nav, 'no-ignition');
+            else _hyNWFinish(nav, ew._dropWhy === 'x' ? 'x-key' : 'no-ignition');
             return;
         }
         // Give up if the target has fallen behind and keeps opening.
@@ -3309,7 +3411,8 @@ function _hyNavWarpTick(forwardDirection, dtF) {
     }
     if (nav.phase === 'ramp') {
         orient();
-        if (ew.active || ew.transitioning || (ew.exitRamp && ew.exitRamp.active)) return;
+        if (nav.sl ? (_sl.active || (_sl.exitRamp && _sl.exitRamp.active))
+                   : (ew.active || ew.transitioning || (ew.exitRamp && ew.exitRamp.active))) return;
         if (nav._baseBoost != null && ew.boostSpeed === nav._boost) ew.boostSpeed = nav._baseBoost;
         nav._baseBoost = null;
         nav.phase = 'park';
@@ -3335,6 +3438,7 @@ function _hyNavWarpTick(forwardDirection, dtF) {
         if (settled || now - nav.parkT0 > HY_NAVWARP.PARK_MS) {
             ew.postWarp = false;
             ew.autoBraking = false;
+            if (nav.sl && _sl) { _sl.postSlingshot = false; _sl.fromBlackHole = false; }
             gameState.autoNavigating = false;
             gameState.autoNavOrienting = false;
             nav.phase = 'hold';
@@ -3771,6 +3875,8 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     // jump brake from damping the burn we are about to start.
     gameState.emergencyWarp.isJump = false;
     gameState.emergencyWarp.autoBraking = false;
+    gameState.emergencyWarp._heldMs = 0;      // HYBRID warpHold:open (HY_WARP_HOLD)
+    gameState.emergencyWarp._dropWhy = null;
 
     console.log(`🚀 Emergency warp initiated! ${gameState.emergencyWarp.available} charges remaining`);
     
@@ -3800,24 +3906,28 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
         // rim pulse on entry, the same again in reverse on exit — and it
         // sustains itself off emergencyWarp.active for the whole burn. The
         // streak field is REUSED, not duplicated.
+        // HYBRID warpFx:calm — Ben 2026-10-11: "Emergency Warp animation could be a
+        // little less intense": every burst below is scaled by HY_WARP_FX (visual-flair.js).
+        const _calm = (typeof window !== 'undefined' && window.HY_WARP_FX && window.HYBRID &&
+                       window.HYBRID.is('warpFx', 'calm')) ? window.HY_WARP_FX : null;
         if (typeof window !== 'undefined') {
             if (typeof window.warpTunnelBurst === 'function') {
-                window.warpTunnelBurst(1, 1500, false);
+                window.warpTunnelBurst(_calm ? _calm.TUNNEL : 1, 1500, false);
             }
             if (typeof window.warpStreakBurst === 'function') {
                 const _ep = _hyWarpPair('emergency', 0x6be6ff, 0xff5ccd);   // package T
                 window.warpStreakBurst(capturedForwardDirection, capturedBoostSpeed * 60,
-                    _ep[0], _ep[1], 1.2);
+                    _ep[0], _ep[1], 1.2 * (_calm ? _calm.STREAK : 1));
             }
             if (typeof window.warpDebrisBurst === 'function') {
                 const _ed = _hyWarpPair('emergency', 0x9ff2ff, 0xff8ade);   // package T
                 window.warpDebrisBurst(capturedForwardDirection, capturedBoostSpeed * 60,
-                    _ed[0], _ed[1], 1.1);
+                    _ed[0], _ed[1], 1.1 * (_calm ? _calm.DEBRIS : 1));
             }
         }
 
         // Activate visual effects
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < (_calm ? _calm.HYPERSPACE : 3); i++) {
             setTimeout(() => createHyperspaceEffect(), i * 200);
         }
 
@@ -3844,6 +3954,7 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
 
         // Enhanced Emergency warp timer with momentum coasting
 if (gameState.emergencyWarp.active) {
+    _hyWarpHoldTick(gameState.emergencyWarp, false, keys, dtMsP);   // HYBRID warpHold:open
     gameState.emergencyWarp.timeRemaining -= dtMsP;
     if (gameState.emergencyWarp.timeRemaining <= 0) {
         gameState.emergencyWarp.active = false;
@@ -4377,11 +4488,15 @@ if (surfaceCollision) {
         if (nearestAssistPlanet && gameState.energy < 20) {
             _wt = '<i class="fas fa-battery-empty mr-2"></i>Insufficient Energy for Slingshot';
         } else if (gameState.slingshot.active) {
-            _wt = `<i class="fas fa-clock mr-2"></i>Slingshot Active (${(gameState.slingshot.timeRemaining/1000).toFixed(1)}s)`;
+            _wt = _hyWarpOpen()
+                ? `<i class="fas fa-clock mr-2"></i>Slingshot Active (${((gameState.slingshot._heldMs || 0)/1000).toFixed(0)}s) — X to drop out`
+                : `<i class="fas fa-clock mr-2"></i>Slingshot Active (${(gameState.slingshot.timeRemaining/1000).toFixed(1)}s)`;
         } else if (gameState.slingshot.postSlingshot) {
             _wt = `<i class="fas fa-wind mr-2"></i>Coasting on Inertia (${(gameState.velocity * 1000).toFixed(0)} km/s)`;
         } else if (gameState.emergencyWarp.active) {
-            _wt = `<i class="fas fa-bolt mr-2"></i>Emergency Warp Active (${(gameState.emergencyWarp.timeRemaining/1000).toFixed(1)}s)`;
+            _wt = (_hyWarpOpen() && !gameState.emergencyWarp.isJump)
+                ? `<i class="fas fa-bolt mr-2"></i>Emergency Warp Active (${((gameState.emergencyWarp._heldMs || 0)/1000).toFixed(0)}s) — X to drop out`
+                : `<i class="fas fa-bolt mr-2"></i>Emergency Warp Active (${(gameState.emergencyWarp.timeRemaining/1000).toFixed(1)}s)`;
         } else {
             _wt = '<i class="fas fa-rocket mr-2"></i>No Gravity Well in Range';
         }
@@ -4390,6 +4505,7 @@ if (surfaceCollision) {
     
     // Slingshot timer management (matching emergency warp behavior)
     if (gameState.slingshot.active) {
+        _hyWarpHoldTick(gameState.slingshot, true, keys, dtMsP);   // HYBRID warpHold:open
         gameState.slingshot.timeRemaining -= dtMsP;
 
         // Keep the view on the direction of travel for the whole glide —
@@ -4676,7 +4792,13 @@ gameState.emergencyBraking = false;  // <-- ADD THIS LINE AT THE VERY END OF THE
     // slingshot.active now also gets near-zero damping: the old 0.998
     // bled a 24s slingshot ride down to ~6% of its launch speed, which
     // (with the maxSpeed=20 clamp) is why slingshots always fizzled.
-const dampingFactor = Math.pow(
+// HYBRID warpHold:open — a burn or glide held open (HY_WARP_HOLD) keeps its
+// speed: at 0.9998/frame an open warp would halve in a minute (measured
+// 14.7 -> 13.0 u/frame over 10 s). The exit ramp still owns the drop-out.
+const _hyHeldOpen = _hyWarpOpen() &&
+    ((gameState.emergencyWarp.active && !gameState.emergencyWarp.isJump) ||
+     (gameState.slingshot.active && !gameState.slingshotWhip && !gameState.slingshotLaunchRamp));
+const dampingFactor = _hyHeldOpen ? 1 : Math.pow(
                      gameState.slingshot.postSlingshot ? 0.9999 :
                      gameState.slingshot.active ? 0.9999 :
                      gameState.emergencyWarp.active ? 0.9998 :
@@ -4715,6 +4837,7 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     // heading. Direction only — the ramp still owns the magnitude.
     _applyWarpGuidance(forwardDirection, dtF);
     // HYBRID navWarp: fly a staged nav-warp's cut, exit and park (no-op otherwise).
+    _hySlingNavTick(forwardDirection, dtF);
     _hyNavWarpTick(forwardDirection, dtF);
 
     // Apply velocity to position. velocityVector's unit stays "distance per

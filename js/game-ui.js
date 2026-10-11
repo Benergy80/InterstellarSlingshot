@@ -5771,7 +5771,9 @@ function updateWarpButton() {
         warpBtn.classList.remove('space-btn', 'pulse', 'assist-ready');
         if (gameState.slingshot && gameState.slingshot.active) {
             const timeLeft = (gameState.slingshot.timeRemaining / 1000).toFixed(1);
-            warpBtn.innerHTML = `<i class="fas fa-rocket mr-2"></i>SLINGSHOT ACTIVE - ${timeLeft}s`;
+            warpBtn.innerHTML = (typeof window._hyWarpOpen === 'function' && window._hyWarpOpen())
+                ? `<i class="fas fa-rocket mr-2"></i>SLINGSHOT ACTIVE - X TO DROP OUT`
+                : `<i class="fas fa-rocket mr-2"></i>SLINGSHOT ACTIVE - ${timeLeft}s`;
         } else {
             warpBtn.innerHTML = `<i class="fas fa-search mr-2"></i>Searching for gravitational assist...`;
         }

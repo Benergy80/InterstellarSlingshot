@@ -1699,6 +1699,31 @@ function _hySlingSubtle() {
     return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('slingshotFx', 'subtle'));
 }
 
+// ── HYBRID: A CALMER EMERGENCY WARP (warpFx: calm) ──────────────────────────
+// Ben, 2026-10-11: "Emergency Warp animation could be a little less intense."
+// Multipliers on the O-warp's own show (modes 'emergency' and 'autowarp'):
+// the streak field, the world-space debris, the tunnel, the chromatic judder,
+// the entry/exit screen pulse and shake, the FOV snap, and how many hyperspace
+// line bursts fire. Jumps, slingshots and black-hole transits are untouched.
+// `?hy=warpFx:overhaul` restores the full show.
+const HY_WARP_FX = {
+    STREAK: 0.65,
+    DEBRIS: 0.5,
+    TUNNEL: 0.7,
+    CHROMA: 0.45,
+    PULSE: 0.6,
+    SHAKE: 0.55,
+    FOV: 0.7,
+    HYPERSPACE: 1      // line bursts at ignition (was 3)
+};
+if (typeof window !== 'undefined') window.HY_WARP_FX = HY_WARP_FX;
+function _hyWarpCalm() {
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('warpFx', 'calm'));
+}
+function _hyWarpCalmMode(mode) {
+    return (mode === 'emergency' || mode === 'autowarp') && _hyWarpCalm();
+}
+
 const _wsfStyle = {
     name: '', level: 0, last: 0,
     len: 1, wid: 1, white: 0.8, swirl: 0, chroma: 0,
@@ -1780,7 +1805,7 @@ function _wsfUpdateStyle(dt, mode) {
     // what makes it feel like the lens is under stress rather than animated.
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
     const judder = 0.55 + 0.45 * Math.sin(now * 0.047) * Math.cos(now * 0.0173);
-    _wsfStyle.chroma = st.chroma * k * judder;
+    _wsfStyle.chroma = st.chroma * k * judder * (_hyWarpCalmMode(_wsfStyle.name) ? HY_WARP_FX.CHROMA : 1);   // HYBRID calm emergency warp
 
     // Shear only means anything while there is a well to lean toward.
     let sx = 0, sy = 0;
@@ -2202,11 +2227,12 @@ function warpExitBeat(blackHole, refSpeed, durMs) {
             window.cameraState._exitFovT0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
             window.cameraState._exitFovMs = 700;
         }
+        const _cm = (!blackHole && _hyWarpCalmMode(_wsfStyle.name)) ? HY_WARP_FX : null;   // HYBRID calm emergency warp
         if (typeof whipScreenPulse === 'function') {
-            whipScreenPulse(blackHole ? 0xb26bff : 0x6be6ff, 0.55);
+            whipScreenPulse(blackHole ? 0xb26bff : 0x6be6ff, 0.55 * (_cm ? _cm.PULSE : 1));
         }
         if (typeof whipScreenShake === 'function') {
-            whipScreenShake(4, 320);
+            whipScreenShake(4 * (_cm ? _cm.SHAKE : 1), 320);
         }
         _wsf.draining = true;
         _wsf.drainT0 = (typeof performance !== 'undefined') ? performance.now() : Date.now();
@@ -2531,6 +2557,7 @@ function _updateWarpStreaks() {
     // HYBRID subtle slingshot: the field stays, at a fraction, so the planet
     // you are whipping round is what you see (HY_SLING_FX.STREAK).
     if (_hySlingSubtle() && _warpMode() === 'slingshot') target *= HY_SLING_FX.STREAK;
+    if (_hyWarpCalmMode(_warpMode())) target *= HY_WARP_FX.STREAK;   // HYBRID calm emergency warp
     if (target <= 0.001 && _wsf.env <= 0.004) {
         if (_wsf.mesh && _wsf.mesh.visible) _wsf.mesh.visible = false;
         _wsf.env = 0;
@@ -2942,6 +2969,7 @@ function _updateWarpDebris() {
         else target = Math.max(target, _wdf.kickAmp * Math.pow(1 - kt, 0.6));
     }
     if (_hySlingSubtle() && _warpMode() === 'slingshot') target *= HY_SLING_FX.DEBRIS;   // HYBRID subtle slingshot
+    if (_hyWarpCalmMode(_warpMode())) target *= HY_WARP_FX.DEBRIS;   // HYBRID calm emergency warp
     if (target <= 0.001 && _wdf.env <= 0.004) {
         if (_wdf.mesh && _wdf.mesh.visible) _wdf.mesh.visible = false;
         _wdf.env = 0;
@@ -3318,15 +3346,18 @@ function _wtuThreshold(entering, bh) {
     // by warpExitBeat()'s cameraState._exitFov* target-ease in
     // camera-system.js, so only the entry pulse fires from here.
     try {
+        // HYBRID calm emergency warp: on the way out the live mode is already
+        // '' (the burn has ended), so the exit reads the tunnel's last style.
+        const _cm = (!bh && _hyWarpCalmMode(entering ? _warpMode() : (_wtu.styleName || _warpMode()))) ? HY_WARP_FX : null;
         if (entering && typeof window.warpFovPulse === 'function') {
-            window.warpFovPulse(15, 950);
+            window.warpFovPulse(15 * (_cm ? _cm.FOV : 1), 950);
         }
         if (typeof whipScreenPulse === 'function') {
             const _tint = bh ? null : _hyWarpTintFor(_warpMode());   // package T
-            whipScreenPulse(bh ? 0xb26bff : (_tint ? _tint.a : 0x6be6ff), entering ? 0.85 : 0.6);
+            whipScreenPulse(bh ? 0xb26bff : (_tint ? _tint.a : 0x6be6ff), (entering ? 0.85 : 0.6) * (_cm ? _cm.PULSE : 1));
         }
         if (typeof whipScreenShake === 'function') {
-            whipScreenShake(entering ? 8 : 5, entering ? 520 : 380);
+            whipScreenShake((entering ? 8 : 5) * (_cm ? _cm.SHAKE : 1), entering ? 520 : 380);
         }
     } catch (e) {}
 }
@@ -3341,7 +3372,7 @@ function _updateWarpTunnel() {
     // ── WHO WANTS A TUNNEL ───────────────────────────────────────────────
     let target = 0, bh = false;
     const ew = gs.emergencyWarp;
-    if (ew && ew.active) target = ew.isJump ? 0.5 : 1;
+    if (ew && ew.active) target = ew.isJump ? 0.5 : (_hyWarpCalmMode(_warpMode()) ? HY_WARP_FX.TUNNEL : 1);   // HYBRID calm emergency warp
     if (gs.isBlackHoleWarping || gs.warping) { target = 1; bh = true; }
     if (_wtu.forceUntil > now) {
         target = Math.max(target, _wtu.forceAmp);

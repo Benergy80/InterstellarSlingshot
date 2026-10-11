@@ -474,10 +474,13 @@ check('warp', async () => {
             if (eng === null && ew.active) eng = Date.now() - t0;
             if (eng !== null && !engV && Date.now() - t0 > eng + 400) { engV = gs.velocityVector.clone().normalize(); steerAt = Date.now() - t0; if (steerKey) keys[steerKey] = true; }
             if (engV && r.turn === undefined && Date.now() - t0 > steerAt + 1500) { if (steerKey) keys[steerKey] = false; r.turn = K.deg(engV, gs.velocityVector.clone().normalize()); }
-            if (eng !== null && end === null && !ew.active) end = Date.now() - t0;
+            // warpHold:open (Ben 2026-10-11): the burn lasts until X — drop out 5 s in.
+            if (eng !== null && end === null && ew.active && Date.now() - t0 > eng + 5000) keys.x = true;
+            if (eng !== null && end === null && !ew.active) { end = Date.now() - t0; keys.x = false; }
             if (end !== null && Date.now() - t0 > end + 1800) break;
         }
         if (steerKey) keys[steerKey] = false;
+        keys.x = false;
         Object.assign(r, { engageMs: eng, endMs: end, peak: +peak.toFixed(1), after: +gs.velocityVector.length().toFixed(2),
             fovKick: +(Math.max(fmax, K.fov.max) - fov0).toFixed(1), fovSettle: +(cam.fov - fov0).toFixed(1), tunnel: +tun.toFixed(2),
             starfield: sf, exitRamp: ramp, exitBeats: beats - b0 });

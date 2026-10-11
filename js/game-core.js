@@ -2545,7 +2545,11 @@ function animate(rafTime) {
     if (typeof updateThrusterGlow === 'function' && typeof keys !== 'undefined') {
         const _boosting = keys.w || keys.b;
         const _warping = gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning || (gameState.emergencyWarp.timeRemaining > 0));
-        const isThrusting = (_boosting || gameState.autoNavigating || _warping) && gameState.energy > 0;
+        // Ben 2026-10-11: "Thrusters should be on during a slingshot or warp as though
+        // the player is pressing W key" — the whip, the glide and the nav computer's arrival count.
+        const _slinging = !!gameState.slingshotWhip || !!(gameState.slingshot && gameState.slingshot.active) ||
+                          !!(gameState._hyNavWarp && gameState._hyNavWarp.phase !== 'hold');
+        const isThrusting = (_boosting || gameState.autoNavigating || _warping || _slinging) && gameState.energy > 0;
         updateThrusterGlow(isThrusting);
     }
 
