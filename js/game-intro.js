@@ -3832,11 +3832,16 @@ function resetCameraToGamePosition() {
     if (typeof HY_SOL !== 'undefined' && typeof _hyScaleOn === 'function' && _hyScaleOn()) {
         camera.position.set(localSystemOffset.x + HY_SOL.START.x, localSystemOffset.y + HY_START_HEIGHT, localSystemOffset.z + HY_SOL.START.z);
     }
+    // Ben, 2026-10-11: "Player starting position should be in orbit above earth,
+    // facing Sagittarius A." (_hyStartPoint, js/game-objects.js — Earth's live
+    // position at hand-off; Earth's orbital velocity is carried below.)
+    const _sp = (typeof _hyStartPoint === 'function' && typeof _hyScaleOn === 'function' && _hyScaleOn()) ? _hyStartPoint() : null;
+    if (_sp && _sp.earth) camera.position.copy(_sp.pos);
     // Open the game facing Sagittarius A* (galactic center at the origin)
     // so the player's first view is the heart of the Milky Way — Earth
     // and Sol still sit just behind/below the camera and are easy to
     // pivot back to. Looks more cinematic than staring at our home world.
-    camera.lookAt(new THREE.Vector3(0, 0, 0));
+    camera.lookAt(_sp && _sp.earth ? _sp.look : new THREE.Vector3(0, 0, 0));
 
     // Reset camera rotation tracking
     if (typeof cameraRotation !== 'undefined') {
@@ -3854,6 +3859,8 @@ function resetCameraToGamePosition() {
         const toEarth = new THREE.Vector3().subVectors(earthPos, camera.position).normalize();
         const orbitalDir = new THREE.Vector3(-toEarth.z, 0, toEarth.x).normalize();
         gameState.velocityVector = orbitalDir.multiplyScalar(gameState.minVelocity || 0.2);
+        // In orbit above Earth: carry Earth's own orbital velocity so it stays in view.
+        if (_sp && _sp.earth && _sp.vel && _sp.vel.length() <= (gameState.maxVelocity || 4)) gameState.velocityVector.copy(_sp.vel);
     }
 
     // Start the player with an empty Navigation target so they make

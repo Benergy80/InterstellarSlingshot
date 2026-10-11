@@ -17266,6 +17266,8 @@ function createAllyShips() {
     // package N (scale2): beside the scaled start point (HY_SOL.START), clear of the 650 Sun
     if (typeof HY_SOL !== 'undefined' && typeof _hyScaleOn === 'function' && _hyScaleOn()) {
         alpha.position.set(sol.x + HY_SOL.START.x, sol.y + HY_SOL.START.y - 100, sol.z + HY_SOL.START.z);
+        // Ben, 2026-10-11: the start is in orbit above Earth — Alpha sits beside it.
+        try { const _sp = (typeof _hyStartPoint === 'function') ? _hyStartPoint() : null; if (_sp && _sp.earth) alpha.position.copy(_sp.pos).add(new THREE.Vector3(160, -60, 120)); } catch (e) { /* fallback above */ }
     }
     scene.add(alpha);
     allyShips.push(alpha);

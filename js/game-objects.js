@@ -1010,6 +1010,53 @@ function _hySgrA() {
     }
     return null;
 }
+// ═══ HYBRID: THE START — in orbit above Earth, facing Sagittarius A* ════════
+// Ben, 2026-10-11: "Player starting position should be in orbit above earth,
+// facing Sagittarius A." Computed at hand-off from Earth's live position:
+// ABOVE_K Earth radii above its orbital plane, TOWARD_K radii toward Sgr A*,
+// carrying Earth's own orbital velocity (game-core's updatePlanetOrbits:
+// angle = Date.now() x 0.001 x orbitSpeed x 3 for local planets, counter-
+// clockwise in x/z) so the view holds. Falls back to Sol + HY_SOL.START.
+const HY_START = { ABOVE_K: 2.3, TOWARD_K: 0.6, LOCAL_SPEED_MULT: 3.0 };
+if (typeof window !== 'undefined') window.HY_START = HY_START;
+function _hyStartPoint() {
+    const so = (typeof window !== 'undefined' && window.localSystemOffset) || { x: 0, y: 0, z: 0 };
+    const S = (typeof HY_SOL !== 'undefined' && HY_SOL.START) || { x: 1560, y: 150, z: 173 };
+    const oo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+    const fallback = { pos: new THREE.Vector3(so.x + S.x, (so.y || 0) + S.y, so.z + S.z), look: new THREE.Vector3(-oo.x, -oo.y, -oo.z), vel: null, earth: null };
+    if (typeof planets === 'undefined' || !planets) return fallback;
+    let earth = null;
+    for (let i = 0; i < planets.length; i++) { const p = planets[i]; if (p && p.userData && p.userData.isLocal && p.userData.name === 'Earth' && p.position) { earth = p; break; } }
+    if (!earth) return fallback;
+    const sgr = (typeof _hySgrA === 'function') ? _hySgrA() : null;
+    const look = sgr ? sgr.getWorldPosition(new THREE.Vector3()) : fallback.look;
+    // Earth's position is set every frame from the clock (updatePlanetOrbits:
+    // systemCenter + (cos, sin)(Date.now() x 0.001 x baseSpeed + orbitPhase) x r);
+    // at hand-off its mesh may still sit at the build position, up to 2 r away
+    // (measured: start 8,700 u from Earth). Compute the orbital position here.
+    const ep = earth.getWorldPosition(new THREE.Vector3());
+    {
+        const u0 = earth.userData, c0 = u0.systemCenter;
+        if (c0 && u0.orbitRadius > 0 && u0.orbitSpeed) {
+            const base0 = u0.orbitSpeed * HY_START.LOCAL_SPEED_MULT * Math.max(1, 500 / u0.orbitRadius);
+            const th0 = Date.now() * 0.001 * base0 + (u0.orbitPhase || 0);
+            ep.set(c0.x + Math.cos(th0) * u0.orbitRadius, c0.y, c0.z + Math.sin(th0) * u0.orbitRadius);
+        }
+    }
+    const R = (typeof _hyBodyR === 'function') ? _hyBodyR(earth) : (earth.userData.radius || 400);
+    const toSgr = look.clone().sub(ep); toSgr.y = 0; if (toSgr.lengthSq() < 1) toSgr.set(1, 0, 0); toSgr.normalize();
+    const pos = ep.clone().add(new THREE.Vector3(0, R * HY_START.ABOVE_K, 0)).addScaledVector(toSgr, R * HY_START.TOWARD_K);
+    let vel = null;
+    const u = earth.userData, c = u.systemCenter;
+    if (c && u.orbitRadius > 0 && u.orbitSpeed) {
+        const base = u.orbitSpeed * HY_START.LOCAL_SPEED_MULT * Math.max(1, 500 / u.orbitRadius);   // rad/s
+        const th = Math.atan2(ep.z - c.z, ep.x - c.x);
+        vel = new THREE.Vector3(-Math.sin(th), 0, Math.cos(th)).multiplyScalar(base * u.orbitRadius / 60);   // u per 60fps frame
+    }
+    return { pos: pos, look: look, vel: vel, earth: earth, R: R };
+}
+if (typeof window !== 'undefined') window._hyStartPoint = _hyStartPoint;
+
 function _hyCoreFor(g) {
     if (typeof planets === 'undefined') return null;
     for (let i = 0; i < planets.length; i++) {
@@ -1183,7 +1230,8 @@ function _hySolPirateStations() {
     }
     let belt = null; try { belt = _hySolLayout().belt; } catch (e) { belt = null; }
     const S = (typeof HY_SOL !== 'undefined' && HY_SOL.START) || { x: 1560, y: 150, z: 173 };
-    const start = new THREE.Vector3(sol.x + S.x, sol.y + S.y, sol.z + S.z);
+    let start = new THREE.Vector3(sol.x + S.x, sol.y + S.y, sol.z + S.z);
+    try { const _sp = _hyStartPoint(); if (_sp && _sp.earth) start = _sp.pos.clone(); } catch (e) { /* Sol fallback */ }   // the start is above Earth now
     const sgr = _hySgrA();
     const fwd = (sgr ? sgr.position.clone() : new THREE.Vector3()).sub(start); fwd.y = 0; fwd.normalize();
     const side = new THREE.Vector3(-fwd.z, 0, fwd.x);
@@ -7794,7 +7842,7 @@ const HY_SCALE = {
     ORBIT_K: 1.2,            // rule 3: orbit gap >= ORBIT_K x (reach1 + reach2) (1.0 = moon systems touch at conjunction)
     STAR_CLEAR: 2.6,         // rule 3: first orbit >= STAR_CLEAR x star radius (+ its reach)
     SOL_BEARING: { x: 0.4157, z: 0.9095 },  // Sol's direction from Sgr A* (was (8000,0,4800)-ish)
-    SOL_SGR_GAP: 1000,       // extra clear space between Sol's keep-clear and Sgr A*'s
+    SOL_SGR_GAP: 6000,       // extra clear space between Sol's keep-clear and Sgr A*'s (Ben, 2026-10-11: "Sag A may need to be located out a little further from Sol"; was 1000)
     // package N (scale2): every body roughly doubled, every system ~1.85x
     // wider, so the universe's own distances grow by this one factor: galaxy
     // cores from Sgr A*, nebula bands and footprints, outer systems, the
@@ -8219,8 +8267,8 @@ const HY_SOL = {
     BELT_WIDTH: 900,                    // the asteroid lane between Mars and Jupiter
     // name: [radius, rings?, { moon: [radius, orbit from the planet's centre] }]
     planets: [
-        ['Mercury', 250, false, {}],
-        ['Venus',   380, false, {}],
+        ['Mercury', 170, false, {}],   // Ben, 2026-10-11: "can mercury and venus be smaller" (were 250 / 380)
+        ['Venus',   290, false, {}],
         ['Earth',   400, false, { Luna: [100, 1200] }],
         ['Mars',    290, false, { Phobos: [46, 640], Deimos: [40, 900] }],
         ['Jupiter', 620, false, { Io: [70, 1050], Europa: [62, 1300], Ganymede: [94, 1650], Callisto: [86, 1950] }],
@@ -8229,6 +8277,7 @@ const HY_SOL = {
         ['Neptune', 430, false, { Triton: [75, 1150] }],
     ],
     RING_K: 2.45,                       // Sol ring planes reach 2.45 radii (addPlanetRings outerK)
+    ORBIT_MULT: 2.0,                    // Ben, 2026-10-11: Sol orbits 2x (applied in _hySolLayout; edge and belt follow)
 };
 let _hySolLayoutCache = null;
 function _hySolLayout() {
@@ -8263,6 +8312,15 @@ function _hySolLayout() {
         out.edge = Math.max(out.edge, Math.round(orbit + reach));
         prevOrbit = orbit; prevReach = reach;
     });
+    // Ben, 2026-10-11: "can the local system orbits be 2x what they currently
+    // are?" — every orbit, the belt lane and Sol's edge x ORBIT_MULT (the gaps
+    // scale with them; Sol's distance from Sgr A* follows its edge, _hySolCentre).
+    const M = HY_SOL.ORBIT_MULT || 1;
+    if (M !== 1) {
+        Object.keys(out.planets).forEach(function (n) { out.planets[n].orbit = Math.round(out.planets[n].orbit * M); });
+        if (out.belt) out.belt = [Math.round(out.belt[0] * M), Math.round(out.belt[1] * M)];
+        out.edge = Math.round(out.edge * M);
+    }
     _hySolLayoutCache = out;
     return out;
 }
@@ -12063,11 +12121,13 @@ if (Math.random() < moonProbability) {
         try {
             // HYBRID (solScale:big): 160 u out is inside the scaled Sun; use the
             // start point resetCameraToGamePosition() sets (Sol + HY_SOL.START).
-            const earthInitialPosition = _hyScaleOn()
+            let earthInitialPosition = _hyScaleOn()
                 ? new THREE.Vector3(localSystemOffset.x + HY_SOL.START.x, localSystemOffset.y + HY_SOL.START.y, localSystemOffset.z + HY_SOL.START.z)
                 : new THREE.Vector3(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
+            let _lookAt = new THREE.Vector3(0, 0, 0);
+            if (_hyScaleOn() && typeof _hyStartPoint === 'function') { const _sp = _hyStartPoint(); if (_sp && _sp.earth) { earthInitialPosition = _sp.pos; _lookAt = _sp.look; } }
             camera.position.copy(earthInitialPosition);
-            camera.lookAt(new THREE.Vector3(0, 0, 0));
+            camera.lookAt(_lookAt);
             
             if (typeof cameraRotation !== 'undefined') {
                 cameraRotation = { 
@@ -16469,6 +16529,50 @@ window.cullPixelCensus = function (minPx) {
 // Frame counter for throttling
 let _orbitVisibilityFrameCount = 0;
 
+// ═══ HYBRID: EVERY SYSTEM STAR GLOWS ═══════════════════════════════════════
+// Ben, 2026-10-11: "make sure ... all planets ... have glowing stars at their
+// centers." Measured: 76 of 76 system centres have a star, but only 10 of 40
+// sampled stars carried any glow layer. Each star (not the dressed Sun, not
+// the frontier's own) gets one additive radial sprite in its own colour,
+// sized HY_STAR_GLOW.K radii, added a few stars per orbit-line cadence tick.
+const HY_STAR_GLOW = { K: 2.6, OPACITY: 0.55, PER_TICK: 12 };
+if (typeof window !== 'undefined') window.HY_STAR_GLOW = HY_STAR_GLOW;
+let _hyStarGlowTex = null;
+function _hyStarGlowTexture() {
+    if (_hyStarGlowTex) return _hyStarGlowTex;
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d'); const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grad.addColorStop(0, 'rgba(255,255,255,1)'); grad.addColorStop(0.18, 'rgba(255,255,255,0.75)');
+    grad.addColorStop(0.45, 'rgba(255,255,255,0.22)'); grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 128, 128);
+    _hyStarGlowTex = new THREE.CanvasTexture(c);
+    return _hyStarGlowTex;
+}
+let _hyStarGlowCursor = 0;
+function _hyEnsureStarGlow() {
+    if (typeof planets === 'undefined' || !planets || typeof THREE === 'undefined' || typeof document === 'undefined') return;
+    let done = 0;
+    for (let n = 0; n < planets.length && done < HY_STAR_GLOW.PER_TICK; n++) {
+        const i = (_hyStarGlowCursor + n) % planets.length;
+        const s = planets[i];
+        if (!s || !s.userData || s.userData.type !== 'star' || s.userData._hyStarGlow || s.userData._hySun || s.userData._osStar) continue;
+        s.userData._hyStarGlow = true;
+        try {
+            const R = (typeof _hyBodyR === 'function') ? _hyBodyR(s) : (s.userData.radius || 300);
+            let col = 0xfff2c0;
+            const m = s.material; if (m && m.color) col = m.color.getHex(); else if (s.userData.color !== undefined) col = s.userData.color;
+            const mat = new THREE.SpriteMaterial({ map: _hyStarGlowTexture(), color: col, transparent: true, opacity: HY_STAR_GLOW.OPACITY,
+                blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true, toneMapped: false });
+            const sp = new THREE.Sprite(mat);
+            const sc = (R * HY_STAR_GLOW.K * 2) / Math.max(1e-3, (s.scale.x || 1));   // sprite is a child: undo the star's own scale
+            sp.scale.set(sc, sc, 1);
+            sp.userData.isGlowLayer = true; sp.userData.__dbTris = Infinity; sp.userData._hyStarGlowSprite = true;
+            s.add(sp);
+            done++;
+        } catch (e) { /* glow optional */ }
+    }
+    _hyStarGlowCursor = (_hyStarGlowCursor + HY_STAR_GLOW.PER_TICK * 4) % Math.max(1, planets.length);
+}
 // Orbit-ring distance fade (rings stay drawn): opacity = base x max(FLOOR, 1 - DEPTH x aerial k).
 const HY_ORBIT_FADE = { FLOOR: 0.18, DEPTH: 0.9 };
 if (typeof window !== 'undefined') window.HY_ORBIT_FADE = HY_ORBIT_FADE;
@@ -16484,6 +16588,7 @@ function updateOrbitLineVisibility() {
     // HYBRID package T: one ring per orbiting planet, at its current radius and
     // centre, whatever createOrbitLines() last rebuilt (game-core.js).
     if (typeof _hyOrbitLineSync === 'function') { try { _hyOrbitLineSync(); } catch (e) { /* rings optional */ } }
+    try { _hyEnsureStarGlow(); } catch (e) { /* glow optional */ }
 
     // Ben, 2026-10-11: "look at all the orbit lines without planets" → "if the
     // rings can fade as well perhaps that would work. We can keep them visible
