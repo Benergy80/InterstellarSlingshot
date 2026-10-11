@@ -1112,6 +1112,8 @@ function createThrusterGlows(playerModel) {
     });
 
     cameraState.thrusterGlows = createThrusterGlowsForModel(playerModel);
+    // HULL FIT: the thruster light + the hull's light elements (built once per hull)
+    try { _hyBuildHullLights(playerModel); } catch (e) { console.warn('hull lights skipped', e); }
 
     console.log(`🔥 Created ${cameraState.thrusterGlows.length} thruster glow effects`);
 }
@@ -1214,6 +1216,7 @@ function updateThrusterGlowArray(glows, state, isThrusting) {
  * @param {boolean} isThrusting - Whether W key (or other thrust) is active
  */
 function updateThrusterGlow(isThrusting) {
+    try { _hyUpdateHullLights(isThrusting); } catch (e) {}
     if (cameraState.thrusterGlows.length === 0) return;
     
     // Smooth intensity transition
@@ -1241,3 +1244,189 @@ function updateThrusterGlow(isThrusting) {
     cameraState.thrusterActive = isThrusting;
 }
 
+// =============================================================================
+// HULL LIGHTS (package hullfit — Ben 2026-10-11: "thrusters should generate
+// light. there should be some kind of light elements on the ship")
+// =============================================================================
+// Two pieces, both anchored in the hull's own HY_HULL_POINTS entry (box
+// fractions, js/game-controls.js) and created ONCE per hull:
+//  1. ONE THREE.PointLight at the nozzle group, plume-coloured, no shadows,
+//     distance = hull length x 3, decay 2, parented to the hull. Its intensity
+//     rides the glow cones' throttle ramp (0 at idle-coast, full under W) and,
+//     with the overhaul plume on (`thrusters: overhaul`), climbs further with
+//     the bloom's log-speed burn (boost / whip / warp). It is never hidden or
+//     re-added — a light-count change recompiles every lit material.
+//  2. ONE THREE.Points draw call for every light element on the hull: port
+//     red + starboard green nav lights at the wingtips, a white spine strobe
+//     (1 Hz double flash), a constant cockpit glow, engine throats that
+//     brighten with thrust and a few panel lights. Additive, outside the tone
+//     curve, sized in hull widths (so they shrink with the warp pull-back),
+//     faded out within a few units of the lens (cockpit view), exempt from
+//     the draw budget (__dbTris = Infinity).
+const _HL = {
+    MAX_I: 2.6,          // point-light intensity at full W
+    BURN_K: 0.7,         // extra fraction at full burn (overhaul plume only)
+    COLOR: 0xff7a1e,     // between the cones' 0xffaa00 core and 0xff6600 sheath
+    REACH_K: 3,          // light distance = hull length x 3
+    BACK_K: 0.35,        // light sits this many half-lengths behind the nozzle exit
+    STOCK_GAIN: 0.6,     // the stock vector hull keeps its elements subtle
+    KIND_COLOR: { port: 0xff2a1a, starboard: 0x22ff55, strobe: 0xffffff, cockpit: 0xa8eeff, throat: 0xff8a2a, panel: 0xff4030 }
+};
+const _hl = { model: null, points: null, light: null, gain: null, kinds: null, level: 0, key: null };
+
+function _hlDispose() {
+    if (_hl.points) {
+        if (_hl.points.parent) _hl.points.parent.remove(_hl.points);
+        _hl.points.geometry.dispose();
+        _hl.points.material.dispose();
+    }
+    if (_hl.light && _hl.light.parent) _hl.light.parent.remove(_hl.light);
+    _hl.model = null; _hl.points = null; _hl.light = null; _hl.gain = null; _hl.kinds = null; _hl.level = 0;
+}
+
+function _hlMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: { uHalfH: { value: 360 } },
+        vertexShader: [
+            'attribute float aSize;', 'attribute float aGain;', 'attribute vec3 aColor;',
+            'uniform float uHalfH;', 'varying vec3 vColor;', 'varying float vGain;',
+            '#include <common>', '#include <logdepthbuf_pars_vertex>',
+            'void main() {',
+            '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+            '  float d = max(0.001, -mv.z);',
+            '  float worldSize = aSize * length(modelMatrix[0].xyz);',
+            '  float px = worldSize * projectionMatrix[1][1] * uHalfH / d;',
+            '  gl_PointSize = clamp(px, 2.0, 72.0);',
+            '  vColor = aColor;',
+            // fade on the lens (cockpit view), and dim instead of shrinking below 2 px
+            '  vGain = aGain * smoothstep(2.0, 6.0, d) * clamp(px / 2.0, 0.35, 1.0);',
+            '  gl_Position = projectionMatrix * mv;',
+            '  #include <logdepthbuf_vertex>',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'varying vec3 vColor;', 'varying float vGain;',
+            '#include <common>', '#include <logdepthbuf_pars_fragment>',
+            'void main() {',
+            '  #include <logdepthbuf_fragment>',
+            '  vec2 q = gl_PointCoord - 0.5;',
+            '  float r = length(q) * 2.0;',
+            '  if (r > 1.0) discard;',
+            '  float core = smoothstep(0.5, 0.0, r);',
+            '  float halo = pow(1.0 - r, 2.2) * 0.55;',
+            '  float a = (core + halo) * vGain;',
+            '  gl_FragColor = vec4(mix(vColor, vec3(1.0), core * 0.55) * a, a);',
+            '}'
+        ].join('\n'),
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false
+    });
+}
+
+function _hyBuildHullLights(model) {
+    _hlDispose();
+    if (!model || typeof THREE === 'undefined' || typeof window.hyHullPoints !== 'function' ||
+        typeof _hyShipLocalBox !== 'function') return;
+    const entry = window.hyHullPoints(model);
+    const box = _hyShipLocalBox(model);
+    if (!entry || !box) return;
+    const key = window.hyHullKey(model);
+    const width = box.max.x - box.min.x, len = box.max.z - box.min.z;
+    const lights = entry.lights || [];
+    const n = lights.length;
+    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    const size = new Float32Array(n), gain = new Float32Array(n);
+    const v = new THREE.Vector3(), c = new THREE.Color();
+    lights.forEach((L, i) => {
+        window.hyHullLocal(box, L, v);
+        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+        c.setHex(L.color != null ? L.color : (_HL.KIND_COLOR[L.kind] || 0xffffff));
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        size[i] = L.size * width;
+        gain[i] = 0;
+    });
+    if (n) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+        geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+        const ga = new THREE.BufferAttribute(gain, 1);
+        ga.setUsage(THREE.DynamicDrawUsage);
+        geo.setAttribute('aGain', ga);
+        geo.computeBoundingSphere();
+        const pts = new THREE.Points(geo, _hlMaterial());
+        pts.name = 'hullLights';
+        pts.frustumCulled = false;
+        pts.renderOrder = 102;
+        pts.userData.isEffect = true;
+        pts.userData.__dbTris = Infinity;
+        model.add(pts);
+        _hl.points = pts;
+        _hl.gain = ga;
+        _hl.kinds = lights.map((L) => L.kind);
+    }
+    // the thruster light, at the nozzle group's centre, a little behind the exit
+    let nx = 0, ny = 0, nz = 0, nn = 0;
+    if (entry.exact) {
+        entry.exact.thrusters.forEach((p) => { nx += p[0]; ny += p[1]; nz += p[2]; nn++; });
+    } else {
+        (entry.thrusters || []).forEach((t) => { window.hyHullLocal(box, t, v); nx += v.x; ny += v.y; nz += v.z; nn++; });
+    }
+    if (nn) {
+        const scaleW = (model.scale && model.scale.x) || 1;
+        const light = new THREE.PointLight(_HL.COLOR, 0, len * scaleW * _HL.REACH_K, 2);
+        light.name = 'thrusterLight';
+        light.castShadow = false;
+        light.position.set(nx / nn, ny / nn, nz / nn - _HL.BACK_K * len / 2);
+        model.add(light);
+        _hl.light = light;
+    }
+    _hl.model = model;
+    _hl.key = key;
+}
+
+const _hlSize = (typeof THREE !== 'undefined') ? new THREE.Vector2() : null;
+function _hyUpdateHullLights(isThrusting) {
+    const model = cameraState.playerShipMesh;
+    if (!model) return;
+    if (_hl.model !== model) { _hyBuildHullLights(model); if (_hl.model !== model) return; }
+    const dtF = (typeof gameState !== 'undefined' && gameState.dtFrames) ? gameState.dtFrames : 1;
+    // throttle: the cones' own ramp, plus the bloom's burn with the overhaul plume
+    let target = cameraState.thrusterIntensity || 0;
+    if (!window.HYBRID || window.HYBRID.is('thrusters', 'overhaul')) {
+        const spd = (typeof gameState !== 'undefined' && gameState.velocityVector) ? gameState.velocityVector.length() : 0;
+        const burn = Math.max(0, Math.min(1, Math.log(1 + spd / 6.8) / Math.log(1 + 120 / 6.8)));
+        target *= 1 + _HL.BURN_K * burn;
+    }
+    _hl.level += (target - _hl.level) * (1 - Math.pow(1 - 0.22, dtF));
+    if (_hl.light) _hl.light.intensity = _HL.MAX_I * _hl.level;
+    if (!_hl.points) return;
+    if (typeof renderer !== 'undefined' && renderer && renderer.getDrawingBufferSize) {
+        renderer.getDrawingBufferSize(_hlSize);
+        _hl.points.material.uniforms.uHalfH.value = _hlSize.y * 0.5;
+    }
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const ph = (now % 1000) / 1000;                                   // 1 Hz
+    const strobe = (ph < 0.05 || (ph > 0.13 && ph < 0.18)) ? 1 : 0;   // short double flash
+    const g = (_hl.key === 'Player') ? _HL.STOCK_GAIN : 1;
+    const thr = Math.min(1.2, _hl.level);
+    const arr = _hl.gain.array;
+    for (let i = 0; i < _hl.kinds.length; i++) {
+        const k = _hl.kinds[i];
+        let a;
+        if (k === 'strobe') a = strobe * 1.2;
+        else if (k === 'throat') a = 0.18 + 0.95 * thr;
+        else if (k === 'cockpit') a = 0.55;
+        else if (k === 'panel') a = 0.62 + 0.12 * Math.sin(now * 0.002 + i * 1.7);
+        else a = 1.15;                                                // nav lights: steady
+        arr[i] = a * g;
+    }
+    _hl.gain.needsUpdate = true;
+}
+if (typeof window !== 'undefined') {
+    window._hyBuildHullLights = _hyBuildHullLights;
+    window._hyHullLights = _hl;
+}
