@@ -5154,7 +5154,7 @@ function _efStep(enemy) {
 
     // ---- 1. the intent: what the behaviours asked for this tick ----------
     _efI.subVectors(enemy.position, ef.p0);
-    const _vMax = spec.maxSpeed * (ud.isAlly ? 1 : HY_ENEMY_SPEED_K);   // the 20% slow-down is for hostiles only
+    const _vMax = spec.maxSpeed * (ud.isAlly ? (ud._wmSpeedK || 1) : HY_ENEMY_SPEED_K);   // (wingmen: their tier, package AC)   // the 20% slow-down is for hostiles only
     // The per-frame swarm pull (autopilot.js swarmEnemiesNearPlayer) is
     // banked between ticks as a wish, not applied as a shove.
     if (ud._efPull) { _efI.add(ud._efPull); ud._efPull.set(0, 0, 0); }
@@ -6697,7 +6697,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             // If firing at a wingman, damage the wingman and exit
             if (targetWingman && targetWingman.userData) {
                 const wasAlive = targetWingman.userData.health > 0;
-                targetWingman.userData.health = Math.max(0, targetWingman.userData.health - damage);
+                targetWingman.userData.health = Math.max(0, targetWingman.userData.health - damage / (typeof _wmShieldK === 'function' ? _wmShieldK(targetWingman) : 1));   // HYBRID (package AC): tier shields
                 if (typeof flashEnemyHit === 'function') flashEnemyHit(targetWingman, damage);
 
                 // Wingman destroyed — large explosion + notification
@@ -18241,6 +18241,406 @@ function _wmApproachSpeed(d, vmax) {
     return Math.min(vmax, Math.sqrt(2 * 0.7 * WINGMAN_FLIGHT.wingman.brake * Math.max(0, d)), 1.6 * d);
 }
 
+// =============================================================================
+// HYBRID (package AC, gated on wingmanFlight: physical) — Ben, 2026-10-11:
+// "Wingmen should always swarm in ways that do not repeat so each wingman
+// seems independent and with its own attack personality. Wingmen should
+// upgrade regularly and heal by harvesting asteroids often."
+//
+// 1. RUNS THAT DO NOT REPEAT. Every attack run is planned by _wmPlanRun from a
+//    per-wingman seeded stream (_wmRand): approach side (a clock angle round
+//    the sightline: R / U / L / D), entry angle, standoff, height, roll
+//    direction, timing and the break move, weighted by the personality.
+//    WINGMAN_RUNS scores candidates against the wingman's own last runs (the
+//    same side + entry + break twice in a row is never flown) and against the
+//    squad's live runs (no two wingmen fly the same run at once; two on one
+//    target come in from mirrored sides, their aims staggered).
+// 2. TIERS 1-5 (WINGMAN_TIERS). Merit from kills a wingman took part in,
+//    campaign milestones, nebulae charted and time on the wing. Each tier is
+//    +12% damage, fire rate, top speed and shield strength — the player's own
+//    curve is +12.5% top speed per nebula (SPEED_BOOST_PER_NEBULA 0.5 on 4.0)
+//    — and the tier is capped by the player's upgrades (rep tiers + nebulae
+//    + galaxies freed) so the squad never outclasses its captain.
+// 3. HARVESTING (WINGMAN_HARVEST). Hull under 60 %, or every few minutes when
+//    idle, with no threat near the wingman or the player: break off to the
+//    nearest belt rock within 6k, shoot 2-4 (real hits on the proxies, the
+//    rock destruction effect plays), heal a step per rock, then rejoin.
+// =============================================================================
+const WINGMAN_RUNS = {
+    CANDIDATES: 12,        // plans scored per run
+    HISTORY: 3,            // own runs remembered for the repeat penalty
+    STAGGER_MS: 650,       // a second wingman on the same target holds its aim this long after the first
+    ENTRY_JITTER: 28,      // deg round the personality's entry angle
+    STANDOFF: [0.72, 1.32],// x the personality's standoff
+    TIMING: [0.75, 1.4],   // x aim / break times
+};
+const WINGMAN_TIERS = {
+    MAX: 5,
+    STEP: 0.12,                       // per tier: damage, fire rate, top speed, shields
+    MERIT: [0, 3, 8, 15, 25],         // merit needed for tier 1..5
+    KILL: 1,                          // a kill this wingman shot at in the last KILL_WINDOW_MS
+    KILL_WINDOW_MS: 10000,
+    MILESTONE: 3,                     // each campaign phase completed
+    NEBULA: 2,                        // each nebula charted (applyNebulaShipUpgrade)
+    SERVICE_MS: 150000,               // +1 merit per this long flying with the player
+    CAP_BASE: 2,                      // the tier cap = CAP_BASE + the player's upgrades
+};
+const WINGMAN_HARVEST = {
+    HULL_FRAC: 0.6,        // break off below this hull fraction
+    IDLE_MS: 180000,       // ... or this long since the last harvest
+    FIELD_RANGE: 6000,     // the rock must be this close to the wingman ...
+    PLAYER_LEASH: 6000,    // ... and to the player
+    ABORT_DIST: 8000,      // the player is further than this: drop it and come home
+    THREAT_RANGE: 3000,    // no hostile this close to the player (the player is not in a fight)
+    ROCKS: [2, 4],         // rocks per harvest
+    HEAL_FRAC: 0.15,       // x maxHealth per rock
+    SHOT_RANGE: 380, STANDOFF: 230, GAP_MS: 420, AIM_DEG: 28,
+    ROCK_TIMEOUT_MS: 9000, MAX_MS: 45000, RETURN_MS: 25000, SCAN_MS: 4000, COOLDOWN_MS: 45000,
+};
+
+// Per-wingman seeded stream (mulberry32): each wingman's own sequence of
+// choices, seeded from its name and this session.
+const _WM_SESSION_SEED = (Math.random() * 4294967296) >>> 0;
+function _wmRand(ud) {
+    if (ud._wmSeed === undefined) {
+        let h = 2166136261 >>> 0; const s = String(ud.name || 'wingman');
+        for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+        ud._wmSeed = (h ^ _WM_SESSION_SEED) >>> 0;
+    }
+    let t = (ud._wmSeed = (ud._wmSeed + 0x6D2B79F5) >>> 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function _wmPick(r, weights) {   // weights: { key: w }
+    let tot = 0; for (const k in weights) tot += weights[k];
+    let x = r * tot;
+    for (const k in weights) { x -= weights[k]; if (x < 0) return k; }
+    return Object.keys(weights)[0];
+}
+function _wmSideB(phi) { return ['R', 'U', 'L', 'D'][Math.round(((phi % 360) + 360) % 360 / 90) % 4]; }
+function _wmEntryB(deg) { return deg < 25 ? 'tail' : deg < 55 ? 'oblique' : deg < 85 ? 'flank' : 'beam'; }
+function _wmStandB(k) { return k < 0.85 ? 'close' : k < 1.1 ? 'mid' : 'far'; }
+function _wmAngDiff(a, b) { const d = Math.abs(((a - b) % 360 + 540) % 360 - 180); return d; }
+
+// Plan the next attack run for this wingman (fills run.* in place).
+function _wmPlanRun(ally, ud, P, run, now) {
+    const R = WINGMAN_RUNS;
+    const hist = ud._wmRunHist || (ud._wmRunHist = []);
+    const last = hist.length ? hist[hist.length - 1] : null;
+    // the squad's live runs (setup / aim / burst, planned in the last 8 s)
+    const live = [];
+    for (let i = 0; i < allyShips.length; i++) {
+        const o = allyShips[i];
+        if (!o || o === ally || !o.userData || o.userData.health <= 0) continue;
+        const or = o.userData._wmRun;
+        if (or && or.sig && or.phase !== 'break' && now - (or.planAt || 0) < 8000 && o.userData.aiState === 'engage') live.push(or);
+    }
+    const modeW = {}; modeW[P.modes[0]] = 0.55; modeW[P.modes[1]] = (modeW[P.modes[1]] || 0) + 0.3;
+    ['flank', 'strafe', 'pursue', 'evade'].forEach((m) => { if (modeW[m] === undefined) modeW[m] = 0.075; });
+    const brkW = { pull: 0.12, climb: 0.1 };
+    const pb = P.breakMove || 'pull';
+    brkW[pb] = (brkW[pb] || 0) + 0.45;
+    for (const k in P.evade) brkW[k] = (brkW[k] || 0) + P.evade[k] * 0.4;
+    let best = null, bestS = -Infinity;
+    for (let c = 0; c < R.CANDIDATES; c++) {
+        const mode = _wmPick(_wmRand(ud), modeW);
+        const j = _wmRand(ud) * 2 - 1;
+        let entry = mode === 'strafe' ? 90 + j * 20 : mode === 'pursue' ? Math.abs(j) * 24 : P.flankDeg + j * R.ENTRY_JITTER;
+        entry = Math.max(0, Math.min(120, entry));
+        const phi = _wmRand(ud) * 360;
+        const sk = P.standoffK * (R.STANDOFF[0] + _wmRand(ud) * (R.STANDOFF[1] - R.STANDOFF[0]));
+        const brk = _wmPick(_wmRand(ud), brkW);
+        const side = _wmSideB(phi), eB = _wmEntryB(entry), sB = _wmStandB(sk);
+        const sig = side + '|' + eB + '|' + brk;
+        let s = Math.log(modeW[mode] + 1e-3) * 0.6 + Math.log(brkW[brk] + 1e-3) * 0.6 + _wmRand(ud) * 0.6;
+        if (last && last.sig === sig) s -= 100;                       // never the same run twice running
+        for (let h = 0; h < hist.length; h++) {
+            const H = hist[h], w = (h + 1) / hist.length;               // the most recent counts most
+            if (H.side === side) s -= 0.7 * w;
+            if (H.entry === eB) s -= 0.6 * w;
+            if (H.brk === brk) s -= 0.6 * w;
+            if (H.stand === sB) s -= 0.3 * w;
+        }
+        for (let i = 0; i < live.length; i++) {
+            const o = live[i];
+            if (o.sig === sig) s -= 50;                                  // no two wingmen fly the same run at once
+            if (o.target === run.target) {
+                if (o.sideB === side) s -= 4;                            // mirrored sides on one target
+                s += 1.5 * _wmAngDiff(phi, o.phi) / 180;
+            }
+        }
+        if (s > bestS) { bestS = s; best = { mode, entry, phi, sk, brk, side, eB, sB, sig }; }
+    }
+    run.mode = best.mode; run.entry = best.entry; run.phi = best.phi; run.sk = best.sk;
+    run.brkMove = best.brk; run.sideB = best.side; run.sig = best.sig;
+    run.side = (best.phi > 90 && best.phi < 270) ? -1 : 1;
+    run.dive = P.diveUp * (0.5 + _wmRand(ud)) * (best.side === 'D' ? -1 : 1);
+    run.rollDir = _wmRand(ud) < 0.5 ? -1 : 1;
+    const T = WINGMAN_RUNS.TIMING, tj = () => T[0] + _wmRand(ud) * (T[1] - T[0]);
+    run.aimMs = P.aimMs * tj();
+    run.breakMs = P.breakMs * tj();
+    run.burst = Math.max(2, P.burst + Math.floor(_wmRand(ud) * 3) - 1);
+    run.gapMs = P.gapMs * (0.8 + _wmRand(ud) * 0.45) / _wmTierK(ud);   // tier: fire rate
+    run.planAt = now;
+    // stagger: a squadmate already lining this target up goes first
+    let ahead = 0;
+    for (let i = 0; i < live.length; i++) if (live[i].target === run.target) ahead++;
+    run.notBefore = now + ahead * WINGMAN_RUNS.STAGGER_MS;
+    hist.push({ sig: best.sig, side: best.side, entry: best.eB, stand: best.sB, brk: best.brk });
+    if (hist.length > R.HISTORY) hist.shift();
+    // measurement log (probe: .critic/wingmen3)
+    const log = ud._wmRunLog || (ud._wmRunLog = []);
+    log.push({ t: now, end: 0, sig: best.sig, side: best.side, entry: best.eB, stand: best.sB, brk: best.brk, mode: best.mode, tgt: run.target && run.target.id });
+    if (log.length > 80) log.shift();
+    run.logRow = log[log.length - 1];
+    _wmCount(ud, 'mode:' + run.mode);
+}
+
+// Approach direction (unit, relative to the target) for a planned run: the
+// entry angle off the sightline, swung round it by the clock angle phi.
+function _wmApproachDir(run, toT, firingRange, R, out) {
+    const sd = _wmS.crossVectors(toT, _wmUp);
+    if (sd.lengthSq() < 1e-6) sd.set(1, 0, 0);
+    sd.normalize();
+    const up2 = _wmG.crossVectors(sd, toT).normalize();
+    const ph = run.phi * _EF_D2R, en = run.entry * _EF_D2R;
+    const lat = new THREE.Vector3().copy(sd).multiplyScalar(Math.cos(ph)).addScaledVector(up2, Math.sin(ph));
+    out.copy(toT).multiplyScalar(-Math.cos(en)).addScaledVector(lat, Math.sin(en))
+       .addScaledVector(_wmUp, run.dive * firingRange / Math.max(1, R));
+    run.side0 = lat;
+    return out;
+}
+
+// ── Tiers ────────────────────────────────────────────────────────────────
+function _wmTierK(ud) { return 1 + WINGMAN_TIERS.STEP * (((ud && ud._wmTier) || 1) - 1); }
+function _wmShieldK(ally) {   // enemy fire on a wingman is divided by this (fireEnemyWeapon)
+    if (!_wmFlightOn() || !ally || !ally.userData) return 1;
+    return _wmTierK(ally.userData);
+}
+function _wmTierCap() {
+    const g = (typeof gameState !== 'undefined' && gameState) || {};
+    const up = (g.repTier || 0) + (g.nebulasDeepDiscovered || 0) + (g.galaxiesCleared || 0);
+    return Math.min(WINGMAN_TIERS.MAX, WINGMAN_TIERS.CAP_BASE + up);
+}
+// Squad-wide milestones (campaign phases completed + nebulae charted), read
+// once per AI tick. A new recruit starts from the count at its joining.
+let _wmCampPrev = null, _wmCampSteps = 0;
+function _wmMilestones() {
+    let st = null;
+    try { st = window.__campaign ? window.__campaign.state : null; } catch (e) { st = null; }
+    if (st && _wmCampPrev && st !== _wmCampPrev) _wmCampSteps++;
+    if (st) _wmCampPrev = st;
+    const neb = (typeof gameState !== 'undefined' && gameState && gameState.nebulasDeepDiscovered) || 0;
+    return { camp: _wmCampSteps, neb };
+}
+// Note a shot / missile at a target, so its death counts as this wingman's kill.
+function _wmNoteHit(ud, et) {
+    if (!et || !et.userData) return;
+    const L = ud._wmHits || (ud._wmHits = []);
+    for (let i = 0; i < L.length; i++) if (L[i].e === et) { L[i].t = Date.now(); return; }
+    L.push({ e: et, t: Date.now() });
+    if (L.length > 8) L.shift();
+}
+function _wmTierTick(ally, ud, now, ms, distToPlayer) {
+    const T = WINGMAN_TIERS;
+    if (!ud._wmTier) {
+        ud._wmTier = 1; ud._wmMerit = 0; ud._wmKills = 0;
+        ud._wmMsCamp = ms.camp; ud._wmMsNeb = ms.neb; ud._wmServiceAt = now;
+    }
+    let gain = 0;
+    const L = ud._wmHits;
+    if (L && L.length) {
+        for (let i = L.length - 1; i >= 0; i--) {
+            const h = L[i], eud = h.e.userData;
+            const dead = !eud || eud.health <= 0 || !h.e.parent;
+            if (dead) { if (now - h.t < T.KILL_WINDOW_MS) { gain += T.KILL; ud._wmKills++; } L.splice(i, 1); }
+            else if (now - h.t > T.KILL_WINDOW_MS) L.splice(i, 1);
+        }
+    }
+    if (ms.camp > ud._wmMsCamp) { gain += T.MILESTONE * (ms.camp - ud._wmMsCamp); ud._wmMsCamp = ms.camp; }
+    if (ms.neb > ud._wmMsNeb) { gain += T.NEBULA * (ms.neb - ud._wmMsNeb); ud._wmMsNeb = ms.neb; }
+    if (distToPlayer < 4000 && !ud.recruitPending) {
+        if (now - ud._wmServiceAt > T.SERVICE_MS) { gain += 1; ud._wmServiceAt = now; }
+    } else ud._wmServiceAt = Math.max(ud._wmServiceAt, now - T.SERVICE_MS * 0.5);
+    if (gain) ud._wmMerit += gain;
+    let tier = 1;
+    for (let i = 0; i < T.MERIT.length; i++) if (ud._wmMerit >= T.MERIT[i]) tier = i + 1;
+    tier = Math.min(tier, _wmTierCap());
+    if (tier > ud._wmTier) {
+        ud._wmTier = tier;
+        _wmApplyTier(ally, ud);
+        _wmTierUps.push(ud);   // announced after the squad's tick (_wmAnnounceTiers)
+        const log = ud._wmTierLog || (ud._wmTierLog = []);
+        log.push({ t: now, tier, merit: ud._wmMerit, kills: ud._wmKills });
+    }
+}
+// One comms line per tick: a single wingman's refit in its own voice, a
+// squad-wide one (a campaign milestone lifts everyone at once) as one line —
+// separate lines would queue behind Mission Control and be dropped.
+const _wmTierUps = [];
+function _wmAnnounceTiers() {
+    if (!_wmTierUps.length) return;
+    const STAT = ['Guns', 'Shields', 'Engines', 'Fire control'];
+    const u0 = _wmTierUps[0], tier = u0._wmTier;
+    const pct = Math.round((_wmTierK(u0) - 1) * 100);
+    const feat = STAT[(tier + ((u0.name || '').length)) % STAT.length];
+    if (_wmTierUps.length === 1) {
+        _enqueueWingmanComms(u0.name + ' (Comms)', feat + ' upgraded, tier ' + tier + ' — damage, fire rate, speed and shields +' + pct + '%.');
+    } else {
+        const names = _wmTierUps.map((u) => (u.name || 'Wingman').replace(/^Wingman /, '') + ' ' + u._wmTier).join(', ');
+        _enqueueWingmanComms(u0.name + ' (Comms)', 'Squadron refit: ' + feat.toLowerCase() + ' upgraded — tiers ' + names + '. Each tier is +' + Math.round(WINGMAN_TIERS.STEP * 100) + '% damage, fire rate, speed and shields.');
+    }
+    _wmTierUps.length = 0;
+}
+function _wmApplyTier(ally, ud) {
+    const k = _wmTierK(ud);
+    ud._wmSpeedK = k;   // _efStep: the wingman's top speed
+    if (ud._wmMissileCd0 === undefined) ud._wmMissileCd0 = ud.missileCooldownMs || 8000;
+    ud.missileCooldownMs = ud._wmMissileCd0 / k;
+}
+
+// ── Harvesting ───────────────────────────────────────────────────────────
+const _wmHarvTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Belt rocks are instancer proxies (no parent; their record says if they are gone).
+function _wmRockAlive(p) {
+    if (!p || !p.userData || p.userData._wmGone) return false;
+    return p._instRef ? !p._instRef.dead : !!p.parent;
+}
+function _wmHarvestRock(ally, fromPos, playerPos, range) {
+    if (typeof planets === 'undefined') return null;
+    const taken = [];
+    for (let i = 0; i < allyShips.length; i++) {
+        const o = allyShips[i]; if (o && o !== ally && o.userData && o.userData._wmHarvest && o.userData._wmHarvest.rock) taken.push(o.userData._wmHarvest.rock);
+    }
+    let best = null, bd2 = range * range;
+    const L2 = WINGMAN_HARVEST.PLAYER_LEASH * WINGMAN_HARVEST.PLAYER_LEASH;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData || p.userData.type !== 'asteroid' || !_wmRockAlive(p) || taken.indexOf(p) !== -1) continue;
+        p.getWorldPosition(_wmHarvTmp);
+        const d2 = fromPos.distanceToSquared(_wmHarvTmp);
+        if (d2 < bd2 && playerPos.distanceToSquared(_wmHarvTmp) < L2) { bd2 = d2; best = p; }
+    }
+    return best;
+}
+function _wmPlayerInCombat(playerPos) {
+    if (typeof enemies === 'undefined') return false;
+    const r2 = WINGMAN_HARVEST.THREAT_RANGE * WINGMAN_HARVEST.THREAT_RANGE;
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (e && e.userData && e.userData.health > 0 && e.position.distanceToSquared(playerPos) < r2) return true;
+    }
+    return false;
+}
+// Start a harvest when it is wanted and safe (called in patrol, throttled).
+function _wmHarvestMaybe(ally, ud, now, playerPos, distToPlayer, threat) {
+    const H = WINGMAN_HARVEST;
+    if (ud._wmHarvest || ud.recruitPending || threat || now < (ud._wmHarvestCd || 0)) return;
+    if (now - (ud._wmHarvScan || 0) < H.SCAN_MS + ((ally.id || 0) % 7) * 150) return;
+    ud._wmHarvScan = now;
+    if (!ud._wmBornAt) ud._wmBornAt = now;
+    const frac = ud.health / Math.max(1, ud.maxHealth);
+    const low = frac < H.HULL_FRAC;
+    const idle = now - (ud._wmHarvestAt || ud._wmBornAt) > H.IDLE_MS;
+    if (!low && !idle) return;
+    if (distToPlayer > H.PLAYER_LEASH || _wmPlayerInCombat(playerPos)) return;
+    const rock = _wmHarvestRock(ally, ally.position, playerPos, H.FIELD_RANGE);
+    if (!rock) { if (idle && !low) ud._wmHarvestAt = now - H.IDLE_MS * 0.5; return; }   // nothing near: look again later
+    const want = H.ROCKS[0] + Math.floor(_wmRand(ud) * (H.ROCKS[1] - H.ROCKS[0] + 1));
+    ud._wmHarvest = { rock, rockAt: now, t0: now, shots: 0, rocks: 0, want, nextShot: 0, hp0: ud.health, low, rp: new THREE.Vector3(), rpPrev: null };
+    ud.patrolTarget = null;
+    const pct = Math.round(frac * 100);
+    const short = (ud.name || 'Wingman').replace(/^Wingman /, '');
+    _enqueueWingmanComms(ud.name + ' (Comms)', low
+        ? short + ': hull at ' + pct + '%, harvesting the belt.'
+        : short + ': all quiet — mining a few rocks for the plating.');
+    const log = ud._wmHarvLog || (ud._wmHarvLog = []);
+    log.push({ t0: now, hp0: Math.round(ud.health * 10) / 10, low, want, d0: Math.round(ally.position.distanceTo(rock.getWorldPosition(_wmHarvTmp))), rocks: 0, shots: 0, end: 0, why: '', hp1: 0, rejoinMs: null });
+    if (log.length > 20) log.shift();
+}
+function _wmHarvestEnd(ud, now, why) {
+    const Hs = ud._wmHarvest; if (!Hs) return;
+    ud._wmHarvest = null;
+    ud._wmHarvestAt = now;
+    ud._wmHarvestCd = now + WINGMAN_HARVEST.COOLDOWN_MS;
+    ud._wmReturnUntil = now + WINGMAN_HARVEST.RETURN_MS;
+    ud._wmAimPos = null;
+    const log = ud._wmHarvLog, row = log && log[log.length - 1];
+    if (row && !row.end) { row.end = now; row.why = why; row.rocks = Hs.rocks; row.shots = Hs.shots; row.hp1 = Math.round(ud.health * 10) / 10; row.ms = now - Hs.t0; row._ret = now; }
+}
+// One bolt on a belt rock: the rock has 2 hit points, like the player's.
+function _wmHarvestShot(ally, ud, rock, rp) {
+    const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+    _fireWingmanLaser(ally.position.clone(), rp, color);
+    const rud = rock.userData;
+    rud.health = (typeof rud.health === 'number' ? rud.health : 2) - 1;
+    if (rud.health > 0) { if (typeof createHitSparks === 'function') createHitSparks(rp, 0xffcc66); return false; }
+    const r = ((rock.geometry && rock.geometry.parameters && rock.geometry.parameters.radius) || 1) * ((rock.scale && rock.scale.x) || 1);
+    if (typeof createAsteroidExplosion === 'function') createAsteroidExplosion(rp.clone(), r);
+    if (typeof playSound === 'function' && typeof camera !== 'undefined' && camera.position.distanceTo(rp) < 2500) playSound('explosion');
+    // destroyAsteroid pays the PLAYER (+0.5 hull, +1 rep) — a squadmate's rock heals the squadmate
+    const g = (typeof gameState !== 'undefined') ? gameState : null;
+    const hull0 = g ? g.hull : 0, rep0 = g ? g.reputation : 0, tier0 = g ? g.repTier : 0;
+    rud._wmGone = true;
+    if (typeof destroyAsteroid === 'function') destroyAsteroid(rock);
+    if (g) { g.hull = hull0; if (g.repTier === tier0) g.reputation = rep0; }
+    ud.health = Math.min(ud.maxHealth, ud.health + ud.maxHealth * WINGMAN_HARVEST.HEAL_FRAC);
+    return true;
+}
+// Fly the harvest (physical flight model; replaces the patrol this tick).
+function _executeHarvest(ally, ud, now, playerPos, distToPlayer) {
+    const H = WINGMAN_HARVEST, Hs = ud._wmHarvest, spec = WINGMAN_FLIGHT.wingman;
+    if (distToPlayer > H.ABORT_DIST) return _wmHarvestEnd(ud, now, 'leash');
+    if (now - Hs.t0 > H.MAX_MS) return _wmHarvestEnd(ud, now, 'timeout');
+    if (Hs.rocks >= Hs.want || (Hs.rocks >= H.ROCKS[0] && ud.health >= ud.maxHealth)) return _wmHarvestEnd(ud, now, 'done');
+    if (!_wmRockAlive(Hs.rock) || now - Hs.rockAt > H.ROCK_TIMEOUT_MS) {
+        Hs.rock = _wmHarvestRock(ally, ally.position, playerPos, Hs.rocks ? 2500 : H.FIELD_RANGE);
+        Hs.rockAt = now; Hs.rpPrev = null;
+        if (!Hs.rock) return _wmHarvestEnd(ud, now, Hs.rocks ? 'done' : 'none');
+    }
+    const rp = Hs.rock.getWorldPosition(Hs.rp);
+    // the rock's own drift (belt orbit), so the approach leads it
+    const rv = _wmHarvTmp.set(0, 0, 0);
+    const tNow = performance.now(), rdt = Hs.rpT ? (tNow - Hs.rpT) / 1000 : 0;
+    if (Hs.rpPrev && rdt > 0.004) rv.subVectors(rp, Hs.rpPrev).divideScalar(rdt);
+    Hs.rpT = tNow;
+    Hs.rpPrev = (Hs.rpPrev || new THREE.Vector3()).copy(rp);
+    if (rv.lengthSq() > 250000) rv.set(0, 0, 0);   // a rebase, not motion
+    const toR = _wmA.subVectors(rp, ally.position);
+    const d = Math.max(1e-3, toR.length()); toR.divideScalar(d);
+    const goal = _wmG.copy(rp).addScaledVector(toR, -H.STANDOFF);
+    const wish = _wmB.subVectors(goal, ally.position);
+    const dG = wish.length();
+    if (dG > 1e-3) wish.multiplyScalar(_wmApproachSpeed(dG, spec.maxSpeed * 0.85) / dG);
+    wish.addScaledVector(rv, 0.9);
+    const ef = ud._ef, facing = ef ? ef.nose.dot(toR) : 1;
+    if (d < H.SHOT_RANGE * 1.8) ud._wmAimPos = rp.clone();
+    if (d < H.SHOT_RANGE && facing > Math.cos(H.AIM_DEG * _EF_D2R) && now >= Hs.nextShot) {
+        Hs.nextShot = now + H.GAP_MS;
+        Hs.shots++;
+        _wmCount(ud, 'harvestShot');
+        if (_wmHarvestShot(ally, ud, Hs.rock, rp)) { Hs.rocks++; Hs.rock = null; Hs.nextShot = now + H.GAP_MS * 2; }
+    }
+    ud._efWish = (ud._efWish || new THREE.Vector3()).copy(wish);
+    _allyDir.copy(wish);
+}
+// The stranded rule's reach for this wingman: wider while it is out on a
+// harvest or flying home from one, so the harvest never strands it.
+function _wmStrandReach(ud, now) {
+    return (ud._wmHarvest || now < (ud._wmReturnUntil || 0)) ? WINGMAN_HARVEST.ABORT_DIST : 4000;
+}
+// Close the rejoin measurement once the wingman is back with the player.
+function _wmHarvestRejoin(ud, now, distToPlayer) {
+    const log = ud._wmHarvLog, row = log && log[log.length - 1];
+    if (row && row._ret && row.rejoinMs === null && distToPlayer < 600) { row.rejoinMs = now - row._ret; ud._wmReturnUntil = 0; }
+}
+if (typeof window !== 'undefined') {
+    window.WINGMAN_RUNS = WINGMAN_RUNS;
+    window.WINGMAN_TIERS = WINGMAN_TIERS;
+    window.WINGMAN_HARVEST = WINGMAN_HARVEST;
+}
+
 // ── Engage (physical): attack runs, like the enemies' ──────────────────────
 // setup  fly the personality's approach (flank / strafe / pursue / evade)
 // aim    telegraph: wings level, nose onto the target, closing
@@ -18268,9 +18668,10 @@ function _executeEngagePhysical(ally, ud, now) {
     // A new target, or a run left cold (the state machine dropped out of
     // engage for a while), starts a fresh run.
     if (!run || run.target !== et || now - run.seen > 1500) {
+        if (run && run.logRow && !run.logRow.end) run.logRow.end = now;
         run = ud._wmRun = { target: et, phase: 'setup', t0: now, seen: now, shots: 0, nextShot: 0, mode: P.modes[0],
                             side: Math.random() < 0.5 ? -1 : 1, flown: false, app: null, brk: null };
-        _wmCount(ud, 'mode:' + run.mode);
+        _wmPlanRun(ally, ud, P, run, now);   // HYBRID (package AC): a run that does not repeat
     }
     run.seen = now;
     const age = now - run.t0;
@@ -18278,7 +18679,10 @@ function _executeEngagePhysical(ally, ud, now) {
     ud._wmAimPos = null;
 
     if (run.phase === 'setup') {
-        const R = firingRange * P.standoffK;
+        const R = firingRange * (run.sk || P.standoffK);
+        if (!run.app && run.sig) {
+            run.app = _wmApproachDir(run, toT, firingRange, R, new THREE.Vector3());
+        }
         if (!run.app) {
             // The approach point is fixed RELATIVE TO THE TARGET when the run
             // is set up (re-deriving it from the live sightline every tick
@@ -18303,11 +18707,13 @@ function _executeEngagePhysical(ally, ud, now) {
         const inPos = dG < Math.max(150, R * 0.4) || age > 3500;
         // in position — or the target has wandered into the guns on the way
         const chance = age > 1000 && dist < firingRange * 1.4 && facing > Math.cos(35 * _EF_D2R);
-        if ((inPos && dist < firingRange * 2.5 && (facing > Math.cos(55 * _EF_D2R) || age > 3500)) || chance) {
+        const held = now < (run.notBefore || 0) && age < 3500;   // a squadmate on this target goes first
+        if (!held && ((inPos && dist < firingRange * 2.5 && (facing > Math.cos(55 * _EF_D2R) || age > 3500)) || chance)) {
             run.phase = 'aim'; run.t0 = now; _wmCount(ud, 'aim');
         } else if (age > 3500 && run.mode !== 'pursue') {
             // could not get into position (the target is running): go straight in
             run.mode = 'pursue'; run.app = null; run.t0 = now; _wmCount(ud, 'mode:pursue');
+            if (run.sig) run.entry = Math.min(run.entry || 0, 15);
         }
     } else if (run.phase === 'aim' || run.phase === 'burst') {
         ud._wmAimPos = enemyPos;
@@ -18315,33 +18721,48 @@ function _executeEngagePhysical(ally, ud, now) {
         else wish.copy(toT);                                                                                                      // close on it
         wish.multiplyScalar(Math.min(spec.maxSpeed * 0.8, Math.max(160, (dist - firingRange * 0.3) * 1.4)));
         if (tv) wish.addScaledVector(tv, 0.85);
-        if (run.phase === 'aim' && age > P.aimMs) { run.phase = 'burst'; run.t0 = now; run.shots = 0; run.nextShot = now; _wmCount(ud, 'burst'); }
+        if (run.phase === 'aim' && age > (run.aimMs || P.aimMs)) { run.phase = 'burst'; run.t0 = now; run.shots = 0; run.nextShot = now; _wmCount(ud, 'burst'); }
         if (run.phase === 'burst') {
             const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
             if (now >= run.nextShot && _gameAge >= 5000 && dist < firingRange * 1.3 && facing > Math.cos(40 * _EF_D2R)) {
-                run.nextShot = now + P.gapMs;
+                run.nextShot = now + (run.gapMs || P.gapMs);
                 run.shots++;
+                _wmNoteHit(ud, et);
                 ud.lastAttack = now;
                 _wmCount(ud, 'shot');
                 _wingmanLaserHit(ally, ud, et, enemyPos);
             }
-            if (run.shots >= P.burst || now - run.t0 > P.burst * P.gapMs + 2500 || dist < firingRange * 0.25) {
+            const _bN = run.burst || P.burst, _bG = run.gapMs || P.gapMs;
+            if (run.shots >= _bN || now - run.t0 > _bN * _bG + 2500 || dist < firingRange * 0.25) {
                 run.phase = 'break'; run.t0 = now; _wmCount(ud, 'break');
+                if (run.sig) {
+                    // HYBRID (package AC): the planned break — out on the side it came
+                    // in from (a climb goes up and over), rolled the planned way
+                    const lat = run.side0 || _wmS.crossVectors(toT, _wmUp).normalize();
+                    run.brk = new THREE.Vector3().copy(nose);
+                    if (run.brkMove === 'climb') run.brk.addScaledVector(_wmUp, 1.1).addScaledVector(lat, 0.3);
+                    else run.brk.addScaledVector(lat, 0.8).addScaledVector(_wmUp, 0.35 * (run.sideB === 'D' ? -1 : 1));
+                    run.brk.normalize();
+                    const mv = run.brkMove;
+                    if (mv === 'barrel' || mv === 'corkscrew' || mv === 'splitS') {
+                        if (_wmEvade(ally, ud, P, now, 'break', mv) && ud._evade) ud._evade.dir = run.rollDir || 1;
+                    }
+                } else {
                 // break direction, fixed for the break: on past it, out to the side and up
                 const sd = _wmS.crossVectors(toT, _wmUp);
                 if (sd.lengthSq() < 1e-6) sd.set(1, 0, 0);
                 sd.normalize().multiplyScalar(run.side);
                 run.brk = new THREE.Vector3().copy(nose).addScaledVector(sd, 0.8).addScaledVector(_wmUp, 0.5).normalize();
                 if (P.breakMove) _wmEvade(ally, ud, P, now, 'break', P.breakMove);
+                }
             }
         }
     } else {   // break: pull out, away from its guns
         wish.copy(run.brk || nose).multiplyScalar(spec.maxSpeed * 0.85);
-        if (age > P.breakMs) {
+        if (age > (run.breakMs || P.breakMs)) {
+            if (run.logRow && !run.logRow.end) run.logRow.end = now;
             run.phase = 'setup'; run.t0 = now; run.flown = false; run.app = null; run.brk = null;
-            run.mode = (Math.random() < 0.75) ? P.modes[0] : P.modes[1];
-            if (Math.random() < 0.6) run.side = -run.side;
-            _wmCount(ud, 'mode:' + run.mode);
+            _wmPlanRun(ally, ud, P, run, now);   // HYBRID (package AC): the next run, never the last one again
         }
     }
     if (dist < 90) wish.addScaledVector(toT, -(90 - dist) * 6);   // never ram the target
@@ -18356,6 +18777,7 @@ function _executeEngagePhysical(ally, ud, now) {
         ud.lastMissile = now;
         ud.missilesRemaining = (ud.missilesRemaining || 0) - 1;
         _wingmanTacticalMessage(ud, 'missile');
+        _wmNoteHit(ud, et);
         if (typeof _fireWingmanMissile === 'function') _fireWingmanMissile(ally, et, enemyPos, ud);
     }
 }
@@ -18421,6 +18843,7 @@ function updateAllyShips() {
     if (updateAllyShips._disp.lengthSq() > 4000000) updateAllyShips._disp.set(0, 0, 0);
     updateAllyShips._prevPP.copy(playerPos);
     const _wmPhys = _wmFlightOn();   // HYBRID (package AA): wingmanFlight physical | kinematic
+    const _wmMs = _wmPhys ? _wmMilestones() : null;   // HYBRID (package AC): squad milestones for the tiers
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
@@ -18463,6 +18886,7 @@ function updateAllyShips() {
         const threat = _scanForEnemy(ally);
         // HYBRID: where-we-are / lore / tips chatter (see WINGMAN_CONTEXT_LINES)
         _wingmanAmbientChatter(ally, ud, now, distToPlayer, threat, playerWarping);
+        if (_wmPhys) { _wmTierTick(ally, ud, now, _wmMs, distToPlayer); _wmHarvestRejoin(ud, now, distToPlayer); }   // HYBRID (package AC)
 
         // ── State transitions ────────────────────────────────────────────
         // Boss-victory celebration takes priority over everything except
@@ -18519,7 +18943,7 @@ function updateAllyShips() {
                 ud.engageTarget = threat;
                 // (the 'engage' line fires on the first SHOT, in _executeEngage —
                 // a contact on the scope is not "moving in")
-            } else if (ud.recruitPending || distToPlayer > 4000) {
+            } else if (ud.recruitPending || distToPlayer > (_wmPhys ? _wmStrandReach(ud, now) : 4000)) {   // (wider out on a harvest, package AC)
                 // Separated by >4000u — stranded, orbit local planets here
                 ud.aiState = 'stranded';
                 _wingmanTacticalMessage(ud, 'stranded');
@@ -18594,6 +19018,10 @@ function updateAllyShips() {
         if (_wmFly) _wmReact(ally, ud, now);
         else if (ud._ef) { ud._ef = null; ud._wmAimPos = null; }
 
+        // HYBRID (package AC): a harvest lives inside patrol — a fight, a warp
+        // or a celebration ends it (the wingman then flies home on _wmReturnUntil)
+        if (ud._wmHarvest && (ud.aiState !== 'patrol' || !_wmFly || celebrating)) _wmHarvestEnd(ud, now, ud.aiState);
+
         // ── Execute current state ────────────────────────────────────────
         if (ud.aiState === 'celebrate') {
             _executeCelebrate(ally, ud, now, playerPos);
@@ -18606,6 +19034,8 @@ function updateAllyShips() {
             _executeStranded(ally, ud, now);
         } else if (ud.aiState === 'return') {
             _executeReturn(ally, ud);
+        } else if (_wmFly && (ud._wmHarvest || (!celebrating && !playerWarping && (_wmHarvestMaybe(ally, ud, now, playerPos, distToPlayer, threat), ud._wmHarvest)))) {
+            _executeHarvest(ally, ud, now, playerPos, distToPlayer);   // HYBRID (package AC): heal on the belt
         } else {
             // Always swarm the player when within 4000u (any galaxy)
             if (_wmFly && distToPlayer < 4000) {
@@ -18628,7 +19058,7 @@ function updateAllyShips() {
         {
             const _objective = (ud.aiState === 'engage' && ud.engageTarget && ud.engageTarget.position)
                 ? ud.engageTarget.position
-                : (distToPlayer > 1200 ? playerPos : null);
+                : (ud._wmHarvest ? (ud._wmHarvest.rock ? ud._wmHarvest.rp : null) : (distToPlayer > 1200 ? playerPos : null));
             if (!ud._jumpUntil && _objective &&
                 pos.distanceTo(_objective) > 1200 &&
                 now - (ud._lastJumpAt || 0) > 7000 + ((ally.id || 0) % 4000)) {
@@ -18675,7 +19105,7 @@ function updateAllyShips() {
         // in range it re-scanned EVERY FRAME × every wingman — ~3ms/frame of
         // pure waste, the cause of the discovery-path chop. Stamp on every
         // scan attempt so it runs at most once per 5-9s per wingman.
-        if (ud.aiState !== 'engage' && typeof _wingmanNearestAsteroid === 'function' &&
+        if (ud.aiState !== 'engage' && !ud._wmHarvest && typeof _wingmanNearestAsteroid === 'function' &&
             now - (ud._lastAstScan || 0) > 5000 + ((ally.id || 0) % 4000)) {
             ud._lastAstScan = now;
             const ast = _wingmanNearestAsteroid(ally.position, 1400);
@@ -18703,6 +19133,7 @@ function updateAllyShips() {
             ud.health = Math.min(ud.maxHealth, ud.health + 1);
         }
     });
+    if (_wmPhys) _wmAnnounceTiers();   // HYBRID (package AC)
 }
 
 // ── Patrol: cruise between waypoints (biased toward player in home systems)
@@ -18814,9 +19245,10 @@ function _wingmanLaserHit(ally, ud, et, enemyPos) {
             return;
         }
         const wasAlive = et.userData.health > 0;
-        et.userData.health -= 0.1;
+        const _wmDmg = 0.1 * _wmTierK(ud);   // HYBRID (package AC): the wingman's tier
+        et.userData.health -= _wmDmg;
         _activateOnDamage(et);
-        if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
+        if (typeof flashEnemyHit === 'function') flashEnemyHit(et, _wmDmg);
 
         // Kill notification + cleanup (remove from scene, run boss checks)
         if (wasAlive && et.userData.health <= 0) {
