@@ -229,7 +229,7 @@ try {
                     qi.copy(c.quaternion).invert();
                     up.set(0, 1, 0).applyQuaternion(sh.quaternion).applyQuaternion(qi);
                     const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(sh.quaternion).applyQuaternion(qi);
-                    S.rec.push([performance.now(), (v.x + 1) * 0.5 * innerWidth, (1 - v.y) * 0.5 * innerHeight,
+                    S.rec.push([(typeof gameState._lastRafTime === 'number' ? gameState._lastRafTime : performance.now()), (v.x + 1) * 0.5 * innerWidth, (1 - v.y) * 0.5 * innerHeight,
                         Math.atan2(-up.x, up.y) * 57.2958, Math.atan2(fwd.x, -fwd.z) * 57.2958, gameState.frameCount, keys.left ? 1 : 0, rotationalVelocity.yaw]);
                 }
                 return orig.apply(this, arguments);
@@ -245,19 +245,25 @@ try {
         await page.waitForTimeout(1500);
         const rec = await page.evaluate(() => { window.__afTurn.on = false; return window.__afTurn.rec; });
         const stats = (rows) => {
-            const ax = [], ar = [], ay = [], dts = [];
+            const ax = [], ar = [], ay = [], dts = [], nx = [], nr = [];
             for (let i = 1; i < rows.length - 1; i++) {
                 const [ , x0, y0, r0, w0] = rows[i - 1], [t1, x1, y1, r1, w1] = rows[i], [t2, x2, y2, r2_, w2] = rows[i + 1];
                 ax.push(Math.hypot(x2 - 2 * x1 + x0, y2 - 2 * y1 + y0));
                 ar.push(Math.abs(r2_ - 2 * r1 + r0));
                 ay.push(Math.abs(w2 - 2 * w1 + w0));
                 dts.push(t2 - t1);
+                // time-aware acceleration from the two frame velocities, per 60 Hz frame^2
+                // (samples are stamped with the frame's rAF time = when it is presented)
+                const d1 = Math.max(0.05, (t1 - rows[i - 1][0]) / 16.67), d2 = Math.max(0.05, (t2 - t1) / 16.67), h = (d1 + d2) / 2;
+                nx.push(Math.hypot(((x2 - x1) / d2 - (x1 - x0) / d1) / h, ((y2 - y1) / d2 - (y1 - y0) / d1) / h));
+                nr.push(Math.abs(((r2_ - r1) / d2 - (r1 - r0) / d1) / h));
             }
             return { frames: rows.length, fps: rows.length > 1 ? r2((rows.length - 1) / ((rows[rows.length - 1][0] - rows[0][0]) / 1000)) : null,
                 px2: { p50: r2(pct(ax, 0.5)), p95: r2(pct(ax, 0.95)), max: r2(Math.max(...ax)) },
                 rollDeg2: { p50: r2(pct(ar, 0.5)), p95: r2(pct(ar, 0.95)), max: r2(Math.max(...ar)) },
                 yawDeg2: { p50: r2(pct(ay, 0.5)), p95: r2(pct(ay, 0.95)), max: r2(Math.max(...ay)) },
                 dtMs: { p50: r2(pct(dts, 0.5)), p95: r2(pct(dts, 0.95)) },
+                at60Hz: { px2p95: r2(pct(nx, 0.95)), px2max: r2(Math.max(...nx)), rollDeg2p95: r2(pct(nr, 0.95)), rollDeg2max: r2(Math.max(...nr)) },
                 rollRange: [r2(Math.min(...rows.map((r) => r[3]))), r2(Math.max(...rows.map((r) => r[3])))],
                 screenX: [r2(Math.min(...rows.map((r) => r[1]))), r2(Math.max(...rows.map((r) => r[1])))] };
         };
