@@ -703,8 +703,14 @@
         const inward = s.clone().sub(c.position).divideScalar(d);
         const vv = g.velocityVector;
         const outward = -vv.dot(inward);
-        if (outward > 0) vv.addScaledVector(inward, outward * (1 - Math.pow(0.9, dtF)) * (1 + over / 800));
-        vv.addScaledVector(inward, 0.03 * dtF * (1 + over / 600));
+        // bleed the outward velocity (flight code re-aims velocity along the
+        // nose every frame, so this alone cannot win) …
+        if (outward > 0) vv.addScaledVector(inward, outward * Math.min(1, (1 - Math.pow(0.9, dtF)) * (1 + over / 800)));
+        // … so the well also moves the ship itself: it cancels this frame's
+        // outward progress (fully by 1,000 u past the edge) and reels it in
+        const outRate = (prev !== null) ? Math.max(0, d - prev) : 0;
+        const reel = outRate * Math.min(1, 0.35 + over / 1000) + dtF * (0.5 + over / 300);
+        c.position.addScaledVector(inward, Math.min(reel, over + 50));
         const ew = g.emergencyWarp;
         if (ew && ew.active) { ew.timeRemaining = Math.min(ew.timeRemaining, 1); T.warpCuts++; }
         if (over > TETHER_HARD) {
