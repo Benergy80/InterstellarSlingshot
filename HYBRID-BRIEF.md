@@ -426,8 +426,10 @@ Demo showcase (integrator, 20261010m): with 48 pirates at Sol the demo never lef
 | warpfx | T — warp colours by sector (`warpTint: sector`) + Sol orbit lines from the start + regional haze (`haze: regional`) — **MERGED 20261010n** (Sol gold/lime, nebula/galaxy hues, black holes violet; 8 Sol rings from frame one, wider + 1-px edge; HY_HAZE recolours only, cull unchanged) | 3 |
 | sun | U — the local Sun as a bright burning star emitting light (`sun: burning`) — **MERGED 20261010n** (HY_SUN: white-gold disc, corona, glare, streak, light to Sol's edge ×1.65; foreign Dune star lights capped — they were lighting Sol's night sides) | 3 |
 | outer | V — outer systems makeover, much further away (`outerSystems: frontier`) — **MERGED 20261010n** (HY_OUTER: 28 frontier systems 313-360k from Sgr A*, themed, stars emit light, dt-scaled, Borg cube no longer teleports; nav DESTINATIONS list the two nearest; map shows them on the rim until map2 raises universeRadius) | 3 |
-| map2 | W — the map's Universal View shows relevant information | 3b |
-| guardflake | X — the keep-check slingshot flake (whip exit through the body) | 3b |
+| map2 | W — the map's Universal View shows relevant information — **MERGED 20261010o** (tactical chart: objective marker + dotted line + distance, cores in faction colour with cleared state, nebulae charted ticks, frontier/Borg glyphs, SOS dots, wingmen, hostile ticks, labelled range rings 50k/150k/350k, zone caption; `HY_UNIMAP`) | 3b |
+| guardflake | X — the keep-check slingshot flake — **MERGED 20261010o, ROOT-CAUSED**: a full-sweep release launched along 0.65×aim + 0.35×tangent, which on 240-620 u worlds passes 0.58 R from the centre → PLANETARY IMPACT 120 ms into the ramp (on the old ~70 u worlds it grazed at ~1.0 R). `_whipClearLaunch` (HY_WHIP_EXIT.CLEAR_K) bends the launch the least that clears the periapsis floor. Second cause under it: the demo's universe boundary was a fixed 140k (now × _hyU) and braked the park check. Guard: rows 1/2/4 13/13, park 7/7 after; visuals threshold lowered to 6 under subtle fx | 3b |
+
+**All packages N–X are merged (20261010o).**
 
 ## Open questions for Ben
 

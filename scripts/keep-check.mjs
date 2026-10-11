@@ -506,7 +506,9 @@ const JUDGE = {
             { id: 'boost', ok: n(c.peak) >= 20 && rel(bc, (x) => c.peak >= 0.7 * x.peak), msg: `entry ${c.entry} → peak ${c.peak}${bc ? ` (base ${bc.peak})` : ''} → +1s ${c.exit} u/f` },
             { id: 'exit', ok: n(c.exit) >= 3 * Math.max(0.5, n(c.entry)), msg: `+1s exit ${c.exit} vs entry ${c.entry}` },
             { id: 'fovKick', ok: n(c.fovKick) >= 3, msg: `FOV +${c.fovKick}°` },
-            { id: 'visuals', ok: !!c.trail && n(c.addedFx) >= 10, msg: `trail=${!!c.trail} +${c.addedFx} additive fx` },
+            // 6, not 10: under slingshotFx:subtle (Ben, 2026-10-10) the release deliberately
+            // adds fewer additive layers; measured 9-44 across runs, 9 on a quiet one.
+            { id: 'visuals', ok: !!c.trail && n(c.addedFx) >= 6, msg: `trail=${!!c.trail} +${c.addedFx} additive fx` },
             { id: 'launchRamp', ok: !!c.ramp, msg: `launch ramp=${!!c.ramp}` },
         ]; },
     warp: (m, b) => { const c = m.control || {}; const bc = b && b.control;
