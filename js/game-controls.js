@@ -12090,32 +12090,70 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
 // fixed-step interpolation, warp framing pull-back (ship drawn smaller), and
 // any model scale. Local offsets are derived ONCE from the model's local
 // bounds; +Z is the model's nose.
+// HYBRID (Ben, 2026-10-10): "the lasers need to appear as though they are
+// coming from the guns on the players ship no matter what size or position of
+// the ship". The gun points are read off the HULL ITSELF, in the ship's own
+// local frame (rotation-independent, effects excluded), re-measured whenever
+// the model hydrates or rescales, and the nose end is picked by where the
+// ship actually points — so any hull, any scale, any camera mode puts the
+// bolts on the wingtips. The previous version measured a WORLD-space box
+// once (so a pitched/yawed first shot baked a swollen box in for good) and
+// first person ignored the ship entirely (fixed camera offsets).
+const _HY_GUN = { SPREAD: 0.85, DOWN: 0.10, FWD: 0.75 }; // fraction of half-width out, of height down, of the way to the nose
+function _hyShipLocalBox(ship) {
+    const ud = ship.userData;
+    const key = (ship.scale.x || 1).toFixed(4) + ':' + ship.children.length;
+    if (ud._hyLocalBox && ud._hyLocalBoxKey === key) return ud._hyLocalBox;
+    ship.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(ship.matrixWorld).invert();
+    const box = new THREE.Box3();
+    const m = new THREE.Matrix4(), v = new THREE.Vector3();
+    let any = false;
+    ship.traverse((c) => {
+        if (!c.isMesh || !c.geometry || c.isSprite) return;
+        if (c.userData && (c.userData.isShield || c.userData._isGlow || c.userData.isThrusterGlow || c.userData.isEffect)) return;
+        if (/shield|glow|thrust|exhaust|cone|flame|bubble|halo|plume/i.test(c.name || '')) return;
+        const mat = Array.isArray(c.material) ? c.material[0] : c.material;
+        if (mat && mat.blending === THREE.AdditiveBlending) return;   // effects, not hull
+        if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+        const bb = c.geometry.boundingBox;
+        if (!bb) return;
+        m.multiplyMatrices(inv, c.matrixWorld);
+        for (let i = 0; i < 8; i++) {
+            v.set(i & 1 ? bb.max.x : bb.min.x, i & 2 ? bb.max.y : bb.min.y, i & 4 ? bb.max.z : bb.min.z).applyMatrix4(m);
+            box.expandByPoint(v);
+            any = true;
+        }
+    });
+    if (!any || !(box.max.x - box.min.x > 1e-6)) return null;   // not hydrated yet
+    ud._hyLocalBox = box;
+    ud._hyLocalBoxKey = key;
+    return box;
+}
 function getPlayerWingGuns() {
     const ship = window.cameraState && window.cameraState.playerShipMesh;
     if (!ship || typeof THREE === 'undefined') return null;
-    const ud = ship.userData;
-    if (!ud._wingGunsLocal) {
-        const box = new THREE.Box3().setFromObject(ship);
-        const size = box.getSize(new THREE.Vector3());
-        const s = ship.scale.x || 1;
-        if (!(size.x > 0.001)) return null;   // model not hydrated yet
-        ud._wingGunsLocal = {
-            spread: (size.x * 0.35) / s,      // ± along local X (wingtips)
-            up: -2 / s,                       // slightly under the hull
-            fwd: (size.z * 0.15) / s,         // toward the +Z nose
-        };
-    }
+    const box = _hyShipLocalBox(ship);
+    if (!box) return null;
     // Rendered transform when fresh (≤1 frame old), live mesh otherwise
     const fresh = typeof window.__renderedShipFrame === 'number' &&
         (gameState.frameCount - window.__renderedShipFrame) <= 1 && window.__renderedShipPos;
     const pos = fresh ? window.__renderedShipPos : ship.position;
     const att = fresh ? window.__renderedShipAtt : ship.quaternion;
     const s = (fresh && window.__renderedShipScale) ? window.__renderedShipScale : (ship.scale.x || 1);
-    const g = ud._wingGunsLocal;
-    const mk = (side) => new THREE.Vector3(side * g.spread * s, g.up * s, g.fwd * s)
+    // Which local Z end is the nose: the one that points the way the camera looks.
+    const camFwd = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
+    const localZ = new THREE.Vector3(0, 0, 1).applyQuaternion(att);
+    const noseZ = localZ.dot(camFwd) >= 0 ? box.max.z : box.min.z;
+    const cx = (box.min.x + box.max.x) / 2, cy = (box.min.y + box.max.y) / 2, cz = (box.min.z + box.max.z) / 2;
+    const halfW = (box.max.x - box.min.x) / 2, h = box.max.y - box.min.y;
+    const gy = cy - h * _HY_GUN.DOWN;
+    const gz = cz + (noseZ - cz) * _HY_GUN.FWD;
+    const mk = (side) => new THREE.Vector3((cx + side * halfW * _HY_GUN.SPREAD) * s, gy * s, gz * s)
         .applyQuaternion(att).add(pos);
     return { left: mk(-1), right: mk(1) };
 }
+if (typeof window !== 'undefined') window._HY_GUN = _HY_GUN;
 if (typeof window !== 'undefined') window.getPlayerWingGuns = getPlayerWingGuns;
 
 function createThirdPersonLasers(playerShip, targetPosition) {
@@ -15389,13 +15427,19 @@ function fireWeapon() {
         // 3RD PERSON: Create tracer effect from wing tips
         createThirdPersonLasers(playerShip, targetPosition);
     } else {
-        // 1ST PERSON: Fire from camera position
+        // 1ST PERSON: fire from the ship's own guns when the hull is there
+        // (it sits around the camera at the cockpit offset), camera offsets
+        // only when there is no hull at all (zero-offset POV). HYBRID: Ben,
+        // "no matter what size or position of the ship".
+        const _fpGuns = (typeof getPlayerWingGuns === 'function') ? getPlayerWingGuns() : null;
         const leftOffset = new THREE.Vector3(-3, -2, 0).applyQuaternion(camera.quaternion);
         const rightOffset = new THREE.Vector3(3, -2, 0).applyQuaternion(camera.quaternion);
-        
+        const _fpLeft = _fpGuns ? _fpGuns.left : camera.position.clone().add(leftOffset);
+        const _fpRight = _fpGuns ? _fpGuns.right : camera.position.clone().add(rightOffset);
+
         const _beamCol = gameState._chargedShot ? '#ffdd33' : '#00ff96'; // charged = yellow
-        createLaserBeam(camera.position.clone().add(leftOffset), targetPosition, _beamCol, true);
-        createLaserBeam(camera.position.clone().add(rightOffset), targetPosition, _beamCol, true);
+        createLaserBeam(_fpLeft, targetPosition, _beamCol, true);
+        createLaserBeam(_fpRight, targetPosition, _beamCol, true);
         // SPREAD SHOT power-up: two extra fanned beams.
         if (window.arcade && window.arcade.hasPowerup && window.arcade.hasPowerup('spread')) {
             const _fwd = new THREE.Vector3(); camera.getWorldDirection(_fwd);
