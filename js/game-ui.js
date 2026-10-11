@@ -2218,8 +2218,13 @@ function _tlDrawEdgeChevron(ctx, proj, w, h, scheme, distance) {
 
 function updateTargetLayer() {
     // HYBRID: the world-anchored bracket/tag canvas is overhaul-only; ORIGINAL
-    // marks targets with its crosshair + target list. The canvas is never built.
-    if (window.HYBRID && !HYBRID.is('notifications', 'overhaul')) return;
+    // marks targets with its crosshair + target list. The canvas is never built…
+    // …except — Ben, 2026-10-11: "brackets appear around targeted enemy like the
+    // newer version had but only on the targeted enemy" — under targetBracket:
+    // targeted the layer draws ONLY the locked / selected hostile (bracket, tag,
+    // lead pip; no edge chevron — the HUD arrows cover off-screen targets).
+    const _tbTargeted = !!(window.HYBRID && !HYBRID.is('notifications', 'overhaul') && HYBRID.is('targetBracket', 'targeted'));
+    if (window.HYBRID && !HYBRID.is('notifications', 'overhaul') && !_tbTargeted) return;
     if (typeof camera === 'undefined' || typeof gameState === 'undefined' || typeof THREE === 'undefined') return;
     _ensureTargetLayer();
     const ctx = _targetLayerCtx;
@@ -2247,11 +2252,13 @@ function updateTargetLayer() {
     // geometric yield, kept well clear of the "no sub-0.6" legibility floor.
     const _tlSpectacleTagAlpha = _hudSpectacleActive() ? 0.7 : 1;
 
-    const hostiles = _tlGatherHostiles(camPos);
+    const hostiles = _tbTargeted ? [] : _tlGatherHostiles(camPos);
     const tracked = hostiles.slice();
     // Union in the active nav target (if any) so the pilot's selected
     // destination — hostile or not — also gets a marker/chevron.
-    if (gameState.currentTarget && tracked.indexOf(gameState.currentTarget) === -1) {
+    // (targeted mode: only when it is an enemy)
+    if (gameState.currentTarget && tracked.indexOf(gameState.currentTarget) === -1 &&
+        (!_tbTargeted || (gameState.currentTarget.userData && gameState.currentTarget.userData.type === 'enemy'))) {
         tracked.push(gameState.currentTarget);
     }
     // A combat lock always gets its bracket, even on a contact the normal
@@ -2447,7 +2454,7 @@ function updateTargetLayer() {
                 _tlDrawLeadPip(ctx, obj, wp, distance, proj, camera, w, h, scheme);
             }
         } else {
-            _tlDrawEdgeChevron(ctx, proj, w, h, scheme, distance);
+            if (!_tbTargeted) _tlDrawEdgeChevron(ctx, proj, w, h, scheme, distance);
         }
     }
 }

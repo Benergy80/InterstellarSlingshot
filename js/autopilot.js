@@ -7332,6 +7332,15 @@
   function pursuitFlightStyle(mode) {
     const now = Date.now();
     const k = keys();
+    // HYBRID — Ben, 2026-10-11: "Why is the demo player steering so erratically?
+    // It would be great if demo player steered towards enemy." Under
+    // demoSteering: steady the showmanship nudges (a random yaw or roll key for
+    // 200-360 ms every 5-13 s) are off; the nose stays on the target.
+    if (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('demoSteering', 'steady')) {
+      if (ap._flightStyleKey) { k[ap._flightStyleKey] = false; ap._flightStyleKey = null; }
+      ap._flightStyleUntil = 0;
+      return;
+    }
 
     if (ap._flightStyleUntil && now < ap._flightStyleUntil) {
       if (ap._flightStyleKey) k[ap._flightStyleKey] = true;

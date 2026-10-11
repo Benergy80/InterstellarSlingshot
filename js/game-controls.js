@@ -5008,6 +5008,10 @@ const _efQ = new THREE.Quaternion(), _efM = new THREE.Matrix4(), _efEu = new THR
 function _efOn() {
     return !!(typeof window !== 'undefined' && window.HYBRID && !window.HYBRID.is('enemyFlight', 'overhaul'));
 }
+// Ben, 2026-10-11: "Enemies can slow 20%." — top speed of every flight class × this
+// (fighter 600 → 480, elite 660 → 528, support 520 → 416, boss 420 → 336 u/s).
+const HY_ENEMY_SPEED_K = 0.8;
+if (typeof window !== 'undefined') window.HY_ENEMY_SPEED_K = HY_ENEMY_SPEED_K;
 function _efClass(ud) {
     if (ud.guardianRole === 'ram') return ENEMY_FLIGHT.elite;   // HYBRID (package R): a rammer needs the thrust
     if (ud.isBoss) return ENEMY_FLIGHT.boss;
@@ -5160,7 +5164,7 @@ function _efStep(enemy) {
     }
     _efI.divideScalar(dt);                        // desired velocity, u/s
     ef.ask = _efI.length();                       // (instrumentation: what the AI asked for)
-    if (_efI.length() > spec.maxSpeed) _efI.setLength(spec.maxSpeed);
+    if (_efI.length() > spec.maxSpeed * HY_ENEMY_SPEED_K) _efI.setLength(spec.maxSpeed * HY_ENEMY_SPEED_K);
     enemy.position.copy(ef.p0);                   // rewind: only the flight model moves the hull
 
     // ---- 2. where the nose should point -----------------------------------
@@ -5274,7 +5278,7 @@ function _efStep(enemy) {
     _efLv.subVectors(ef.v, _efC);
     const aCap = (spec.mainThrust + spec.manThrust) * dt;
     if (_efLv.length() > aCap) { _efLv.setLength(aCap); ef.v.copy(_efC).add(_efLv); }
-    if (ef.v.length() > spec.maxSpeed) ef.v.setLength(spec.maxSpeed);
+    if (ef.v.length() > spec.maxSpeed * HY_ENEMY_SPEED_K) ef.v.setLength(spec.maxSpeed * HY_ENEMY_SPEED_K);
     // Plume = what the main engine is doing: accelerating, or hauling the
     // velocity round in a turn. Straight and level at speed, it coasts.
     const thrTarget = Math.min(1, (Math.max(0, aMain) + aGrip) / spec.mainThrust);
