@@ -2968,6 +2968,290 @@ function _applyWarpGuidance(forwardDirection, dtF) {
     return true;
 }
 
+// ── NAV-WARP (HYBRID navWarp:on) ──────────────────────────────────────────
+// Ben, 2026-10-10: "in the new game the demo player warps to nebulas and
+// stops in front of a big awesome planet. how can we give the human player
+// the ability to do that also so it looks cool when they warp also?"
+// The demo stages its arrivals inside js/autopilot.js (gated on ap.active and
+// tangled with its own state); this is the player's own small version. When
+// the O-warp fires with a nav target roughly ahead, the burn is sized to the
+// target, the nose stays on it, the burn is cut so the 1 s exit ramp ends at
+// a standoff, and the ship parks there facing the body and holds station
+// (a slow sideways drift at minimum speed) until the player touches a key.
+// No target, or a target off the nose: the plain ballistic O-warp, as before.
+const HY_NAVWARP = {
+    MAX_OFF_DEG: 55,     // nose must be within this of the target at the key press (or auto-nav on)
+    STAND_K: 2.6,        // park this many body radii out...
+    STAND_MIN: 350,      // ...never closer than this...
+    STAND_PAD: 150,      // ...and this far outside the body's danger radius
+    BH_DANGER_K: 5.5,    // black holes: danger = the event-horizon warning zone (~5.5 radii)
+    PARK_MS: 6000,       // longest the park may take before it settles anyway
+    PARK_DAMP: 0.90,     // per-60fps-frame blend of velocity toward the park controller's
+    BURN_S: 7,           // the burn is sized to cover the leg in about this many seconds...
+    SPEED_MAX: 45,       // ...but never faster than this (u/frame; stock warp is 15)
+    BURN_MAX_MS: 25000,  // the burn may be stretched to reach the target, up to this
+    CUT_K: 1.25,         // the burn is cut so the exit ramp ends this x the standoff out
+    PLANET_PICK_K: 1.5   // a nebula-sized target parks at its biggest planet within this x its size
+};
+if (typeof window !== 'undefined') window.HY_NAVWARP = HY_NAVWARP;
+
+const _hyNWTmp = { a: null, b: null, c: null, d: null, proxy: null };
+function _hyNWVecs() {
+    if (!_hyNWTmp.a && typeof THREE !== 'undefined') {
+        _hyNWTmp.a = new THREE.Vector3(); _hyNWTmp.b = new THREE.Vector3();
+        _hyNWTmp.c = new THREE.Vector3(); _hyNWTmp.d = new THREE.Vector3();
+        _hyNWTmp.proxy = { position: new THREE.Vector3() };
+    }
+    return _hyNWTmp;
+}
+function _hyNavWarpOn() {
+    if (typeof window === 'undefined' || !window.HYBRID || !window.HYBRID.is('navWarp', 'on')) return false;
+    return !(window.demoPilot && window.demoPilot.active);
+}
+// Radius the crash test reads (geometry radius), grown by mesh scale.
+function _hyNWBodyR(obj) {
+    let r = (typeof _hyBodyR === 'function') ? _hyBodyR(obj) : 0;
+    if (!r && obj && obj.userData) r = obj.userData.size || 0;
+    if (r && obj.scale) r *= Math.max(1, obj.scale.x, obj.scale.y, obj.scale.z);
+    return r || 50;
+}
+function _hyNWWorldPos(obj, out) {
+    if (obj.getWorldPosition && obj.parent) return obj.getWorldPosition(out);
+    return out.copy(obj.position);
+}
+function _hyNWIsHostile(obj) {
+    const ud = obj.userData || {};
+    if (ud.type === 'asteroid' || ud.type === 'asteroidBelt') return true;
+    if (ud.isEnemy || ud.isBoss || ud.type === 'enemy' || ud.type === 'ufo') return true;
+    if (typeof enemies !== 'undefined' && Array.isArray(enemies) && enemies.indexOf(obj) >= 0) return true;
+    if (typeof ufoEnemies !== 'undefined' && Array.isArray(ufoEnemies) && ufoEnemies.indexOf(obj) >= 0) return true;
+    return false;
+}
+// A nebula (or any cloud-sized, non-solid target) parks at its biggest world
+// instead — the "big awesome planet" the demo stops in front of. Stars and
+// black holes are solid subjects in their own right and keep themselves.
+function _hyNWPickSubject(obj) {
+    const ud = obj.userData || {};
+    const solid = (ud.type === 'planet' || ud.type === 'moon' || ud.type === 'star' || ud.type === 'blackhole');
+    if (solid || typeof planets === 'undefined' || !Array.isArray(planets)) return obj;
+    const v = _hyNWVecs();
+    const c = _hyNWWorldPos(obj, v.d);
+    const reach = Math.max(1500, (ud.size || ud.radius || 0) * HY_NAVWARP.PLANET_PICK_K);
+    let best = null, bestR = 0;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], pu = p && p.userData;
+        if (!pu || pu.type !== 'planet' || !p.position) continue;
+        if (_hyNWWorldPos(p, v.a).distanceTo(c) > reach) continue;
+        const r = _hyNWBodyR(p);
+        if (r > bestR) { bestR = r; best = p; }
+    }
+    return best || obj;
+}
+function _hyNWStandoff(obj, R) {
+    const ud = obj.userData || {};
+    let danger = R * 1.3;
+    if (ud.type === 'blackhole') danger = Math.max(R * 3.2, R * HY_NAVWARP.BH_DANGER_K, ud._ehWarnDist || 0);
+    return Math.max(R * HY_NAVWARP.STAND_K, HY_NAVWARP.STAND_MIN, danger + HY_NAVWARP.STAND_PAD);
+}
+const _HY_NW_LOOK = ['up', 'down', 'left', 'right', 'q', 'e'];
+const _HY_NW_FLY = ['w', 's', 'a', 'd', 'x'];
+function _hyNWHeld() {
+    const h = {};
+    if (typeof keys === 'undefined') return h;
+    _HY_NW_LOOK.concat(_HY_NW_FLY).forEach(function (k) { h[k] = !!keys[k]; });
+    return h;
+}
+function _hyNWFinish(nav, why) {
+    const ew = gameState.emergencyWarp;
+    if (ew && nav._baseBoost != null && ew.boostSpeed === nav._boost) ew.boostSpeed = nav._baseBoost;
+    nav._baseBoost = null;
+    gameState._hyNavWarp = null;
+    gameState._hyNavWarpLast = { name: nav.name, why: why, phase: nav.phase, t: Date.now() };
+    if (why !== 'parked') console.log('🧭 Nav-warp ended (' + why + ') in ' + nav.phase);
+}
+
+// Called at the O-key trigger, after the forward direction is captured and
+// BEFORE the boost speed is (so a resized burn speed is the one ignition uses).
+function _hyStageNavWarp(fwd) {
+    if (typeof gameState === 'undefined') return null;
+    if (gameState._hyNavWarp) _hyNWFinish(gameState._hyNavWarp, 'restaged');
+    if (!_hyNavWarpOn() || typeof camera === 'undefined' || typeof THREE === 'undefined' || !fwd) return null;
+    const tgt = gameState.currentTarget;
+    if (!tgt || !tgt.position || _hyNWIsHostile(tgt)) return null;
+    const obj = _hyNWPickSubject(tgt);
+    const v = _hyNWVecs();
+    const pos = _hyNWWorldPos(obj, v.a);
+    const to = v.b.subVectors(pos, camera.position);
+    const range = to.length();
+    if (!(range > 1)) return null;
+    const off = Math.acos(Math.max(-1, Math.min(1, to.dot(fwd) / range))) * 180 / Math.PI;
+    if (off > HY_NAVWARP.MAX_OFF_DEG && !gameState.autoNavigating) return null;
+    const R = _hyNWBodyR(obj);
+    const stand = _hyNWStandoff(obj, R);
+    if (range <= stand * 1.15) return null;
+    const ew = gameState.emergencyWarp;
+    const nav = {
+        obj: obj, target: tgt, R: R, stand: stand, phase: 'burn', t0: Date.now(),
+        name: (obj.userData && obj.userData.name) || (tgt.userData && tgt.userData.name) || 'target',
+        fwd: fwd, held: _hyNWHeld(), range0: range, minRange: range, offDeg0: off,
+        _baseBoost: ew.boostSpeed, _boost: ew.boostSpeed, _behindMs: 0, _lastRange: range,
+        tv: new THREE.Vector3(), lastPos: pos.clone()
+    };
+    // Size the burn to the leg: stock speed for a short hop, faster for a long one.
+    const ground = Math.max(0, range - stand);
+    const spd = Math.max(ew.boostSpeed || 15, Math.min(HY_NAVWARP.SPEED_MAX, ground / (60 * HY_NAVWARP.BURN_S)));
+    ew.boostSpeed = spd;
+    nav._boost = spd;
+    // The nav computer is flying the arrival now — the auto-nav orbit approach would fight it.
+    gameState.autoNavigating = false;
+    gameState.autoNavOrienting = false;
+    gameState._hyNavWarp = nav;
+    console.log('🧭 Nav-warp: ' + nav.name + ' at ' + Math.round(range) + ' u, park ' + Math.round(stand) +
+        ' u (R ' + Math.round(R) + '), burn ' + spd.toFixed(1) + ' u/frame');
+    return nav;
+}
+
+// Every frame, right after _applyWarpGuidance (before position integration).
+function _hyNavWarpTick(forwardDirection, dtF) {
+    if (typeof gameState === 'undefined') return;
+    const nav = gameState._hyNavWarp;
+    if (!nav) return;
+    const ew = gameState.emergencyWarp;
+    if (!_hyNavWarpOn() || !nav.obj || !nav.obj.position || !nav.obj.parent) { _hyNWFinish(nav, 'lost'); return; }
+    // Manual override: a look key ends it in every phase, a flight key ends the
+    // park. A key already held at the press only counts once released and pressed again.
+    if (typeof keys !== 'undefined') {
+        const pressed = function (k) {
+            if (!keys[k]) { nav.held[k] = false; return false; }
+            return !nav.held[k];
+        };
+        let look = false, fly = false;
+        for (let i = 0; i < _HY_NW_LOOK.length; i++) if (pressed(_HY_NW_LOOK[i])) look = true;
+        for (let i = 0; i < _HY_NW_FLY.length; i++) if (pressed(_HY_NW_FLY[i])) fly = true;
+        if (look) { _hyNWFinish(nav, 'look-key'); return; }
+        if (fly && (nav.phase === 'park' || nav.phase === 'hold')) { _hyNWFinish(nav, 'fly-key'); return; }
+    }
+    if (nav.phase === 'hold' && gameState.currentTarget !== nav.target && gameState.currentTarget !== nav.obj) {
+        _hyNWFinish(nav, 'retarget'); return;
+    }
+    const v = _hyNWVecs();
+    const pos = _hyNWWorldPos(nav.obj, v.a);
+    v.proxy.position.copy(pos);
+    const to = v.b.subVectors(pos, camera.position);
+    const range = to.length();
+    const toDir = v.c.copy(to).divideScalar(Math.max(range, 1e-6));
+    if (range < nav.minRange) nav.minRange = range;
+    // The body's own motion, u per 60fps frame (Sol's outer planets orbit at
+    // ~17 u/frame, faster than cruise), lightly smoothed. Parking means
+    // matching it. A floating-origin rebase jumps both ends, so a jump is skipped.
+    const step = v.d.subVectors(pos, nav.lastPos);
+    nav.lastPos.copy(pos);
+    if (step.length() < 500 * (dtF || 1)) nav.tv.lerp(step.divideScalar(dtF || 1), 0.25);
+    const tvAlong = nav.tv.dot(toDir);   // > 0: the body is running away from us
+    nav.range = range;
+    const vel = gameState.velocityVector;
+    const speed = vel.length();
+    const minV = gameState.minVelocity || 0.4;
+    const maxV = gameState.maxVelocity || 4;
+    const now = Date.now();
+    const orient = function () { if (typeof orientTowardsTarget === 'function') orientTowardsTarget(v.proxy); };
+
+    if (nav.phase === 'burn') {
+        orient();
+        if (!ew.active) {
+            // Camera hand-off before ignition: ignite along the nose as it is NOW.
+            if (ew.transitioning) { if (nav.fwd && forwardDirection) nav.fwd.copy(forwardDirection); }
+            else _hyNWFinish(nav, 'no-ignition');
+            return;
+        }
+        // Give up if the target has fallen behind and keeps opening.
+        const ahead = toDir.dot(forwardDirection) > 0;
+        if (!ahead && range > nav._lastRange) nav._behindMs += (dtF || 1) * 16.67; else nav._behindMs = 0;
+        nav._lastRange = range;
+        if (nav._behindMs > 1500) { _hyNWFinish(nav, 'behind'); return; }
+        // Cut so the exit ramp (1 s, ease-out cubic: mean speed 0.25 x from +
+        // 0.75 x to) runs out at the standoff.
+        const toSpeed = Math.min(Math.max(ew.entrySpeed > 0 ? ew.entrySpeed : minV, minV * 2), maxV);
+        const rampDist = Math.max(0, 60 * (0.25 * speed + 0.75 * toSpeed - tvAlong) + speed * 2);
+        // Aimed CUT_K x outside the standoff: a ramp that runs long (measured
+        // ~15% on an orbiting world) still stops well clear, and the park
+        // closes the last stretch at cruise.
+        if (range - nav.stand * HY_NAVWARP.CUT_K <= rampDist) {
+            ew.timeRemaining = 0;
+            nav.phase = 'ramp';
+            nav.cutRange = range;
+            nav.cutMs = now - nav.t0;
+        } else if (ew.timeRemaining < 500 && now - nav.t0 < HY_NAVWARP.BURN_MAX_MS) {
+            ew.timeRemaining = 500;   // stretch the burn until it reaches
+        }
+        return;
+    }
+    if (nav.phase === 'ramp') {
+        orient();
+        if (ew.active || ew.transitioning || (ew.exitRamp && ew.exitRamp.active)) return;
+        if (nav._baseBoost != null && ew.boostSpeed === nav._boost) ew.boostSpeed = nav._baseBoost;
+        nav._baseBoost = null;
+        nav.phase = 'park';
+        nav.parkT0 = now;
+        nav.rampEndRange = range;
+        // The park keeps its own velocity: the cruise clamp re-caps velocityVector
+        // to maxVelocity every frame, which would stop it ever matching a world
+        // that orbits faster than that.
+        nav.vel = vel.clone();
+    }
+    if (nav.phase === 'park') {
+        orient();
+        // Closed loop on the standoff: a speed proportional to the range error
+        // (inbound when short of it, outbound when inside), clamped to cruise,
+        // with velocity blended onto it at PARK_DAMP per frame.
+        const err = range - nav.stand;
+        // On top of the body's own motion, so the ship co-moves with an orbiting world.
+        const want = Math.max(-maxV * 0.5, Math.min(maxV * 2, err / 40));
+        nav.vel.lerp(v.d.copy(toDir).multiplyScalar(want).add(nav.tv), 1 - Math.pow(HY_NAVWARP.PARK_DAMP, dtF || 1));
+        vel.copy(nav.vel);
+        nav.relSpeed = v.d.subVectors(vel, nav.tv).length();
+        const settled = Math.abs(err) < nav.stand * 0.06 + 20 && nav.relSpeed <= minV * 1.6;
+        if (settled || now - nav.parkT0 > HY_NAVWARP.PARK_MS) {
+            ew.postWarp = false;
+            ew.autoBraking = false;
+            gameState.autoNavigating = false;
+            gameState.autoNavOrienting = false;
+            nav.phase = 'hold';
+            nav.holdT0 = now;
+            nav.parkRange = range;
+            if (typeof window !== 'undefined' && typeof window.showIncomingTransmission === 'function') {
+                try {
+                    window.showIncomingTransmission('Nav Computer',
+                        'Arrived at ' + nav.name + '. Holding station at ' + Math.round(range) + ' units.', 'lore');
+                } catch (e) {}
+            }
+            console.log('🧭 Nav-warp: parked at ' + nav.name + ', ' + Math.round(range) + ' u (' +
+                (range / nav.R).toFixed(1) + ' R, stand ' + Math.round(nav.stand) + ')');
+        }
+        return;
+    }
+    if (nav.phase === 'hold') {
+        // Holding station: a slow sideways drift at minimum speed (the game
+        // never lets the ship sit dead still), kept on the standoff sphere with
+        // the nose on the body, until the player takes the stick.
+        orient();
+        const tan = v.d.set(0, 1, 0);
+        if (camera.up) tan.copy(camera.up).applyQuaternion(camera.quaternion);
+        tan.cross(toDir);
+        if (tan.lengthSq() < 1e-6) tan.set(1, 0, 0).cross(toDir);
+        tan.normalize().multiplyScalar(minV);
+        const radial = Math.max(-0.3, Math.min(0.3, (range - nav.stand) / 120));
+        vel.copy(tan).addScaledVector(toDir, radial);
+        nav.relSpeed = vel.length();
+        vel.add(nav.tv);
+        if (vel.length() < minV) vel.setLength(minV);
+    }
+}
+if (typeof window !== 'undefined') {
+    window._hyStageNavWarp = _hyStageNavWarp;
+    window._hyNavWarpTick = _hyNavWarpTick;
+}
+
 function updateEnhancedPhysics() {
     // Pause-aware physics
     if (typeof gamePaused !== 'undefined' && gamePaused) {
@@ -3326,6 +3610,10 @@ else if (keys.o && gameState.emergencyWarp.available > 0 && !gameState.emergency
     
     // ✅ Capture forward direction NOW before setTimeout (closure issue fix)
     const capturedForwardDirection = forwardDirection.clone();
+    // HYBRID navWarp: with a nav target ahead, size this burn to it and park on
+    // arrival (_hyStageNavWarp, above). Before capturedBoostSpeed so a resized
+    // burn speed is the one ignition uses; it may re-aim capturedForwardDirection.
+    _hyStageNavWarp(capturedForwardDirection);
     const capturedBoostSpeed = gameState.emergencyWarp.boostSpeed;
 
     // Capture the speed the ship actually had BEFORE the burn — this is
@@ -4298,6 +4586,8 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
     // and before integration so this frame's step already flies the corrected
     // heading. Direction only — the ramp still owns the magnitude.
     _applyWarpGuidance(forwardDirection, dtF);
+    // HYBRID navWarp: fly a staged nav-warp's cut, exit and park (no-op otherwise).
+    _hyNavWarpTick(forwardDirection, dtF);
 
     // Apply velocity to position. velocityVector's unit stays "distance per
     // 60fps frame" (every speed readout/clamp above assumes it) — scaling
