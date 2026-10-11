@@ -64,6 +64,8 @@
         warpFx:          'calm',       // Ben 2026-10-11: "Emergency Warp animation could be a little less intense" (HY_WARP_FX)  'calm' | 'overhaul'
         targetBracket:   'targeted',   // Ben 2026-10-11: the overhaul's bracket + tag, but only round the targeted enemy  'targeted' | 'overhaul' | 'off'
         demoSteering:    'steady',     // Ben 2026-10-11: the demo keeps its nose on the enemy — no showmanship look/roll nudges in combat  'steady' | 'overhaul'
+        // — synthwave branch (claude/synthwave) —
+        deathScreen:     'synthwave',  // MISSION FAILED as an arcade sequence (js/synthwave-fx.js)  'synthwave' | 'original'
         haze:            'regional',   // distance haze varies by region: murky in nebulae, clear between galaxies (HY_HAZE)  'regional' | 'global'
         sun:             'burning',    // the local Sun as a burning star emitting light (HY_SUN)  'burning' | 'overhaul'
         outerSystems:    'frontier',   // outer systems rebuilt as the far frontier (HY_OUTER)  'frontier' | 'classic'

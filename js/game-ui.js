@@ -6243,6 +6243,12 @@ function showGameOverScreen(title, message) {
     const existing = document.getElementById('gameOverScreen');
     if (existing) existing.remove();
 
+    // SYNTHWAVE (branch claude/synthwave): the arcade MISSION FAILED sequence
+    // (js/synthwave-fx.js) replaces the stats modal under deathScreen: synthwave.
+    if (window.HYBRID && HYBRID.is('deathScreen', 'synthwave') && typeof window.synthwaveGameOver === 'function') {
+        try { window.synthwaveGameOver(title || 'MISSION FAILED', message); console.log('✅ Synthwave game over sequence'); return; } catch (e) { console.warn('synthwave game over failed, falling back', e); }
+    }
+
     const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0 || window.innerWidth < 768;
 
     const gameOverOverlay = document.createElement('div');

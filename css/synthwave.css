@@ -1,0 +1,117 @@
+/* =============================================================================
+   SYNTHWAVE THEME — Interstellar Slingshot (branch claude/synthwave)
+   Palette + the arcade screens (Mission Failed first). Everything is a CSS
+   variable so the research pass (research/*.md) can retune it in one place.
+   ============================================================================= */
+:root {
+    --sw-bg:        #07030f;   /* near-black violet */
+    --sw-floor:     #0b0620;   /* grid floor */
+    --sw-magenta:   #ff2bd6;
+    --sw-cyan:      #19f0ff;
+    --sw-violet:    #7b2bff;
+    --sw-orange:    #ff8c3a;
+    --sw-yellow:    #ffe066;
+    --sw-red:       #ff3b5c;
+    --sw-white:     #f4f7ff;
+    --sw-grid:      rgba(255, 43, 214, 0.85);
+    --sw-grid-dim:  rgba(123, 43, 255, 0.35);
+    --sw-font-title: 'Orbitron', 'Audiowide', monospace;
+    --sw-font-ui:    'Rajdhani', 'Orbitron', sans-serif;
+}
+
+/* ── MISSION FAILED ───────────────────────────────────────────────────────── */
+#swDeath {
+    position: fixed; inset: 0; z-index: 99999; overflow: hidden;
+    background: rgba(7, 3, 15, 0.55);           /* the frozen world shows through */
+    color: var(--sw-white); font-family: var(--sw-font-ui);
+    cursor: auto; pointer-events: auto; user-select: none;
+    animation: swDeathIn 420ms ease-out both;
+}
+@keyframes swDeathIn { from { background: rgba(7,3,15,0); } to { background: rgba(7,3,15,0.55); } }
+
+#swDeath .sw-grid { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+#swDeath .sw-vignette {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(7,3,15,0) 35%, rgba(7,3,15,0.85) 100%);
+}
+#swDeath .sw-scan {
+    position: absolute; inset: 0; pointer-events: none; mix-blend-mode: overlay; opacity: 0.55;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.10) 0 1px, rgba(0,0,0,0.22) 1px 3px);
+    animation: swScanRoll 6s linear infinite;
+}
+@keyframes swScanRoll { from { background-position: 0 0; } to { background-position: 0 60px; } }
+
+/* RGB-split tear bars for the first ~0.7 s */
+#swDeath .sw-glitch { position: absolute; inset: 0; pointer-events: none; animation: swGlitchFade 800ms steps(8) both; }
+#swDeath .sw-glitch span {
+    position: absolute; left: 0; width: 100%; height: 9px; opacity: 0.8;
+    background: linear-gradient(90deg, var(--sw-cyan), transparent 30%, transparent 70%, var(--sw-magenta));
+    animation: swTear 160ms steps(4) infinite alternate;
+}
+@keyframes swTear { from { transform: translateX(-14px) scaleX(1.02); } to { transform: translateX(18px) scaleX(0.98); } }
+@keyframes swGlitchFade { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+#swDeath .sw-stage {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; text-align: center; padding: 24px;
+}
+
+/* chrome title: gradient fill + chromatic split shadows, slams in */
+#swDeath .sw-title {
+    font-family: var(--sw-font-title); font-weight: 900; font-size: clamp(2.4rem, 7vw, 5.4rem);
+    letter-spacing: 0.08em; line-height: 1; margin: 0;
+    background: linear-gradient(180deg, #ffffff 0%, #d9fbff 38%, var(--sw-cyan) 50%, var(--sw-violet) 52%, var(--sw-magenta) 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(-3px 0 0 rgba(25,240,255,0.75)) drop-shadow(3px 0 0 rgba(255,43,214,0.75)) drop-shadow(0 0 18px rgba(255,43,214,0.55));
+    animation: swSlam 520ms cubic-bezier(0.2, 1.4, 0.3, 1) both;
+}
+@keyframes swSlam {
+    0%   { transform: scale(3.2); letter-spacing: 0.6em; opacity: 0; }
+    60%  { transform: scale(0.96); letter-spacing: 0.06em; opacity: 1; }
+    100% { transform: scale(1); letter-spacing: 0.08em; opacity: 1; }
+}
+#swDeath .sw-sub {
+    font-size: clamp(0.95rem, 1.6vw, 1.25rem); letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--sw-cyan); text-shadow: 0 0 10px rgba(25,240,255,0.8);
+    animation: swFadeUp 500ms 350ms ease-out both;
+}
+@keyframes swFadeUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+/* tally */
+#swDeath .sw-tally {
+    display: grid; grid-template-columns: auto auto; gap: 6px 28px; margin-top: 8px;
+    font-family: var(--sw-font-title); font-size: clamp(0.8rem, 1.3vw, 1.05rem); letter-spacing: 0.14em; text-transform: uppercase;
+}
+#swDeath .sw-tally .k { text-align: right; color: rgba(244,247,255,0.72); }
+#swDeath .sw-tally .v { text-align: left; color: var(--sw-yellow); text-shadow: 0 0 8px rgba(255,224,102,0.7); min-width: 7ch; }
+#swDeath .sw-tally .row { display: contents; }
+#swDeath .sw-tally .row.pending .v { color: rgba(255,224,102,0.25); text-shadow: none; }
+#swDeath .sw-tally .row.done .v { animation: swPop 220ms ease-out; }
+@keyframes swPop { 0% { transform: scale(1.35); color: #fff; } 100% { transform: scale(1); } }
+
+/* continue countdown + coin */
+#swDeath .sw-continue {
+    margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+    font-family: var(--sw-font-title); letter-spacing: 0.2em; text-transform: uppercase;
+}
+#swDeath .sw-continue .q { font-size: clamp(0.9rem, 1.4vw, 1.2rem); color: var(--sw-magenta); text-shadow: 0 0 10px rgba(255,43,214,0.8); }
+#swDeath .sw-continue .n { font-size: clamp(2.2rem, 5vw, 3.6rem); color: var(--sw-white); text-shadow: 0 0 12px var(--sw-cyan), 0 0 28px rgba(25,240,255,0.5); line-height: 1; }
+#swDeath .sw-continue .n.tick { animation: swPop 200ms ease-out; }
+#swDeath .sw-coin {
+    font-family: var(--sw-font-title); letter-spacing: 0.3em; font-size: clamp(0.8rem, 1.2vw, 1rem);
+    color: var(--sw-yellow); text-shadow: 0 0 10px rgba(255,224,102,0.9); animation: swBlink 1s steps(2) infinite;
+}
+@keyframes swBlink { 50% { opacity: 0; } }
+
+#swDeath .sw-btn {
+    margin-top: 6px; padding: 12px 34px; min-height: 48px; cursor: pointer;
+    font-family: var(--sw-font-title); font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; font-size: 0.95rem;
+    color: var(--sw-white); background: linear-gradient(180deg, rgba(123,43,255,0.35), rgba(255,43,214,0.25));
+    border: 2px solid var(--sw-magenta); border-radius: 6px;
+    box-shadow: 0 0 18px rgba(255,43,214,0.55), inset 0 0 14px rgba(25,240,255,0.18);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+}
+#swDeath .sw-btn:hover { transform: scale(1.04); box-shadow: 0 0 30px rgba(255,43,214,0.9), inset 0 0 18px rgba(25,240,255,0.3); }
+#swDeath .sw-hint { font-size: 0.72rem; letter-spacing: 0.2em; color: rgba(244,247,255,0.55); text-transform: uppercase; }
+#swDeath.sw-over .sw-continue .n { color: var(--sw-red); text-shadow: 0 0 14px rgba(255,59,92,0.9); }
