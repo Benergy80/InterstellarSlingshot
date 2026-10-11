@@ -688,14 +688,35 @@ function generateSphericalGalaxyPositions() {
         }
         
         // Generate spherical coordinates for distant galaxies
-        const radius = minRadius + Math.random() * (maxRadius - minRadius);
-        const theta = Math.random() * Math.PI * 2; // Azimuthal angle (0 to 2Ï€)
-        const phi = Math.acos(1 - 2 * Math.random()); // Polar angle (0 to Ï€) - uniform distribution
+        let radius = minRadius + Math.random() * (maxRadius - minRadius);
+        let theta = Math.random() * Math.PI * 2; // Azimuthal angle (0 to 2Ï€)
+        let phi = Math.acos(1 - 2 * Math.random()); // Polar angle (0 to Ï€) - uniform distribution
         
         // Convert spherical to Cartesian coordinates
-        const x = radius * Math.sin(phi) * Math.cos(theta);
-        const y = radius * Math.cos(phi);
-        const z = radius * Math.sin(phi) * Math.sin(theta);
+        let x = radius * Math.sin(phi) * Math.cos(theta);
+        let y = radius * Math.cos(phi);
+        let z = radius * Math.sin(phi) * Math.sin(theta);
+        // package N (scale2): Sol (edge 26k, 38.9k out) can now sit inside
+        // this shell — re-roll a core that lands on Sol's keep-clear sphere or
+        // within GALAXY_GAP of another core (their systems reach ~30k out).
+        // Package Q (bhplace) owns the real placement; this only stops overlaps.
+        if (_u > 1 && typeof window !== 'undefined' && window.localSystemOffset) {
+            const sol = window.localSystemOffset;
+            const solClear = _hySolEdge() * (1 + HY_SCALE.EDGE_MARGIN) + 40000;
+            const GALAXY_GAP = 60000;
+            for (let tries = 0; tries < 40; tries++) {
+                const dSol = Math.hypot(x - sol.x, y - sol.y, z - sol.z);
+                const crowd = galaxySphericalPositions.some((g) => g.radius > 0 &&
+                    Math.hypot(x - g.position.x, y - g.position.y, z - g.position.z) < GALAXY_GAP);
+                if (dSol >= solClear && !crowd) break;
+                radius = minRadius + Math.random() * (maxRadius - minRadius);
+                theta = Math.random() * Math.PI * 2;
+                phi = Math.acos(1 - 2 * Math.random());
+                x = radius * Math.sin(phi) * Math.cos(theta);
+                y = radius * Math.cos(phi);
+                z = radius * Math.sin(phi) * Math.sin(theta);
+            }
+        }
         
         // Generate random rotation for galaxy orientation
         const rotationX = Math.random() * Math.PI * 2;

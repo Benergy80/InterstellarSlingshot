@@ -154,6 +154,10 @@ bodies.forEach((b) => {
     nebSys.push(Math.round(b.p.distanceTo(n.getWorldPosition(new V())) / nr * 100) / 100);
 });
 const nebSize = q(NC.map((n) => (n.userData && n.userData.size) || 0));
+const cores = holes.filter((h) => h.o.userData.isGalacticCore && !h.o.userData.isCompanionCore && !h.o.userData.isSagittariusA);
+const coreToSol = Math.round(Math.min(...cores.map((h) => h.p.distanceTo(solV))));
+let coreGap = Infinity; cores.forEach((a, i) => cores.forEach((b, j) => { if (j > i) coreGap = Math.min(coreGap, a.p.distanceTo(b.p)); }));
+coreGap = Math.round(coreGap);
 const holesAt = holes.map((h) => [h.name.slice(0, 14), Math.round(h.r), Math.round(h.p.length() / 100) * 100]);
 // what the camera sees of Sol right now: [name, distance, on-screen diameter px, in frame]
 cam.updateMatrixWorld(); const _fr = new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse));
@@ -164,4 +168,4 @@ const solView = bodies.filter((b) => b.k === 'sol-planet' || b.k === 'sun').map(
     return [b.name, Math.round(d), Math.round(px), _fr.intersectsSphere(new THREE.Sphere(b.p, b.r))];
 });
 const nebDist = NC.map((n) => Math.round(n.getWorldPosition(new V()).distanceTo(solV))).sort((a, b) => a - b);
-return { hist, audit: { placeK: K, placeV, placeWorst: placeW.slice(0, 10), bhClear: CL, bhV, bhWorst: bhW.slice(0, 8), rockBH, nebV, nebWorst: nebW }, bbox: bb, start, sol: [sol.x, sol.z], nebFromSol: [nebDist[0], nebDist[Math.floor(nebDist.length / 2)], nebDist[nebDist.length - 1], nebDist.length], nebSize, nebSysInCloudRadii: q(nebSys), holesAt, solEdge: window._hySolEdge && window._hySolEdge(), solView, far: cam.far, fog: ie('scene').fog ? [ie('scene').fog.near, ie('scene').fog.far] : null };
+return { hist, audit: { placeK: K, placeV, placeWorst: placeW.slice(0, 10), bhClear: CL, bhV, bhWorst: bhW.slice(0, 8), rockBH, nebV, nebWorst: nebW }, bbox: bb, start, sol: [sol.x, sol.z], nebFromSol: [nebDist[0], nebDist[Math.floor(nebDist.length / 2)], nebDist[nebDist.length - 1], nebDist.length], nebSize, nebSysInCloudRadii: q(nebSys), holesAt, coreToSol, coreGap, solEdge: window._hySolEdge && window._hySolEdge(), solView, far: cam.far, fog: ie('scene').fog ? [ie('scene').fog.near, ie('scene').fog.far] : null };
