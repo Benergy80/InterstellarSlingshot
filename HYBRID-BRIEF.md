@@ -410,9 +410,9 @@ Sent while testing build 20261010a. Each is a package (N–T below) or already l
 
 | key | package | wave |
 |---|---|---|
-| scale2 | N — planet scale: every planet sized like the nebula planets; universe spaced out | 1 |
-| progression | O — the campaign above (`progression: campaign`) | 1 |
-| navwarp | P — player O-warp arrives and parks like the demo (`navWarp: on`) | 1 |
+| scale2 | N — planet scale: every planet sized like the nebula planets; universe spaced out — **MERGED 20261010k** (band 240-620, Sun 650, Sol edge 26,451, UNIVERSE_K 1.85, guard 9/9) | 1 |
+| progression | O — the campaign above (`progression: campaign`) — **MERGED 20261010k** (js/progression.js; walked to VICTORY; tether + warp gate driven live; not yet played end to end with real fights) | 1 |
+| navwarp | P — player O-warp arrives and parks like the demo (`navWarp: on`) — **MERGED 20261010k** (parks 1.0× stand on planet/giant/star, 5.67 R on Sgr A*, 10-15 s) | 1 |
 | bhplace | Q — black hole system placements | 2 |
 | enemies2 | R — enemies and bosses: placement and behaviour | 2 |
 | nebula2 | S — nebulae clearly visible (ORIGINAL swirl inside the overhaul cloud) | 2 |
