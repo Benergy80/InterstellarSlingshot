@@ -13685,9 +13685,9 @@ function _aerialFactor(o, d) {
     // before/after taken across them is comparing two different skies.
     if (typeof window !== 'undefined' && window.__aerialOff) return 0;
     const ud = o.userData;
+    _aerialCullK = 0;   // reset FIRST: a non-planet (a black hole) used to inherit the previous body's cull score
     if (!ud) return 0;
     if (ud.type !== 'planet' && ud.type !== 'moon') return 0;
-    _aerialCullK = 0;
     // package T: the regional haze field scales both distances (m = 1 when off).
     // The COLOUR ramp follows the region; the CULL stays on the global curve
     // (_aerialCullK = kBase), so the set of drawn — and lit — bodies is exactly
@@ -16175,7 +16175,14 @@ function updateDistanceCulling() {
                 //     the boundary cannot strobe.
                 const near = CULL_NEAR_RADII * br;
                 let wantImp = false;
-                if (d2 <= near * near) {
+                // HYBRID — Ben, 2026-10-11: "black holes need to be visible from
+                // far away. they can be black from a distance and the glowing
+                // effects around them can fade up on approach." A galactic core
+                // is never range-culled (its HY_BH ramp already keeps the disc
+                // and aurora dark beyond RAMP_FAR radii); the far plane is the
+                // only limit. Measured before: every foreign core _distCulled
+                // from Sol at 142-208k, swirl and all.
+                if (o.userData.type === 'blackhole' || d2 <= near * near) {
                     inRange = true;
                 } else {
                     const lim = (o.userData._distCulled ? CULL_SUBPIXEL_BACK : CULL_SUBPIXEL_ANG) * _cullAng;
@@ -23306,6 +23313,103 @@ function _hyJunkMaterial(kind) {
     return (_hyJunkMats[kind] = m);
 }
 const _hyJunkGroups = [];
+// ═══ HYBRID: ASTEROID FIELDS IN NEBULAE (in place of the junk) ═══════════════
+// Ben, 2026-10-11: "get rid of space junk it is not as cool as we hoped. Use
+// asteroids instead." The ORIGINAL belt rocks (asteroidResources, the GPU
+// instancer, shootable proxies in `planets`) now ring the nebula's two biggest
+// worlds and scatter one loose field across the cloud. HY_NEB_JUNK is unused.
+const HY_NEB_ROCKS = {
+    RING_FIELDS: 2,            // rings round the nebula's biggest worlds
+    RING_K: [2.4, 3.6],        // ring radius in world radii
+    RING_WIDTH_K: 0.9,         // band width in world radii
+    RING_COUNT: [26, 40],      // rocks per ring
+    LOOSE_COUNT: [30, 44],     // rocks in the loose field
+    LOOSE_R_K: [0.25, 0.75],   // loose field radius as a fraction of the cloud size
+    LOOSE_H_K: 0.25,           // loose field half-height as a fraction of the cloud size
+    SIZE: [3, 9],              // ORIGINAL rock scale band (x HY_ASTEROIDS.SIZE_K)
+};
+if (typeof window !== 'undefined') window.HY_NEB_ROCKS = HY_NEB_ROCKS;
+function _hyNebAsteroids(neb, opts) {
+    if (typeof scene === 'undefined' || typeof planets === 'undefined' || typeof _spawnAsteroidInstance !== 'function' || typeof THREE === 'undefined') return 0;
+    if (typeof initializeAsteroidResources === 'function') initializeAsteroidResources();
+    if (typeof asteroidResources === 'undefined' || !asteroidResources.initialized || !asteroidResources.materials.length) return 0;
+    const ringsOnly = !!(opts && opts.ringsOnly);
+    const K = HY_NEB_ROCKS, size = neb.userData.size || 1500, nebName = neb.userData.name || 'Nebula';
+    const wp = new THREE.Vector3();
+    const bodies = planets.filter((p) => p && p.userData && p.userData.type === 'planet' && !p.userData.isLocal && p.position && !p.isAsteroidProxy)
+        .map((p) => { p.getWorldPosition(wp); return { p: p, pos: wp.clone(), r: (typeof _hyBodyR === 'function') ? _hyBodyR(p) : (p.userData.radius || 100), d: wp.distanceTo(neb.position) }; })
+        .filter((b) => b.d < size * 1.6).sort((a, b) => b.r - a.r);
+    // The harbour runs before the nebula's worlds exist (measured: 0 worlds at
+    // build, 1 at play), so the rings are built later by _hyNebRingsPendingTick.
+    if (!bodies.length) { if (ringsOnly) return 0; neb.userData._hyRingsPending = true; }
+    const rnd = (a, b) => a + Math.random() * (b - a);
+    const fields = [];
+    for (let f = 0; f < Math.min(K.RING_FIELDS, bodies.length); f++) {
+        const b = bodies[f];
+        fields.push({ center: b.pos.clone(), radius: b.r * rnd(K.RING_K[0], K.RING_K[1]), width: b.r * K.RING_WIDTH_K,
+            count: Math.round(rnd(K.RING_COUNT[0], K.RING_COUNT[1])), height: b.r * 0.35, loose: false });
+    }
+    if (!ringsOnly) fields.push({ center: neb.position.clone(), radius: size * rnd(K.LOOSE_R_K[0], K.LOOSE_R_K[1]), width: size * 0.5,
+        count: Math.round(rnd(K.LOOSE_COUNT[0], K.LOOSE_COUNT[1])), height: size * K.LOOSE_H_K, loose: true });
+    if (bodies.length) neb.userData._hyRingsPending = false;
+    let made = 0;
+    fields.forEach((F, fi) => {
+        const beltGroup = new THREE.Group();
+        beltGroup.position.copy(F.center);
+        beltGroup.visible = true; beltGroup.frustumCulled = false;
+        beltGroup.userData = { name: nebName + ' Asteroid Field ' + (fi + 1), type: 'asteroidBelt', center: F.center, radius: F.radius,
+            asteroidCount: F.count, galaxyId: -1, _hyNebRocks: true };
+        let n = 0;
+        for (let j = 0; j < F.count; j++) {
+            const geomIndex = Math.floor(Math.random() * 3);
+            const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
+            const scale = rnd(K.SIZE[0], K.SIZE[1]) * ((typeof _hyAstK === 'function') ? _hyAstK() : 1);
+            const ringAngle = (j / F.count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+            const ringDistance = F.radius + (Math.random() - 0.5) * F.width;
+            const ringHeight = (Math.random() - 0.5) * 2 * F.height;
+            if (F.loose) {   // a loose rock never sits inside a world
+                const px = F.center.x + Math.cos(ringAngle) * ringDistance, py = F.center.y + ringHeight, pz = F.center.z + Math.sin(ringAngle) * ringDistance;
+                let bad = false;
+                for (let b = 0; b < bodies.length; b++) { const q = bodies[b]; if (Math.hypot(q.pos.x - px, q.pos.y - py, q.pos.z - pz) < q.r * 1.6) { bad = true; break; } }
+                if (bad) continue;
+            }
+            const orbitSpeed = (F.loose ? 0.0002 : 0.0006) + Math.random() * 0.0006;
+            const rotationSpeed = (Math.random() - 0.5) * 0.015;
+            const userData = { name: nebName + ' Asteroid ' + (j + 1), type: 'asteroid', health: 2, maxHealth: 2,
+                orbitSpeed: orbitSpeed, rotationSpeed: rotationSpeed, beltCenter: F.center, orbitRadius: ringDistance, orbitPhase: ringAngle,
+                galaxyId: -1, isTargetable: true, isDestructible: true, beltGroup: beltGroup, nebulaId: neb.userData.nebulaId };
+            const proxy = _spawnAsteroidInstance({ geomIdx: geomIndex, matIdx: matIndex, beltGroup: beltGroup,
+                orbitRadius: ringDistance, orbitPhase: ringAngle, ringHeight: ringHeight,
+                orbitSpeed: orbitSpeed, rotSpeed: rotationSpeed, scale: scale, userData: userData });
+            if (proxy) { planets.push(proxy); n++; }
+        }
+        scene.add(beltGroup);
+        if (typeof window !== 'undefined') { if (!window.asteroidBelts) window.asteroidBelts = []; window.asteroidBelts.push(beltGroup); }
+        made += n;
+    });
+    neb.userData._hyRockFields = (neb.userData._hyRockFields || 0) + fields.length;
+    neb.userData._hyRocks = (neb.userData._hyRocks || 0) + made;
+    return made;
+}
+if (typeof window !== 'undefined') window._hyNebAsteroids = _hyNebAsteroids;
+// Rings round the nebula worlds, built once those worlds exist (every 90
+// frames, at most 40 tries per nebula). Called from the junk tick wrapper.
+let _hyRingsTickN = 0;
+function _hyNebRingsPendingTick() {
+    if ((++_hyRingsTickN % 90) !== 0 || typeof nebulaClouds === 'undefined' || !nebulaClouds) return;
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const neb = nebulaClouds[i];
+        if (!neb || !neb.userData || !neb.userData._hyRingsPending) continue;
+        neb.userData._hyRingsTries = (neb.userData._hyRingsTries || 0) + 1;
+        if (neb.userData._hyRingsTries > 40) { neb.userData._hyRingsPending = false; continue; }
+        try {
+            // the loose field is already down; only the world rings are pending
+            if (neb.userData._hyRocks === undefined || neb.userData._hyRockFields === undefined) { neb.userData._hyRocks = 0; neb.userData._hyRockFields = 0; }
+            _hyNebAsteroids(neb, { ringsOnly: true });
+        } catch (e) { neb.userData._hyRingsPending = false; }
+    }
+}
+
 function _hyNebJunk(neb) {
     const J = HY_NEB_JUNK, size = neb.userData.size || 1500;
     const k = _isMobileRenderTier() ? J.MOBILE_K : 1;
@@ -23406,6 +23510,7 @@ function _hyJunkCompose(im, adv) {
 // Per frame (rides updateNebulaBreathing): follow the cloud, cull by range,
 // tumble the near field at 30 Hz, dt-scaled.
 function _hyNebJunkTick() {
+    try { _hyNebRingsPendingTick(); } catch (e) { /* rings optional */ }
     if (!_hyJunkGroups.length || typeof camera === 'undefined' || !camera) return;
     const gs = (typeof gameState !== 'undefined') ? gameState : null;
     const dtF = gs && gs.dtFrames ? gs.dtFrames : 1;
@@ -23439,7 +23544,8 @@ function _hyNebHarbours() {
         if (!neb.userData.isDistant && !neb.userData.isExoticCore && typeof createTradingShip === 'function') {
             try { ships += _hyNebTraffic(neb); } catch (e) { console.warn('HYBRID harbour traffic:', e); }
         }
-        try { junk += _hyNebJunk(neb); } catch (e) { console.warn('HYBRID harbour junk:', e); }
+        // Ben, 2026-10-11: asteroids in place of the junk (_hyNebJunk is kept, unused).
+        try { junk += _hyNebAsteroids(neb); } catch (e) { console.warn('HYBRID harbour rocks:', e); }
     }
     if (n) console.log(`HYBRID harbours: +${ships} ships, ${junk} junk pieces across ${n} nebulae`);
 }

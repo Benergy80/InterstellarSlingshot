@@ -1426,7 +1426,7 @@ function _osSignature(g, theme, R) {
         const c1 = new THREE.Color(t.color), c2 = new THREE.Color(0xff2a10);
         for (let i = 0; i < 160; i++) {
             const d = new THREE.Vector3().randomDirection ? new THREE.Vector3().randomDirection() : new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-            let r = R * _osRand(2.4, 5.0);
+            let r = R * _osRand(1.5, 2.6);   // was 2.4-5.0: the remnant swallowed the system from 9k (Ben, 2026-10-11)
             let p = d.clone().multiplyScalar(r);
             const tan = new THREE.Vector3().crossVectors(d, new THREE.Vector3(0, 1, 0.3)).normalize();
             for (let k = 0; k < 4; k++) {
@@ -1443,7 +1443,7 @@ function _osSignature(g, theme, R) {
         const ls = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7, depthWrite: false, toneMapped: false, blending: THREE.AdditiveBlending }));
         ls.userData.baseOpacity = 0.7;
         sig.add(ls);
-        const shock = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 3.2, 3), _osFlat(t.color, 0.12, { wireframe: true }));
+        const shock = new THREE.Mesh(new THREE.IcosahedronGeometry(R * 1.9, 3), _osFlat(t.color, 0.12, { wireframe: true }));   // was R x 3.2
         shock.userData = { baseOpacity: 0.12, _osPulse: 0.05 };
         sig.add(shock);
         sig.userData._osSpin = 0.00025;
