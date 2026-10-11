@@ -8490,8 +8490,14 @@ function _hyLadderSystems(tag) {
         });
         _hyMeasureSystem(g);
         // a system light reaches the new edge
+        // HYBRID (package U): ... and no further than Sol's own rule (edge x
+        // HY_SUN.LIGHT_RANGE_K). Scaling the authored reach by edge/oldEdge
+        // (x22 for the gateway's Dune stars: 3,000 -> 66-79k) let six foreign
+        // stars 43-69k away light Sol's night sides as brightly as the Sun.
         lights.forEach(function (l) {
-            if (l.distance > 0 && l.position.distanceTo(g.center) < 2 && oldEdge > 0) l.distance *= Math.max(1, g.edge / oldEdge);
+            if (l.distance > 0 && l.position.distanceTo(g.center) < 2 && oldEdge > 0) {
+                l.distance = Math.max(l.distance, Math.min(l.distance * g.edge / oldEdge, g.edge * HY_SUN.LIGHT_RANGE_K));
+            }
         });
     });
     console.log('HYBRID scale: ladder re-sized ' + bodies + ' bodies in ' + todo.length + ' systems (' + tag + ')');
