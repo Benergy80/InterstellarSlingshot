@@ -3699,10 +3699,24 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             // by the post-physics re-sync — carry it along with the render
             // camera so it can't lag by the interpolation delta. (The
             // cinematic block below re-anchors it fully when active.)
+            // RIGID re-anchor (package AF): the hull's camera-relative offset
+            // AND attitude are rotated into the interpolated view too. Moving
+            // it by the position delta alone left it glued to the CURRENT
+            // sim orientation while the view drew the interpolated one, so in
+            // a turn the hull swung by (1 - alpha) x one step's rotation —
+            // a different amount every frame as alpha jittered.
             if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+                const _sh = cameraState.playerShipMesh;
                 if (!window.__simShipSavedPos) window.__simShipSavedPos = new THREE.Vector3();
-                window.__simShipSavedPos.copy(cameraState.playerShipMesh.position);
-                cameraState.playerShipMesh.position.add(camera.position).sub(_fixedSim._tmpPos);
+                if (!window.__simShipSavedQuat) window.__simShipSavedQuat = new THREE.Quaternion();
+                if (!_fixedSim._dq) { _fixedSim._dq = new THREE.Quaternion(); _fixedSim._rel = new THREE.Vector3(); }
+                window.__simShipSavedPos.copy(_sh.position);
+                window.__simShipSavedQuat.copy(_sh.quaternion);
+                // dq = interpQuat * inverse(simQuat): sim camera frame -> rendered frame
+                _fixedSim._dq.copy(_fixedSim._tmpQuat).invert().premultiply(camera.quaternion);
+                _fixedSim._rel.copy(_sh.position).sub(_fixedSim._tmpPos).applyQuaternion(_fixedSim._dq);
+                _sh.position.copy(camera.position).add(_fixedSim._rel);
+                _sh.quaternion.premultiply(_fixedSim._dq);
                 if (typeof syncShieldPositionToShip === 'function') syncShieldPositionToShip();
             }
         }
@@ -3877,6 +3891,7 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
         if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh &&
             window.__simShipSavedPos) {
             cameraState.playerShipMesh.position.copy(window.__simShipSavedPos);
+            if (window.__simShipSavedQuat) cameraState.playerShipMesh.quaternion.copy(window.__simShipSavedQuat);
         }
     }
 

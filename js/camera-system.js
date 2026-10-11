@@ -385,7 +385,7 @@ function updateCameraView(camera) {
             : 1 - Math.pow(-2 * progress + 2, 2) / 2;
 
         // Interpolate between start and target offset
-        currentOffset = new THREE.Vector3();
+        currentOffset = _camViewScratch.cur;
         currentOffset.lerpVectors(
             cameraState.transitionStartOffset,
             cameraState.transitionTargetOffset,
@@ -399,13 +399,13 @@ function updateCameraView(camera) {
         }
     } else if (cameraState.mode === 'zero-offset') {
         // Zero offset - ship behind camera (matches transition target)
-        currentOffset = new THREE.Vector3(0.25, -1, 3);
+        currentOffset = _camViewScratch.cur.set(0.25, -1, 3);
     } else if (cameraState.mode === 'first-person') {
         // First-person offset
-        currentOffset = cameraState.normalFirstPersonOffset.clone();
+        currentOffset = _camViewScratch.cur.copy(cameraState.normalFirstPersonOffset);
     } else {
         // Third-person offset
-        currentOffset = cameraState.normalThirdPersonOffset.clone();
+        currentOffset = _camViewScratch.cur.copy(cameraState.normalThirdPersonOffset);
     }
 
     // ── CINEMATIC WARP FRAMING ──────────────────────────────────────────
@@ -707,115 +707,107 @@ function updateCameraView(camera) {
         }
     }
 
-    if (cameraState.mode === 'first-person') {
-        // FIRST-PERSON MODE (COCKPIT VIEW):
-        // Camera IS the player position - enemies target this location
-        // Position the ship model so the camera is at the cockpit/center of the ship
-        // The ship model is just visual - the camera position is the "real" player position
+    if (cameraState.mode === 'first-person' || cameraState.mode === 'third-person') {
+        // FIRST-PERSON (cockpit) and THIRD-PERSON (chase) place the hull the
+        // same way: camera position + the animated offset rotated into the
+        // camera frame, facing AWAY from the camera (direction of travel),
+        // then leaned into the turn by _shipLean(). The camera IS the
+        // player's position either way — the hull is only visual.
+        // Scratch objects instead of per-call new Vector3/Quaternion/Matrix4
+        // (this runs twice a frame).
+        const S = _camViewScratch;
+        S.offset.copy(currentOffset).applyQuaternion(camera.quaternion);
+        cameraState.playerShipMesh.position.copy(camera.position).add(S.offset);
 
-        // Use animated offset during transitions
-        const cockpitOffset = currentOffset.clone();
-        cockpitOffset.applyQuaternion(camera.quaternion);
-
-        cameraState.playerShipMesh.position.copy(camera.position);
-        cameraState.playerShipMesh.position.add(cockpitOffset);
-
-        // Orient ship to face AWAY from camera (direction of travel)
         // v2254: Build rotation matrix from camera vectors for proper alignment
-        const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-        
-        // Ship faces opposite direction (away from camera)
-        const shipForward = camForward.clone().negate();
-        
-        // Build rotation matrix from direction vectors
-        const shipMatrix = new THREE.Matrix4();
-        shipMatrix.lookAt(new THREE.Vector3(), shipForward, camUp);
-        const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
-        
-        // Dynamic banking + counter-roll spring for realistic feel.
-        // The ship leans into yaw turns and has a damped counter-roll
-        // at the end of Q/E rolls, like inertia overshooting then settling.
+        S.fwd.set(0, 0, 1).applyQuaternion(camera.quaternion);   // = -(camera forward)
+        S.up.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        S.mat.lookAt(S.zero, S.fwd, S.up);
+        S.quat.setFromRotationMatrix(S.mat);
+
+        // Lean (bank into yaw, tilt into pitch), SMOOTHED for both views.
+        // The chase view used to apply the raw angular velocity x 15-45 every
+        // frame: the bank snapped 0 -> 19 deg in two frames when a turn began
+        // and every per-frame wobble of the yaw rate showed as a roll — on the
+        // lit, normal-mapped XT-7 that reads as the whole hull flickering.
         if (typeof rotationalVelocity !== 'undefined') {
-            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
-            // SMOOTH the bank/pitch tilt. Previously the bank was raw
-            // angular velocity × 15-45, applied every frame — so the noisy
-            // per-frame yaw (inertia overshoot + the orient closed-form step)
-            // mapped straight to a big roll that visibly jittered/shook the
-            // ship during fast turns. Easing the applied angle removes it.
-            const targetBank = -rotationalVelocity.yaw * (demo ? 38 : 14);
-            const targetPitch = -rotationalVelocity.pitch * (demo ? 10 : 5);
-            if (cameraState._smBank === undefined) cameraState._smBank = 0;
-            if (cameraState._smPitch === undefined) cameraState._smPitch = 0;
-            cameraState._smBank += (targetBank - cameraState._smBank) * 0.18;
-            cameraState._smPitch += (targetPitch - cameraState._smPitch) * 0.18;
-            // Counter-roll spring (for Q/E rolls), gentler multiplier (3→1.5).
+            const lean = _shipLean(cameraState.mode);
+            S.axis.set(0, 0, 1);
+            S.bank.setFromAxisAngle(S.axis, lean.bank);
+            S.axis.set(1, 0, 0);
+            S.pitch.setFromAxisAngle(S.axis, lean.pitch);
+            S.quat.multiply(S.bank).multiply(S.pitch);
+        }
+
+        cameraState.playerShipMesh.quaternion.copy(S.quat);
+
+        // Make ship visible (cockpit view keeps existing material transparency;
+        // the chase view is fully visible and opaque)
+        cameraState.playerShipMesh.visible = true;
+        cameraState.playerShipMesh.traverse(_setMeshVisible);
+    }
+}
+
+// Scratch for updateCameraView's hull placement (no per-frame allocation).
+const _camViewScratch = {
+    cur: new THREE.Vector3(), offset: new THREE.Vector3(), fwd: new THREE.Vector3(), up: new THREE.Vector3(),
+    zero: new THREE.Vector3(), axis: new THREE.Vector3(), mat: new THREE.Matrix4(),
+    quat: new THREE.Quaternion(), bank: new THREE.Quaternion(), pitch: new THREE.Quaternion(),
+    lean: { bank: 0, pitch: 0 }
+};
+function _setMeshVisible(child) { if (child.isMesh) child.visible = true; }
+
+// HULL LEAN — one smoothed bank/pitch for both camera views (package AF).
+// Gains are the views' previous ones (cockpit 14/5, chase 15/5; demo 38/10
+// and 45/12) so the lean reads exactly as large; what changed is the path to
+// it: a critically damped spring (C1 — no velocity kink when a turn starts or
+// stops, unlike the cockpit's old 0.18/frame exponential) integrated ONCE per
+// game frame on the real dt (updateCameraView runs twice a frame, and the
+// intro loop calls it too). OMEGA 14 rad/s: 90% of the lean in 0.33 s; replayed
+// at 60 Hz on the physics yaw ramp the worst frame-to-frame roll acceleration
+// drops from 2.58 to 0.22 deg/frame^2 (p95 0.09).
+// The cockpit keeps its Q/E counter-roll spring; the chase view never had one.
+const HY_SHIP_LEAN = {
+    OMEGA: 14,
+    GAIN: { 'first-person': [14, 5, 38, 10], 'third-person': [15, 5, 45, 12] }
+};
+function _shipLean(mode) {
+    const L = _camViewScratch.lean;
+    const fc = (typeof gameState !== 'undefined') ? gameState.frameCount : 0;
+    if (cameraState._leanFrame !== fc || cameraState._leanMode !== mode) {
+        const first = cameraState._leanFrame === undefined;
+        cameraState._leanFrame = fc;
+        cameraState._leanMode = mode;
+        const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
+        const g = HY_SHIP_LEAN.GAIN[mode] || HY_SHIP_LEAN.GAIN['third-person'];
+        const tBank = -rotationalVelocity.yaw * (demo ? g[2] : g[0]);
+        const tPitch = -rotationalVelocity.pitch * (demo ? g[3] : g[1]);
+        if (first || !isFinite(cameraState._smBank) || !isFinite(cameraState._smPitch)) {
+            cameraState._smBank = tBank; cameraState._smPitch = tPitch;
+            cameraState._smBankV = 0; cameraState._smPitchV = 0;
+        }
+        const dt = Math.min(0.05, Math.max(0.004, ((typeof gameState !== 'undefined' && gameState.dtMs) || 16.67) / 1000));
+        const w = HY_SHIP_LEAN.OMEGA, e = Math.exp(-w * dt);
+        // exact critically damped step: x -> target with velocity v
+        let y = cameraState._smBank - tBank, v = cameraState._smBankV || 0, j = v + w * y;
+        cameraState._smBank = tBank + (y + j * dt) * e;
+        cameraState._smBankV = (v - w * j * dt) * e;
+        y = cameraState._smPitch - tPitch; v = cameraState._smPitchV || 0; j = v + w * y;
+        cameraState._smPitch = tPitch + (y + j * dt) * e;
+        cameraState._smPitchV = (v - w * j * dt) * e;
+        // Counter-roll spring for Q/E rolls (cockpit only, as before), dt-scaled.
+        let counterRoll = 0;
+        if (mode === 'first-person') {
             if (cameraState._smoothedRoll === undefined) cameraState._smoothedRoll = 0;
             const targetRoll = rotationalVelocity.roll * 8;
-            cameraState._smoothedRoll += (targetRoll - cameraState._smoothedRoll) * 0.08;
-            const counterRoll = (cameraState._smoothedRoll - targetRoll) * 1.5;
-            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), cameraState._smBank + counterRoll);
-            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), cameraState._smPitch);
-            shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
+            cameraState._smoothedRoll += (targetRoll - cameraState._smoothedRoll) *
+                (1 - Math.pow(0.92, dt * 60));
+            counterRoll = (cameraState._smoothedRoll - targetRoll) * 1.5;
         }
-
-        cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
-
-        // Make ship visible but slightly transparent for cockpit view
-        cameraState.playerShipMesh.visible = true;
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = true;
-                // Keep existing material transparency
-            }
-        });
-
-    } else if (cameraState.mode === 'third-person') {
-        // THIRD-PERSON MODE (CHASE CAMERA):
-        // Camera is behind and above the ship looking at it
-        // Ship positioned ahead of camera at a comfortable viewing distance
-
-        // Use animated offset during transitions (same as first-person: ADD)
-        const chaseOffset = currentOffset.clone();
-        chaseOffset.applyQuaternion(camera.quaternion);
-
-        // UNIFIED: Always ADD offset (third-person uses negative Z to put ship ahead)
-        cameraState.playerShipMesh.position.copy(camera.position);
-        cameraState.playerShipMesh.position.add(chaseOffset);
-
-        // Orient ship to face AWAY from camera (direction of travel)
-        // v2254: Build rotation matrix from camera vectors for proper alignment
-        const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-        
-        // Ship faces opposite direction (away from camera, toward travel direction)
-        const shipForward = camForward.clone().negate();
-        
-        // Build rotation matrix from direction vectors
-        const shipMatrix = new THREE.Matrix4();
-        shipMatrix.lookAt(new THREE.Vector3(), shipForward, camUp);
-        const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
-        
-        // Add dynamic banking based on rotational velocity
-        if (typeof rotationalVelocity !== 'undefined') {
-            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
-            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
-            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
-            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
-            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
-            shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
-        }
-
-        cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
-
-        // Ensure the ship model is fully visible and opaque in third-person
-        cameraState.playerShipMesh.visible = true;
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = true;
-            }
-        });
+        L.bank = cameraState._smBank + counterRoll;
+        L.pitch = cameraState._smPitch;
     }
+    return L;
 }
 
 /**
