@@ -4,11 +4,21 @@
 **This document governs the hybrid effort.** Where it disagrees with `CLAUDE.md`, `progress.html`
 or `SELF-IMPROVE.md`, this document wins.
 
-## RESUME HERE (saved 2026-09-30, paused by Ben)
+## RESUME HERE (updated 2026-10-11)
 
-**State:** everything is committed and pushed. Latest build **20260927n** on
-`claude/star-explorer-hybrid`. All packages A–M merged. Guard 9/9 at 60 fps; real-input shooting
-4/4 for every asteroid kind; demo soak 0 deaths. Nothing is running.
+**State:** everything is committed and pushed. Latest build **20261010p** on
+`claude/star-explorer-hybrid`. All packages A–M (Sep) and N–X (Oct 10-11) merged: planet scale +
+universe spacing, the campaign (js/progression.js), player nav-warp, black-hole galaxy placement,
+enemies by region + guardians + mission hosts, ORIGINAL nebula swirls + harbours, sector warp tint +
+Sol orbit rings + regional haze, the burning Sun, the frontier outer systems, the Universal View
+chart, and the slingshot-exit fix. Guard 9/9 at 60 fps; demo soak 0 deaths. Ben's round-3 asks
+(items 1-25 under "Requirements, round 3") are all landed or merged. Nothing is running.
+
+**Open after this round** (see the status table + "Open items"): the opening fight is hot (idle
+player dies ~55 s — HY_ENEMIES.SOL_START_AHEAD / start stations); the demo showcase's Sol budget
+(HY_DEMO) covers combat and boss-engage — soak twice if touching the pilot; the frontier (313-360k)
+is beyond the demo's scaled boundary (259k); nebula junk cannot be shot; guard row 9 noseLeads is
+marginal (~15°); the campaign has not been played end to end with real fights.
 
 **Where the work lives**
 - Hybrid checkout: `~/InterstellarSlingshot/.claude/worktrees/hybrid` (a git worktree; the main
@@ -34,17 +44,20 @@ Claude's memory index also points here (`star-explorer-branch.md`).
 `scripts/hybrid-wave.workflow.js` is the saved Workflow script. Launch with the Workflow tool,
 `scriptPath` = that file, `args` = `{"base": "<commit sha>", "packages": ["<key>"]}`. The base
 MUST be a commit sha (never `HEAD`). Package keys: ui craft keepguard enemies fx-audio deepspace
-intro enemyflight sol vista blackholes asteroids asteroids-original demopilot. After it finishes:
+intro enemyflight sol vista blackholes asteroids asteroids-original demopilot scale2 progression
+navwarp bhplace enemies2 nebula2 warpfx sun outer map2 guardflake (all run; re-running one replays
+its brief on a new base). Keep ≤3 agents at a time. After it finishes:
 `git merge --no-edit hybrid/<key>`, run `npm run test:syntax`, `node scripts/fn-undef.mjs --new`,
 `node scripts/keep-check.mjs --root . --out .critic/keepcheck`, then `node scripts/bump-build.mjs
 YYYYMMDDx`, commit, push. Never SendMessage a running workflow agent (it forks a second copy).
 
 **Next up, in order**
-1. Enemy density near the player: 21 within 15,000 of the start vs ORIGINAL's 57 (Ben: "lots of
-   enemies"). Spawn placement moved out with the spacing rule.
-2. The guard's intermittent failure (~1 run in 7: slingshot/warp/steering fail together, warp never
-   engages, 0 errors). Cause unknown; may be a real occasional warp fault.
-3. Ben's pending decisions, listed under "Open questions for Ben" and "Open items" below.
+1. Ben plays the campaign end to end (Sol pirates → flagship → Sgr A* → nebula → mission → faction
+   galaxy → guardians) and reports; tune the opening-fight heat if asked.
+2. The decisions listed per package in the status table ("decisionsForBen" in each agent report are
+   summarised there) and "Open questions for Ben" below.
+3. Done, for the record: enemy density (48 pirates at Sol's planets) and the guard flake (whip exit
+   through the body) — both root-caused and fixed on Oct 10-11.
 
 **Switches** (`?hy=key:value` on the URL, or `HYBRID.set()` in the console): see
 `js/hybrid-config.js`. Current defaults are Ben's choices as of 2026-09-27.
