@@ -3975,6 +3975,500 @@ function _currentRadarRange(nowMs) {
     return st.shown;
 }
 
+// =============================================================================
+// HYBRID package W (map2) — the Universal View as a tactical chart.
+// Ben, 2026-10-10: "The Universal view should show more relevant information".
+// One <canvas> inside #galaxyMap answers "where am I, where am I going, what
+// matters out there": the player's heading wedge, Sol + Sgr A* labelled, the 8
+// galaxy cores in faction colour with HOSTILE / CLEARED state, nebulae
+// charted / uncharted, frontier systems and Borg sectors, the campaign
+// objective (pulsing marker + dotted line + distance), the nav target reticle,
+// live SOS calls, wingmen and hostile clusters near the player, and labelled
+// range rings. Flat saturated colours, crisp strokes, no textures.
+// Projection: top-down X/Z about Sgr A*, radially compressed
+// (r = log(1 + d/D0) / log(1 + RANGE/D0)) so Sol's fight and the frontier both
+// read on a 220 px disc; bearings from Sgr A* stay true and the rings carry the
+// unit labels. The static layer (rings, places) is cached in an offscreen
+// canvas and rebuilt only when its signature changes (a galaxy cleared, a
+// nebula charted, a system discovered, a resize); the live layer is a few
+// dozen strokes per refresh. Galaxy View is untouched.
+// Escape hatch: HY_UNIMAP.ENABLED = false restores the previous Universal View.
+// =============================================================================
+const HY_UNIMAP = {
+    ENABLED: true,
+    RANGE_BASE: 205000,          // x _hyU() → true units from Sgr A* to the chart rim (379k at U 1.85; frontier 313-360k)
+    D0: 30000,                   // compression knee (true units): below it the chart is ~linear
+    RIM: 0.92,                   // fraction of the disc radius the RANGE maps to
+    RINGS: [50000, 150000, 350000],   // range rings (true units from Sgr A*), labelled
+    ENEMY_RANGE_BASE: 15000,     // x _hyU() → hostile clusters drawn within this of the player
+    ENEMY_CELL_PX: 6,            // hostile bucket size (CSS px)
+    CORE_NEAR: 30000,            // "in <galaxy>" zone radius around a core
+    OUTER_NEAR: 20000,           // "at <frontier system>" zone radius
+    GLYPH: { core: 4.2, sgr: 4.6, sol: 3.4, nebula: 2.6, nebulaFaint: 1.1, outer: 2.6, player: 6.5, wing: 1.6, sos: 2.4, objective: 4.2, reticle: 5.5, hostile: 2.2 },
+    FONT: "7px 'Share Tech Mono', monospace",
+    COL: {
+        ring: 'rgba(0,200,255,0.30)', ringText: 'rgba(120,210,255,0.75)',
+        sol: '#ffd23c', solEdge: 'rgba(255,210,60,0.35)', sgr: '#c78cff',
+        nebula: '#ff5ad2', charted: '#39ff8a', faint: 'rgba(255,90,210,0.40)',
+        borg: '#33ff55', hostile: '#ff3344', cleared: '#39ff8a',
+        player: '#00ff96', wing: '#8fd3ff', sos: '#ff2a2a', reticle: '#ffcc33', objective: '#ffffff',
+        text: '#bfefff', shade: 'rgba(0,0,20,0.85)',
+    },
+    ABBR: ['FED', 'KLG', 'REB', 'ROM', 'EMP', 'CAR', 'SITH', 'VUL'],
+};
+if (typeof window !== 'undefined') window.HY_UNIMAP = HY_UNIMAP;
+
+const _hyUni = { canvas: null, ctx: null, stat: null, statSig: '', w: 0, dpr: 1, cores: null, sgr: null, legendEl: null, legendOrig: null, lastDraw: 0 };
+
+function _hyUniMapOn() { return !!(HY_UNIMAP.ENABLED && typeof document !== 'undefined'); }
+function _hyUniU() { return (typeof window !== 'undefined' && typeof window._hyU === 'function') ? window._hyU() : 1; }
+function _hyUniHex(c, fb) {
+    if (c === undefined || c === null) return fb;
+    if (typeof c === 'string') return c;
+    if (typeof c === 'number') return '#' + ('000000' + c.toString(16)).slice(-6);
+    if (c.getHexString) return '#' + c.getHexString();
+    return fb;
+}
+function _hyUniFmt(d) { return d >= 10000 ? Math.round(d / 1000) + 'k' : d >= 1000 ? (d / 1000).toFixed(1) + 'k' : Math.round(d) + ''; }
+
+// galaxy cores + Sgr A*: object refs found once (planets is large), positions read live
+function _hyUniRefs() {
+    if (_hyUni.cores && _hyUni.sgr && _hyUni.cores.every(Boolean)) return;
+    if (typeof planets === 'undefined' || !planets.length) return;
+    const cores = _hyUni.cores || new Array(8).fill(null);
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], u = p && p.userData; if (!u) continue;
+        if (u.isSagittariusA) _hyUni.sgr = p;
+        if (u.isGalacticCore && u.type === 'blackhole' && u.galaxyId >= 0 && u.galaxyId < 8 && !cores[u.galaxyId]) cores[u.galaxyId] = p;
+    }
+    _hyUni.cores = cores;
+}
+
+function _hyUniCleared(g) {
+    const c = (typeof window !== 'undefined') ? window.__campaign : null;
+    if (c) {
+        if (c.state === 'VICTORY') return true;
+        if (g === 7 && c.phases && c.phases.indexOf(c.state) >= c.phases.indexOf('SGR_LIBERATED')) return true;
+        const cl = c.cleared; if (cl && cl.indexOf(g) !== -1) return true;
+    }
+    return !!(typeof bossSystem !== 'undefined' && bossSystem && bossSystem.galaxyGuardiansDefeated && bossSystem.galaxyGuardiansDefeated[g]);
+}
+
+// chart geometry for the current widget size
+function _hyUniGeom() {
+    const w = _hyUni.w, R = w / 2;
+    const range = HY_UNIMAP.RANGE_BASE * _hyUniU();
+    const k = 1 / Math.log(1 + range / HY_UNIMAP.D0);
+    const rim = R * HY_UNIMAP.RIM;
+    const woo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
+    let cx = 0, cz = 0;
+    if (_hyUni.sgr) { cx = _hyUni.sgr.position.x + woo.x; cz = _hyUni.sgr.position.z + woo.z; }
+    // true X/Z → widget px (clamped to the rim)
+    const proj = function (x, z, out) {
+        const dx = x - cx, dz = z - cz, d = Math.sqrt(dx * dx + dz * dz);
+        let r = Math.log(1 + d / HY_UNIMAP.D0) * k; if (r > 1) r = 1;
+        const s = d > 0 ? (r * rim) / d : 0;
+        out.x = R + dx * s; out.y = R + dz * s; out.r = r;
+        return out;
+    };
+    const ringPx = function (d) { return Math.min(1, Math.log(1 + d / HY_UNIMAP.D0) * k) * rim; };
+    return { R: R, rim: rim, proj: proj, ringPx: ringPx, woo: woo };
+}
+
+function _hyUniEnsureCanvas(galaxyMap) {
+    let cv = _hyUni.canvas;
+    if (!cv || !cv.parentNode) {
+        cv = document.createElement('canvas');
+        cv.id = 'hyUniMapCanvas';
+        // a sibling overlay, not a child: the disc's ORIGINAL hue-rotate cycle (.cyberpunk-bg,
+        // 0-60 deg every 8 s) would shift the faction / hostile / SOS colours
+        cv.style.cssText = 'position:absolute;pointer-events:none;z-index:11;border-radius:50%;transform:perspective(800px) rotateX(-3deg) translateZ(5px);';
+        galaxyMap.parentNode.appendChild(cv);   // appended last: _updateMapLegendCollapse reads the disc's nextElementSibling
+        _hyUni.canvas = cv; _hyUni.ctx = cv.getContext('2d');
+    }
+    const w = galaxyMap.clientWidth || 214, dpr = Math.min(3, (typeof window !== 'undefined' && window.devicePixelRatio) || 1);
+    const L = galaxyMap.offsetLeft + galaxyMap.clientLeft, T = galaxyMap.offsetTop + galaxyMap.clientTop;
+    if (L !== _hyUni.L || T !== _hyUni.T || w !== _hyUni.w) {
+        _hyUni.L = L; _hyUni.T = T;
+        cv.style.left = L + 'px'; cv.style.top = T + 'px'; cv.style.width = w + 'px'; cv.style.height = w + 'px';
+    }
+    if (w !== _hyUni.w || dpr !== _hyUni.dpr) {
+        _hyUni.w = w; _hyUni.dpr = dpr;
+        cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr);
+        _hyUni.statSig = '';
+    }
+    cv.style.display = 'block';
+    return _hyUni.ctx;
+}
+
+function _hyUniHide() {
+    if (_hyUni.canvas && _hyUni.canvas.style.display !== 'none') _hyUni.canvas.style.display = 'none';
+    _hyUniLegend(false);
+}
+
+// legend line under the disc: the new glyph key in Universal View, the original text in Galaxy View
+function _hyUniLegend(on) {
+    if (!_hyUni.legendEl) {
+        const panel = document.querySelector('.ui-panel.bottom-right');
+        _hyUni.legendEl = panel && panel.querySelector('.text-purple-300');
+        if (!_hyUni.legendEl) return;
+        _hyUni.legendOrig = _hyUni.legendEl.innerHTML;
+    }
+    const el = _hyUni.legendEl, want = on ? 'uni' : 'gal';
+    if (el.dataset.hyMode === want) return;
+    el.dataset.hyMode = want;
+    if (!on) { el.innerHTML = _hyUni.legendOrig; return; }
+    const C = HY_UNIMAP.COL;
+    const s = function (c, g, t) { return '<span style="color:' + c + '">' + g + '</span>' + t; };
+    el.innerHTML = s(C.hostile, '◎', 'held ') + s(C.cleared, '◎', 'freed ') + s(C.nebula, '○', 'nebula') +
+        s(C.charted, '✓', 'charted ') + s('#ffaa55', '◇', 'frontier ') + s(C.borg, '□', 'Borg<br>') +
+        s(C.objective, '◌', 'objective ') + s(C.reticle, '⌜⌟', 'target ') + s(C.sos, '●', 'SOS ') +
+        s(C.hostile, '✕', 'hostiles ') + s(C.wing, '•', 'wingmen');
+}
+
+function _hyUniStaticSig() {
+    let s = _hyUni.w + '|' + _hyUni.dpr + '|' + (_hyUni.sgr ? 1 : 0) + '|';
+    for (let g = 0; g < 8; g++) s += (_hyUni.cores && _hyUni.cores[g] ? (_hyUniCleared(g) ? 'c' : 'h') : '-');
+    if (typeof nebulaClouds !== 'undefined') { let n = 0; for (let i = 0; i < nebulaClouds.length; i++) if (nebulaClouds[i] && nebulaClouds[i].userData && nebulaClouds[i].userData.deepDiscovered) n++; s += '|n' + n + '/' + nebulaClouds.length; }
+    if (typeof outerInterstellarSystems !== 'undefined') { let n = 0; for (let i = 0; i < outerInterstellarSystems.length; i++) if (outerInterstellarSystems[i] && outerInterstellarSystems[i].userData && outerInterstellarSystems[i].userData.discovered) n++; s += '|o' + n + '/' + outerInterstellarSystems.length; }
+    return s;
+}
+
+function _hyUniBuildStatic(G) {
+    const w = _hyUni.w, dpr = _hyUni.dpr, C = HY_UNIMAP.COL, GL = HY_UNIMAP.GLYPH;
+    let cv = _hyUni.stat;
+    if (!cv) { cv = _hyUni.stat = document.createElement('canvas'); }
+    cv.width = Math.round(w * dpr); cv.height = Math.round(w * dpr);
+    const x = cv.getContext('2d');
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    x.clearRect(0, 0, w, w);
+    x.font = HY_UNIMAP.FONT; x.textBaseline = 'middle';
+    const P = { x: 0, y: 0, r: 0 }, woo = G.woo;
+    const label = function (t, px, py, col, align) {
+        x.textAlign = align || 'center';
+        x.lineWidth = 2.5; x.strokeStyle = C.shade; x.strokeText(t, px, py);
+        x.fillStyle = col; x.fillText(t, px, py);
+    };
+    // range rings, dashed, labelled on the upper-right diagonal
+    x.setLineDash([2, 3]); x.lineWidth = 1; x.strokeStyle = C.ring;
+    HY_UNIMAP.RINGS.forEach(function (d) {
+        const r = G.ringPx(d);
+        x.beginPath(); x.arc(G.R, G.R, r, 0, Math.PI * 2); x.stroke();
+    });
+    x.setLineDash([]);
+    HY_UNIMAP.RINGS.forEach(function (d) {
+        const r = G.ringPx(d), a = -Math.PI * 0.80;
+        label(_hyUniFmt(d), G.R + Math.cos(a) * r, G.R + Math.sin(a) * r, C.ringText);
+    });
+    // Sol's gravity edge + the Sun
+    if (typeof window !== 'undefined' && window.localSystemOffset) {
+        const so = window.localSystemOffset;
+        G.proj(so.x + woo.x, so.z + woo.z, P); const sx = P.x, sy = P.y;
+        let edge = 26451; try { if (window.__campaign && window.__campaign.tether && window.__campaign.tether.edge) edge = window.__campaign.tether.edge; } catch (e) { /* default edge */ }
+        G.proj(so.x + woo.x + edge, so.z + woo.z, P); const er = Math.max(3, Math.hypot(P.x - sx, P.y - sy));
+        x.setLineDash([1, 2]); x.strokeStyle = C.solEdge; x.lineWidth = 1;
+        x.beginPath(); x.arc(sx, sy, er, 0, Math.PI * 2); x.stroke(); x.setLineDash([]);
+        x.fillStyle = C.sol; x.beginPath(); x.arc(sx, sy, GL.sol, 0, Math.PI * 2); x.fill();
+        label('SOL', sx + GL.sol + 2, sy + 1, C.sol, 'left');
+    }
+    // nebulae: named ones ring (uncharted) / dot + tick (charted); distant + exotic ones faint
+    if (typeof nebulaClouds !== 'undefined') {
+        for (let i = 0; i < nebulaClouds.length; i++) {
+            const n = nebulaClouds[i], u = n && n.userData; if (!u || !n.position) continue;
+            G.proj(n.position.x + woo.x, n.position.z + woo.z, P);
+            if (u.isDistant || u.isExoticCore) {
+                x.fillStyle = u.deepDiscovered ? C.nebula : C.faint;
+                x.beginPath(); x.arc(P.x, P.y, GL.nebulaFaint, 0, Math.PI * 2); x.fill();
+                continue;
+            }
+            x.strokeStyle = C.nebula; x.lineWidth = 1.2;
+            x.beginPath(); x.arc(P.x, P.y, GL.nebula, 0, Math.PI * 2);
+            if (u.deepDiscovered) { x.fillStyle = C.nebula; x.fill(); }
+            x.stroke();
+            if (u.deepDiscovered) {   // charted: a green check to the upper right
+                x.strokeStyle = C.charted; x.lineWidth = 1.2; x.beginPath();
+                x.moveTo(P.x + 2.5, P.y - 3.5); x.lineTo(P.x + 3.8, P.y - 2.2); x.lineTo(P.x + 6.2, P.y - 5.6); x.stroke();
+            }
+        }
+    }
+    // outer systems: frontier = diamond in its colour, Borg = square; filled once discovered
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        for (let i = 0; i < outerInterstellarSystems.length; i++) {
+            const s = outerInterstellarSystems[i], u = s && s.userData; if (!u || !s.position) continue;
+            G.proj(s.position.x + woo.x, s.position.z + woo.z, P);
+            const borg = !!u.hasBorg || u.theme === 'borg';
+            const col = borg ? C.borg : _hyUniHex(u.systemColor, '#ffaa55'), g = GL.outer;
+            x.strokeStyle = col; x.fillStyle = col; x.lineWidth = 1;
+            x.beginPath();
+            if (borg) x.rect(P.x - g * 0.8, P.y - g * 0.8, g * 1.6, g * 1.6);
+            else { x.moveTo(P.x, P.y - g); x.lineTo(P.x + g, P.y); x.lineTo(P.x, P.y + g); x.lineTo(P.x - g, P.y); x.closePath(); }
+            if (u.discovered) x.fill(); else x.stroke();
+        }
+    }
+    // galaxy cores: faction-colour ring + hub; HOSTILE = red crosshair ticks, CLEARED = green outer ring
+    const lore = (typeof window !== 'undefined' && window.FACTION_LORE) || null;
+    for (let g = 0; g < 8; g++) {
+        const c = _hyUni.cores && _hyUni.cores[g]; if (!c) continue;
+        const gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[g] : null;
+        const fl = lore && gt ? lore[gt.faction] : null;
+        const col = _hyUniHex(fl && fl.color !== undefined ? fl.color : (gt && gt.color), '#ffffff');
+        G.proj(c.position.x + woo.x, c.position.z + woo.z, P);
+        const cl = _hyUniCleared(g), isSgr = g === 7, r = isSgr ? GL.sgr : GL.core;
+        x.strokeStyle = col; x.lineWidth = 1.4;
+        x.beginPath(); x.arc(P.x, P.y, r, 0, Math.PI * 2); x.stroke();
+        x.fillStyle = isSgr ? C.sgr : col; x.beginPath(); x.arc(P.x, P.y, 1.4, 0, Math.PI * 2); x.fill();
+        if (cl) {
+            x.strokeStyle = C.cleared; x.lineWidth = 1; x.beginPath(); x.arc(P.x, P.y, r + 2.2, 0, Math.PI * 2); x.stroke();
+        } else {
+            x.strokeStyle = C.hostile; x.lineWidth = 1.2; x.beginPath();
+            for (let q = 0; q < 4; q++) {
+                const a = q * Math.PI / 2 + Math.PI / 4;
+                x.moveTo(P.x + Math.cos(a) * (r + 1), P.y + Math.sin(a) * (r + 1));
+                x.lineTo(P.x + Math.cos(a) * (r + 3.4), P.y + Math.sin(a) * (r + 3.4));
+            }
+            x.stroke();
+        }
+        if (isSgr) label('SGR A*', P.x, P.y - r - 6, C.sgr);
+        else label(HY_UNIMAP.ABBR[g] || ('G' + g), P.x, P.y + r + 6.5, cl ? C.cleared : col);
+    }
+    _hyUni.statSig = _hyUni.lastSig;
+}
+
+// the campaign's current objective: { pos (current coords), label, color, sos }
+function _hyUniObjective() {
+    const c = (typeof window !== 'undefined') ? window.__campaign : null;
+    if (!c || !c.state) return null;
+    const st = c.state;
+    const fcol = function (g) {
+        const gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[g] : null, fl = gt && window.FACTION_LORE ? window.FACTION_LORE[gt.faction] : null;
+        return _hyUniHex(fl && fl.color !== undefined ? fl.color : (gt && gt.color), '#ffffff');
+    };
+    if (st === 'NEBULA_MISSION') {
+        const m = c.mission; if (!m || m.complete) return { pos: null, label: 'MISSION COMPLETE', color: HY_UNIMAP.COL.cleared };
+        const nb = c.nebula;
+        return { pos: { x: m.site[0], y: m.site[1], z: m.site[2] }, label: m.label || 'Mission', color: nb ? fcol(nb.galaxy) : '#ff8844', sos: m.kind === 'convoy' };
+    }
+    if (st === 'SOL_PIRATES' || st === 'SOL_BOSS') {
+        let best = null;
+        if (st === 'SOL_BOSS' && typeof bossSystem !== 'undefined' && bossSystem && bossSystem.areaBosses) {
+            const ab = bossSystem.areaBosses['7-martianPirate_boss'];
+            if (ab && ab.bossRef && ab.bossRef.userData && ab.bossRef.userData.health > 0) best = ab.bossRef;
+        }
+        if (!best && typeof enemies !== 'undefined' && typeof camera !== 'undefined') {
+            let bd = Infinity;
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i], u = e && e.userData;
+                if (!u || !(u.health > 0) || !u.isMartianPirate || u.isVulcanPatrol || u.isBoss || u.isBossSupport) continue;
+                const d = e.position.distanceToSquared(camera.position); if (d < bd) { bd = d; best = e; }
+            }
+        }
+        return { pos: best ? best.position : null, label: st === 'SOL_BOSS' ? 'PIRATE FLAGSHIP' : 'CLEAR SOL PIRATES', color: '#ff7744' };
+    }
+    if (st === 'VICTORY') return { pos: null, label: 'ALL GALAXIES FREE', color: HY_UNIMAP.COL.cleared };
+    const gd = c.guide;
+    let color = '#ffffff';
+    if (st === 'SGR_VULCANS') color = '#66ccff';
+    else if (st === 'FACTION_GALAXY' && c.galaxy) color = fcol(c.galaxy.g);
+    if (gd && gd.to) return { pos: { x: gd.to[0], y: gd.to[1], z: gd.to[2] }, label: gd.label || st, color: color };
+    if (st === 'TO_SGR_A' && _hyUni.sgr) return { pos: _hyUni.sgr.position, label: 'Sagittarius A*', color: color };
+    if (st === 'FACTION_GALAXY' && c.galaxy && _hyUni.cores && _hyUni.cores[c.galaxy.g]) return { pos: _hyUni.cores[c.galaxy.g].position, label: c.galaxy.name + ' Core', color: color };
+    return { pos: null, label: (c.guide && c.guide.label) || st.replace(/_/g, ' '), color: color };
+}
+
+// where am I, in words (replaces the old distance-from-origin bands)
+function _hyUniZone(px, pz) {
+    const woo = window.worldOriginOffset || { x: 0, y: 0, z: 0 };
+    const d2 = function (o, x, z) { const dx = o.x + woo.x - x, dz = o.z + woo.z - z; return dx * dx + dz * dz; };
+    const so = window.localSystemOffset;
+    // localSystemOffset is rebased with the world (current coords)
+    if (so) { const dx = so.x + woo.x - px, dz = so.z + woo.z - pz; let edge = 26451; try { edge = window.__campaign.tether.edge || edge; } catch (e) { /* default */ } if (dx * dx + dz * dz < edge * edge) return 'SOL SYSTEM'; }
+    if (typeof nebulaClouds !== 'undefined') {
+        for (let i = 0; i < nebulaClouds.length; i++) {
+            const n = nebulaClouds[i], u = n && n.userData; if (!u || !n.position) continue;
+            const r = (u.radius || u.size || 3000) * 1.2;
+            if (d2(n.position, px, pz) < r * r) return (u.mythicalName || u.name || 'NEBULA').toUpperCase();
+        }
+    }
+    if (_hyUni.cores) {
+        const near = HY_UNIMAP.CORE_NEAR * HY_UNIMAP.CORE_NEAR;
+        for (let g = 0; g < 8; g++) {
+            const c = _hyUni.cores[g]; if (!c || d2(c.position, px, pz) > near) continue;
+            if (g === 7) return 'SGR A* REGION';
+            const gt = (typeof galaxyTypes !== 'undefined') ? galaxyTypes[g] : null;
+            return gt ? (gt.name + ' GALAXY').toUpperCase() : 'GALAXY ' + g;
+        }
+    }
+    if (typeof outerInterstellarSystems !== 'undefined') {
+        const near = HY_UNIMAP.OUTER_NEAR * HY_UNIMAP.OUTER_NEAR;
+        for (let i = 0; i < outerInterstellarSystems.length; i++) {
+            const s = outerInterstellarSystems[i]; if (!s || !s.position || d2(s.position, px, pz) > near) continue;
+            return ((s.userData && s.userData.name) || 'FRONTIER').toUpperCase();
+        }
+    }
+    return 'DEEP SPACE';
+}
+
+// every live distress source (current coords): trading ships, civilian calls, caravans
+function _hyUniSOS(out) {
+    out.length = 0;
+    if (typeof tradingShips !== 'undefined') {
+        for (let i = 0; i < tradingShips.length; i++) {
+            const s = tradingShips[i]; if (s && s.userData && s.userData.distressActive && !s.userData.destroyed) out.push(s.position);
+        }
+    }
+    if (typeof activeDistressCalls !== 'undefined' && activeDistressCalls) {
+        for (let i = 0; i < activeDistressCalls.length; i++) {
+            const civ = activeDistressCalls[i] && activeDistressCalls[i].civilian;
+            if (civ && civ.userData && !civ.userData.destroyed && civ.userData.health > 0) out.push(civ.position);
+        }
+    }
+    const cv = (typeof freighterCaravans !== 'undefined' && freighterCaravans) || (window.caravans || (window.caravanSystem && window.caravanSystem.caravans)) || [];
+    for (let i = 0; i < cv.length; i++) {
+        const c = cv[i]; if (!c || !c.underAttack || c.rescued || c.destroyed) continue;
+        const lead = (c.ships && c.ships[0]) || c.leader || c; if (lead && lead.position) out.push(lead.position);
+    }
+    return out;
+}
+
+const _hyUniP = { x: 0, y: 0, r: 0 }, _hyUniQ = { x: 0, y: 0, r: 0 }, _hyUniSos = [], _hyUniCells = new Map();
+const _hyUniFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _hyUniTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+
+function _hyDrawUniversalMap(galaxyMap) {
+    const ctx = _hyUniEnsureCanvas(galaxyMap); if (!ctx) return;
+    _hyUniRefs();
+    _hyUniLegend(true);
+    const G = _hyUniGeom(), C = HY_UNIMAP.COL, GL = HY_UNIMAP.GLYPH, woo = G.woo, w = _hyUni.w, dpr = _hyUni.dpr;
+    _hyUni.lastSig = _hyUniStaticSig();
+    if (_hyUni.lastSig !== _hyUni.statSig || !_hyUni.stat) _hyUniBuildStatic(G);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, _hyUni.canvas.width, _hyUni.canvas.height);
+    ctx.drawImage(_hyUni.stat, 0, 0);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.font = HY_UNIMAP.FONT; ctx.textBaseline = 'middle';
+    const label = function (t, px, py, col, align) {
+        ctx.textAlign = align || 'center'; ctx.lineWidth = 2.5; ctx.strokeStyle = C.shade; ctx.strokeText(t, px, py);
+        ctx.fillStyle = col; ctx.fillText(t, px, py);
+    };
+    // a caption on a dark pill, shortened until it fits the disc's chord at that height
+    const caption = function (t, py, col) {
+        const R = w / 2, half = Math.sqrt(Math.max(0, R * R - (py - R) * (py - R))) * 0.86;
+        ctx.textAlign = 'center';
+        while (t.length > 4 && ctx.measureText(t).width > half * 2) t = t.slice(0, -2) + '\u2026';
+        const tw = ctx.measureText(t).width;
+        ctx.fillStyle = C.shade; ctx.fillRect(w / 2 - tw / 2 - 3, py - 5, tw + 6, 10);
+        ctx.strokeStyle = col; ctx.globalAlpha = 0.5; ctx.lineWidth = 1; ctx.strokeRect(w / 2 - tw / 2 - 3, py - 5, tw + 6, 10); ctx.globalAlpha = 1;
+        ctx.fillStyle = col; ctx.fillText(t, w / 2, py + 0.5);
+    };
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const pulse = 0.5 + 0.5 * Math.sin(now / 180);
+    const cam = camera.position, px = cam.x + woo.x, pz = cam.z + woo.z;
+    const P = G.proj(px, pz, _hyUniP), plx = P.x, ply = P.y;
+    const Q = _hyUniQ;
+
+    // hostile clusters near the player, bucketed into cells
+    if (typeof enemies !== 'undefined') {
+        const rr = HY_UNIMAP.ENEMY_RANGE_BASE * _hyUniU(), r2 = rr * rr, cell = HY_UNIMAP.ENEMY_CELL_PX;
+        _hyUniCells.clear();
+        for (let i = 0; i < enemies.length; i++) {
+            const e = enemies[i], u = e && e.userData; if (!u || !(u.health > 0) || !e.position) continue;
+            if (e.position.distanceToSquared(cam) > r2) continue;
+            G.proj(e.position.x + woo.x, e.position.z + woo.z, Q);
+            const key = Math.floor(Q.x / cell) * 1000 + Math.floor(Q.y / cell);
+            const b = _hyUniCells.get(key);
+            if (b) { b.n++; b.x += Q.x; b.y += Q.y; if (u.isBoss) b.boss = true; }
+            else _hyUniCells.set(key, { n: 1, x: Q.x, y: Q.y, boss: !!u.isBoss });
+        }
+        ctx.strokeStyle = C.hostile; ctx.fillStyle = C.hostile; ctx.lineWidth = 1.3;
+        _hyUniCells.forEach(function (b) {
+            const x = b.x / b.n, y = b.y / b.n, s = GL.hostile * (b.n >= 6 ? 1.6 : b.n >= 2 ? 1.25 : 1) * (b.boss ? 1.4 : 1);
+            ctx.beginPath(); ctx.moveTo(x - s, y - s); ctx.lineTo(x + s, y + s); ctx.moveTo(x + s, y - s); ctx.lineTo(x - s, y + s); ctx.stroke();
+        });
+    }
+    // wingmen
+    if (typeof allyShips !== 'undefined') {
+        ctx.fillStyle = C.wing;
+        for (let i = 0; i < allyShips.length; i++) {
+            const a = allyShips[i]; if (!a || !a.userData || !(a.userData.health > 0)) continue;
+            G.proj(a.position.x + woo.x, a.position.z + woo.z, Q);
+            ctx.beginPath(); ctx.arc(Q.x, Q.y, GL.wing, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+    // live SOS calls: pulsing red dots, the nearest labelled
+    const sos = _hyUniSOS(_hyUniSos);
+    let nearSos = null, nearD = Infinity;
+    for (let i = 0; i < sos.length; i++) {
+        const p = sos[i]; G.proj(p.x + woo.x, p.z + woo.z, Q);
+        ctx.fillStyle = C.sos; ctx.beginPath(); ctx.arc(Q.x, Q.y, GL.sos, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(255,42,42,' + (0.9 - 0.8 * pulse).toFixed(2) + ')'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.arc(Q.x, Q.y, GL.sos + 1.5 + 4 * pulse, 0, Math.PI * 2); ctx.stroke();
+        const d = p.distanceTo ? p.distanceTo(cam) : Infinity;
+        if (d < nearD) { nearD = d; nearSos = { x: Q.x, y: Q.y }; }
+    }
+    if (nearSos) label('SOS ' + _hyUniFmt(nearD), nearSos.x, nearSos.y - GL.sos - 6, C.sos);
+
+    // nav target reticle
+    const tgt = (typeof gameState !== 'undefined') ? gameState.currentTarget : null;
+    if (tgt && tgt.position) {
+        let tp = tgt.position;
+        if (_hyUniTmp && tgt.getWorldPosition && tgt.parent && tgt.parent.type !== 'Scene') tp = tgt.getWorldPosition(_hyUniTmp);
+        G.proj(tp.x + woo.x, tp.z + woo.z, Q);
+        const s = GL.reticle, k = 2.2;
+        ctx.strokeStyle = C.reticle; ctx.lineWidth = 1.2; ctx.beginPath();
+        ctx.moveTo(Q.x - s, Q.y - s + k); ctx.lineTo(Q.x - s, Q.y - s); ctx.lineTo(Q.x - s + k, Q.y - s);
+        ctx.moveTo(Q.x + s - k, Q.y - s); ctx.lineTo(Q.x + s, Q.y - s); ctx.lineTo(Q.x + s, Q.y - s + k);
+        ctx.moveTo(Q.x + s, Q.y + s - k); ctx.lineTo(Q.x + s, Q.y + s); ctx.lineTo(Q.x + s - k, Q.y + s);
+        ctx.moveTo(Q.x - s + k, Q.y + s); ctx.lineTo(Q.x - s, Q.y + s); ctx.lineTo(Q.x - s, Q.y + s - k);
+        ctx.stroke();
+    }
+
+    // campaign objective: dotted line from the player, pulsing marker, banner with distance
+    const obj = _hyUniObjective();
+    let objText = null;
+    if (obj) {
+        if (obj.pos) {
+            G.proj(obj.pos.x + woo.x, obj.pos.z + woo.z, Q);
+            const dx = obj.pos.x - cam.x, dy = obj.pos.y - cam.y, dz = obj.pos.z - cam.z, d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            ctx.setLineDash([2, 3]); ctx.strokeStyle = obj.color; ctx.globalAlpha = 0.85; ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.moveTo(plx, ply); ctx.lineTo(Q.x, Q.y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+            const r = GL.objective + 3 * pulse;
+            ctx.strokeStyle = obj.color; ctx.lineWidth = 1.4;
+            ctx.beginPath(); ctx.arc(Q.x, Q.y, r, 0, Math.PI * 2); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(Q.x - r - 2, Q.y); ctx.lineTo(Q.x - r + 1.5, Q.y); ctx.moveTo(Q.x + r - 1.5, Q.y); ctx.lineTo(Q.x + r + 2, Q.y);
+            ctx.moveTo(Q.x, Q.y - r - 2); ctx.lineTo(Q.x, Q.y - r + 1.5); ctx.moveTo(Q.x, Q.y + r - 1.5); ctx.lineTo(Q.x, Q.y + r + 2); ctx.stroke();
+            if (obj.sos) { ctx.fillStyle = C.sos; ctx.beginPath(); ctx.arc(Q.x, Q.y, 1.8, 0, Math.PI * 2); ctx.fill(); }
+            objText = _hyUniFmt(d) + ' \u00b7 ' + String(obj.label).toUpperCase();
+            _hyUni.last = { state: window.__campaign.state, label: obj.label, d: Math.round(d), px: [Math.round(Q.x), Math.round(Q.y)] };
+        } else {
+            objText = String(obj.label).toUpperCase();
+            _hyUni.last = { state: window.__campaign.state, label: obj.label, d: null };
+        }
+    } else _hyUni.last = null;
+
+    // the player: a heading wedge
+    if (_hyUniFwd) {
+        camera.getWorldDirection(_hyUniFwd);
+        const a = Math.atan2(_hyUniFwd.z, _hyUniFwd.x), s = GL.player;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        ctx.beginPath();
+        ctx.moveTo(plx + ca * s, ply + sa * s);
+        ctx.lineTo(plx + Math.cos(a + 2.5) * s * 0.75, ply + Math.sin(a + 2.5) * s * 0.75);
+        ctx.lineTo(plx - ca * s * 0.25, ply - sa * s * 0.25);
+        ctx.lineTo(plx + Math.cos(a - 2.5) * s * 0.75, ply + Math.sin(a - 2.5) * s * 0.75);
+        ctx.closePath();
+        ctx.lineWidth = 2; ctx.strokeStyle = C.shade; ctx.stroke();
+        ctx.fillStyle = C.player; ctx.fill();
+    }
+    // banner: the objective at the top of the disc
+    if (objText) caption('\u25b8 ' + objText, w * 0.14, obj.color);
+    // where am I: the zone in words + distance from Sgr A*, at the foot of the disc
+    _hyUni.zone = _hyUniZone(px, pz);
+    const _dz = Math.sqrt(px * px + (cam.y + woo.y) * (cam.y + woo.y) + pz * pz);
+    caption(_hyUni.zone + ' \u00b7 ' + _hyUniFmt(_dz) + ' u', w * 0.87, C.text);
+    _hyUni.lastDraw = now;
+}
+if (typeof window !== 'undefined') window.__hyUniMap = _hyUni;
+
 function updateGalaxyMap() {
     if (typeof gameState === 'undefined' || typeof camera === 'undefined') return;
     
@@ -3991,6 +4485,7 @@ function updateGalaxyMap() {
     
     // Hide player and ally triangles (allies show as dots in galactic view)
     playerMapPos.style.display = 'none';
+    _hyUniHide();   // package W: the Universal View chart
     const _depthBar = document.getElementById('mapDepthBar');
     if (_depthBar) _depthBar.style.display = 'none';
     const _zoneLabel = document.getElementById('mapZoneLabel');
@@ -4486,6 +4981,9 @@ if (obj.type === 'ally') {
     // Declared at the top of the else block to avoid TDZ when nested forEachs
     // reference it before later const declarations.
     const galaxyMap = document.getElementById('galaxyMap');
+    // package W (map2): the tactical chart draws everything below on one canvas
+    const _hyUniOn = _hyUniMapOn() && !!galaxyMap;
+    if (!_hyUniOn) _hyUniHide();
 
     // Use pooling instead
 mapDotPool.releaseAll();
@@ -4668,7 +5166,7 @@ mapDotPool.releaseAll();
         my: 50 + (z / universeRadius) * 50
     });
     // package V (outer): the frontier systems (outer-systems.js draws them; past the map radius they sit on the rim)
-    if (typeof window.drawOuterSystemsOnMap === 'function') { try { window.drawOuterSystemsOnMap(galaxyMap, universeRadius); } catch (e) {} }
+    if (!_hyUniOn && typeof window.drawOuterSystemsOnMap === 'function') { try { window.drawOuterSystemsOnMap(galaxyMap, universeRadius); } catch (e) {} }
     const playerProj = projectXZ(playerX, playerZ);
     const clampedX = Math.max(5, Math.min(95, playerProj.mx));
     const clampedZ = Math.max(5, Math.min(95, playerProj.my));
@@ -4726,8 +5224,17 @@ mapDotPool.releaseAll();
     const angle = Math.atan2(forward.x, -forward.z);
     playerMapPos.style.transform = `translate(-50%, -50%) rotate(${angle}rad)`;
 
+    if (_hyUniOn) {
+        // package W: wedge, wingmen, nebulae, lines, galaxies and frontier all live on the chart canvas
+        _hyDrawUniversalMap(galaxyMap);
+        if (playerMapPos.style.display !== 'none') playerMapPos.style.display = 'none';
+        for (let _i = 0; _i < 10; _i++) { const m = document.getElementById('allyMapMarker' + _i); if (m && m.style.display !== 'none') m.style.display = 'none'; }
+        galaxyMap.querySelectorAll('.universe-nebula-dot, .universe-path-line').forEach(d => d.remove());
+        galaxyMap.querySelectorAll('.galaxy-indicator, .frontier-map-dot, [title="Sagittarius A* - Galactic Center"]').forEach(function (el) { if (el.style.display !== 'none') el.style.display = 'none'; });
+    }
+
     // ── Ally wingmen markers (same ▲ shape, in their faction colors) ──
-    if (typeof allyShips !== 'undefined') {
+    if (!_hyUniOn && typeof allyShips !== 'undefined') {
         if (galaxyMap) {
             // Create/reuse wingman markers
             allyShips.forEach((ally, idx) => {
@@ -4763,7 +5270,7 @@ mapDotPool.releaseAll();
     }
 
     // ── Render nebulas as colored dots (universe view) ───────────────
-    if (galaxyMap && typeof nebulaClouds !== 'undefined') {
+    if (!_hyUniOn && galaxyMap && typeof nebulaClouds !== 'undefined') {
         // Clear previous nebula dots
         const oldNebDots = galaxyMap.querySelectorAll('.universe-nebula-dot');
         oldNebDots.forEach(d => d.remove());
@@ -4792,7 +5299,7 @@ mapDotPool.releaseAll();
     }
 
     // ── Render discovery paths as dashed lines ───────────────────────
-    if (galaxyMap && typeof window.discoveryPaths !== 'undefined') {
+    if (!_hyUniOn && galaxyMap && typeof window.discoveryPaths !== 'undefined') {
         const oldPathLines = galaxyMap.querySelectorAll('.universe-path-line');
         oldPathLines.forEach(d => d.remove());
 
@@ -4838,11 +5345,11 @@ mapDotPool.releaseAll();
         else if (dist < 100000) zone = 'Distant Galaxy';
         else zone = 'Cosmic Edge';
         zoneLabel.textContent = zone + ' · ' + (dist|0) + 'u';
-        zoneLabel.style.display = 'block';
+        zoneLabel.style.display = _hyUniOn ? 'none' : 'block';   // package W: the chart prints the zone itself
     }
 
     // Show all galaxy indicators
-    const galaxyIndicators = document.querySelectorAll('.galaxy-indicator');
+    const galaxyIndicators = _hyUniOn ? [] : document.querySelectorAll('.galaxy-indicator');
     galaxyIndicators.forEach((el, index) => {
         if (index < galaxyTypes.length) {
             // Top-down X/Z projection — convert 3D spherical → cartesian → linear map
@@ -4874,7 +5381,7 @@ mapDotPool.releaseAll();
     });
     
     // Show Sagittarius A* at center
-    const sgrAEl = document.querySelector('[title="Sagittarius A* - Galactic Center"]');
+    const sgrAEl = _hyUniOn ? null : document.querySelector('[title="Sagittarius A* - Galactic Center"]');
     if (sgrAEl) {
         sgrAEl.style.left = '50%';
         sgrAEl.style.top = '50%';
