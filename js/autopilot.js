@@ -176,6 +176,24 @@
       return { counts: Object.assign({}, ko.counts), last: ko.last,
                k: KEEPOUT_K, hardK: KEEPOUT_HARD_K, lookS: KEEPOUT_LOOK_S };
     },
+    // Package AD pursuit avoidance (HY_AVOID): episode counts and the closest
+    // approach this run, in radii, to a black hole and to a planet/moon/star
+    // (minBodyRailK = during a whip rail or a lit burn, which this guard
+    // leaves to the keep-out guard).
+    get avoid() {
+      const A = _avState();
+      const r2 = (x) => (isFinite(x) ? Math.round(x * 100) / 100 : null);
+      return { bhHolds: A.bhHolds, bhSteers: A.bhSteers, bhDrops: A.bhDrops, bhSlides: A.bhSlides,
+               bodySteers: A.bodySteers, bodyBreaks: A.bodyBreaks, bodySlides: A.bodySlides,
+               burnCuts: A.burnCuts, jumpLatchCuts: A.jumpLatchCuts,
+               bhTransits: A.bhTransits, bhWarpsIntended: A.bhWarpsIntended, ehWarnings: A.ehWarnings,
+               closestHoleR: r2(A.minHoleK), closestHole: A.minHoleName, closestHolePhase: A.minHolePhase,
+               closestBodyR: r2(A.minBodyK), closestBody: A.minBodyName, closestBodyPhase: A.minBodyPhase,
+               closestBodyRailR: r2(A.minBodyRailK),
+               holding: !!A.holdT, breaking: !!(A.brk && Date.now() < A.brk.until),
+               last: A.last, lastTransit: A.lastTransit, lastWarning: A.lastWarning,
+               cfg: Object.assign({}, HY_AVOID) };
+    },
     // The reach a jump actually delivers — the number that replaced
     // `jumpMaxDist: Infinity`. Exposed so a test can assert legs beyond it
     // took the O-warp path.
@@ -932,6 +950,10 @@
     // and a demo that then fights it for the rest of the run never shows the
     // nebulae (soak: 0 warps, 0 parks in 180 s).
     if ((ap.phase === 'combat' || ap.phase === 'bossEngage') && !ap._bossHunt && _solBudgetOut()) { _solBudgetLeave(); return; }
+
+    // package AD: while the avoidance guard owns the nose, remember it so the
+    // phase's orient can be undone (see _avPreDispatch)
+    _avPreDispatch();
 
     // package Y: the campaign director picks the leg and owns the phase
     _campaignDirect();
@@ -2389,6 +2411,10 @@
       }
     }
 
+    // PURSUIT AVOIDANCE (package AD) — black-hole balls + body balls in
+    // every phase, combat included (see HY_AVOID); the keep-out guard after it.
+    _avoidGuard();
+
     // KEEP-OUT GUARD — last word on the frame, after every phase and hold
     // (see KEEPOUT_K). Physics runs next and reads what this leaves.
     _keepoutGuard();
@@ -2566,8 +2592,9 @@
     for (let i = 0; i < planets.length; i++) {
       const p = planets[i]; const ud = p && p.userData;
       if (!ud || ud.type !== 'blackhole' || !p.position) continue;
-      const R = _keepoutBodyR(p) || 400;
-      if (p.position.distanceTo(pos) < R * HY_DIRECTOR.BH_FIGHT_MIN_K) return p;
+      // package AD: the pursuit-avoidance ball (HY_AVOID.BH_K) when it is wider
+      const R = _avHoleR(p);
+      if (p.position.distanceTo(pos) < R * (HY_AVOID.ON ? Math.max(HY_DIRECTOR.BH_FIGHT_MIN_K, HY_AVOID.BH_K) : HY_DIRECTOR.BH_FIGHT_MIN_K)) return p;
     }
     return null;
   }
@@ -5902,6 +5929,517 @@
     }
   }
 
+  // ── PURSUIT AVOIDANCE (hybrid package AD — demoavoid) ─────────────────────
+  // Ben, 2026-10-11: "demo player in 8803 needs to avoid black hole warps and
+  // planet collisions when pursuing enemies and bosses." The keep-out guard
+  // above reads the ship's velocity against STILL spheres of 1.8 R and has no
+  // notion of black holes (they are not in _keepoutApplies); the director's
+  // _dirBHAt / _dirEscape only run while the campaign phase flies. This guard
+  // runs every demo frame, in every phase, just before _keepoutGuard:
+  //   BLACK HOLES  a ball of BH_K x the hole's radius (the transit fires at
+  //     2.5, the warning at ~2.7). (a) A pursued target inside the ball is not
+  //     followed: the ship holds at BH_HOLD_K on the target's bearing, nose on
+  //     it (the auto-fire shoots when it is in range), and after BH_HOLD_MS
+  //     drops it and skips it for BH_SKIP_MS (the pickers and the director's
+  //     hunt read _avSkipTarget / _dirBHAt). (b) The ship's predicted path —
+  //     stopping distance + BH_LOOK_S of flight — entering a ball turns the
+  //     nose onto the line that grazes it (tangential, not back), brakes when
+  //     closing, cuts a lit burn / jump / glide that would carry it in, drops
+  //     a W-jump latch whose dash would, and in the last frames slides the
+  //     velocity along the ball. Only blackHoleWarp / gotoBlackHoleGalaxy
+  //     (their own hole) may go in.
+  //   BODIES (planets, moons, stars; world positions, so parented moons count)
+  //     a ball of BODY_K x R + BODY_SPEED_S of flight, swept with the ship's
+  //     velocity RELATIVE to the body (the outer giants orbit at 5-25 u/frame).
+  //     Sublight only — a lit burn and the whip rail stay with _keepoutGuard
+  //     (and the whip passes ~1.7 R by design). If the target stays inside
+  //     FIRE_CONE_DEG of the grazing heading the nose veers onto it and the
+  //     fight goes on; otherwise the guard breaks off for at most BREAK_MS and
+  //     then the phase re-acquires. The arrival subject (the park) and the
+  //     whip body are exempt.
+  // While the guard owns the nose it snapshots the nose before the dispatch
+  // and puts it back before turning, so the phase's orient cannot outvote it.
+  const HY_AVOID = {
+    ON: true,             // false = this guard off (A/B probes: window.HY_AVOID.ON = false)
+    BH_K: 5.5,            // never enter this x a black hole's radius
+    BH_HOLD_K: 5.75,      // hold on the pursued target's bearing at this x radius
+    BH_LOOK_S: 1.5,       // look-ahead: stopping distance + this many s of flight
+    BH_STEER_RATE: 0.07,  // nose authority, rad per 60 fps frame
+    BH_HOLD_MS: 15000,    // a target that stays inside the ball this long is dropped …
+    BH_SKIP_MS: 30000,    // … and skipped for this long
+    BH_HOLD_RANGE: 9000,  // the hold flies to its point only inside this (the phase travels beyond)
+    BODY_K: 2.2,          // planets / moons / stars: this x radius …
+    BODY_SPEED_S: 0.6,    // … plus this many seconds of flight at the relative speed
+    BODY_LOOK_S: 1.5,
+    BODY_STEER_RATE: 0.07,
+    FIRE_CONE_DEG: 18,    // veer while the target stays this close to the grazing heading
+    BREAK_MS: 2000,       // otherwise break off for at most this long
+    BREAK_COOLDOWN_MS: 3000, // after a break, veer (never re-break) on the same body this long
+    JUMP_REACH: 7000,     // a W-jump latch is checked along the nose this far
+    NEAR_R: 40000,        // bodies are cached within this (+ their radius) of the ship
+  };
+  if (typeof window !== 'undefined') window.HY_AVOID = HY_AVOID;
+
+  const _avT1 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avT2 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avT3 = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avEsc = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avFwd = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avAx = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avVb = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avVr = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _avQr = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+  const _avQ = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
+  function _avState() {
+    return ap._av || (ap._av = {
+      bhHolds: 0, bhSteers: 0, bhDrops: 0, bodySteers: 0, bodyBreaks: 0, burnCuts: 0, jumpLatchCuts: 0,
+      bhSlides: 0, bodySlides: 0, bhTransits: 0, bhWarpsIntended: 0, ehWarnings: 0,
+      minHoleK: Infinity, minHoleName: null, minHolePhase: null,
+      minBodyK: Infinity, minBodyName: null, minBodyPhase: null, minBodyRailK: Infinity,
+      last: null, lastTransit: null, lastWarning: null,
+      ep: {}, skip: new Map(), bhs: [], bhF: -999, near: [], nearF: -999,
+      prev: new Map(), own: false, ownNow: false, snapF: -1, brk: null, holdT: null,
+      _bhwPrev: false, _ehPrev: false
+    });
+  }
+  // One count per EPISODE: the same act on the same subject within 1.5 s is one.
+  function _avCount(kind, key, info) {
+    const A = _avState(), now = Date.now(), id = kind + ':' + key;
+    if (!(A.ep[id] && now - A.ep[id] < 1500)) A[kind] = (A[kind] || 0) + 1;
+    A.ep[id] = now;
+    A.last = Object.assign({ at: now, kind: kind, phase: ap.phase, subject: key }, info || {});
+  }
+  function _avName(o) { return (o && o.userData && (o.userData.name || o.userData.type)) || 'body'; }
+  // The radius the horizon test reads (geometry radius: game-physics.js
+  // criticalDistance = 2.5 x it), or the placement's _hyHoleR when larger.
+  function _avHoleR(bh) {
+    let r = _keepoutBodyR(bh) || 0;
+    if (typeof _hyHoleR === 'function') { try { r = Math.max(r, _hyHoleR(bh) || 0); } catch (e) { /* not ready */ } }
+    return r || 400;
+  }
+  function _avBHs() {
+    const A = _avState(), fc = gameState.frameCount || 0;
+    if (fc - A.bhF >= 120 || fc < A.bhF) {
+      A.bhF = fc; A.bhs = [];
+      if (typeof planets !== 'undefined') {
+        for (let i = 0; i < planets.length; i++) {
+          const p = planets[i];
+          if (p && p.position && p.userData && p.userData.type === 'blackhole') A.bhs.push(p);
+        }
+      }
+    }
+    return A.bhs;
+  }
+  function _avBHIntended(bh) {
+    if (ap.phase !== 'blackHoleWarp' && ap.phase !== 'gotoBlackHoleGalaxy') return false;
+    return !ap.currentBH || ap.currentBH === bh;
+  }
+  // The black hole whose ball (x k) contains `pos`, or null.
+  function _avBHContaining(pos, k) {
+    if (!pos || typeof gameState === 'undefined') return null;
+    const hs = _avBHs();
+    for (let i = 0; i < hs.length; i++) {
+      const bh = hs[i];
+      if (_avBHIntended(bh)) continue;
+      if (bh.position.distanceTo(pos) < HY_AVOID.BH_K * (k || 1) * _avHoleR(bh)) return bh;
+    }
+    return null;
+  }
+  // Target pickers ask this: a hostile on a black hole's lip, or one the hold
+  // dropped, is not a target (it is again once it leaves the ball).
+  function _avSkipTarget(e) {
+    if (!e || !e.position || !HY_AVOID.ON) return false;
+    const A = _avState();
+    const until = A.skip.get(e);
+    if (until && until > Date.now()) return true;
+    if (until) A.skip.delete(e);
+    return !!_avBHContaining(e.position);
+  }
+  function _avWorldPos(p, out) {
+    return (p.parent && !p.parent.isScene) ? p.getWorldPosition(out) : out.copy(p.position);
+  }
+  // Planets / moons / stars near the ship, refreshed every 20 frames.
+  function _avNear() {
+    const A = _avState(), fc = gameState.frameCount || 0;
+    if (fc - A.nearF >= 20 || fc < A.nearF) {
+      A.nearF = fc; A.near = [];
+      if (typeof planets !== 'undefined') {
+        const cp = camPos();
+        for (let i = 0; i < planets.length; i++) {
+          const p = planets[i];
+          if (!p || !p.position || !_keepoutApplies(p)) continue;
+          const R = _keepoutBodyR(p); if (!(R > 0)) continue;
+          if (_avWorldPos(p, _avT1).distanceTo(cp) - R > HY_AVOID.NEAR_R) continue;
+          A.near.push(p);
+        }
+      }
+      if (A.prev.size > 400) A.prev.clear();
+    }
+    return A.near;
+  }
+  // The pursued hostile: the combat / boss target, else an enemy the phase
+  // has on the nav (flyToward on currentTarget). Bodies and beacons are not.
+  // Under the director's own 'campaign' phase there is none: its hunt already
+  // refuses a target inside the ball (_dirBHAt), and a stale combatTarget
+  // must not pull the leg it is flying onto a hold.
+  function _avTarget() {
+    if (ap.phase === 'campaign') return null;
+    const fight = ap.phase === 'combat' || ap.phase === 'bossEngage';
+    const cand = fight ? [ap.combatTarget, gameState.currentTarget] : [gameState.currentTarget];
+    for (let i = 0; i < cand.length; i++) {
+      const t = cand[i];
+      if (!t || !t.position || !t.userData) continue;
+      const ty = t.userData.type;
+      if (ty === 'blackhole' || ty === 'asteroid' || _keepoutApplies(t)) continue;
+      if (!(t.userData.health > 0)) continue;
+      return t;
+    }
+    return null;
+  }
+  // Grazing heading round a ball of radius K at `bp`, on the side the motion
+  // `vdir` already passes (written to out). Inside the ball: tangent, leaning out.
+  function _avGraze(bp, K, vdir, out) {
+    const cp = camPos();
+    _avT2.subVectors(bp, cp);
+    const dist = _avT2.length();
+    if (dist < 1e-6) return out.set(0, 1, 0);
+    _avT2.divideScalar(dist);                                     // toward the ball
+    out.copy(vdir).addScaledVector(_avT2, -vdir.dot(_avT2));      // tangent, pass side
+    if (out.lengthSq() < 1e-6) {
+      out.set(0, 1, 0).addScaledVector(_avT2, -_avT2.y);
+      if (out.lengthSq() < 1e-6) out.set(1, 0, 0).addScaledVector(_avT2, -_avT2.x);
+    }
+    out.normalize();
+    const s = K / dist;
+    if (s < 1) out.multiplyScalar(s).addScaledVector(_avT2, Math.sqrt(1 - s * s)).normalize();
+    else out.addScaledVector(_avT2, -0.5).normalize();
+    return out;
+  }
+  function _avTurn(dir, rate, dtF) {
+    if (typeof camera === 'undefined' || !dir) return;
+    camera.getWorldDirection(_avFwd);
+    const ang = _avFwd.angleTo(dir);
+    if (!(ang > 1e-4)) return;
+    _avAx.crossVectors(_avFwd, dir);
+    if (_avAx.lengthSq() < 1e-10) _avAx.set(0, 1, 0);
+    _avAx.normalize();
+    _avQr.setFromAxisAngle(_avAx, Math.min(ang, rate * dtF));
+    camera.quaternion.premultiply(_avQr);
+    gameState._lastAutoOrientFrame = gameState.frameCount;
+  }
+  // Ray from `from` along unit `dir` for `len`: first entry into the ball
+  // (centre c, radius K) in u along the ray, 0 when already inside and not
+  // leaving, -1 when it misses.
+  function _avRayEntry(from, dir, len, c, K) {
+    _avT3.subVectors(c, from);
+    const along = _avT3.dot(dir), d2 = _avT3.lengthSq();
+    if (d2 < K * K) return along > 0 ? 0 : -1;
+    if (along <= 0) return -1;
+    const off2 = Math.max(0, d2 - along * along);
+    if (off2 >= K * K) return -1;
+    const entry = along - Math.sqrt(K * K - off2);
+    return entry <= len ? entry : -1;
+  }
+  // Called just before the dispatch: while the guard owns the nose, keep a
+  // copy so the phase's own orient can be undone.
+  function _avPreDispatch() {
+    if (!_avQ || typeof camera === 'undefined' || typeof gameState === 'undefined') return;
+    const A = ap._av;
+    if (A && A.own) { _avQ.copy(camera.quaternion); A.snapF = gameState.frameCount; }
+  }
+  function _avTakeNose(A) {
+    if (!A.ownNow && A.snapF === gameState.frameCount && !gameState.slingshotWhip) camera.quaternion.copy(_avQ);
+    A.ownNow = true;
+  }
+
+  function _avoidGuard() {
+    if (typeof gameState === 'undefined' || !gameState.velocityVector || !_avT1 ||
+        typeof camera === 'undefined') return;
+    const A = _avState();
+    A.ownNow = false;
+    if (!HY_AVOID.ON) { A.own = false; return; }
+    const now = Date.now();
+    const intendedPhase = ap.phase === 'blackHoleWarp' || ap.phase === 'gotoBlackHoleGalaxy';
+    // observability: horizon transits / warnings the demo did not ask for
+    const bhw = !!gameState.isBlackHoleWarping;
+    if (bhw && !A._bhwPrev) {
+      if (intendedPhase) A.bhWarpsIntended++;
+      else { A.bhTransits++; A.lastTransit = { at: now, phase: ap.phase }; }
+    }
+    A._bhwPrev = bhw;
+    const eh = !!(gameState.eventHorizonWarning && gameState.eventHorizonWarning.active);
+    if (eh && !A._ehPrev && !intendedPhase) { A.ehWarnings++; A.lastWarning = { at: now, phase: ap.phase }; }
+    A._ehPrev = eh;
+    if (bhw || gameState.playerDying || ap.phase === 'init') { A.own = false; return; }
+
+    const v = gameState.velocityVector;
+    const speed = v.length();
+    const dtF = Math.max(1, Math.min(6, gameState.dtFrames || 1));
+    const ew = gameState.emergencyWarp || {};
+    const sl = gameState.slingshot || {};
+    const whipRec = gameState.slingshotWhip;
+    const whip = !!whipRec;
+    const warp = !!(ew.active && !ew.isJump);
+    const jump = !!(ew.isJump && (ew.active || ew.autoBraking));
+    const glide = !!(!whip && (sl.active || gameState.slingshotLaunchRamp));
+    const lit = warp || jump || glide;
+    const cp = camPos();
+    const k = keys();
+    const vd = new THREE.Vector3();
+    if (speed > 1e-6) vd.copy(v).divideScalar(speed); else camera.getWorldDirection(vd);
+    const cruise = Math.min(speed, gameState.maxVelocity || 4);
+    let stop;
+    if (warp || glide) stop = (0.25 * speed + 0.75 * cruise) * 60 + speed * 2;
+    else if (jump) stop = speed / 0.035;
+    else stop = speed / 0.03;
+    const subj = gameState._arrivalSubject && gameState._arrivalSubject.obj;
+    const T = _avTarget();
+    const holes = _avBHs();
+    // the hole a pursued target sits inside (the hold below owns that hole)
+    const tBH = (T && !lit && !whip) ? _avBHContaining(T.position) : null;
+
+    // ── 1. BLACK HOLES — the ship's own predicted path ─────────────────────
+    let bhThreat = null;
+    const lookBH = stop + speed * 60 * HY_AVOID.BH_LOOK_S;
+    for (let i = 0; i < holes.length; i++) {
+      const bh = holes[i];
+      if (_avBHIntended(bh)) continue;
+      const R = _avHoleR(bh), ball = HY_AVOID.BH_K * R;
+      const d = bh.position.distanceTo(cp);
+      const kk = d / R;
+      if (kk < A.minHoleK) { A.minHoleK = kk; A.minHoleName = _avName(bh); A.minHolePhase = ap.phase; }
+      if (d - ball > lookBH + speed * (dtF + 1)) continue;
+      // the hold flies its own approach to this hole's lip (section 2, and 4 slides)
+      if (bh === tBH && d >= ball) continue;
+      let entry = speed > 0.05 ? _avRayEntry(cp, vd, lookBH, bh.position, ball) : -1;
+      if (entry < 0 && d < ball) entry = 0;
+      if (entry < 0) continue;
+      if (!bhThreat || entry < bhThreat.entry) bhThreat = { bh: bh, R: R, ball: ball, d: d, entry: entry };
+    }
+    if (bhThreat) {
+      const bh = bhThreat.bh, nm = _avName(bh);
+      const info = { dOverR: Math.round(bhThreat.d / bhThreat.R * 100) / 100, speed: Math.round(speed * 10) / 10 };
+      const isSubj = subj === bh;
+      if (whip) {
+        // the rail ignores input: a whip that would carry the ship into a ball
+        // is dropped — the same teardown as the keep-out's whipAbort
+        gameState.slingshotWhip = null;
+        gameState.slingshotLaunchRamp = null;
+        if (typeof window !== 'undefined') {
+          window.__whipLaunch = null; window.__whipDilation = 0;
+          if (window.__whipFrame) window.__whipFrame.active = false;
+        }
+        if (sl.active) sl.timeRemaining = 0;
+        k.x = true; k.w = false;
+        _avCount('burnCuts', nm, Object.assign({ what: 'whip' }, info));
+      } else if (lit) {
+        if (!isSubj || bhThreat.entry < stop) {
+          if (ew.active) ew.timeRemaining = 0;
+          if (glide) { if (sl.active) sl.timeRemaining = 0; gameState.slingshotLaunchRamp = null; }
+          k.x = true; k.w = false;
+          _avCount('burnCuts', nm, Object.assign({ what: warp ? 'warp' : jump ? 'jump' : 'glide' }, info));
+        }
+        if (!isSubj) { _avTakeNose(A); _avTurn(_avGraze(bh.position, bhThreat.ball * 1.08, vd, _avEsc), HY_AVOID.BH_STEER_RATE, dtF); }
+      } else {
+        _avTakeNose(A);
+        _avTurn(_avGraze(bh.position, bhThreat.ball * 1.08, vd, _avEsc), HY_AVOID.BH_STEER_RATE, dtF);
+        _avT2.subVectors(bh.position, cp).normalize();
+        const closing = v.dot(_avT2) > 0;
+        if (closing && bhThreat.entry < stop * 1.5 + speed * 60) { k.x = true; k.w = false; }
+        else {
+          camera.getWorldDirection(_avFwd);
+          if (_avFwd.dot(_avT2) > 0.2) k.w = false;   // never thrust toward the hole
+        }
+        _avCount('bhSteers', nm, info);
+      }
+      k.wDoubleTap = false;
+    }
+    // A jump latch whose dash would carry the ship into a ball is dropped.
+    // A latch _igniteJump vetted knows its own size: boost (speed x ms) plus
+    // physics' 0.985/frame auto-brake tail (~66 x speed); an unvetted one is
+    // read at JUMP_REACH.
+    const vetted = Date.now() - (ap._jumpVettedAt || 0) < 400;
+    let jumpReach = HY_AVOID.JUMP_REACH;
+    if (vetted && gameState._pendingJumpSpeed > 0) {
+      const js = gameState._pendingJumpSpeed;
+      jumpReach = js * ((gameState._pendingJumpMs || 2000) / 16.67) + js * 66;
+    }
+    if (k.wDoubleTap) {
+      camera.getWorldDirection(_avFwd);
+      for (let i = 0; i < holes.length; i++) {
+        const bh = holes[i];
+        if (_avBHIntended(bh)) continue;
+        if (_avRayEntry(cp, _avFwd, jumpReach, bh.position, HY_AVOID.BH_K * _avHoleR(bh)) >= 0) {
+          k.wDoubleTap = false; _avCount('jumpLatchCuts', _avName(bh)); break;
+        }
+      }
+    }
+
+    // ── 2. A PURSUED TARGET INSIDE A BALL — hold at its edge ────────────────
+    let holding = false;
+    if (tBH && !bhThreat) {
+      if (!A.holdT || A.holdT.obj !== T) A.holdT = { obj: T, at: now };
+      const R = _avHoleR(tBH), ball = HY_AVOID.BH_K * R;
+      const H = new THREE.Vector3().subVectors(T.position, tBH.position);
+      if (H.lengthSq() < 1) H.set(1, 0, 0);
+      H.normalize().multiplyScalar(HY_AVOID.BH_HOLD_K * R).add(tBH.position);
+      const dH = H.distanceTo(cp);
+      if (now - A.holdT.at > HY_AVOID.BH_HOLD_MS) {
+        // dropped: skipped until it leaves the ball (pickers + the director)
+        A.skip.set(T, now + HY_AVOID.BH_SKIP_MS);
+        if (ap._dir && ap._dir.skip) ap._dir.skip.set(T, now + HY_AVOID.BH_SKIP_MS);
+        if (ap.combatTarget === T) ap.combatTarget = null;
+        if (gameState.currentTarget === T) gameState.currentTarget = null;
+        A.bhDrops++; A.holdT = null;
+        A.last = { at: now, kind: 'bhDrop', phase: ap.phase, subject: _avName(T) };
+      } else if (dH < HY_AVOID.BH_HOLD_RANGE) {
+        holding = true;
+        _avCount('bhHolds', _avName(T) + '@' + _avName(tBH), { hole: _avName(tBH) });
+        _avTakeNose(A);
+        k.wDoubleTap = false;
+        const rOut = new THREE.Vector3().subVectors(cp, tBH.position).normalize();   // hole -> ship
+        if (dH > 900) {
+          // fly to the hold point, round the ball if the straight line crosses it
+          let toH = new THREE.Vector3().subVectors(H, cp).normalize();
+          if (_avRayEntry(cp, toH, dH, tBH.position, ball) >= 0) toH = _avGraze(tBH.position, ball * 1.08, toH, new THREE.Vector3());
+          _avTurn(toH, HY_AVOID.BH_STEER_RATE, dtF);
+          camera.getWorldDirection(_avFwd);
+          const want = Math.min(4, Math.max(0.6, (dH - 300) / 150));
+          k.w = _avFwd.dot(toH) > 0.85 && speed < want;
+          k.x = speed > want * 1.25 + 0.3;
+        } else {
+          // on station: nose on the target, no thrust, slide off the radial
+          _avTurn(new THREE.Vector3().subVectors(T.position, cp).normalize(), HY_AVOID.BH_STEER_RATE, dtF);
+          k.w = false; k.x = speed > 1.0;
+          gameState.currentTarget = T;
+        }
+        const inward = -v.dot(rOut);
+        if (inward > 0 && cp.distanceTo(tBH.position) < HY_AVOID.BH_HOLD_K * R * 1.05) v.addScaledVector(rOut, inward);
+        if (dH <= 900 && v.length() < 0.45) {
+          // keep the engine's 0.4 floor from pushing along a nose that faces the hole
+          const tan = new THREE.Vector3().copy(v).addScaledVector(rOut, -v.dot(rOut));
+          if (tan.lengthSq() < 1e-6) tan.set(0, 1, 0).addScaledVector(rOut, -rOut.y);
+          if (tan.lengthSq() < 1e-6) tan.set(1, 0, 0);
+          v.copy(tan.normalize().multiplyScalar(0.45));
+        }
+      }
+    } else if (A.holdT && (!T || A.holdT.obj !== T || !tBH)) {
+      A.holdT = null;
+    }
+
+    // ── 3. PLANETS / MOONS / STARS — sublight, relative motion ──────────────
+    const near = _avNear();
+    const fcNow = gameState.frameCount || 0;
+    let bt = null;
+    for (let i = 0; i < near.length; i++) {
+      const p = near[i];
+      const R = _keepoutBodyR(p);
+      const wp = _avWorldPos(p, _avT2);
+      // body velocity from its last frame (a rebase reads as a jump: ignored)
+      let pr = A.prev.get(p);
+      if (!pr) { pr = { p: wp.clone(), f: -9, v: new THREE.Vector3() }; A.prev.set(p, pr); }
+      if (pr.f !== fcNow) {
+        _avVb.set(0, 0, 0);
+        if (pr.f === fcNow - 1) {
+          _avVb.subVectors(wp, pr.p);
+          if (_avVb.length() > 60 * dtF) _avVb.set(0, 0, 0); else _avVb.divideScalar(dtF);
+        }
+        pr.v.copy(_avVb); pr.p.copy(wp); pr.f = fcNow;
+      }
+      const d = wp.distanceTo(cp);
+      const kk = d / R;
+      if (whip || lit) { if (kk < A.minBodyRailK) A.minBodyRailK = kk; }
+      else if (kk < A.minBodyK) { A.minBodyK = kk; A.minBodyName = _avName(p); A.minBodyPhase = ap.phase; }
+      if (whip || lit || p === subj) continue;
+      const vr = _avVr.subVectors(v, pr.v);                    // ship relative to the body
+      const vrs = vr.length();
+      const K = HY_AVOID.BODY_K * R + vrs * 60 * HY_AVOID.BODY_SPEED_S;
+      const look = vrs / 0.03 + vrs * 60 * HY_AVOID.BODY_LOOK_S + pr.v.length() * 60 * 2;
+      if (d - K > look + vrs * (dtF + 1)) continue;
+      let entry = -1;
+      if (vrs >= 0.05) entry = _avRayEntry(cp, _avEsc.copy(vr).divideScalar(vrs), look, wp, K);
+      if (entry < 0 && d < K && vrs < 0.05) entry = 0;
+      if (entry < 0) continue;
+      if (!bt || entry < bt.entry) bt = { p: p, R: R, K: K, d: d, entry: entry, vr: vr.clone(), vrs: vrs, wp: wp.clone() };
+      // last frames: slide along BODY_K x R (relative), whatever the phase wants
+      if (d - vrs * (dtF + 1) < HY_AVOID.BODY_K * R) {
+        const rIn = new THREE.Vector3().subVectors(wp, cp).divideScalar(Math.max(d, 1e-6));
+        const inward = vr.dot(rIn);
+        if (inward > 0) { v.addScaledVector(rIn, -inward); _avCount('bodySlides', _avName(p), { dOverR: Math.round(kk * 100) / 100 }); }
+      }
+    }
+    if (bt && !holding && !bhThreat) {
+      const vrd = bt.vrs >= 0.05 ? bt.vr.clone().divideScalar(bt.vrs) : vd.clone();
+      const esc = _avGraze(bt.wp, bt.K * 1.1, vrd, new THREE.Vector3());
+      const nm = _avName(bt.p);
+      const info = { dOverR: Math.round(bt.d / bt.R * 100) / 100, speed: Math.round(speed * 10) / 10 };
+      let inCone = true;
+      if (T) {
+        const toT = new THREE.Vector3().subVectors(T.position, cp).normalize();
+        inCone = toT.dot(esc) > Math.cos(HY_AVOID.FIRE_CONE_DEG * Math.PI / 180);
+      }
+      const sameBrk = !!(A.brk && A.brk.p === bt.p);
+      let breaking = sameBrk && now < A.brk.until;
+      if (!breaking && !inCone && !(sameBrk && now < A.brk.until + HY_AVOID.BREAK_COOLDOWN_MS)) {
+        A.brk = { p: bt.p, until: now + HY_AVOID.BREAK_MS };
+        breaking = true;
+        _avCount('bodyBreaks', nm, info);
+      }
+      _avTakeNose(A);
+      if (breaking) {
+        // break off: fly the grazing line, thrust once the nose is clear
+        _avTurn(esc, HY_AVOID.BODY_STEER_RATE * 1.3, dtF);
+        k.wDoubleTap = false;
+        camera.getWorldDirection(_avFwd);
+        const rIn = new THREE.Vector3().subVectors(bt.wp, cp).normalize();
+        const closing = bt.vr.dot(rIn) > 0;
+        if (closing && bt.entry < stop * 1.5 + speed * 30) { k.x = true; k.w = false; }
+        else { k.w = _avFwd.dot(rIn) < 0.2 && speed < 4; k.x = false; }
+      } else {
+        // veer: the target stays in the cone, the fight goes on
+        _avTurn(esc, HY_AVOID.BODY_STEER_RATE, dtF);
+        _avCount('bodySteers', nm, info);
+      }
+      if (bt.entry < stop * 1.2) { k.x = true; k.w = false; }
+    } else if (A.brk && (!bt || bt.p !== A.brk.p) && now >= A.brk.until) {
+      A.brk = null;   // clear: the phase re-acquires
+    }
+    // a jump latch on a heading into a body ball is dropped too — unless
+    // _igniteJump vetted it: its corridor sweep already shortened the dash to
+    // what is clear of every keep-out sphere, and dropping it would leave the
+    // chase without its closing move (measured, a pirate fleeing through
+    // Jupiter: 10 dashes dropped, the ship fell from 6 R to 12 R behind and the
+    // probe's notRecedingFromTarget fired)
+    if (k.wDoubleTap && near.length && !vetted) {
+      camera.getWorldDirection(_avFwd);
+      for (let i = 0; i < near.length; i++) {
+        const p = near[i];
+        if (p === subj) continue;
+        const wp = _avWorldPos(p, _avT2);
+        if (_avRayEntry(cp, _avFwd, HY_AVOID.JUMP_REACH, wp, HY_AVOID.BODY_K * _keepoutBodyR(p)) >= 0) {
+          k.wDoubleTap = false; _avCount('jumpLatchCuts', _avName(p)); break;
+        }
+      }
+    }
+
+    // ── 4. LAST FRAMES AT A HOLE — slide along the ball ─────────────────────
+    if (!whip) {
+      for (let i = 0; i < holes.length; i++) {
+        const bh = holes[i];
+        if (_avBHIntended(bh)) continue;
+        const R = _avHoleR(bh), ball = HY_AVOID.BH_K * R;
+        const sp = v.length();
+        const d = bh.position.distanceTo(cp);
+        if (d - sp * (dtF + 1) > ball * 1.02) continue;
+        const rOut = _avT3.subVectors(cp, bh.position).divideScalar(Math.max(d, 1e-6));
+        const inward = -v.dot(rOut);
+        if (inward > 0) { v.addScaledVector(rOut, inward); _avCount('bhSlides', _avName(bh), { dOverR: Math.round(d / R * 100) / 100 }); }
+        if (d < ball) v.addScaledVector(rOut, 0.06 * dtF);        // inside: ease back out
+      }
+    }
+    A.own = A.ownNow;
+  }
+
   // Furthest a burn can be armed to reach — the reachability test every
   // staging path is gated on. This replaces `_oWarpBoostDist()` in those
   // tests: what matters is not how far the CURRENT duration would carry the
@@ -8219,7 +8757,7 @@
       if (!e || !e.userData || e.userData.health <= 0) continue;
       const maxRange = e.userData.isBlackHoleGuardian ? 10000 : 3000;
       const d = cp.distanceTo(e.position);
-      if (d < maxRange && d < bestDist) { bestDist = d; best = e; }
+      if (d < maxRange && d < bestDist && !_avSkipTarget(e)) { bestDist = d; best = e; }
     }
     ap._navCache = best;
     return best;
@@ -8247,7 +8785,7 @@
       if (!e.userData.isLocal) continue;
       if (e.userData.isBoss || e.userData.isBossSupport || e.userData.isBlackHoleGuardian) continue;
       const d = cp.distanceTo(e.position);
-      if (d < bestDist) { bestDist = d; best = e; }
+      if (d < bestDist && !_avSkipTarget(e)) { bestDist = d; best = e; }
     }
     return best;
   }
