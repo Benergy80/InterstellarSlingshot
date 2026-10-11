@@ -12,6 +12,7 @@
     --sw-orange:    #ff8c3a;
     --sw-yellow:    #ffe066;
     --sw-red:       #ff3b5c;
+    --sw-mint:      #7bffb0;   /* near ridges of the alien landscape */
     --sw-white:     #f4f7ff;
     --sw-grid:      rgba(255, 43, 214, 0.85);
     --sw-grid-dim:  rgba(123, 43, 255, 0.35);
@@ -95,7 +96,7 @@
     margin-top: 10px; display: flex; flex-direction: column; align-items: center; gap: 6px;
     font-family: var(--sw-font-title); letter-spacing: 0.2em; text-transform: uppercase;
 }
-#swDeath .sw-continue .q { font-size: clamp(0.9rem, 1.4vw, 1.2rem); color: var(--sw-magenta); text-shadow: 0 0 10px rgba(255,43,214,0.8); }
+#swDeath .sw-continue .q { font-size: clamp(0.9rem, 1.4vw, 1.2rem); color: #b388ff; text-shadow: 0 0 10px rgba(123,43,255,0.9); }
 #swDeath .sw-continue .n { font-size: clamp(2.2rem, 5vw, 3.6rem); color: var(--sw-white); text-shadow: 0 0 12px var(--sw-cyan), 0 0 28px rgba(25,240,255,0.5); line-height: 1; }
 #swDeath .sw-continue .n.tick { animation: swPop 200ms ease-out; }
 #swDeath .sw-coin {
@@ -107,9 +108,9 @@
 #swDeath .sw-btn {
     margin-top: 6px; padding: 12px 34px; min-height: 48px; cursor: pointer;
     font-family: var(--sw-font-title); font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase; font-size: 0.95rem;
-    color: var(--sw-white); background: linear-gradient(180deg, rgba(123,43,255,0.35), rgba(255,43,214,0.25));
-    border: 2px solid var(--sw-magenta); border-radius: 6px;
-    box-shadow: 0 0 18px rgba(255,43,214,0.55), inset 0 0 14px rgba(25,240,255,0.18);
+    color: var(--sw-white); background: linear-gradient(180deg, rgba(123,43,255,0.35), rgba(25,240,255,0.18));
+    border: 2px solid var(--sw-cyan); border-radius: 6px;
+    box-shadow: 0 0 18px rgba(25,240,255,0.45), inset 0 0 14px rgba(123,43,255,0.25);
     transition: transform 120ms ease, box-shadow 120ms ease;
 }
 #swDeath .sw-btn:hover { transform: scale(1.04); box-shadow: 0 0 30px rgba(255,43,214,0.9), inset 0 0 18px rgba(25,240,255,0.3); }

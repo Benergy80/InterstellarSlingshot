@@ -40,54 +40,122 @@
         } catch (e) { /* sound optional */ }
     }
 
-    // ── the grid horizon + striped sun (2D canvas, drawn each frame) ───────
+    // ── the alien landscape (2D canvas, drawn each frame) ───────────────────
+    // Ben, 2026-10-11: "it needs mountains being generated like beat lines
+    // horizontally so it makes crazy alien landscapes. It is a little too miami
+    // and needs to be otherworldly." Rows of horizontal lines, each displaced by
+    // layered value noise (taller as they near the viewer), drawn back to front
+    // with a dark fill below each so nearer ridges occlude farther ones — a
+    // wireframe range that scrolls toward you and never repeats — under an
+    // eclipsed black hole instead of the striped sun.
+    const SW_LAND = {
+        ROWS: 30,            // beat lines from the horizon to the bottom edge
+        SEGS: 120,           // samples per row
+        SPEED: 0.16,         // rows per second toward the viewer
+        DRIFT: 0.05,         // sideways drift of the range (noise units / s)
+        AMP: 0.95,           // max ridge height, as a fraction of the floor height (near rows)
+        SHARP: 1.35,         // peak sharpening (pow)
+        FLOOR: 0.06,         // noise below this is flat ground
+        OCTAVES: [[1.9, 0.5], [4.6, 0.32], [9.3, 0.18]],   // [frequency, weight] — several peaks across the width
+        COLS: 14,            // faint converging verticals (0 = none)
+        VALLEY: 0.8,         // how much the ranges drop toward the centre (0 = none)
+        VALLEY_W: 0.2,       // half-width of the valley, fraction of the screen
+        HOLE_R: 0.15         // eclipse radius, fraction of min(w,h)
+    };
+    if (typeof window !== 'undefined') window.SW_LAND = SW_LAND;
+    function _hash(i) { let x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+    function _vnoise(x, y) {            // 2-D value noise, smooth, 0..1
+        const xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+        const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+        const h = (i, j) => _hash(i * 57 + j * 131);
+        const a = h(xi, yi) + (h(xi + 1, yi) - h(xi, yi)) * sx;
+        const b = h(xi, yi + 1) + (h(xi + 1, yi + 1) - h(xi, yi + 1)) * sx;
+        return a + (b - a) * sy;
+    }
+    function _terrain(u, d) {           // u: across, d: depth (0 far … 1 near)
+        let v = 0, wsum = 0;
+        for (let i = 0; i < SW_LAND.OCTAVES.length; i++) {
+            const f = SW_LAND.OCTAVES[i][0], w = SW_LAND.OCTAVES[i][1];
+            v += w * _vnoise(u * f, d * f * 2.2); wsum += w;
+        }
+        v /= wsum;
+        return Math.pow(Math.max(0, v - SW_LAND.FLOOR) / (1 - SW_LAND.FLOOR), SW_LAND.SHARP);   // flats stay flat, peaks spike
+    }
     function startGrid(canvas) {
         const ctx = canvas.getContext('2d');
         let raf = 0, t0 = performance.now();
-        const magenta = cssVar('--sw-magenta', '#ff2bd6'), cyan = cssVar('--sw-cyan', '#19f0ff');
-        const orange = cssVar('--sw-orange', '#ff8c3a'), yellow = cssVar('--sw-yellow', '#ffe066');
+        const cyan = cssVar('--sw-cyan', '#19f0ff'), violet = cssVar('--sw-violet', '#7b2bff');
+        const magenta = cssVar('--sw-magenta', '#ff2bd6'), mint = cssVar('--sw-mint', '#7bffb0');
         function frame(now) {
-            const w = canvas.width = canvas.clientWidth * (window.devicePixelRatio || 1);
-            const h = canvas.height = canvas.clientHeight * (window.devicePixelRatio || 1);
+            const pr = window.devicePixelRatio || 1;
+            const w = canvas.width = canvas.clientWidth * pr, h = canvas.height = canvas.clientHeight * pr;
             const t = (now - t0) / 1000;
             ctx.clearRect(0, 0, w, h);
-            const horizon = h * 0.62;
-            // sun with stripes, behind the horizon
-            const sunR = Math.min(w, h) * 0.17, sx = w * 0.5, sy = horizon - sunR * 0.15;
-            const g = ctx.createLinearGradient(0, sy - sunR, 0, sy + sunR);
-            g.addColorStop(0, yellow); g.addColorStop(0.55, orange); g.addColorStop(1, magenta);
-            ctx.save(); ctx.beginPath(); ctx.arc(sx, sy, sunR, 0, Math.PI * 2); ctx.clip();
-            ctx.fillStyle = g; ctx.globalAlpha = 0.9; ctx.fillRect(sx - sunR, sy - sunR, sunR * 2, sunR * 2);
-            ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(7,3,15,0.95)';
-            for (let i = 0; i < SW_DEATH.SUN_STRIPES; i++) {
-                const y = sy + sunR * (0.05 + i * 0.13) + ((t * 18) % (sunR * 0.13));
-                ctx.fillRect(sx - sunR, y, sunR * 2, Math.max(1, sunR * 0.02 + i * sunR * 0.012));
+            const horizon = h * 0.58, floorH = h - horizon;
+            // sky: violet dusk down to the horizon
+            const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+            sky.addColorStop(0, 'rgba(7,3,15,0)'); sky.addColorStop(0.7, 'rgba(26,11,58,0.35)'); sky.addColorStop(1, 'rgba(60,20,110,0.55)');
+            ctx.fillStyle = sky; ctx.fillRect(0, 0, w, horizon);
+            // the eclipsed hole on the horizon
+            const R = Math.min(w, h) * SW_LAND.HOLE_R, hx = w * 0.5, hy = horizon - R * 0.35;
+            const pulse = 0.5 + 0.5 * Math.sin(t * 1.3);
+            const corona = ctx.createRadialGradient(hx, hy, R * 0.95, hx, hy, R * 2.6);
+            corona.addColorStop(0, 'rgba(123,43,255,0.55)'); corona.addColorStop(0.35, 'rgba(25,240,255,0.18)'); corona.addColorStop(1, 'rgba(7,3,15,0)');
+            ctx.fillStyle = corona; ctx.fillRect(hx - R * 2.6, hy - R * 2.6, R * 5.2, R * 5.2);
+            ctx.fillStyle = '#030108'; ctx.beginPath(); ctx.arc(hx, hy, R, 0, Math.PI * 2); ctx.fill();
+            ctx.save(); ctx.shadowColor = cyan; ctx.shadowBlur = (14 + 10 * pulse) * pr; ctx.strokeStyle = 'rgba(214,250,255,0.95)'; ctx.lineWidth = 2 * pr;
+            ctx.beginPath(); ctx.arc(hx, hy, R * 1.02, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+            // the range: rows from far to near, each a displaced beat line with a dark fill below
+            const rows = SW_LAND.ROWS, segs = SW_LAND.SEGS;
+            const phase = (t * SW_LAND.SPEED) % 1, drift = t * SW_LAND.DRIFT;
+            const base = Math.floor(t * SW_LAND.SPEED);        // integer row index of the nearest row (new rows enter at the horizon)
+            const vpX = w * 0.5;
+            for (let r = 0; r < rows; r++) {                   // painter's order: far (horizon) first, near last
+                const k = (r + phase) / rows;                  // 0 at the horizon … 1 at the bottom
+                const kk = k * k;                              // perspective spacing
+                const y0 = horizon + floorH * kk;
+                const depthIdx = base + (rows - 1 - r);        // continuous identity as the row scrolls
+                const amp = floorH * SW_LAND.AMP * (0.08 + 0.92 * kk);
+                const spread = 1 + 2.2 * kk;                   // near rows span wider in world units
+                ctx.beginPath();
+                for (let i = 0; i <= segs; i++) {
+                    const sx = i / segs;
+                    const u = (sx - 0.5) * spread * 4 + drift;
+                    const hgt = _terrain(u, depthIdx * 0.37 + kk * 0.6) * amp * (1 - SW_LAND.VALLEY * Math.exp(-Math.pow((sx - 0.5) / SW_LAND.VALLEY_W, 2)));   // a dark plain down the middle: the text sits on it
+                    const x = vpX + (sx - 0.5) * w * (0.35 + 0.95 * k);   // converge toward the horizon
+                    const y = y0 - hgt;
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                // occlusion: fill below the ridge to the bottom in the sky-dark
+                ctx.lineTo(w * 1.2, h + 4); ctx.lineTo(-w * 0.2, h + 4); ctx.closePath();
+                ctx.fillStyle = 'rgba(8,4,20,0.96)'; ctx.fill();
+                // the beat line itself: violet far, teal near, brightest at the peaks
+                const col = k < 0.5 ? violet : (k < 0.8 ? cyan : mint);
+                ctx.save(); ctx.globalAlpha = 0.28 + 0.72 * k; ctx.shadowColor = col; ctx.shadowBlur = (4 + 10 * k) * pr;
+                ctx.strokeStyle = col; ctx.lineWidth = (0.8 + 1.4 * k) * pr;
+                ctx.beginPath();
+                for (let i = 0; i <= segs; i++) {
+                    const sx = i / segs;
+                    const u = (sx - 0.5) * spread * 4 + drift;
+                    const hgt = _terrain(u, depthIdx * 0.37 + kk * 0.6) * amp * (1 - SW_LAND.VALLEY * Math.exp(-Math.pow((sx - 0.5) / SW_LAND.VALLEY_W, 2)));   // a dark plain down the middle: the text sits on it
+                    const x = vpX + (sx - 0.5) * w * (0.35 + 0.95 * k);
+                    const y = y0 - hgt;
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }
+                ctx.stroke(); ctx.restore();
             }
-            ctx.restore();
-            ctx.save(); ctx.shadowColor = magenta; ctx.shadowBlur = 24 * (window.devicePixelRatio || 1);
-            ctx.strokeStyle = 'rgba(255,43,214,0.5)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx, sy, sunR, 0, Math.PI * 2); ctx.stroke();
-            ctx.restore();
-            // floor
-            ctx.fillStyle = 'rgba(11,6,32,0.92)'; ctx.fillRect(0, horizon, w, h - horizon);
+            // faint converging verticals over the floor, for depth
+            if (SW_LAND.COLS > 0) {
+                ctx.save(); ctx.globalAlpha = 0.16; ctx.strokeStyle = violet; ctx.lineWidth = 1 * pr;
+                for (let i = -SW_LAND.COLS; i <= SW_LAND.COLS; i++) {
+                    const xb = w * 0.5 + i * (w * 0.08);
+                    ctx.beginPath(); ctx.moveTo(vpX + (xb - vpX) * 0.35, horizon); ctx.lineTo(xb, h); ctx.stroke();
+                }
+                ctx.restore();
+            }
             // horizon glow line
-            ctx.save(); ctx.shadowColor = cyan; ctx.shadowBlur = 18; ctx.strokeStyle = cyan; ctx.lineWidth = 2;
+            ctx.save(); ctx.shadowColor = cyan; ctx.shadowBlur = 16 * pr; ctx.strokeStyle = 'rgba(25,240,255,0.7)'; ctx.lineWidth = 1.5 * pr;
             ctx.beginPath(); ctx.moveTo(0, horizon); ctx.lineTo(w, horizon); ctx.stroke(); ctx.restore();
-            // perspective grid: verticals converge on the vanishing point, horizontals scroll toward the viewer
-            ctx.save(); ctx.shadowColor = magenta; ctx.shadowBlur = 8; ctx.strokeStyle = cssVar('--sw-grid', 'rgba(255,43,214,0.85)'); ctx.lineWidth = 1.5;
-            const vpX = w * 0.5, vpY = horizon - h * 0.08;
-            const cols = 18;
-            for (let i = -cols; i <= cols; i++) {
-                const xb = w * 0.5 + i * (w * 0.09);
-                ctx.beginPath(); ctx.moveTo(vpX + (xb - vpX) * ((horizon - vpY) / (h - vpY)), horizon); ctx.lineTo(xb, h); ctx.stroke();
-            }
-            const rows = 14, phase = (t * SW_DEATH.GRID_SPEED) % 1;
-            for (let r = 0; r < rows; r++) {
-                const k = (r + phase) / rows;               // 0 = horizon … 1 = bottom
-                const y = horizon + (h - horizon) * k * k;  // squared for perspective
-                ctx.globalAlpha = 0.25 + 0.75 * k;
-                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
-            }
-            ctx.restore();
             raf = requestAnimationFrame(frame);
         }
         raf = requestAnimationFrame(frame);
