@@ -1129,14 +1129,20 @@ function createThrusterGlowsForModel(model) {
 
     // Two thruster positions at rear engine exhausts (local model space,
     // small values — tuned to the player ship's exhaust points).
-    const thrusterPositions = [
-        new THREE.Vector3(-0.022, 0, -0.125),   // Left engine exhaust
-        new THREE.Vector3(0.022, 0, -0.125)     // Right engine exhaust
+    // HULL FIT: the nozzles come from the hull's anchor table (HY_HULL_POINTS
+    // in js/game-controls.js) — the stock hull's entry is these numbers
+    // verbatim, any other hull gets its own measured nozzles with cones sized
+    // to its width.
+    const _fit = (typeof window.hyHullThrusters === 'function') ? window.hyHullThrusters(model) : null;
+    const nozzles = _fit ? _fit.nozzles : [
+        { pos: new THREE.Vector3(-0.022, 0, -0.125), r: 0.01, len: 0.035, r2: 0.015, len2: 0.05, back: 0.008 },   // Left engine exhaust
+        { pos: new THREE.Vector3(0.022, 0, -0.125), r: 0.01, len: 0.035, r2: 0.015, len2: 0.05, back: 0.008 }     // Right engine exhaust
     ];
 
-    thrusterPositions.forEach((pos) => {
+    nozzles.forEach((nz) => {
+        const pos = nz.pos;
         // Inner glow cone for engine exhaust
-        const glowGeometry = new THREE.ConeGeometry(0.01, 0.035, 8);
+        const glowGeometry = new THREE.ConeGeometry(nz.r, nz.len, 8);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0xffaa00,  // Orange-yellow
             transparent: true,
@@ -1152,7 +1158,7 @@ function createThrusterGlowsForModel(model) {
         glows.push(glow);
 
         // Outer, larger, dimmer glow
-        const outerGlowGeometry = new THREE.ConeGeometry(0.015, 0.05, 8);
+        const outerGlowGeometry = new THREE.ConeGeometry(nz.r2, nz.len2, 8);
         const outerGlowMaterial = new THREE.MeshBasicMaterial({
             color: 0xff6600,  // Deeper orange
             transparent: true,
@@ -1161,7 +1167,7 @@ function createThrusterGlowsForModel(model) {
         });
         const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial);
         outerGlow.position.copy(pos);
-        outerGlow.position.z -= 0.008;  // Slightly further back
+        outerGlow.position.z -= nz.back;  // Slightly further back
         outerGlow.rotation.x = -Math.PI / 2;
         outerGlow.renderOrder = 100;
         outerGlow.frustumCulled = false;
@@ -1234,3 +1240,4 @@ function updateThrusterGlow(isThrusting) {
     
     cameraState.thrusterActive = isThrusting;
 }
+

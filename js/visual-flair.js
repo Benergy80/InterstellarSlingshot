@@ -151,11 +151,13 @@ function _updateLaserCharge() {
     if (!_chargeGlow.sprites) {
         if (!charging) return;
         _chargeGlow.sprites = [];
-        for (let i = 0; i < 2; i++) {
+        // [0],[1] the gun glows; [2] the hull's charge point (HY_HULL_POINTS
+        // `charge`, hulls that name one — the stock hull keeps two)
+        for (let i = 0; i < 3; i++) {
             const sm = new THREE.SpriteMaterial({ map: _vfGlowTexture(), color: 0x66ccff,
                 transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
                 depthWrite: false, depthTest: false });
-            const sp = new THREE.Sprite(sm); sp.renderOrder = 93; scene.add(sp);
+            const sp = new THREE.Sprite(sm); sp.renderOrder = 93; if (i === 2) sp.visible = false; scene.add(sp);
             _chargeGlow.sprites.push(sp);
         }
     }
@@ -183,17 +185,33 @@ function _updateLaserCharge() {
     }
     // Expose for the blast origin (emit from the charge center).
     gameState._chargeWings = [leftWing, rightWing];
-    gameState._chargeCenter = leftWing.clone().add(rightWing).multiplyScalar(0.5);
+    // HULL FIT: the hull's own charge point when its anchor table names one
+    gameState._chargeCenter = (_guns && _guns.charge) ? _guns.charge.clone()
+        : leftWing.clone().add(rightWing).multiplyScalar(0.5);
     // Glow size derives from the actual wing span (guns sit at ±0.35 of the
     // hull width, so span/0.7 ≈ ship width) — branch-independent. The old
     // `size.x` only existed in the fallback branch: with the wing-gun
     // helper active it threw a ReferenceError that the caller's try/catch
     // swallowed, silently killing the charge glow every frame.
-    const _glowBase = Math.max(leftWing.distanceTo(rightWing) / 0.7, 8);
+    // HULL FIT: hulls with a charge point size the glow off the hull width
+    // (their guns may sit much wider or narrower than the stock ±0.85).
+    const _glowBase = (_guns && _guns.chargeGlow) ? Math.max(_guns.chargeGlow, 8)
+        : Math.max(leftWing.distanceTo(rightWing) / 0.7, 8);
     const t = Date.now();
-    const wings = [leftWing, rightWing];
+    const wings = [leftWing, rightWing, (_guns && _guns.charge) ? _guns.charge : null];
     _chargeGlow.sprites.forEach((sp, i) => {
+        if (!wings[i]) { sp.visible = false; sp.material.opacity = 0; sp.scale.setScalar(0); return; }
         sp.position.copy(wings[i]);
+        if (i === 2) {
+            sp.visible = true;
+            // the gathering core: grows a little behind the gun glows, then
+            // outshines them as the charge tops out
+            const flick2 = 0.85 + 0.15 * Math.sin(t * 0.045);
+            sp.scale.setScalar(_glowBase * (_guns.chargeR || 0.5) * (0.06 + prog * prog * 0.5) * flick2);
+            sp.material.opacity = Math.min(1, prog * 1.1);
+            sp.material.color.setHSL(0.13, 1, 0.55 + prog * 0.42);
+            return;
+        }
         const flick = 0.82 + 0.18 * Math.sin(t * 0.03 + i * 2);
         sp.scale.setScalar(_glowBase * (0.08 + prog * 0.34) * flick);
         sp.material.opacity = prog * 0.95;
@@ -3562,7 +3580,7 @@ function _vfStreakTexture() {
     return t;
 }
 
-const _ebState = { mesh: null, adopted: [], nozzles: [], corona: [], streak: [], anchored: false };
+const _ebState = { mesh: null, adopted: [], nozzles: [], corona: [], streak: [], anchored: false, k: 1 };
 const _ebWorld = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 const _ebColA = (typeof THREE !== 'undefined') ? new THREE.Color(0x2ad4ff) : null; // cool idle cyan
 const _ebColB = (typeof THREE !== 'undefined') ? new THREE.Color(0xffc24a) : null; // engine gold
@@ -3640,18 +3658,23 @@ function _ebBuild(mesh) {
     _ebTeardownOwn();
     // Nozzle anchors: the real bloom sprites if they exist, else the known
     // exhaust points (we can arrive before game-models has attached them).
+    // HULL FIT: the fallback is the hull's own nozzle table (HY_HULL_POINTS;
+    // the stock entry is _EB_NOZZLES verbatim), and the plume size follows it.
+    const _fit = (typeof window.hyHullThrusters === 'function') ? window.hyHullThrusters(mesh) : null;
     const anchors = _ebState.nozzles.length
         ? _ebState.nozzles.map((s) => [s.position.x, s.position.y, s.position.z])
-        : _EB_NOZZLES;
+        : (_fit ? _fit.bloom.map((v) => [v.x, v.y, v.z]) : _EB_NOZZLES);
 
+    const _k = (mesh.userData && mesh.userData._bloomK) || (_fit ? _fit.fxK : 1);
+    _ebState.k = _k;
     anchors.forEach((p) => {
         const corona = _ebMakeSprite(_vfCoronaTexture(), 99); // under the hot core
-        corona.position.set(p[0], p[1], p[2] - 0.012);
+        corona.position.set(p[0], p[1], p[2] - 0.012 * _k);
         mesh.add(corona);
         _ebState.corona.push(corona);
 
         const streak = _ebMakeSprite(_vfStreakTexture(), 102); // over everything
-        streak.position.set(p[0], p[1], p[2] - 0.004);
+        streak.position.set(p[0], p[1], p[2] - 0.004 * _k);
         mesh.add(streak);
         _ebState.streak.push(streak);
     });
@@ -3734,7 +3757,7 @@ function _updateEngineBloom() {
         corona.material.opacity = Math.min(0.85, vis * 0.72);
         const cs2 = 0.030 + 0.052 * heat + 0.070 * burn + 0.055 * carve + 0.110 * crack;
         // Slight vertical squash: an exhaust bloom is wider than it is tall.
-        corona.scale.set(cs2 * 1.30, cs2 * 0.92, 1);
+        corona.scale.set(cs2 * 1.30 * _ebState.k, cs2 * 0.92 * _ebState.k, 1);
 
         // The streak is a HIGH-SPEED signature only — off at cruise, so it
         // reads as an event rather than as permanent ship decoration.
@@ -3745,7 +3768,7 @@ function _updateEngineBloom() {
             streak.material.color.copy(_vfStreakHot);
             streak.material.opacity = Math.min(0.80,
                 (sLevel * 0.55 + crack * 0.45 + snap * 0.35) * prox * flick);
-            const w = 0.10 + 0.30 * sLevel + 0.34 * crack;
+            const w = (0.10 + 0.30 * sLevel + 0.34 * crack) * _ebState.k;
             streak.scale.set(w, w * 0.075, 1);
         }
     }

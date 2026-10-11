@@ -2550,10 +2550,15 @@ function _runPlayerHullUpgradeLoop() {
         });
 
         if (hullMeshes > 0) {
-            (wantBloom ? [
+            // HULL FIT: nozzle points from the hull's anchor table
+            // (HY_HULL_POINTS, js/game-controls.js); the stock hull's entry is
+            // the old (±0.024, 0, -0.14) verbatim.
+            const _fit = (typeof window.hyHullThrusters === 'function') ? window.hyHullThrusters(mesh) : null;
+            mesh.userData._bloomK = _fit ? _fit.fxK : 1;
+            (wantBloom ? (_fit ? _fit.bloom : [
                 new THREE.Vector3(-0.024, 0, -0.14),
                 new THREE.Vector3(0.024, 0, -0.14)
-            ] : []).forEach((pos) => {
+            ]) : []).forEach((pos) => {
                 const sprite = _createEngineBloomSprite();
                 sprite.position.copy(pos);
                 mesh.add(sprite);
@@ -2583,7 +2588,7 @@ function _runPlayerHullUpgradeLoop() {
         // sprite placement above) so full boost halos the nozzle instead
         // of ballooning into a screen-filling blob (was 0.03->0.18, i.e.
         // bigger than half the ship itself, at full boost).
-        const s = 0.012 + t * 0.045;
+        const s = (0.012 + t * 0.045) * (mesh.userData._bloomK || 1);
         sprite.scale.set(s, s, 1);
     });
 }

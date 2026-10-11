@@ -12836,6 +12836,143 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
 // once (so a pitched/yawed first shot baked a swollen box in for good) and
 // first person ignored the ship entirely (fixed camera offsets).
 const _HY_GUN = { SPREAD: 0.85, DOWN: 0.10, FWD: 0.75 }; // fraction of half-width out, of height down, of the way to the nose
+// HULL FIT (package hullfit, Ben 2026-10-11: "The thrusters, gun, and charge
+// locations will needs some adjusting to match the new model" + "thrusters
+// should generate light. there should be some kind of light elements on the
+// ship"). One anchor table per hull, keyed by model name (the playerModel
+// switch value; default 'Player'). Every point is a FRACTION of the hull's own
+// local box (_hyShipLocalBox): x -1..1 of half-width, y -1..1 of half-height,
+// z -1..1 of half-length measured from the box centre, nose = +1 — so the
+// numbers survive any scale and any warp pull-back. In the ship's frame +X is
+// the PORT side (the ship's +Z is camera-forward, so its +X is screen-left).
+//   thrusters [{x,y,z, r}]  nozzle exit centre; r = cone radius / hull width
+//   guns      [{x,y,z}]     barrel muzzles (2 or more; [0] is the -X gun)
+//   charge    {x,y,z, r}    where a charged shot gathers; r = glow / hull width
+//   lights    [{x,y,z, kind, size}]  hull light elements; size / hull width
+//             kind: port | starboard | strobe | cockpit | throat | panel
+// The stock hull's thrusters and bloom sprites were hand-tuned in its LOCAL
+// units long before this table; `exact` keeps those numbers verbatim so the
+// stock hull (and any wingman flying it) is byte-identical to before. Its guns
+// are _HY_GUN written as fractions (computed bit-exactly the same way).
+// XT-7small: measured from models/XT-7small.glb itself after the in-game bake
+// (yaw +90 about Y: x' = z_raw, z' = -x_raw; box half 0.676 x 0.398 x 0.951
+// raw, 0.0723 x 0.0425 x 0.1016 local): vertices within 6% of the rear plane
+// clustered on a 0.1 x/y grid give two round nozzle rims centred x ±0.20,
+// y 0.56 (ring ±0.10 of half-width, ±0.18 of half-height), exit plane z -0.95;
+// the wingtip gun pods are vertex clusters at |x| 0.868-0.914, y -0.61..-0.77
+// whose forward-most rings stop at z -0.073 (the muzzle); the nose tip is
+// z 1.0 at y -0.07..-0.15. The turnarounds agree (rear view: nozzles 0.20 of
+// half-width out, 0.58 of half-height up; top view: pod muzzles 0.08 of
+// half-length behind centre). Surface heights for the lights were read off the
+// same vertices (canopy top y 0.30 at z 0.30; red dot strips on the shoulders
+// y 0.15 at x ±0.24, z 0.27; spine y 0.34 at z 0; fin top y 1.0 at z -0.9;
+// wingtip top y -0.66 at |x| 0.95, z -0.4).
+const HY_HULL_POINTS = {
+    Player: {
+        exact: {
+            // camera-system.js createThrusterGlowsForModel (cones) and
+            // game-models.js engine-bloom sprites, verbatim
+            thrusters: [[-0.022, 0, -0.125], [0.022, 0, -0.125]],
+            cone: { r: 0.01, len: 0.035, r2: 0.015, len2: 0.05, back: 0.008 },
+            bloom: [[-0.024, 0, -0.14], [0.024, 0, -0.14]]
+        },
+        guns: [{ x: -0.85, y: -0.2, z: 0.75 }, { x: 0.85, y: -0.2, z: 0.75 }],   // == _HY_GUN
+        charge: null,                       // legacy: the midpoint of the two guns
+        // light elements on the stock vector craft: kept small and few so it
+        // still reads as the flat-cyan vector ship (box half 0.096 x 0.036 x 0.102)
+        lights: [
+            { x:  1.00, y: -0.80, z:  0.00, kind: 'port',      size: 0.10 },
+            { x: -1.00, y: -0.80, z:  0.00, kind: 'starboard', size: 0.10 },
+            { x:  0.00, y:  0.50, z: -0.62, kind: 'strobe',    size: 0.12 },
+            { x:  0.00, y:  0.48, z:  0.25, kind: 'cockpit',   size: 0.14 },
+            { x: -0.23, y:  0.00, z: -1.08, kind: 'throat',    size: 0.10 },
+            { x:  0.23, y:  0.00, z: -1.08, kind: 'throat',    size: 0.10 },
+            { x:  0.42, y:  0.34, z: -0.40, kind: 'panel',     size: 0.045 },
+            { x: -0.42, y:  0.34, z: -0.40, kind: 'panel',     size: 0.045 }
+        ]
+    },
+    'XT-7small': {
+        thrusters: [{ x: -0.20, y: 0.56, z: -0.95, r: 0.036 }, { x: 0.20, y: 0.56, z: -0.95, r: 0.036 }],
+        guns: [{ x: -0.891, y: -0.69, z: -0.073 }, { x: 0.891, y: -0.69, z: -0.073 }],
+        charge: { x: 0, y: -0.11, z: 1.02, r: 0.55 },
+        lights: [
+            { x:  0.98, y: -0.58, z: -0.45, kind: 'port',      size: 0.14 },
+            { x: -0.98, y: -0.58, z: -0.45, kind: 'starboard', size: 0.14 },
+            { x:  0.00, y:  1.04, z: -0.88, kind: 'strobe',    size: 0.16 },
+            { x:  0.00, y:  0.40, z:  0.30, kind: 'cockpit',   size: 0.20 },
+            { x: -0.20, y:  0.56, z: -0.97, kind: 'throat',    size: 0.10 },
+            { x:  0.20, y:  0.56, z: -0.97, kind: 'throat',    size: 0.10 },
+            // the red dot strips beside the canopy (seen from the side / above)
+            { x:  0.24, y:  0.18, z:  0.27, kind: 'panel',     size: 0.05 },
+            { x: -0.24, y:  0.18, z:  0.27, kind: 'panel',     size: 0.05 },
+            // amber deck lights on the wings' trailing edge and the nacelle tops (seen from the chase cam)
+            { x:  0.62, y:  0.05, z: -0.78, kind: 'panel',     size: 0.05, color: 0xffb040 },
+            { x: -0.62, y:  0.05, z: -0.78, kind: 'panel',     size: 0.05, color: 0xffb040 },
+            { x:  0.00, y:  0.37, z: -0.02, kind: 'panel',     size: 0.045, color: 0xffb040 }
+        ]
+    }
+};
+// The table entry for a hull object (player ship, wingman clone, any model
+// built from modelCache.player): the baked alternate hull carries its name in
+// userData._hyAltHull (clones copy userData); anything else is the stock hull.
+function hyHullKey(model) {
+    if (model && model.userData && model.userData._hyHullKey) return model.userData._hyHullKey;
+    let name = null;
+    if (model) {
+        if (model.userData && model.userData._hyAltHull) name = model.userData._hyAltHull.name;
+        else if (model.traverse) model.traverse((o) => { if (!name && o.userData && o.userData._hyAltHull) name = o.userData._hyAltHull.name; });
+    }
+    const key = (name && HY_HULL_POINTS[name]) ? name : 'Player';
+    if (model && model.userData) model.userData._hyHullKey = key;
+    return key;
+}
+function hyHullPoints(model) { return HY_HULL_POINTS[hyHullKey(model)]; }
+// A box-fraction anchor → the hull's local frame (out = Vector3).
+function hyHullLocal(box, p, out) {
+    const cx = (box.min.x + box.max.x) / 2, cy = (box.min.y + box.max.y) / 2, cz = (box.min.z + box.max.z) / 2;
+    return out.set(cx + (box.max.x - box.min.x) / 2 * p.x,
+                   cy + (box.max.y - box.min.y) / 2 * p.y,
+                   cz + (box.max.z - box.min.z) / 2 * p.z);
+}
+// Thruster + bloom anchors in the hull's local frame, for the cone builder
+// (camera-system.js) and the engine-bloom sprites (game-models.js / visual-flair.js).
+//   { key, nozzles: [{pos, r, len, r2, len2, back}], bloom: [Vector3], fxK }
+// fxK = size of this hull's plume relative to the stock hull's (1 for it).
+function hyHullThrusters(model) {
+    const key = hyHullKey(model), e = HY_HULL_POINTS[key];
+    if (e.exact) {
+        const c = e.exact.cone;
+        return { key: key, fxK: 1,
+            nozzles: e.exact.thrusters.map((p) => ({ pos: new THREE.Vector3(p[0], p[1], p[2]), r: c.r, len: c.len, r2: c.r2, len2: c.len2, back: c.back })),
+            bloom: e.exact.bloom.map((p) => new THREE.Vector3(p[0], p[1], p[2])) };
+    }
+    const box = _hyShipLocalBox(model);
+    if (!box) return null;
+    const width = box.max.x - box.min.x;
+    const ref = HY_HULL_POINTS.Player.exact.cone;
+    const nozzles = [], bloom = [];
+    let fxK = 1;
+    e.thrusters.forEach((t) => {
+        const r = t.r * width, k = r / ref.r;
+        fxK = k;
+        const exit = hyHullLocal(box, t, new THREE.Vector3());
+        // the cone's base sits on the nozzle exit plane, as the stock cones sit
+        // just behind the stock hull's tail (base 0.17 x len behind it)
+        const len = ref.len * k;
+        const pos = exit.clone(); pos.z -= len * 0.67;
+        nozzles.push({ pos: pos, r: r, len: len, r2: ref.r2 * k, len2: ref.len2 * k, back: ref.back * k });
+        // stock bloom sprites sit 1.5 cone radii behind the cone centre
+        bloom.push(new THREE.Vector3(pos.x, pos.y, pos.z - 1.5 * r));
+    });
+    return { key: key, fxK: fxK, nozzles: nozzles, bloom: bloom };
+}
+if (typeof window !== 'undefined') {
+    window.HY_HULL_POINTS = HY_HULL_POINTS;
+    window.hyHullKey = hyHullKey;
+    window.hyHullPoints = hyHullPoints;
+    window.hyHullLocal = hyHullLocal;
+    window.hyHullThrusters = hyHullThrusters;
+}
 function _hyShipLocalBox(ship) {
     const ud = ship.userData;
     const key = (ship.scale.x || 1).toFixed(4) + ':' + ship.children.length;
@@ -12883,11 +13020,33 @@ function getPlayerWingGuns() {
     const noseZ = localZ.dot(camFwd) >= 0 ? box.max.z : box.min.z;
     const cx = (box.min.x + box.max.x) / 2, cy = (box.min.y + box.max.y) / 2, cz = (box.min.z + box.max.z) / 2;
     const halfW = (box.max.x - box.min.x) / 2, h = box.max.y - box.min.y;
-    const gy = cy - h * _HY_GUN.DOWN;
-    const gz = cz + (noseZ - cz) * _HY_GUN.FWD;
-    const mk = (side) => new THREE.Vector3((cx + side * halfW * _HY_GUN.SPREAD) * s, gy * s, gz * s)
-        .applyQuaternion(att).add(pos);
-    return { left: mk(-1), right: mk(1) };
+    // HULL FIT: the hull's own muzzles from HY_HULL_POINTS (box fractions).
+    // Written so the stock entry (x ±0.85, y -0.2, z 0.75 == _HY_GUN) gives
+    // bit-identical results to the old expressions: halfW*(-0.85) ==
+    // (-1*halfW)*0.85, h*(-0.2*0.5) == -(h*0.10) (halving is exact).
+    const entry = (typeof HY_HULL_POINTS !== 'undefined') ? HY_HULL_POINTS[hyHullKey(ship)] : null;
+    const gunPts = (entry && entry.guns && entry.guns.length >= 2) ? entry.guns : null;
+    if (!gunPts) {
+        // unknown hull: the box-fraction guess
+        const gy = cy - h * _HY_GUN.DOWN;
+        const gz = cz + (noseZ - cz) * _HY_GUN.FWD;
+        const mk = (side) => new THREE.Vector3((cx + side * halfW * _HY_GUN.SPREAD) * s, gy * s, gz * s)
+            .applyQuaternion(att).add(pos);
+        return { left: mk(-1), right: mk(1) };
+    }
+    const mkP = (g) => new THREE.Vector3((cx + halfW * g.x) * s, (cy + h * (g.y * 0.5)) * s,
+        (cz + (noseZ - cz) * g.z) * s).applyQuaternion(att).add(pos);
+    const all = gunPts.map(mkP);
+    const out = { left: all[0], right: all[1] };
+    if (all.length > 2) out.all = all;
+    // charge point + glow size (world) for hulls that name one; the stock hull
+    // keeps the legacy midpoint-of-the-guns charge (no `charge` key).
+    if (entry.charge) {
+        out.charge = mkP(entry.charge);
+        out.chargeGlow = (box.max.x - box.min.x) * s * 1.2143;   // the stock span/0.7 rule, as hull width
+        out.chargeR = entry.charge.r;
+    }
+    return out;
 }
 if (typeof window !== 'undefined') window._HY_GUN = _HY_GUN;
 if (typeof window !== 'undefined') window.getPlayerWingGuns = getPlayerWingGuns;
@@ -12931,7 +13090,9 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         createThirdPersonBeam(leftWing, targetPosition, _beamCol);
         createThirdPersonBeam(rightWing, targetPosition, _beamCol);
         if (_charged) {
-            const _center = leftWing.clone().add(rightWing).multiplyScalar(0.5);
+            // HULL FIT: a hull that names a charge point fires the bolts from it
+            const _center = (guns && guns.charge) ? guns.charge.clone()
+                : leftWing.clone().add(rightWing).multiplyScalar(0.5);
             createMuzzleFlash(_center.clone());
             const _bolts = 1 + Math.round((gameState._chargedPower || 0.5) * 3);
             for (let _b = 0; _b < _bolts; _b++) createThirdPersonBeam(_center, targetPosition, '#ffee66');
