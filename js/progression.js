@@ -315,16 +315,15 @@
             say('Mission Control - Sol Under Attack',
                 'Captain Bo, Martian pirates are raiding the Sol system' + (n ? ' — ' + n + ' raiders on scope' : '') +
                 '. Destroy them and their flagship will show itself. Sol\'s gravity holds you here: only a gravitational slingshot can break you free.');
-            setGuide(piratePos, 0xff5533, 'Martian Pirates');
+            // Ben, 2026-10-10: "what are the red dashed orbit lines? I don't
+            // think we want them." No guide line in the Sol fight — his spec's
+            // first dotted line appears after the flagship falls (TO_SGR_A).
+            clearGuide();
         },
         SOL_BOSS: function () {
             say('Mission Control - Pirate Flagship',
                 'The Martian Pirate flagship has committed to the fight. Take it down and Sol is ours.');
-            setGuide(function () {
-                const ab = areaBoss(PIRATE_BOSS);
-                if (ab && ab.bossRef && isAlive(ab.bossRef)) return ab.bossRef.position.clone();
-                return piratePos();
-            }, 0xff3311, 'Martian Pirate Flagship');
+            clearGuide();
         },
         TO_SGR_A: function () {
             const s = sgrA(), c = cam();

@@ -2375,10 +2375,39 @@
   }
 
   // ─── 1) Hunt down local enemies ───────────────────────────────────────────
+  // HYBRID demo showcase budget. Sol now holds 48 Martian pirates at planet
+  // stations (package R), so "fight until no enemy is within 5,500 u" never
+  // ends — measured: 150 s soaks with 0 O-warps and 0 parks, the demo never
+  // left Sol. After SOL_KILLS kills or SOL_FIGHT_MS in the opening fight the
+  // showcase moves on to the nebula leg (the player's own game is unaffected).
+  const HY_DEMO = { SOL_KILLS: 6, SOL_FIGHT_MS: 75000 };
+  if (typeof window !== 'undefined') window.HY_DEMO = HY_DEMO;
+  // True once the opening fight has used its budget (kills or time) while the
+  // ship is still in Sol — whatever phase the demo is in. Measured: the demo
+  // chains combat targets without returning to the scan, and its return phase
+  // is often the campaign's guide path, so a scan-only check never fired.
+  function _solBudgetOut() {
+    if (ap._solFightDone) return false;
+    if (!ap._solFightT0) ap._solFightT0 = Date.now();
+    const o = (typeof window !== 'undefined') ? window.localSystemOffset : null;
+    if (!o || typeof camera === 'undefined') return false;
+    const edge = (typeof _hySolLayout === 'function') ? ((_hySolLayout() || {}).edge || 26000) : 26000;
+    if (Math.hypot(camera.position.x - (o.x || 0), camera.position.z - (o.z || 0)) > edge * 1.2) return false;
+    return (ap._solKills || 0) >= HY_DEMO.SOL_KILLS || Date.now() - ap._solFightT0 > HY_DEMO.SOL_FIGHT_MS;
+  }
+  function _solBudgetLeave() {
+    ap._solFightDone = true;
+    ap.combatTarget = null;
+    setStatus('Sol patrol complete — making for the nebulae');
+    goPhase('warpToNebulaCluster');
+  }
+
   function phaseFindLocalEnemies() {
     const t = elapsed();
     ensureShieldsFor('travel');
     ensureThirdPerson();
+
+    if (_solBudgetOut()) { _solBudgetLeave(); return; }
 
     // Force the nav panel to refresh immediately on first entry and every 3s
     if (typeof populateTargets === 'function' &&
@@ -2497,6 +2526,9 @@
   // ─── Reusable combat phase (returns to ap.returnPhase when target dead) ───
   function phaseCombat() {
     const t = elapsed();
+    // HYBRID: the Sol opening-fight budget (HY_DEMO) also ends a combat that
+    // keeps chaining targets without ever returning to the scan phase.
+    if (_solBudgetOut()) { _solBudgetLeave(); return; }
     // Shields are reactive — they pop up only when hull takes a hit (see
     // reactiveShields in the main update loop).
     ensureThirdPerson();
@@ -2551,6 +2583,7 @@
       ap._navCacheFrame = -99;
 
       ap._killCooldownUntil = Date.now() + 1000;
+      if (!ap._solFightDone) ap._solKills = (ap._solKills || 0) + 1;   // HYBRID: Sol fight budget (HY_DEMO)
 
       // Resume the prior phase if it was a deliberate mission step
       // (following a path, engaging a boss, approaching a nebula).

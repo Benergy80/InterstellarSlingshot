@@ -148,7 +148,11 @@ const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(String(e.stack || e.message || e).slice(0, 400)));
 // window.__warpdiag (autopilot.js) exposes goPhase / unlockWarp — only armed under this flag.
-await page.addInitScript(`try{localStorage.setItem('warpdiag','1');localStorage.removeItem('warpdiag_legs');}catch(e){}`);
+// The guard checks KEEP physics (slingshot / warp / steering) on staged ships,
+// independent of the campaign: the campaign's Sol gravity tether (js/progression.js)
+// would otherwise reel in a staged glide that crosses Sol's edge and cut the
+// staged O-warp. The flag is the tether's own documented off switch.
+await page.addInitScript(`try{localStorage.setItem('warpdiag','1');localStorage.removeItem('warpdiag_legs');}catch(e){} window.__campaignTetherOff = true;`);
 
 const results = { build: null, root: ROOT, hy: HY || null, at: new Date().toISOString(), checks: {} };
 const saveJson = () => writeFile(join(OUT, 'keep-check.json'), JSON.stringify(results, null, 2));
@@ -382,8 +386,21 @@ check('slingshot', async () => {
     K.stashEnemies();
     // The smallest nebula world over 25 u (package N moved every planet onto 240-620,
     // so the old 25-140 window found nothing; on older builds this is still a 25-140 one).
-    const body = K.nebPlanets().filter((p) => p.geometry && p.geometry.parameters && p.geometry.parameters.radius > 25)
-        .sort((a, b) => a.geometry.parameters.radius - b.geometry.parameters.radius)[0];
+    // …and one with CLEAR SKIES round its whip arc. Since package N the moons
+    // are 40-150 u and orbit right through the staged arc (range x 0.6 from the
+    // centre), so a run that happened to pick a planet with a moon in the way
+    // whipped into it: velocity 80 -> 0.4 in a second, and every later check
+    // failed on the stunned ship (measured 1 run in 2 on 20261010l+Q/R/S).
+    // Prefer the smallest world with no other body inside 2.5 x its slingshot range.
+    const _cands = K.nebPlanets().filter((p) => p.geometry && p.geometry.parameters && p.geometry.parameters.radius > 25)
+        .sort((a, b) => a.geometry.parameters.radius - b.geometry.parameters.radius);
+    const _allBodies = ie('planets').filter((p) => p && p.position && p.userData && p.userData.type !== 'asteroid');
+    const _clear = (p) => {
+        const r = ie('getSlingshotRange')(p) * 2.5; const wp = p.getWorldPosition(new THREE.Vector3()); const tmp = new THREE.Vector3();
+        for (let i = 0; i < _allBodies.length; i++) { const q = _allBodies[i]; if (q === p) continue; q.getWorldPosition(tmp); if (tmp.distanceTo(wp) < r) return false; }
+        return true;
+    };
+    const body = _cands.find(_clear) || _cands[0];
     if (!body) return { err: 'no staging planet' };
     const range = ie('getSlingshotRange')(body);
     const run = async (steer) => {
@@ -399,9 +416,15 @@ check('slingshot', async () => {
         ie('executeSlingshot')();
         Object.assign(r, { entry: +v0.toFixed(2), captured: !!gs.slingshot.active, fov0: +fov0.toFixed(1) });
         const t0 = Date.now(); let rel = null, relV = null, relC = null, peak = 0, fmax = 0, amax = 0, trail = false, ramp = false, whip = false;
+        // Per-100 ms samples: what the ship is doing against the body through
+        // the whip and the first second of the glide (evidence for a flake).
+        r.samples = [];
+        const _bR = body.geometry.parameters.radius || 1;
         while (Date.now() - t0 < 7000) {
             await sleep(100); gs.hull = gs.maxHull || 100;
             const v = gs.velocityVector.length(); peak = Math.max(peak, v); fmax = Math.max(fmax, cam.fov); amax = Math.max(amax, K.additiveVisible());
+            if (r.samples.length < 80) r.samples.push({ t: Date.now() - t0, v: +v.toFixed(1), dR: +(cam.position.distanceTo(body.getWorldPosition(new THREE.Vector3())) / _bR).toFixed(2),
+                whip: !!gs.slingshotWhip, act: !!gs.slingshot.active, post: !!gs.slingshot.postSlingshot, x: !!keys.x, w: !!keys.w, tr: gs.slingshot.timeRemaining | 0 });
             try { if (ie('_whipTrail')) trail = true; } catch (x) { /* optional */ }
             if (gs.slingshotWhip) whip = true; if (gs.slingshotLaunchRamp) ramp = true;
             if (rel === null && whip && !gs.slingshotWhip) { rel = Date.now() - t0; relV = gs.velocityVector.clone().normalize();
