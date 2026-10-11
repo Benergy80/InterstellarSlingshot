@@ -444,6 +444,14 @@ Demo showcase (integrator, 20261010m): with 48 pirates at Sol the demo never lef
 
 **All packages N–X are merged (20261010o).**
 
+## Round 4 (Ben, verbatim, 2026-10-11) — after the N–X merge
+
+1. "what happened to all the other planets and black hole systems? All the beautiful large planets are gone. The Sun looks great but some extra graphical errors. Outer systems are so large but with no planets. How is the universe organized?" / "look at all the orbit lines without planets" / "if the rings can fade as well perhaps that would work. We can keep them visible and not use distance culling" → LANDED 20261010q: measured 1 of 567 big bodies drawn from the start; `AERIAL_SIZE_FADE/FULL` 0.012/0.045 → 0.003/0.010 rad (162 drawn); fog 101-240k → 222-435k so the relaid galaxies (140-210k) read; non-Sol orbit rings fade with their planet's aerial factor (`HY_ORBIT_FADE`), never culled; frontier systems 4-6 planets, corona 2.0×. The frontier's giant dim ball is the supernova-remnant shell (theme signature) — still to shrink.
+2. "what are all these giant white dots?" → the distance cull's IMPOSTOR tier (one soft sprite per culled world, sized by its pixel radius): with 566 big worlds culled and worlds 3× larger the sky filled with 10-25 px dots. Most are real planets again since 20261010q; the rest are far bodies below 0.003 rad. Confirm on build r.
+3. "found a distant system and did like the distance culling, but needs warps to last longer to reach them. the wingmen animation still jumps like crazy during a warp use" → LANDED 20261010r: nav-warp burns up to 60 s at 60 u/frame (`HY_NAVWARP.BURN_MAX_MS / SPEED_MAX`, was 25 s / 45); the plain O-warp stays 8 s / 15 u/frame (the guard's warp row expects it to end within 12 s). Wingmen: the ally tick runs before the physics moves the camera, so riding last frame's displacement left each wingman one frame of carrier motion behind, and every change of frame length showed as a 15 u hop (measured: camera-space z toggling by exactly v × dtF); they now ride this frame's velocity × dt and are drawn where the tick put them (no one-tick-behind glide at warp). Measured through a warp: median 0.5 u/frame relative motion, max 2.6 (was 13.9 / 29).
+4. "still seeing a lot of green orbit lines with no planets around" → LANDED 20261010r: green = the gateway's "local" systems (Arrakis, Giedi Prime, Caladan), which were exempt from the fade with Sol's; now only Sol's own rings are exempt.
+5. "blue orbit lines and planets look great - local orbit lines look great" (on 20261010q).
+
 ## Open questions for Ben
 
 1. **Invisible messages.** In ORIGINAL, `showAchievement` messages (wingman comms, "Target Hit!",

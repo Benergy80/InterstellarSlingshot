@@ -3439,6 +3439,16 @@ if (gameState.frameCount % 5 === 0 && typeof checkCosmicFeatureInteractions === 
             for (let i = 0; i < allyShips.length; i++) {
                 const w = allyShips[i]; if (!w || !w.userData || !w.userData._iFrom) continue;
                 const u = w.userData;
+                if (_warp) {
+                    // HYBRID (Ben, 2026-10-11: "the wingmen animation still jumps like
+                    // crazy during a warp"): at warp the tick already runs every frame,
+                    // and the glide then drew the ship ONE TICK BEHIND (_iFrom) — a full
+                    // frame of carrier motion behind the camera, so every uneven frame
+                    // read as a 15 u hop (measured: camera-space z toggling -159 / -173).
+                    // Draw it where this tick put it; the glide resumes after the warp.
+                    u._iTick = _wfc; u._iInterval = 1; u._interp = false;
+                    continue;
+                }
                 u._iTo.copy(w.position);
                 u._iToRot.x = w.rotation.x; u._iToRot.y = w.rotation.y; u._iToRot.z = w.rotation.z;
                 w.position.copy(u._iFrom);

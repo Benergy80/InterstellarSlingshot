@@ -18675,6 +18675,7 @@ function _isPlayerWarping() {
 // distance, alternating Y-height offsets, and left/right lateral spread so
 // the squadron reads as a natural V-shape from the player's POV instead of
 // a jittering cluster all at the same depth.
+const _allyCarryTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
 function _executeFollow(ally, ud, playerPos) {
     if (!gameState || !gameState.velocityVector) return;
     const playerVel = gameState.velocityVector.clone();
@@ -18729,13 +18730,22 @@ function _executeFollow(ally, ud, playerPos) {
     // computed once per tick in updateAllyShips; teleports/world-origin
     // rebases zero it there and the FTL anchor handles reunification.
     if (playerSpeed > 4 && updateAllyShips._disp) {
-        ally.position.add(updateAllyShips._disp);
+        // HYBRID (Ben, 2026-10-11: "the wingmen animation still jumps like crazy
+        // during a warp"): this tick runs BEFORE the physics moves the camera, so
+        // riding last frame's displacement (_disp) left the wingman one frame of
+        // carrier motion behind — and every change of frame length showed as a
+        // 15 u hop (measured: camera-space z toggling by exactly v x dtF). Ride
+        // THIS frame's carrier motion instead: the player's velocity over this
+        // frame's dt, which is what the physics is about to apply.
+        const _dtF = (typeof gameState.dtFrames === 'number' && gameState.dtFrames > 0) ? gameState.dtFrames : 1;
+        const _carry = _allyCarryTmp.copy(playerVel).multiplyScalar(_dtF);
+        ally.position.add(_carry);
         _allyDir.subVectors(target, ally.position);
         const err = _allyDir.length();
         ally.position.addScaledVector(_allyDir, 0.10);
         // ud.velocity mirrors the applied step so thruster glows and the
         // follow→patrol handoff stay continuous.
-        ud.velocity.copy(updateAllyShips._disp).addScaledVector(_allyDir, 0.10);
+        ud.velocity.copy(_carry).addScaledVector(_allyDir, 0.10);
         // Face the travel direction (formation error direction flips when
         // tiny — steering the nose by it made them spin); only face the
         // error while genuinely out of formation.

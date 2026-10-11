@@ -3090,8 +3090,8 @@ const HY_NAVWARP = {
     PARK_MS: 6000,       // longest the park may take before it settles anyway
     PARK_DAMP: 0.90,     // per-60fps-frame blend of velocity toward the park controller's
     BURN_S: 7,           // the burn is sized to cover the leg in about this many seconds...
-    SPEED_MAX: 45,       // ...but never faster than this (u/frame; stock warp is 15)
-    BURN_MAX_MS: 25000,  // the burn may be stretched to reach the target, up to this
+    SPEED_MAX: 60,       // ...but never faster than this (u/frame; stock warp is 15). Ben 2026-10-11: "needs warps to last longer to reach them"
+    BURN_MAX_MS: 60000,  // the burn may be stretched to reach the target, up to this (was 25 s; a frontier leg is 280-390k)
     CUT_K: 1.25,         // the burn is cut so the exit ramp ends this x the standoff out
     PLANET_PICK_K: 1.5,  // a nebula-sized target parks at its biggest planet within this x its size
     HOLD_MS: 20000       // station-keeping hands the stick back after this long even untouched

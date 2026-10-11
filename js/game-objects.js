@@ -16485,10 +16485,16 @@ function updateOrbitLineVisibility() {
     // opacity) and is never culled; Sol's rings are untouched.
     if (typeof orbitLines !== 'undefined' && orbitLines && typeof camera !== 'undefined') {
         const _wp = _orbitFadeTmp || (_orbitFadeTmp = new THREE.Vector3());
+        // Only SOL's own rings are exempt — the gateway's "local" systems (Arrakis,
+        // Giedi Prime, Caladan…) are also flagged isLocal and drew green rings
+        // round culled planets 45-55k out (Ben: "still seeing a lot of green
+        // orbit lines with no planets around").
+        const _so = (typeof window !== 'undefined' && window.localSystemOffset) || null;
+        const _isSolRing = (p) => { const c = p.userData.systemCenter; return !!(_so && c && Math.abs(c.x - _so.x) < 1 && Math.abs(c.z - _so.z) < 1); };
         for (let i = 0; i < orbitLines.length; i++) {
             const line = orbitLines[i]; if (!line || !line.userData || !line.material) continue;
             const p = line.userData.planet;
-            if (!p || !p.userData || p.userData.isLocal || line.userData.isLocal) continue;
+            if (!p || !p.userData || _isSolRing(p)) continue;
             if (line.userData._baseOpacity === undefined) line.userData._baseOpacity = line.material.opacity;
             p.getWorldPosition(_wp);
             const d = _wp.distanceTo(camera.position);
