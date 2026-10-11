@@ -6955,6 +6955,8 @@ function showMissionCommandAlert(title, text, isVictoryMessage = false, channelC
     // slowly auto-scrolls so the whole thing displays hands-free. (Measuring is
     // synchronous here — set full text, read scrollHeight, decide — so there's
     // no visible flash before the typewriter clears it.)
+    // a previous message's typewriter must not keep typing into this one
+    if (textElement._mcTimer) { clearInterval(textElement._mcTimer); textElement._mcTimer = null; }
     textElement.classList.remove('mc-typing');
     textElement.textContent = (text == null ? '' : String(text));
     textElement.scrollTop = 0;
