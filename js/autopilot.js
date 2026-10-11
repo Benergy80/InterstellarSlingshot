@@ -2460,6 +2460,7 @@
     WHIP_GRAZE_K: 0.75,    // the approach aims this x range off the body's centre (outside keep-out)
     WHIP_LEAD_MS: 15000,   // … and leads the planet's orbital motion by up to this
     WHIP_MAX_BODY_SPEED: 2.5, // u/frame: a whip body orbiting faster than this outruns the ship (cruise 4)
+    MOON_WAIT_MS: 8000,    // in the well, wait this long for the planet (not a moon) to be the whip body
     ESCAPE_K: 2.0,         // fly straight out when any planet / moon / star is inside this x its radius
     WHIP_LEG_MS: 90000,    // give up on a whip planet after this long
     WHIP_TRIES: 4,         // refusals (arc / exit leg / cooldown) before the next planet
@@ -2691,7 +2692,7 @@
     }
     if (!W.body || !W.body.position) {
       W.body = W.pick(W.tried);
-      W.bodyAt = Date.now(); W.refusals = 0; W.pv = null;
+      W.bodyAt = Date.now(); W.refusals = 0; W.pv = null; W.inWellAt = 0;
       if (!W.body) return 'failed';
       _dirLog('whip body ' + (W.body.userData && W.body.userData.name));
     }
@@ -2757,11 +2758,16 @@
     // were dropped on four park deferrals each, and the second drop left the
     // ship parked at 1.5 R in Mars's path.
     const body0 = (typeof findSlingshotTarget === 'function') ? findSlingshotTarget() : null;
-    const notYet = _parkOwnsBeat() || gameState.energy < 20 ||
+    // the whip takes the NEAREST body in range — a moon riding inside the
+    // planet's ring would steal it (measured r8: whipped Luna, 18 u/frame, not
+    // Earth's 80); give the planet MOON_WAIT_MS to become the nearest
+    if (!W.inWellAt) W.inWellAt = Date.now();
+    const moonSteals = body0 && body0 !== sp && Date.now() - W.inWellAt < HY_DIRECTOR.MOON_WAIT_MS;
+    const notYet = moonSteals || _parkOwnsBeat() || gameState.energy < 20 ||
       Date.now() < (gameState.slingshotCooldownUntil || 0) || Date.now() < (W.retryAt || 0) || !body0;
     if (notYet) {
       if (window.orientTowardsTarget) window.orientTowardsTarget(sp);
-      if (!body0) keys().w = true;   // not quite in the ring yet: ease in
+      if (!body0) keys().w = true;   // not quite in the ring yet: ease in (a moon in the ring: just wait — thrust here points at the planet)
       setStatus('CAMPAIGN · in ' + name + '\'s well — lining up the whip → ' + label);
       return 'approach';
     }
