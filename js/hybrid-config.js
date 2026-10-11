@@ -45,6 +45,7 @@
         asteroids:       'original',
         // — effects and audio —
         explosions:      'original',   // 'combined' (old burst + new detonation) | 'original' | 'overhaul' — Ben 2026-10-10: newer effects PAUSED while testing ("so we can just see the original ones"); flip back to 'combined' when he says
+        bossExplosion:   'epic',       // Ben 2026-10-11: "I want to improve the boss explosions." — death throe (hull blasts, tumble, flicker) → scaled final blast + shockwave + vector debris + hitstop + call-out (HY_BOSS_FX, hyBossDeath)  'epic' | 'original'
         weaponFx:        'original',
         sfx:             'original',
         music:           'original',
