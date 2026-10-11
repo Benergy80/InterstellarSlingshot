@@ -11831,6 +11831,521 @@ function createBossExplosion(position, options) {
 }
 
 // =============================================================================
+// BOSS DEATH SET-PIECE  (HYBRID switch `bossExplosion`: 'epic' | 'original')
+// Ben 2026-10-11: "I want to improve the boss explosions."
+//
+// 'original' = the kill calls createBossExplosion() and the hull vanishes the
+// same frame. 'epic' = the boss visibly BREAKS:
+//   1. DEATH THROE (~1.8-2.7 s): the hull is detached from the game (it has
+//      already left `enemies` — every kill rule ran at the kill) and kept on
+//      screen as a corpse that tumbles, shudders and flickers while 9-12
+//      small ORIGINAL-style blasts pop at random points ON the hull,
+//      120-220 ms apart, each with faction sparks.
+//   2. FINAL BLAST: the ORIGINAL boss detonation (createBossExplosion) plus a
+//      white core flash, faction shockwave rings (band + vector edge) and
+//      vector debris — glowing line shards cut from the hull's own triangles
+//      and radial streaks; hitstop + slow-mo, strong shake, chromatic pulse.
+//   3. CALL-OUT 'BOSS DESTROYED' / '<FACTION> FLAGSHIP', and the boss
+//      celebration (fireworks, victory sting, ambient hand-off) moved from
+//      the kill to the blast.
+//   4. Living enemies near the blast are shoved outward by the shock.
+// Everything is one explosionManager entry (disposed in its cleanup), timed
+// by the manager's dt — so it freezes in hitstop and pause like every fx.
+// =============================================================================
+const HY_BOSS_FX = {
+    POPS_MIN: 9, POPS_MAX: 12,          // secondary blasts across the hull
+    POP_GAP_MIN: 120, POP_GAP_MAX: 220, // ms between them
+    THROE_LEAD: 260,                    // ms from the kill to the first pop
+    FINAL_AFTER_LAST: 340,              // ms from the last pop to the blast
+    POP_LIFE: 700,                      // ms, one secondary blast
+    POP_R_K: 0.07, POP_R_MIN: 1.0,      // pop fireball radius × hull radius (floor in world u)
+    POP_GROW: 5,                        // a pop grows to (1 + POP_GROW) × its radius
+    MIN_VIS_R: 45,                      // blast layers size off max(hull radius, this): bosses are 25-60 u hulls
+    TUMBLE0: 0.25, TUMBLE1: 2.2,        // rad/s at the start / end of the throe
+    SHUDDER_K: 0.025,                   // hull jitter × hull radius
+    FLASH_R_K: 1.1, FLASH_LIFE: 320,    // white core flash
+    RING_R0_K: 0.8, RING_R1_K: 11, RING_LIFE: 1250,
+    SHARDS: 42,                         // hull triangles thrown as wire shards
+    STREAKS: 56,                        // radial glowing streaks
+    DEBRIS_LIFE: 2300,
+    DEBRIS_PX: 2.6,                     // on-screen width of a debris line (px floor)
+    SHARD_SPEED_K: [1.4, 4.2],          // × hull radius per second
+    STREAK_SPEED_K: [5, 12],
+    BLAST_SCALE_BOSS: 1.8,              // createBossExplosion scale (ORIGINAL values)
+    BLAST_SCALE_GUARD: 1.3,
+    HITSTOP_MS: 110, SLOWMO_MS: 850,
+    SHAKE_AMP: 16, SHAKE_MS: 1100, PULSE: 1.15,
+    PUSH_RANGE_K: 40, PUSH_RANGE_MAX: 4500, PUSH_K: 4, PUSH_MS: 700,
+    CALLOUT_RETRY_MS: 1600,
+};
+if (typeof window !== 'undefined') window.HY_BOSS_FX = HY_BOSS_FX;
+
+function _hyBossFxOn() {
+    return !window.HYBRID || window.HYBRID.is('bossExplosion', 'epic');
+}
+
+// Hull meshes of a ship (no shields, hitboxes, glow shells or plumes).
+function _hyBossHullMeshes(ship) {
+    const out = [];
+    ship.traverse(function (o) {
+        if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+        const u = o.userData || {};
+        if (u.isHitbox || u.isGlowLayer || u._isThrusterCone || u._isHullRead || u.isEnemyShield) return;
+        out.push(o);
+    });
+    return out;
+}
+
+// A random point on the hull, in WORLD space (a mesh vertex).
+function _hyBossHullPoint(meshes, out) {
+    const m = meshes[Math.floor(Math.random() * meshes.length)];
+    const p = m.geometry.attributes.position;
+    out.fromBufferAttribute(p, Math.floor(Math.random() * p.count));
+    return out.applyMatrix4(m.matrixWorld);
+}
+
+// Start the set-piece for a dying boss. Returns false (and does nothing) when
+// the switch is 'original', so the caller falls back to createBossExplosion.
+// Call it BEFORE the kill path's scene.remove(enemy).
+function hyBossDeath(enemy, opts) {
+    if (!_hyBossFxOn() || !enemy || !enemy.userData || typeof scene === 'undefined' ||
+        typeof THREE === 'undefined' || typeof explosionManager === 'undefined') return false;
+    const ud = enemy.userData;
+    if (ud._hyBossFx) return true;
+    opts = opts || {};
+    const C = HY_BOSS_FX;
+    const color = opts.color || ud.galaxyColor || 0xff5522;
+    const isBoss = !!ud.isBoss;
+    const blastScale = opts.scale || (isBoss ? C.BLAST_SCALE_BOSS : C.BLAST_SCALE_GUARD);
+
+    enemy.updateMatrixWorld(true);
+    const meshes = _hyBossHullMeshes(enemy);
+    // Hull radius from the hull meshes' world box (shields excluded).
+    let R = (ud.hitboxSize || 144) * 0.5;
+    try {
+        const box = new THREE.Box3(), mb = new THREE.Box3();
+        meshes.forEach(function (m) {
+            if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+            mb.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld);
+            box.union(mb);
+        });
+        if (!box.isEmpty()) {
+            const s = box.getSize(new THREE.Vector3());
+            const r = Math.max(s.x, s.y, s.z) * 0.5;
+            if (isFinite(r) && r > 5) R = Math.min(r, 1200);
+        }
+    } catch (e) {}
+
+    // Detach the corpse: re-parent the hull to a holder at the scene root, so
+    // the kill path's scene.remove(enemy) finds nothing and the hull stays
+    // drawn (identity holder → same world transform; a floating-origin shift
+    // moves the holder, and the hull with it).
+    const holder = new THREE.Group();
+    holder.name = 'hyBossCorpse';
+    holder.userData.__dbTris = Infinity;
+    scene.add(holder);
+    holder.add(enemy);
+    enemy.traverse(function (o) {
+        if (o.userData && o.userData.isEnemyShield) o.visible = false;   // the bubble pops at death
+    });
+    ud._hyBossFx = true;
+
+    const V = Math.max(R, C.MIN_VIS_R);   // blast-layer radius
+    const fx = {
+        t: 0, R: R, V: V, color: color, phase: 'throe', name: ud.name,
+        pops: 0, popsPlanned: C.POPS_MIN + Math.floor(Math.random() * (C.POPS_MAX - C.POPS_MIN + 1)),
+        tFinal: 0, debris: 0, rings: 0, callout: null, hitstop: false, shake: false, pulse: false,
+        pushed: 0, startedAt: performance.now(), finalAt: 0, doneAt: 0, center: null,
+    };
+    const popTimes = [];
+    let tp = C.THROE_LEAD;
+    for (let i = 0; i < fx.popsPlanned; i++) {
+        popTimes.push(tp);
+        tp += C.POP_GAP_MIN + Math.random() * (C.POP_GAP_MAX - C.POP_GAP_MIN);
+    }
+    fx.tFinal = popTimes[popTimes.length - 1] + C.FINAL_AFTER_LAST;
+    if (typeof window !== 'undefined') window.__bossFx = fx;   // read by probes
+
+    const popGeo = new THREE.SphereGeometry(1, 8, 8);   // shared by this set-piece's spheres
+    function mkDebrisMat() {
+        const m = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 1,
+            side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(m); return m;
+    }
+    function mkLoopMat() {
+        const m = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(m); return m;
+    }
+    // SHADER PREWARM: the blast's two uncommon programs (vertex-coloured
+    // additive ribbons, additive line loop) would compile on the blast frame
+    // (measured: a 200-270 ms hitch). Degenerate stand-ins drawn during the
+    // throe compile them early; they stay alive until cleanup so the real
+    // materials reuse the cached programs.
+    const warm = [];
+    try {
+        const wg = new THREE.BufferGeometry();
+        wg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+        wg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(9), 3));
+        const wm = new THREE.Mesh(wg, mkDebrisMat());
+        const wl = new THREE.LineLoop(wg, mkLoopMat());
+        [wm, wl].forEach(function (o) { o.frustumCulled = false; o.userData.__dbTris = Infinity; o.position.copy(enemy.position); scene.add(o); warm.push(o); });
+    } catch (e) {}
+    const live = [];
+    const tumbleAxis = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+    const jitter = new THREE.Vector3();
+    const tmp = new THREE.Vector3();
+    const tmpQ = new THREE.Quaternion();
+    let flickT = 0;
+    let pushList = null;
+
+    const rnd3 = function (v) { return v.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5); };
+
+    // One secondary blast: the ORIGINAL createExplosionEffect look (orange
+    // sphere + square-particle burst) sized to the hull, stuck to the hull.
+    function addPop(big) {
+        if (!meshes.length) return;
+        enemy.updateMatrixWorld(true);
+        const wp = _hyBossHullPoint(meshes, new THREE.Vector3());
+        const local = enemy.worldToLocal(wp.clone());
+        const r = Math.max(C.POP_R_MIN, R * C.POP_R_K) * (big ? 2.2 : (0.8 + Math.random() * 0.6));
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, depthWrite: false });
+        _hyFlatMat(mat);
+        const s = new THREE.Mesh(popGeo, mat);
+        s.position.copy(wp); s.scale.setScalar(r); s.frustumCulled = false;
+        scene.add(s);
+        const N = 30, pg = new THREE.BufferGeometry(), arr = new Float32Array(N * 3), vel = new Float32Array(N * 3);
+        for (let i = 0; i < N * 3; i++) { arr[i] = (Math.random() - 0.5) * r * 3; vel[i] = arr[i] * 1.5; }
+        pg.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+        const pm = new THREE.PointsMaterial({ color: 0xff8800, size: Math.max(1, r * 0.18), transparent: true, opacity: 1, depthWrite: false });
+        _hyFlatMat(pm);
+        const pts = new THREE.Points(pg, pm);
+        pts.position.copy(wp); pts.frustumCulled = false;
+        scene.add(pts);
+        live.push({ kind: 'pop', obj: s, mat: mat, local: local, r: r, age: 0, life: C.POP_LIFE });
+        live.push({ kind: 'popPts', obj: pts, geo: pg, mat: pm, local: local, vel: vel, age: 0, life: C.POP_LIFE * 1.3 });
+        if (typeof createHitSparks === 'function') { try { createHitSparks(wp, color, Math.max(1, R / 60)); } catch (e) {} }
+        if (typeof playSound === 'function') { try { playSound(fx.pops % 2 ? 'hit' : 'explosion'); } catch (e) {} }
+        fx.pops++;
+    }
+
+    function addRing(r0, r1, life, tilt, col, delay) {
+        const mat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(mat);
+        const geo = new THREE.RingGeometry(0.94, 1, 96);
+        const ring = new THREE.Mesh(geo, mat);
+        const pts = [];   // vector edge: a hairline loop just outside the band
+        for (let i = 0; i < 128; i++) { const a = i / 128 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * 1.02, Math.sin(a) * 1.02, 0)); }
+        const lgeo = new THREE.BufferGeometry().setFromPoints(pts);
+        const lmat = mkLoopMat();
+        const loop = new THREE.LineLoop(lgeo, lmat);
+        loop.frustumCulled = false;
+        loop.userData.__dbTris = Infinity;
+        ring.add(loop);
+        ring.position.copy(fx.center);
+        if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+        ring.rotateX(tilt.x); ring.rotateY(tilt.y);
+        ring.scale.setScalar(r0); ring.frustumCulled = false;
+        ring.visible = !(delay > 0);
+        ring.userData.__dbTris = Infinity;
+        scene.add(ring);
+        live.push({ kind: 'ring', obj: ring, geo: geo, mat: mat, lgeo: lgeo, lmat: lmat, r0: r0, r1: r1, age: -(delay || 0), life: life });
+        fx.rings++;
+    }
+
+    // Vector debris: hull triangles as spinning wire shards + radial streaks,
+    // all in ONE LineSegments (vertex colours, additive) centred on the blast.
+    function addDebris() {
+        const shards = [];
+        const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+        const maxEdge = V * 0.45;
+        for (let i = 0; i < C.SHARDS && meshes.length; i++) {
+            const m = meshes[Math.floor(Math.random() * meshes.length)];
+            const pa = m.geometry.attributes.position, ix = m.geometry.index;
+            const triCount = Math.floor(ix ? ix.count / 3 : pa.count / 3);
+            if (triCount < 1) continue;
+            const tri = Math.floor(Math.random() * triCount);
+            a.fromBufferAttribute(pa, ix ? ix.getX(tri * 3) : tri * 3).applyMatrix4(m.matrixWorld);
+            b.fromBufferAttribute(pa, ix ? ix.getX(tri * 3 + 1) : tri * 3 + 1).applyMatrix4(m.matrixWorld);
+            c.fromBufferAttribute(pa, ix ? ix.getX(tri * 3 + 2) : tri * 3 + 2).applyMatrix4(m.matrixWorld);
+            const cen = new THREE.Vector3().add(a).add(b).add(c).multiplyScalar(1 / 3);
+            const off = [a.clone().sub(cen), b.clone().sub(cen), c.clone().sub(cen)];
+            // keep shards readable: tiny triangles grow, huge ones shrink
+            const ext = Math.max(off[0].length(), off[1].length(), off[2].length());
+            const want = Math.min(maxEdge, Math.max(V * 0.15, ext));
+            if (ext > 1e-6) off.forEach(function (o) { o.multiplyScalar(want / ext); });
+            else off.forEach(function (o) { rnd3(o).multiplyScalar(want); });
+            const rel = cen.sub(fx.center);
+            const dir = rel.lengthSq() > 1 ? rel.clone().normalize() : rnd3(new THREE.Vector3()).normalize();
+            dir.add(rnd3(tmp).multiplyScalar(0.6)).normalize();
+            const sp = V * (C.SHARD_SPEED_K[0] + Math.random() * (C.SHARD_SPEED_K[1] - C.SHARD_SPEED_K[0]));
+            shards.push({ p: rel, v: dir.multiplyScalar(sp), off: off,
+                axis: rnd3(new THREE.Vector3()).normalize(),
+                w: (Math.random() - 0.5) * 9, life: 0.6 + Math.random() * 0.4 });
+        }
+        const streaks = [];
+        for (let i = 0; i < C.STREAKS; i++) {
+            streaks.push({ d: rnd3(new THREE.Vector3()).normalize(), r: V * Math.random() * 0.3,
+                v: V * (C.STREAK_SPEED_K[0] + Math.random() * (C.STREAK_SPEED_K[1] - C.STREAK_SPEED_K[0])),
+                len: V * (0.5 + Math.random() * 1.1), life: 0.45 + Math.random() * 0.55 });
+        }
+        // Each segment is drawn as a thin camera-facing ribbon (4 verts), so
+        // the vector lines keep a few pixels of width (GL lines are 1 px).
+        const nSeg = shards.length * 3 + streaks.length;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nSeg * 12), 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(nSeg * 12), 3));
+        const idx = new (nSeg * 4 > 65535 ? Uint32Array : Uint16Array)(nSeg * 6);
+        for (let i = 0; i < nSeg; i++) {
+            const v0 = i * 4;
+            idx[i * 6] = v0; idx[i * 6 + 1] = v0 + 1; idx[i * 6 + 2] = v0 + 2;
+            idx[i * 6 + 3] = v0 + 2; idx[i * 6 + 4] = v0 + 1; idx[i * 6 + 5] = v0 + 3;
+        }
+        geo.setIndex(new THREE.BufferAttribute(idx, 1));
+        const mat = mkDebrisMat();
+        const lines = new THREE.Mesh(geo, mat);
+        lines.position.copy(fx.center); lines.frustumCulled = false;
+        lines.userData.__dbTris = Infinity;
+        scene.add(lines);
+        live.push({ kind: 'debris', obj: lines, geo: geo, mat: mat, age: 0, life: C.DEBRIS_LIFE,
+            shards: shards, streaks: streaks, fc: new THREE.Color(color), hot: new THREE.Color(0xffffff), mix: new THREE.Color(),
+            seg: new Float32Array(nSeg * 6), segCol: new Float32Array(nSeg * 6), nSeg: nSeg });
+        fx.debris = nSeg;
+    }
+
+    function addFlash() {
+        const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(mat);
+        const s = new THREE.Mesh(popGeo, mat);
+        s.position.copy(fx.center); s.scale.setScalar(V * C.FLASH_R_K); s.frustumCulled = false;
+        scene.add(s);
+        live.push({ kind: 'flash', obj: s, mat: mat, age: 0, life: C.FLASH_LIFE, r: V * C.FLASH_R_K });
+    }
+
+    // 'BOSS DESTROYED' / '<FACTION> FLAGSHIP'. flashArcadeText yields to the
+    // boss intro card and event alerts, so the blast retries for a moment.
+    function callout() {
+        if (typeof flashArcadeText !== 'function') return true;
+        const flagship = isBoss && !ud.isGuardian;
+        const word = flagship ? 'BOSS DESTROYED' : 'GUARDIAN DESTROYED';
+        let sub = null;
+        try { sub = (typeof _killLabel === 'function') ? _killLabel(ud) : null; } catch (e) {}
+        if (sub) sub = sub + (flagship ? ' FLAGSHIP' : ' GUARDIAN');
+        flashArcadeText(word, 6, sub);
+        const el = document.getElementById('arcadeText');
+        if (el && el.textContent.indexOf(word) >= 0) { fx.callout = word + (sub ? ' / ' + sub : ''); return true; }
+        return false;
+    }
+
+    function finalBlast() {
+        fx.phase = 'final';
+        fx.finalAt = performance.now();
+        enemy.updateMatrixWorld(true);
+        fx.center = enemy.getWorldPosition(new THREE.Vector3());
+        addDebris();                                   // cut from the hull before it goes
+        for (let i = 0; i < warm.length; i++) if (warm[i].parent) warm[i].parent.remove(warm[i]);
+        holder.remove(enemy);
+        scene.remove(holder);
+        addFlash();
+        if (typeof createBossExplosion === 'function') {
+            try { createBossExplosion(fx.center, { color: color, scale: blastScale }); } catch (e) {}
+        }
+        addRing(V * C.RING_R0_K, V * C.RING_R1_K, C.RING_LIFE, { x: -1.0, y: 0.25 }, color, 0);
+        addRing(V * C.RING_R0_K * 0.7, V * C.RING_R1_K * 0.7, C.RING_LIFE * 0.9, { x: 0.35, y: 1.2 }, color, 140);
+        addRing(V * C.RING_R0_K * 0.5, V * C.RING_R1_K * 0.45, C.RING_LIFE * 0.7, { x: 0, y: 0 }, 0xffffff, 0);
+        if (window.arcade) {
+            try { window.arcade.flash('rgba(255,236,190,1)', 0.6); } catch (e) {}
+            try { window.arcade.hitstop(C.HITSTOP_MS); fx.hitstop = true; } catch (e) {}
+            try { window.arcade.slowmo(C.SLOWMO_MS); } catch (e) {}
+        }
+        const shake = window.whipScreenShake || (typeof whipScreenShake === 'function' ? whipScreenShake : null);
+        if (shake) { try { shake(C.SHAKE_AMP, C.SHAKE_MS); fx.shake = true; } catch (e) {} }
+        const pulse = window.whipScreenPulse || (typeof whipScreenPulse === 'function' ? whipScreenPulse : null);
+        if (pulse) { try { pulse(color, C.PULSE); fx.pulse = true; } catch (e) {} }
+        if (!callout()) fx._calloutUntil = fx.t + C.CALLOUT_RETRY_MS;
+        // the kill paths' celebration, moved from the kill to the blast
+        if (opts.celebrate && typeof createFireworkCelebration === 'function') { try { createFireworkCelebration(); } catch (e) {} }
+        if (opts.music && typeof playBossVictoryMusic === 'function') { try { playBossVictoryMusic(); } catch (e) {} }
+        if (opts.ambient) setTimeout(function () { if (typeof switchToAmbientMusic === 'function') switchToAmbientMusic(); }, 800);
+        // shock pulse: shove living ships near the blast outward
+        pushList = [];
+        if (typeof enemies !== 'undefined') {
+            const range = Math.min(C.PUSH_RANGE_MAX, V * C.PUSH_RANGE_K);
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i];
+                if (!e || !e.userData || e.userData.health <= 0 || e === enemy) continue;
+                const d = e.position.distanceTo(fx.center);
+                if (d > range || d < 1) continue;
+                pushList.push({ e: e, dir: e.position.clone().sub(fx.center).normalize(), k: 1 - d / range });
+            }
+        }
+        fx.pushed = pushList.length;
+    }
+
+    function disposeLive(L) {
+        if (L.obj.parent) L.obj.parent.remove(L.obj);
+        if (L.geo) L.geo.dispose();
+        if (L.mat) L.mat.dispose();
+        if (L.lgeo) L.lgeo.dispose();
+        if (L.lmat) L.lmat.dispose();
+    }
+
+    const _rA = new THREE.Vector3(), _rB = new THREE.Vector3(), _rD = new THREE.Vector3(), _rS = new THREE.Vector3(), _rC = new THREE.Vector3();
+    function stepDebris(L, k, dt) {
+        const pos = L.seg, col = L.segCol, f = dt / 1000;
+        let w = 0;
+        for (let s = 0; s < L.shards.length; s++) {
+            const S = L.shards[s];
+            S.p.addScaledVector(S.v, f); S.v.multiplyScalar(Math.pow(0.55, f));
+            tmpQ.setFromAxisAngle(S.axis, S.w * L.age / 1000);
+            const kk = Math.min(1, k / S.life), fade = 1 - kk;
+            L.mix.copy(L.hot).lerp(L.fc, Math.min(1, kk * 2.5)).multiplyScalar(fade);
+            for (let e = 0; e < 3; e++) {
+                tmp.copy(S.off[e]).applyQuaternion(tmpQ).add(S.p);
+                pos[w] = tmp.x; pos[w + 1] = tmp.y; pos[w + 2] = tmp.z;
+                tmp.copy(S.off[(e + 1) % 3]).applyQuaternion(tmpQ).add(S.p);
+                pos[w + 3] = tmp.x; pos[w + 4] = tmp.y; pos[w + 5] = tmp.z;
+                col[w] = col[w + 3] = L.mix.r; col[w + 1] = col[w + 4] = L.mix.g; col[w + 2] = col[w + 5] = L.mix.b;
+                w += 6;
+            }
+        }
+        for (let s = 0; s < L.streaks.length; s++) {
+            const S = L.streaks[s];
+            const kk = Math.min(1, k / S.life), fade = 1 - kk;
+            S.r += S.v * f * (1 - kk * 0.7);
+            const len = S.len * (1 - kk * 0.8);
+            pos[w] = S.d.x * S.r; pos[w + 1] = S.d.y * S.r; pos[w + 2] = S.d.z * S.r;
+            pos[w + 3] = S.d.x * (S.r + len); pos[w + 4] = S.d.y * (S.r + len); pos[w + 5] = S.d.z * (S.r + len);
+            L.mix.copy(L.hot).lerp(L.fc, Math.min(1, kk * 1.6)).multiplyScalar(fade);
+            col[w] = L.mix.r * 0.35; col[w + 1] = L.mix.g * 0.35; col[w + 2] = L.mix.b * 0.35;
+            col[w + 3] = L.mix.r; col[w + 4] = L.mix.g; col[w + 5] = L.mix.b;
+            w += 6;
+        }
+        // ribbons: offset each segment sideways, perpendicular to the view
+        const P = L.geo.attributes.position.array, Q = L.geo.attributes.color.array;
+        _rC.set(0, 0, 0);
+        let halfW = V * 0.012;
+        if (typeof camera !== 'undefined') {
+            _rC.copy(camera.position).sub(L.obj.position);   // camera in the debris' (unrotated) frame
+            const px = (typeof _plumePxPerUnit === 'function') ? _plumePxPerUnit(Math.max(1, _rC.length())) : 0;
+            if (px > 0) halfW = Math.max(halfW, C.DEBRIS_PX * 0.5 / px);
+        }
+        for (let i = 0; i < L.nSeg; i++) {
+            const o = i * 6;
+            _rA.set(pos[o], pos[o + 1], pos[o + 2]); _rB.set(pos[o + 3], pos[o + 4], pos[o + 5]);
+            _rD.subVectors(_rB, _rA);
+            _rS.subVectors(_rC, _rA).cross(_rD);
+            const sl = _rS.length();
+            if (sl > 1e-9) _rS.multiplyScalar(halfW / sl); else _rS.set(halfW, 0, 0);
+            const w = i * 12;
+            P[w] = _rA.x - _rS.x; P[w + 1] = _rA.y - _rS.y; P[w + 2] = _rA.z - _rS.z;
+            P[w + 3] = _rA.x + _rS.x; P[w + 4] = _rA.y + _rS.y; P[w + 5] = _rA.z + _rS.z;
+            P[w + 6] = _rB.x - _rS.x; P[w + 7] = _rB.y - _rS.y; P[w + 8] = _rB.z - _rS.z;
+            P[w + 9] = _rB.x + _rS.x; P[w + 10] = _rB.y + _rS.y; P[w + 11] = _rB.z + _rS.z;
+            Q[w] = Q[w + 3] = col[o]; Q[w + 1] = Q[w + 4] = col[o + 1]; Q[w + 2] = Q[w + 5] = col[o + 2];
+            Q[w + 6] = Q[w + 9] = col[o + 3]; Q[w + 7] = Q[w + 10] = col[o + 4]; Q[w + 8] = Q[w + 11] = col[o + 5];
+        }
+        L.geo.attributes.position.needsUpdate = true;
+        L.geo.attributes.color.needsUpdate = true;
+    }
+
+    function stepLive(dt) {
+        for (let i = live.length - 1; i >= 0; i--) {
+            const L = live[i];
+            L.age += dt;
+            if (L.age < 0) continue;
+            if (L.kind === 'ring' && !L.obj.visible) L.obj.visible = true;
+            const k = Math.min(1, L.age / L.life);
+            if (L.kind === 'pop' || L.kind === 'popPts') {
+                if (fx.phase === 'throe') { tmp.copy(L.local); enemy.localToWorld(tmp); L.obj.position.copy(tmp); }
+                if (L.kind === 'pop') L.obj.scale.setScalar(L.r * (1 + C.POP_GROW * Math.sqrt(k)));
+                else {
+                    const a = L.geo.attributes.position.array, f = dt / 1000;
+                    for (let j = 0; j < a.length; j++) a[j] += L.vel[j] * f;
+                    L.geo.attributes.position.needsUpdate = true;
+                }
+                L.mat.opacity = 1 - k;
+            } else if (L.kind === 'flash') {
+                L.obj.scale.setScalar(L.r * (1 + 2.4 * Math.sqrt(k)));
+                L.mat.opacity = (1 - k) * (1 - k);
+            } else if (L.kind === 'ring') {
+                L.obj.scale.setScalar(L.r0 + (L.r1 - L.r0) * (1 - Math.pow(1 - k, 3)));
+                L.mat.opacity = 0.95 * (1 - k);
+                L.lmat.opacity = 1 - k * k;
+            } else if (L.kind === 'debris') {
+                stepDebris(L, k, dt);
+            }
+            if (k >= 1) { disposeLive(L); live.splice(i, 1); }
+        }
+    }
+
+    let nextPop = 0;
+    explosionManager.addExplosion({
+        update(dtIn) {
+            const dt = Math.min(50, Math.max(0, dtIn || 0));
+            fx.t += dt;
+            if (fx.phase === 'throe') {
+                while (nextPop < popTimes.length && fx.t >= popTimes[nextPop]) {
+                    addPop(nextPop === popTimes.length - 1);
+                    nextPop++;
+                }
+                const prog = Math.min(1, fx.t / fx.tFinal);
+                // tumble, ramping up
+                tmpQ.setFromAxisAngle(tumbleAxis, (C.TUMBLE0 + (C.TUMBLE1 - C.TUMBLE0) * prog * prog) * dt / 1000);
+                enemy.quaternion.premultiply(tmpQ);
+                // shudder, applied as a delta so a world shift cannot strand it
+                enemy.position.sub(jitter);
+                rnd3(jitter).multiplyScalar(R * C.SHUDDER_K * (0.4 + prog) * 2);
+                enemy.position.add(jitter);
+                // flicker: blinks faster and longer as it fails
+                flickT -= dt;
+                if (flickT <= 0) {
+                    const off = Math.random() < 0.08 + 0.4 * prog;
+                    enemy.visible = !off;
+                    flickT = off ? 30 + Math.random() * 50 : 60 + Math.random() * (160 - 110 * prog);
+                }
+                if (fx.t >= fx.tFinal) {
+                    enemy.visible = true;
+                    enemy.position.sub(jitter); jitter.set(0, 0, 0);
+                    finalBlast();
+                }
+            } else {
+                if (fx._calloutUntil && !fx.callout && fx.t < fx._calloutUntil) callout();
+                const since = fx.t - fx.tFinal;
+                if (pushList && pushList.length && since < C.PUSH_MS) {
+                    const kk = 1 - since / C.PUSH_MS;
+                    for (let i = 0; i < pushList.length; i++) {
+                        const P = pushList[i];
+                        if (!P.e.parent || P.e.userData.health <= 0) continue;
+                        P.e.position.addScaledVector(P.dir, V * C.PUSH_K * P.k * kk * 2 * dt / C.PUSH_MS);
+                    }
+                }
+            }
+            stepLive(dt);
+            return !(fx.phase === 'final' && live.length === 0);
+        },
+        cleanup() {
+            for (let i = 0; i < live.length; i++) disposeLive(live[i]);
+            live.length = 0;
+            for (let i = 0; i < warm.length; i++) {
+                if (warm[i].parent) warm[i].parent.remove(warm[i]);
+                warm[i].material.dispose();
+                if (i === 0) warm[i].geometry.dispose();
+            }
+            warm.length = 0;
+            if (enemy.parent === holder) holder.remove(enemy);
+            if (holder.parent) holder.parent.remove(holder);
+            popGeo.dispose();
+            fx.phase = 'done';
+            fx.doneAt = performance.now();
+        }
+    });
+    return true;
+}
+if (typeof window !== 'undefined') window.hyBossDeath = hyBossDeath;
+
+// =============================================================================
 // MASSIVE BORG CUBE EXPLOSION - For 100 HP BORG destruction
 // =============================================================================
 
@@ -14408,10 +14923,16 @@ if (enemy.userData.health <= 0) {
         playSound('explosion');
     } else if (_bigKill && typeof createBossExplosion === 'function') {
         const _color = _enemyUD.galaxyColor || 0xff5522;
+        // HYBRID (bossExplosion: epic): the death set-piece takes the visuals
+        // and runs the boss celebration at its final blast.
+        if (!(typeof hyBossDeath === 'function' && hyBossDeath(enemy, {
+                color: _color, scale: _enemyUD.isBoss ? 1.8 : 1.3,
+                celebrate: !!(wasBoss || _enemyUD.isEliteGuardian), music: !!wasBoss, ambient: !!wasBoss }))) {
         createBossExplosion(enemy.position, {
             color: _color,
             scale: _enemyUD.isBoss ? 1.8 : 1.3
         });
+        }
     } else if (_isPirate) {
         // Martian Pirate kills roll one of three explosion variants; the
         // explosion color IS the loot tell (see PIRATE_EXPLOSION_VARIANTS):
@@ -14465,15 +14986,17 @@ if (enemy.userData.health <= 0) {
         }
     }
     
+    // HYBRID: true when the boss death set-piece owns flash/slow-mo/call-out/celebration
+    const _hyBossEpic = !!(enemy.userData && enemy.userData._hyBossFx);
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
     // Flagship kill: full-screen flash + bullet-time slow-mo as it dies.
-    if (window.arcade) {
+    if (window.arcade && !_hyBossEpic) {
         window.arcade.flash('rgba(255,200,80,0.9)', 0.85);
         window.arcade.slowmo(700);
     }
     // Top-tier arcade praise for a flagship kill, naming the faction
-    if (typeof flashArcadeText === 'function') {
+    if (typeof flashArcadeText === 'function' && !_hyBossEpic) {
         const _bw = ['TARGET ELIMINATED!', 'THREAT NEUTRALIZED!', 'FLAGSHIP DOWN!', 'REALITY BENT!'];
         let _bsub = null;
         try {
@@ -14489,13 +15012,13 @@ if (enemy.userData.health <= 0) {
         checkBossVictory(enemy);
     }
     // FIREWORKS CELEBRATION!
-    if (typeof createFireworkCelebration === 'function') {
+    if (typeof createFireworkCelebration === 'function' && !_hyBossEpic) {
         createFireworkCelebration();
     }
     // BOSS CELEBRATION MUSIC!
-    playBossVictoryMusic();
+    if (!_hyBossEpic) playBossVictoryMusic();
     // When boss is defeated, switch back to ambient music (after celebration)
-    setTimeout(() => {
+    if (!_hyBossEpic) setTimeout(() => {
         if (typeof switchToAmbientMusic === 'function') {
             switchToAmbientMusic();
         }
@@ -14602,8 +15125,8 @@ if (enemy.userData.health <= 0) {
         			} else {
             			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed!`);
         			}
-        			// Call firework celebration here
-        			if (typeof createFireworkCelebration === 'function') {
+        			// Call firework celebration here (the boss set-piece fires its own at the blast)
+        			if (typeof createFireworkCelebration === 'function' && !enemy.userData._hyBossFx) {
             		createFireworkCelebration();
         }
     }
@@ -15224,10 +15747,14 @@ function handleMissileHit(missile, enemy) {
             playSound('explosion');
         } else if (_missBig && typeof createBossExplosion === 'function') {
             const _color = _missUD.galaxyColor || 0xff5522;
+            if (!(typeof hyBossDeath === 'function' && hyBossDeath(enemy, {
+                    color: _color, scale: _missUD.isBoss ? 1.8 : 1.3,
+                    celebrate: !!wasBoss, music: !!wasBoss }))) {
             createBossExplosion(enemy.position, {
                 color: _color,
                 scale: _missUD.isBoss ? 1.8 : 1.3
             });
+            }
         } else if (_missPirate) {
             createExplosionEffect(enemy);
             playSound('explosion');
@@ -15246,8 +15773,10 @@ function handleMissileHit(missile, enemy) {
         if (wasBoss) {
             showAchievement('BOSS DEFEATED!', `${bossName} destroyed by missile!`);
             if (typeof checkBossVictory === 'function') checkBossVictory(enemy);
-            if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
-            playBossVictoryMusic();
+            if (!_missUD._hyBossFx) {   // else the boss set-piece celebrates at its blast
+                if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
+                playBossVictoryMusic();
+            }
 
             // Boss defeated: refill missiles (max cap 10)
             gameState.missiles.capacity = Math.min(10, gameState.missiles.capacity);
@@ -18305,12 +18834,18 @@ function _handleWingmanKill(enemy) {
     if (!enemy || !enemy.userData || enemy.userData._removedByWingman) return;
     enemy.userData._removedByWingman = true;
 
-    // Visual + sound
+    // Visual + sound (HYBRID bossExplosion: epic — a boss gets the death set-piece)
+    const _wud = enemy.userData;
+    const _wBig = _wud.isBoss || _wud.isEliteGuardian || _wud.isBlackHoleGuardian;
+    if (_wBig && typeof hyBossDeath === 'function' && hyBossDeath(enemy, { color: _wud.galaxyColor })) {
+        // set-piece owns the visuals and sound
+    } else {
     if (typeof createExplosionEffect === 'function') {
         createExplosionEffect(enemy);
     }
     if (typeof playSound === 'function') {
         playSound('explosion');
+    }
     }
 
     // Cluster + intel updates (some games track per-cluster kills)
