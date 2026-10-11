@@ -55,6 +55,8 @@
         // — new in the hybrid —
         solScale:        'big',        // Sol planets + Sun sized like other systems  'big' | 'overhaul'
         openingVista:    'off',        // Ben, 2026-09-27: "the new starting view is bad, revert."  'on' | 'off'
+        navWarp:         'on',         // O-warp with a nav target flies to it and parks facing it (demo-style arrival)  'on' | 'off'
+        warpTint:        'sector',     // warp streaks/tunnel coloured by where you are (nebula / Sol / galaxy)  'sector' | 'overhaul'
     };
 
     const KEY = 'hybridSwitches';

@@ -22325,6 +22325,7 @@ const HY_ASTEROIDS = {
     BODY_CLEAR_K: 3,       // ...and this many body radii from any planet, star or moon
     TRIES: 40,             // re-draws of a free field's centre before ORIGINAL's draw is kept
     BELT_GAP: 200,         // two belts of one host never share a ring: bands at least this far apart (ORIGINAL units)
+    PACE_REF: 2100,        // Feb-2026 belt ring radius (1600-2600): rocks keep that build's ~2 u/frame along-ring pace on any ring
     SOL_BAND: [5000, 7000],// ORIGINAL's Sol belt rings, mapped onto the Mars-Jupiter lane (see _hyAstSol)
     ALBEDO: 1,             // belt / cluster rock surface brightness (1 = ORIGINAL's)
 };
@@ -22401,10 +22402,11 @@ function _hyAstSol(r0, w0) {
     const k = (lane[1] - lane[0]) / (B[1] - B[0]);
     return { r: lane[0] + (r0 - B[0]) * k, w: w0 * k };
 }
-// A belt moved from ORIGINAL's ring r0 to ring r: the factor on its angular
-// orbit rate that makes each rock travel SIZE_K x ORIGINAL's speed — the same
-// pace for its size as in ORIGINAL (a rock you aim at crosses the crosshair
-// as fast as ORIGINAL's did). 1 when the switch is off.
+// A belt on ring r: the factor on its angular orbit rate that gives each rock
+// the Feb-2026 build's along-ring pace. That build (feature/gameplay-improvements,
+// a44151c) orbited belt rocks at 0.0005-0.0015 rad/frame on 1,600-2,600 u rings,
+// i.e. ~2 u/frame; the previous SIZE_K·r0/r factor measured 17.8 u/frame on the
+// Sol belt — Ben (2026-10-10): "these are too fast". 1 when the switch is off.
 // Every black hole as { c, R } (read once per builder call), and whether a
 // world point is clear of all of them by CORE_MIN_RADII — a belt mapped round
 // its own core can still reach a neighbouring hole (the Local Gateway sits
@@ -22438,7 +22440,7 @@ function _hyAstRingFree(c, r, y, holes) {
     }
     return true;
 }
-function _hyAstPace(r0, r) { return (_hyAstOn() && r > 0) ? HY_ASTEROIDS.SIZE_K * r0 / r : 1; }
+function _hyAstPace(r0, r) { return (_hyAstOn() && r > 0) ? HY_ASTEROIDS.PACE_REF / r : 1; }
 if (typeof window !== 'undefined') {
     window._hyAstOn = _hyAstOn; window._hyAstK = _hyAstK; window._hyAstCore = _hyAstCore;
     window._hyAstFloor = _hyAstFloor; window._hyAstPlace = _hyAstPlace; window._hyAstDrawn = _hyAstDrawn;

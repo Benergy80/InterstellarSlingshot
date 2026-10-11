@@ -329,9 +329,9 @@ function createDistressCall(civilian) {
     if (typeof camera !== 'undefined') {
         const distToPlayer = civilian.position.distanceTo(camera.position);
         if (distToPlayer < DISTRESS_DETECTION_RANGE) {
-            if (typeof showAchievement === 'function') {
-                showAchievement('DISTRESS CALL DETECTED', 
-                    `${distressCall.name} under attack! Distance: ${(distToPlayer/1000).toFixed(1)}Mm`);
+            if (typeof showIncomingTransmission === 'function') {   // HYBRID: civilian channel (violet)
+                showIncomingTransmission('DISTRESS CALL — ' + distressCall.name,
+                    `${distressCall.name} under attack! Distance: ${(distToPlayer/1000).toFixed(1)}Mm`, 'civilian');
             }
         }
     }
@@ -368,9 +368,9 @@ function destroyCivilian(civilian) {
     if (typeof camera !== 'undefined') {
         const distToPlayer = civilian.position.distanceTo(camera.position);
         if (distToPlayer < 2000) {
-            if (typeof showAchievement === 'function') {
-                showAchievement('CIVILIAN DESTROYED', 
-                    `${civilian.userData.name || 'Civilian vessel'} has been destroyed`);
+            if (typeof showIncomingTransmission === 'function') {   // HYBRID: civilian channel (violet)
+                showIncomingTransmission('CIVILIAN DESTROYED',
+                    `${civilian.userData.name || 'Civilian vessel'} has been destroyed`, 'civilian');
             }
         }
     }
@@ -402,9 +402,9 @@ function updateDistressCalls() {
         const distToPlayer = call.civilian.position.distanceTo(camera.position);
         if (distToPlayer < DISTRESS_DETECTION_RANGE && !call.playerNotified) {
             call.playerNotified = true;
-            if (typeof showAchievement === 'function') {
-                showAchievement('DISTRESS CALL DETECTED',
-                    `${call.name} under attack! Distance: ${(distToPlayer/1000).toFixed(1)}Mm`);
+            if (typeof showIncomingTransmission === 'function') {   // HYBRID: civilian channel (violet)
+                showIncomingTransmission('DISTRESS CALL — ' + call.name,
+                    `${call.name} under attack! Distance: ${(distToPlayer/1000).toFixed(1)}Mm`, 'civilian');
             }
         }
 
@@ -452,9 +452,9 @@ function triggerCaravanRescue(call) {
     }
 
     // Notification banner + cinematic card
-    if (typeof showAchievement === 'function') {
-        showAchievement('🛡️ CARAVAN RESCUED',
-            `${name} saved! Full resupply: hull, energy, missiles, warps`);
+    if (typeof showIncomingTransmission === 'function') {   // HYBRID: civilian channel (violet)
+        showIncomingTransmission('CARAVAN RESCUED',
+            `${name} saved! Full resupply: hull, energy, missiles, warps`, 'civilian');
     }
     if (typeof flashEventText === 'function') {
         flashEventText('CARAVAN RESCUED', '#00ff88', name + ' · full resupply transferred');

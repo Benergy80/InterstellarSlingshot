@@ -6516,12 +6516,10 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                     if (typeof createWingmanExplosion === 'function') {
                         createWingmanExplosion(targetWingman);
                     }
-                    if (typeof showAchievement === 'function') {
-                        showAchievement(
-                            (targetWingman.userData.name || 'Wingman') + ' DESTROYED!',
-                            'Ally ship lost in combat',
-                            true
-                        );
+                    if (typeof showIncomingTransmission === 'function') {
+                        showIncomingTransmission(
+                            (targetWingman.userData.name || 'Wingman') + ' DESTROYED',
+                            'Ally ship lost in combat', 'wingman');
                     }
                     if (typeof flashEventText === 'function') {
                         flashEventText('WINGMAN DOWN', '#ff5555',
@@ -6565,9 +6563,9 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 if (mv.userData.health <= 0) {
                     mv.userData._destroyed = true;
                     if (typeof createWingmanExplosion === 'function') createWingmanExplosion(mv);
-                    if (typeof showAchievement === 'function') {
-                        showAchievement((mv.userData.name || 'Mining Vessel') + ' LOST',
-                            'A mining vessel was destroyed by hostiles', true);
+                    if (typeof showIncomingTransmission === 'function') {
+                        showIncomingTransmission((mv.userData.name || 'Mining Vessel') + ' LOST',
+                            'A mining vessel was destroyed by hostiles', 'civilian');
                     }
                     if (typeof playSound === 'function') playSound('explosion');
                     if (typeof scene !== 'undefined') scene.remove(mv);
@@ -7039,14 +7037,26 @@ if (typeof gameState === 'undefined' || !gameState.suppressAchievements) {
 // colour-coded by channel, and stays up until the player clicks SKIP.
 // =============================================================================
 
+// Comms channel colours. HYBRID (Ben, 2026-10-10): wingman comms and civilian
+// signals come through this same bottom-of-screen channel, each in its own
+// colour — squad blue for the wingmen, violet for civilians (caravans, mining
+// vessels, freighters), yellow distress, cyan lore, orange ship-to-ship.
+const _HY_COMMS_COLORS = { distress: '#ffd633', lore: '#00e5ff', ship: '#ff9a33', wingman: '#8fd3ff', civilian: '#d08cff' };
+if (typeof window !== 'undefined') window._HY_COMMS_COLORS = _HY_COMMS_COLORS;
+
 function showIncomingTransmission(title, text, factionColor) {
-    // Classify the comms channel -> colour. distress=yellow, lore=cyan,
-    // ship-to-ship=orange. (Direct command briefings stay mission-control green.)
+    // Classify the comms channel -> colour. An explicit channel name wins;
+    // otherwise the sender's title decides. (Direct command briefings stay
+    // mission-control green.)
+    const _t = String(title || '');
     let channel;
-    if (factionColor === true || /distress|mayday|under\s*(attack|fire)/i.test(String(title))) channel = 'distress';
-    else if (/mission control/i.test(String(title))) channel = 'lore';
+    if (typeof factionColor === 'string' && _HY_COMMS_COLORS[factionColor]) channel = factionColor;
+    else if (/\(comms\)|wingman/i.test(_t)) channel = 'wingman';
+    else if (/caravan|civilian|mining vessel|freighter|convoy|trader|merchant|colony|transport|cargo/i.test(_t)) channel = 'civilian';
+    else if (factionColor === true || /distress|mayday|under\s*(attack|fire)/i.test(_t)) channel = 'distress';
+    else if (/mission control/i.test(_t)) channel = 'lore';
     else channel = 'ship';
-    const colorHex = { distress: '#ffd633', lore: '#00e5ff', ship: '#ff9a33' }[channel];
+    const colorHex = _HY_COMMS_COLORS[channel];
 
     // Short comm-link beep, then deliver straight to the comms panel.
     if (typeof playSound === 'function') playSound('achievement');
@@ -17339,7 +17349,7 @@ function updateAllyShips() {
         // hyperjump near the player rather than stranding them. Keeps the
         // squad together when emergency warp covers tens of thousands of
         // units of interstellar space.
-        if (!playerWarping && ud._wasWarping && ud.aiState === 'follow' && distToPlayer > 1500) {
+        if (!playerWarping && ud._wasWarping && distToPlayer > 1500) {   // HYBRID: any state, not only 'follow'
             _ftlAnchorWingman(ally, playerPos);
             ud._wasWarping = false;
         }
@@ -17373,11 +17383,28 @@ function updateAllyShips() {
             ud.patrolTarget = null;
         }
 
-        // Player is warping (slingshot/emergency/BH) — drop everything and follow
-        if (playerWarping && ud.aiState !== 'engage') {
+        // Player is warping (slingshot/emergency/BH) — drop everything and follow.
+        // HYBRID (Ben: "fix the way the wingmen look when warping"): a REAL burn
+        // (emergency warp / slingshot / black-hole transit — not merely fast
+        // cruise) pulls even a dogfighting wingman into formation. Measured:
+        // an engaged wingman stayed on its target and fell from 700 u ahead to
+        // 3,300 u behind in 6 s of O-warp. One too far to form up (stranded,
+        // or across a fight) FTL-hops into formation once per warp, so the
+        // squad rides the burn together instead of trailing it.
+        const _burst = !!((gameState.emergencyWarp && (gameState.emergencyWarp.active || gameState.emergencyWarp.transitioning)) ||
+                          (gameState.slingshot && gameState.slingshot.active) ||
+                          (gameState.blackHoleWarp && gameState.blackHoleWarp.active));
+        if (playerWarping && (ud.aiState !== 'engage' || _burst)) {
+            if (_burst && !ud._warpAnchored && distToPlayer > 1500) {
+                _ftlAnchorWingman(ally, playerPos);
+                ud._warpAnchored = true;
+            }
             if (ud.aiState !== 'follow') _wingmanTacticalMessage(ud, 'follow');
             ud.aiState = 'follow';
             ud.patrolTarget = null;
+            ud.engageTarget = null;
+        } else if (!_burst && ud._warpAnchored) {
+            ud._warpAnchored = false;
         }
 
         if (ud.aiState === 'patrol') {
@@ -17916,9 +17943,21 @@ function _drainWingmanComms() {
         _wingmanCommsTimer = setTimeout(_drainWingmanComms, wait);
         return;
     }
+    // HYBRID: the tutorial briefing owns the comms panel (it carries the SKIP
+    // button); squad chatter during it is dropped rather than queued stale.
+    if (typeof tutorialSystem !== 'undefined' && tutorialSystem && tutorialSystem.active && !tutorialSystem.completed) {
+        _wingmanCommsQueue.length = 0;
+        return;
+    }
     const msg = _wingmanCommsQueue.shift();
     _wingmanCommsLastDispatch = now;
-    if (typeof showAchievement === 'function') {
+    // HYBRID (Ben, 2026-10-10): "the communication texts ... should come in
+    // through the same interface as the other incoming messages at the bottom
+    // of the screen." They used to go to showAchievement, whose popup ORIGINAL
+    // retired — so they were never seen.
+    if (typeof showIncomingTransmission === 'function') {
+        showIncomingTransmission(msg.title, msg.text, 'wingman');
+    } else if (typeof showAchievement === 'function') {
         showAchievement(msg.title, msg.text, false);
     }
     if (_wingmanCommsQueue.length) {
