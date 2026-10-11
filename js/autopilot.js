@@ -866,6 +866,12 @@
                          !(typeof gameState !== 'undefined' && gameState.slingshotWhip));
     if (_bcFrozen) _bcQuatTmp.copy(camera.quaternion);
 
+    // HYBRID demo: the Sol opening-fight budget (HY_DEMO) ends combat AND a
+    // boss engagement — the pirate flagship spawns once enough pirates die,
+    // and a demo that then fights it for the rest of the run never shows the
+    // nebulae (soak: 0 warps, 0 parks in 180 s).
+    if ((ap.phase === 'combat' || ap.phase === 'bossEngage') && _solBudgetOut()) { _solBudgetLeave(); return; }
+
     // Dispatch
     switch (ap.phase) {
       case 'init':                     phaseInit();                   break;
@@ -2391,13 +2397,16 @@
   // ship is still in Sol — whatever phase the demo is in. Measured: the demo
   // chains combat targets without returning to the scan, and its return phase
   // is often the campaign's guide path, so a scan-only check never fired.
-  function _solBudgetOut() {
-    if (ap._solFightDone) return false;
-    if (!ap._solFightT0) ap._solFightT0 = Date.now();
+  function _demoInSol() {
     const o = (typeof window !== 'undefined') ? window.localSystemOffset : null;
     if (!o || typeof camera === 'undefined') return false;
     const edge = (typeof _hySolLayout === 'function') ? ((_hySolLayout() || {}).edge || 26000) : 26000;
-    if (Math.hypot(camera.position.x - (o.x || 0), camera.position.z - (o.z || 0)) > edge * 1.2) return false;
+    return Math.hypot(camera.position.x - (o.x || 0), camera.position.z - (o.z || 0)) <= edge * 1.2;
+  }
+  function _solBudgetOut() {
+    if (ap._solFightDone) return false;
+    if (!ap._solFightT0) ap._solFightT0 = Date.now();
+    if (!_demoInSol()) return false;
     return (ap._solKills || 0) >= HY_DEMO.SOL_KILLS || Date.now() - ap._solFightT0 > HY_DEMO.SOL_FIGHT_MS;
   }
   function _solBudgetLeave() {
@@ -2413,6 +2422,9 @@
     ensureThirdPerson();
 
     if (_solBudgetOut()) { _solBudgetLeave(); return; }
+    // Budget already spent and still in Sol: the scan would pick a pirate,
+    // ask for combat, be refused by goPhase, and scan again forever.
+    if (ap._solFightDone && _demoInSol()) { goPhase('warpToNebulaCluster'); return; }
 
     // Force the nav panel to refresh immediately on first entry and every 3s
     if (typeof populateTargets === 'function' &&
@@ -8134,6 +8146,12 @@
     // The leg is not cancelled, only deferred — every caller re-detects the
     // intruder on the next frame, and the burn is at most ~25 s long.
     if ((name === 'combat' || name === 'bossEngage') && _burnCommitted()) return;
+    // HYBRID demo: once the Sol opening-fight budget is spent (HY_DEMO), no NEW
+    // Sol combat — twelve paths re-enter 'combat' on any contact, and with 48
+    // pirates at Sol the showcase never left (soaks: 0 warps, 0 parks). The
+    // pirates are still fought when they come to the ship; the demo just
+    // stops chasing them and makes for the nebulae.
+    if ((name === 'combat' || name === 'bossEngage') && ap._solFightDone && _demoInSol()) return;
     console.log('🤖 autopilot →', name);
     ap.phase = name;
     ap.phaseStart = Date.now();
