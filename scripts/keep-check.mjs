@@ -380,7 +380,10 @@ check('slingshot', async () => {
     const K = window.__kc, ie = K.ie, sleep = K.sleep; const cam = ie('camera'), gs = ie('gameState'), keys = ie('keys');
     if (window.demoPilot && window.demoPilot.active) window.demoPilot.stop();
     K.stashEnemies();
-    const body = K.nebPlanets().filter((p) => p.geometry && p.geometry.parameters && p.geometry.parameters.radius > 25 && p.geometry.parameters.radius < 140)[0];
+    // The smallest nebula world over 25 u (package N moved every planet onto 240-620,
+    // so the old 25-140 window found nothing; on older builds this is still a 25-140 one).
+    const body = K.nebPlanets().filter((p) => p.geometry && p.geometry.parameters && p.geometry.parameters.radius > 25)
+        .sort((a, b) => a.geometry.parameters.radius - b.geometry.parameters.radius)[0];
     if (!body) return { err: 'no staging planet' };
     const range = ie('getSlingshotRange')(body);
     const run = async (steer) => {
