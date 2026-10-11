@@ -415,6 +415,10 @@ check('slingshot', async () => {
         const a0 = K.additiveVisible(), fov0 = cam.fov, v0 = gs.velocityVector.length(); K.fovReset();
         ie('executeSlingshot')();
         Object.assign(r, { entry: +v0.toFixed(2), captured: !!gs.slingshot.active, fov0: +fov0.toFixed(1) });
+        // What the whip aims at: a stale nav target (left by the demo) moves the aim.
+        { const _w = gs.slingshotWhip, _t = gs.currentTarget;
+          r.navTarget = (_t && _t.userData && _t.userData.name) || (_t ? 'unnamed' : null);
+          if (_w && _w.aim) r.aim = [_w.aim.x, _w.aim.y, _w.aim.z].map((x) => +x.toFixed(3)); }
         const t0 = Date.now(); let rel = null, relV = null, relC = null, peak = 0, fmax = 0, amax = 0, trail = false, ramp = false, whip = false;
         // Per-100 ms samples: what the ship is doing against the body through
         // the whip and the first second of the glide (evidence for a flake).
@@ -424,7 +428,7 @@ check('slingshot', async () => {
             await sleep(100); gs.hull = gs.maxHull || 100;
             const v = gs.velocityVector.length(); peak = Math.max(peak, v); fmax = Math.max(fmax, cam.fov); amax = Math.max(amax, K.additiveVisible());
             if (r.samples.length < 80) r.samples.push({ t: Date.now() - t0, v: +v.toFixed(1), dR: +(cam.position.distanceTo(body.getWorldPosition(new THREE.Vector3())) / _bR).toFixed(2),
-                whip: !!gs.slingshotWhip, act: !!gs.slingshot.active, post: !!gs.slingshot.postSlingshot, x: !!keys.x, w: !!keys.w, tr: gs.slingshot.timeRemaining | 0 });
+                whip: !!gs.slingshotWhip, act: !!gs.slingshot.active, post: !!gs.slingshot.postSlingshot, x: !!keys.x, w: !!keys.w, tr: gs.slingshot.timeRemaining | 0, dying: !!(gs.playerDying || gs.gameOver) });
             try { if (ie('_whipTrail')) trail = true; } catch (x) { /* optional */ }
             if (gs.slingshotWhip) whip = true; if (gs.slingshotLaunchRamp) ramp = true;
             if (rel === null && whip && !gs.slingshotWhip) { rel = Date.now() - t0; relV = gs.velocityVector.clone().normalize();
