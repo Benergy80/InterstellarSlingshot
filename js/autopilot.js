@@ -763,7 +763,8 @@
         // through and the interrupted mission step resumes after it.
         gameState._pendingBossEngage = false;
         _bossHuntStart(_bossHuntPick(null), 'spawn-in-fight');
-      } else if (ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' && !_bossDivertLocked()) {
+      } else if (ap.phase !== 'init' && ap.phase !== 'blackHoleWarp' && !_bossDivertLocked() &&
+                 !(Date.now() < (ap._directorYieldUntil || 0))) {   // not over a diag-staged phase
         // HYBRID boss hunt (Ben 2026-10-11): a boss that appears is pursued until
         // defeated before the path of discovery continues — from any phase, at
         // any range. A lit burn or a locked coast only defers this (flag kept).
@@ -794,7 +795,8 @@
       const _seen = ap._bossSeen || (ap._bossSeen = new Set());
       const _seeded = !!ap._bossSeenSeeded; ap._bossSeenSeeded = true;
       const _fighting = ap.phase === 'combat' || ap.phase === 'bossEngage' || ap.phase === 'fightBorg';
-      const _canDivert = !_fighting && ap.phase !== 'blackHoleWarp' && !_bossDivertLocked() && !_dirOn();
+      const _diagHold = Date.now() < (ap._directorYieldUntil || 0);   // a staged (keep-check) phase is not hijacked
+      const _canDivert = !_fighting && ap.phase !== 'blackHoleWarp' && !_bossDivertLocked() && !_dirOn() && !_diagHold;
       let _pull = null, _why = null;
       for (let i = 0; i < enemies.length; i++) {
         const e = enemies[i];
@@ -817,7 +819,7 @@
         }
       } else if (ap._bossHunt && _canDivert) {
         goPhase('bossEngage');
-      } else if (ap._bossHunt && ap.phase === 'combat' && !_dirOn() && ap.combatTarget !== ap._bossHunt.boss &&
+      } else if (ap._bossHunt && ap.phase === 'combat' && !_dirOn() && !_diagHold && ap.combatTarget !== ap._bossHunt.boss &&
                  !(ap.combatTarget && ap.combatTarget.userData && ap.combatTarget.userData.isBossSupport)) {
         // A stray dogfight yields to the hunt; bossEngage picks the escort or the boss itself.
         goPhase('bossEngage');
