@@ -479,6 +479,12 @@ function getGalaxy3DPosition(galaxyId) {
 }
 
 function getRandomPositionInGalaxy3D(galaxyId) {
+    // package Q (bhplace): galaxy.size (600-1,800) is inside a scaled core's
+    // shadow — draw in the galaxy's field instead (HY_GALAXY.FIELD_*).
+    if (typeof _hyGalaxyFieldPos === 'function') {
+        const _hp = _hyGalaxyFieldPos(galaxyId);
+        if (_hp) return _hp;
+    }
     const galaxy = galaxyTypes[galaxyId];
     const centerPosition = getGalaxy3DPosition(galaxyId);
 
@@ -2653,7 +2659,9 @@ if (typeof window !== 'undefined' && typeof createOptimizedPlanets3D === 'functi
 // =============================================================================
 const HY_BH = {
     SIZE: 900,            // shadow radius of a standard galaxy core (heart worlds are 620, Jupiter 120)
-    REL: { Dwarf: 0.75, Quasar: 1.35, sgr: 1.0, companion: 0.85, gateway: 0.45, other: 1.0 },
+    // package Q (bhplace): gateway 0.45 -> 0.85 (its Dune systems now ring it
+    // at HY_SCALE spacing instead of 1,270 u out, so it can take a home-hole size)
+    REL: { Dwarf: 0.75, Quasar: 1.35, sgr: 1.0, companion: 0.85, gateway: 0.85, other: 1.0 },
     GALAXY_SCALE: 4,      // a galaxy core's particle swirl + star systems grow this much
     CLEAR_RADII: 6,       // star systems around a hole are pushed out past this many radii
     DISC_BRIGHT: 1.0,     // accretion disc + arch brightness multiplier
@@ -7484,6 +7492,9 @@ function _hyPlaceSystems(tag) {
         const R = _hyBodyR(h);
         const clear = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
         nodes.push({ c: h.position.clone(), R: R, edge: clear * R, fixed: true, body: h });
+        // package Q (bhplace): a galaxy / the Gateway is a whole place — its
+        // systems ring and asteroid fields (its own systems are already placed)
+        if (h.userData._hyGalaxyReach) nodes.push({ c: h.position.clone(), R: 0, edge: h.userData._hyGalaxyReach, fixed: true });
     });
     planets.forEach(function (p) {
         if (p && p.userData && p.userData.heartWorld) {
@@ -7520,7 +7531,8 @@ function _hySpaceNebulae() {
         if (!u) return;
         if (u.type === 'blackhole') {
             const R = _hyBodyR(p), clear = (typeof HY_BH !== 'undefined') ? HY_BH.CLEAR_RADII : 6;
-            nodes.push({ c: p.position.clone(), R: 0, edge: clear * R, fixed: true });
+            // package Q (bhplace): a galaxy / the Gateway keeps its whole place
+            nodes.push({ c: p.position.clone(), R: 0, edge: Math.max(clear * R, u._hyGalaxyReach || 0), fixed: true });
         }
     });
     // every star system placed so far, by its edge (rule 2)
@@ -7604,6 +7616,10 @@ function _hyInstallScaleHooks() {
     };
     _wrapAfter('createOptimizedPlanets3D', function () {
         if (typeof _hyLadderSystems === 'function') _hyLadderSystems('core');
+        // package Q (bhplace): galaxy + Gateway systems round their hole first
+        if (typeof _hyArrangeHostSystems === 'function') _hyArrangeHostSystems();
+        // ... then whole galaxies apart by their reach (and galaxy3DPositions synced)
+        if (typeof _hyRelayGalaxies === 'function') _hyRelayGalaxies();
         _hyPlaceSystems('core');
         // package N (scale2): the far plane grows with the universe (250,000 x
         // UNIVERSE_K) so the far galaxies, outer systems and procedural shell
@@ -7943,7 +7959,8 @@ function _hyPlaceOuterSystems() {
     nodes.push(_hySolNode(new THREE.Vector3(sol.x, sol.y, sol.z)));
     const col = _hyCollectSystems();
     col.holes.forEach(function (h) {
-        nodes.push({ c: h.position.clone(), R: _hyBodyR(h), edge: HY_BH.CLEAR_RADII * _hyBodyR(h), fixed: true });
+        // package Q (bhplace): a galaxy / the Gateway keeps its whole place
+        nodes.push({ c: h.position.clone(), R: _hyBodyR(h), edge: Math.max(HY_BH.CLEAR_RADII * _hyBodyR(h), h.userData._hyGalaxyReach || 0), fixed: true });
     });
     col.systems.forEach(function (g) { nodes.push({ c: g.center.clone(), R: g.R, edge: g.edge, ext: g.edge, big: g.big, fixed: true }); });
     // package N (scale2): and against the heart worlds and the nebula clouds,
@@ -7971,6 +7988,318 @@ function _hyPlaceOuterSystems() {
     return moves;
 }
 if (typeof window !== 'undefined') window._hyPlaceOuterSystems = _hyPlaceOuterSystems;
+
+// =============================================================================
+// HYBRID (solScale:big) — BLACK-HOLE GALAXY PLACEMENT   (package Q, bhplace)
+//
+// Ben: "Black Hole Systems placements" / "Shouldn't those giant planets be
+// further away from SOL and each other. There placement needs to scale with
+// their size."  Measured on 20261010k (scripts/bh-audit.js):
+//   * the seven foreign cores were re-rolled at random 46-139k out, but every
+//     other consumer (getGalaxy3DPosition: enemies, cosmic features, the map,
+//     location names, black-hole-warp arrival) read the fixed galaxy3DPositions
+//     table — 98-308k away from the real cores. A warp to a galaxy never
+//     "arrived" (no asteroids / enemies / guardians were loaded for it);
+//   * a galaxy's star systems sat 18-62 core radii out, solver-scattered, and
+//     17 pairs of black-hole places overlapped;
+//   * the Local Gateway's six Dune systems sprawled 27-86 radii round a 405 hole.
+// Now every galaxy is ONE PLACE, sized from its own black hole and systems:
+//   core R (HY_BH) · disc 5.6 R · keep-clear CLEAR_RADII R · asteroid belts
+//   (HY_ASTEROIDS maps them to CLEAR R + GALAXY_SCALE x 1,600-3,400) · its star
+//   systems evenly round a ring in the swirl's own plane, just outside the
+//   belts, neighbours HY_SCALE rule 1 apart · scatter fields out to
+//   CLEAR R + GALAXY_SCALE x FIELD_REACH. Its REACH (userData._hyGalaxyReach)
+//   is the larger of the ring (+ a system's edge) and that field.
+// Under package N's ladder a galaxy system is Sol-sized (6-10 worlds, edge
+// 13-33k), so a galaxy's reach is ~80-100k. Whole galaxies (core, swirl,
+// systems) are then laid out from Sgr A* so two places keep GAP_K x (reach1 +
+// reach2) of empty space between them and stay clear of the home galaxy's
+// star disc (HOME_REACH), Sol's keep-clear and the Gateway's place. N's shell
+// (25k-75k x UNIVERSE_K) cannot hold seven such places, so its outer radius
+// grows by GROW_K until they fit (window.__hyGalaxyLayout.shell says how far).
+// The result is written back into galaxy3DPositions: the table and the cores
+// are one source of truth. ?hy=solScale:overhaul gives back the random roll.
+// Ben: tune the numbers here.
+// =============================================================================
+const HY_GALAXY = {
+    GAP_K: 0.15,           // empty space between two galaxy places = GAP_K x (reach1 + reach2)
+    HOME_REACH: 40000,     // the home galaxy's star disc round Sgr A* / the Companion (measured 37,500)
+    GROW_K: 1.1,           // the core shell's outer radius grows by this until every galaxy fits ...
+    GROW_STEPS: 12,        // ... at most this many times
+    SYS_EDGE: 7500,        // a star system's edge when none is measured
+    BELT_REACH: 3400,      // ORIGINAL units: outermost belt ring + half its width (HY_ASTEROIDS maps it out)
+    FIELD_REACH: 7200,     // ORIGINAL units: scatter clusters 3,000-7,000 from the core plus their spread
+    RING_JITTER: 0.12,     // a system sits ring x (1 .. 1 + RING_JITTER) out ...
+    RING_TILT: 0.06,       // ... and up to RING_TILT x ring above / below the swirl's plane
+    TRIES: 4000,           // candidate core positions tried per galaxy per shell size
+    FIELD_FROM_RADII: 6.8, // getRandomPositionInGalaxy3D: enemies / features from here (core radii) ...
+    FIELD_TO_K: 0.9,       // ... out to this fraction of the galaxy's reach
+    ARRIVE_BODY_K: 3,      // a black-hole warp exit keeps this many body radii from any star / planet
+};
+if (typeof window !== 'undefined') window.HY_GALAXY = HY_GALAXY;
+
+function _hyGalaxyOn() {
+    return _hyScaleOn() && typeof HY_BH !== 'undefined' && typeof window !== 'undefined';
+}
+// A host's systems ring and reach. R = core radius, n = systems, galaxy =
+// it rings asteroid belts too, E = its largest system edge.
+function _hyHostPlan(R, n, galaxy, E) {
+    E = E || HY_GALAXY.SYS_EDGE;
+    const m = 1 + HY_SCALE.EDGE_MARGIN, star = HY_LADDER.star[1];
+    const req = Math.max(HY_SCALE.PLACE_K * 2 * star, 2 * E * m, 2 * E + HY_SCALE.PLACE_K * 2 * star);
+    const gs = HY_BH.GALAXY_SCALE, clr = HY_BH.CLEAR_RADII * R;
+    let ring = clr + E * m;
+    if (galaxy) ring = Math.max(ring, clr + gs * HY_GALAXY.BELT_REACH + E * m);
+    if (n > 1) ring = Math.max(ring, req / (2 * Math.sin(Math.PI / n)));
+    let reach = ring * (1 + HY_GALAXY.RING_JITTER) + E;
+    if (galaxy) reach = Math.max(reach, clr + gs * HY_GALAXY.FIELD_REACH);
+    return { ring: ring, reach: reach, req: req };
+}
+
+// One try at laying `gals` (black holes with _hyGalaxyReach) out in the shell
+// [minR, maxR] round O, clear of `fixed` { c, reach }. Returns { pos: Map, short }.
+function _hyTryGalaxyLayout(gals, fixed, O, minR, maxR) {
+    const V = THREE.Vector3;
+    const placed = [], pos = new Map();
+    let short = 0;
+    const c = new V();
+    gals.forEach(function (h) {
+        const P = h.userData._hyGalaxyReach;
+        const all = fixed.concat(placed);
+        let best = null, bestSlack = -Infinity;
+        const valid = [];
+        for (let t = 0; t < HY_GALAXY.TRIES; t++) {
+            const r = minR + Math.random() * (maxR - minR);
+            const th = Math.random() * Math.PI * 2, ph = Math.acos(1 - 2 * Math.random());
+            c.set(O.x + r * Math.sin(ph) * Math.cos(th), O.y + r * Math.cos(ph), O.z + r * Math.sin(ph) * Math.sin(th));
+            let slack = Infinity;
+            for (let k = 0; k < all.length; k++) slack = Math.min(slack, c.distanceTo(all[k].c) - (all[k].reach + P) * (1 + HY_GALAXY.GAP_K));
+            if (slack >= 0) { valid.push(c.clone()); if (valid.length >= 24) break; }
+            if (slack > bestSlack) { bestSlack = slack; best = c.clone(); }
+        }
+        const p = valid.length ? valid[Math.floor(Math.random() * valid.length)] : best;
+        if (!valid.length) short = Math.max(short, -bestSlack);
+        placed.push({ c: p, reach: P });
+        pos.set(h, p);
+    });
+    return { pos: pos, short: short };
+}
+// Move a whole galaxy — core (its swirl and dressing are children), lights
+// and sprites parked on it, and its star systems — by `delta`.
+function _hyMoveGalaxy(bh, systems, delta) {
+    const old = bh.position.clone();
+    bh.position.add(delta);
+    if (bh.userData.position3D && bh.userData.position3D.isVector3) bh.userData.position3D.add(delta);
+    bh.updateMatrix();
+    bh.updateMatrixWorld(true);
+    if (typeof scene !== 'undefined' && scene) scene.children.forEach(function (o) {
+        if (o !== bh && (o.isPointLight || o.isSprite) && o.position.distanceTo(old) < 2) o.position.add(delta);
+    });
+    systems.forEach(function (g) { _hyMoveSystem(g, delta); });
+}
+// Lay the seven galaxies out as whole places (measured reach). Runs after
+// _hyArrangeHostSystems, before _hyPlaceSystems.
+function _hyRelayGalaxies() {
+    if (!_hyGalaxyOn() || typeof planets === 'undefined') return 0;
+    const V = THREE.Vector3, U = _hyU();
+    const col = _hyCollectSystems();
+    const sgr = col.holes.find(function (h) { return h.userData.isSagittariusA; });
+    const O = sgr ? sgr.position.clone() : new V();
+    const sol = window.localSystemOffset || _hySolCenter();
+    const fixed = [{ c: O.clone(), reach: HY_GALAXY.HOME_REACH }];
+    const gals = [];
+    col.holes.forEach(function (h) {
+        const u = h.userData;
+        if (u.isCompanionCore) fixed.push({ c: h.position.clone(), reach: HY_GALAXY.HOME_REACH });
+        else if (u.isLocalGateway) fixed.push({ c: h.position.clone(), reach: u._hyGalaxyReach || HY_BH.CLEAR_RADII * _hyBodyR(h) });
+        else if (u.isGalacticCore && !u.isSagittariusA && typeof u.galaxyId === 'number' && u.galaxyId < 7 && u._hyGalaxyReach) gals.push(h);
+    });
+    fixed.push({ c: new V(sol.x, sol.y, sol.z), reach: _hySolEdge() * (1 + HY_SCALE.EDGE_MARGIN) });
+    gals.sort(function (a, b) { return b.userData._hyGalaxyReach - a.userData._hyGalaxyReach; });
+    const minR = 25000 * U;
+    let maxR = 75000 * U, res = null, grown = 0;
+    for (;;) {
+        res = _hyTryGalaxyLayout(gals, fixed, O, minR, maxR);
+        if (!res.short || grown >= HY_GALAXY.GROW_STEPS) break;
+        maxR *= HY_GALAXY.GROW_K; grown++;
+    }
+    gals.forEach(function (h) {
+        const delta = res.pos.get(h).clone().sub(h.position);
+        _hyMoveGalaxy(h, col.systems.filter(function (g) { return g.own === h; }), delta);
+    });
+    const woo = window.worldOriginOffset || { x: 0, y: 0, z: 0 };
+    const truePos = [];
+    gals.forEach(function (h) { truePos[h.userData.galaxyId] = new V(h.position.x + woo.x, h.position.y + woo.y, h.position.z + woo.z); });
+    _hySyncGalaxyTable(truePos);
+    let maxCore = 0;
+    gals.forEach(function (h) { maxCore = Math.max(maxCore, h.position.distanceTo(O)); });
+    window.__hyGalaxyLayout = {
+        shell: [Math.round(minR), Math.round(maxR)], grown: grown, short: Math.round(res.short), maxCore: Math.round(maxCore),
+        maxReach: gals.reduce(function (m, h) { return Math.max(m, h.userData._hyGalaxyReach); }, 0),
+        cores: gals.map(function (h) { return { g: h.userData.galaxyId, d: Math.round(h.position.distanceTo(O)), reach: h.userData._hyGalaxyReach }; })
+    };
+    if (res.short) console.warn('HYBRID galaxy layout: still ' + Math.round(res.short) + ' u short of room at shell ' + Math.round(maxR));
+    console.log('HYBRID galaxy layout: ' + gals.length + ' galaxies, shell ' + Math.round(minR) + '-' + Math.round(maxR) +
+        ' (grown ' + grown + 'x), reach ' + gals.map(function (h) { return h.userData._hyGalaxyReach; }).join('/'));
+    return gals.length;
+}
+if (typeof window !== 'undefined') {
+    window._hyRelayGalaxies = _hyRelayGalaxies;
+    window._hyGalaxyReachMax = function () { return (window.__hyGalaxyLayout && window.__hyGalaxyLayout.maxReach) || 0; };
+}
+// galaxy3DPositions := the real cores (TRUE coords, in getGalaxy3DPosition's
+// own spherical convention). Index 7 (the home galaxy) and 8 (Sagittarius A)
+// := Sgr A*, the core getCurrentGalaxyId names galaxy 7 by.
+function _hySyncGalaxyTable(truePos) {
+    const UR = 100000 * _hyU();
+    for (let i = 0; i < galaxy3DPositions.length; i++) {
+        const e = galaxy3DPositions[i];
+        const p = (i < 7) ? truePos[i] : null;
+        if (!p) { if (i >= 7) { e.distance = 0; e.theta = 0; e.phi = 0; } continue; }
+        const r = p.length();
+        e.distance = r / UR;
+        e.theta = Math.acos(Math.max(-1, Math.min(1, p.y / r)));   // polar, from +Y
+        e.phi = Math.atan2(p.z, p.x);                                // azimuth in XZ
+        if (e.phi < 0) e.phi += Math.PI * 2;
+    }
+}
+// Lay each galaxy's (and the Gateway's) star systems evenly round a ring in
+// the core's own swirl plane (the Gateway's: horizontal); measured edges,
+// HY_SCALE rule 1 between neighbours, rules 1/2 against Sol and every other
+// hole. Runs after the size ladder, before _hyPlaceSystems, which then
+// treats them as placed.
+function _hyArrangeHostSystems() {
+    if (!_hyGalaxyOn() || typeof planets === 'undefined') return 0;
+    const V = THREE.Vector3;
+    const col = _hyCollectSystems();
+    const sol = window.localSystemOffset || _hySolCenter();
+    const solNode = _hySolNode(new V(sol.x, sol.y, sol.z));
+    const hosts = new Map();
+    col.systems.forEach(function (g) {
+        const h = g.own;
+        if (!h || g.placed) return;
+        const u = h.userData;
+        if (!u.isLocalGateway && !(u.isGalacticCore && !u.isCompanionCore && !u.isSagittariusA)) return;
+        if (!hosts.has(h)) hosts.set(h, []);
+        hosts.get(h).push(g);
+    });
+    let moved = 0;
+    hosts.forEach(function (list, h) {
+        const R = _hyBodyR(h), c = h.position.clone(), isGal = !h.userData.isLocalGateway;
+        const ex = new V(1, 0, 0), ey = new V(0, 1, 0), ez = new V(0, 0, 1);
+        if (isGal) {
+            h.updateMatrixWorld(true);
+            const q = h.getWorldQuaternion(new THREE.Quaternion());
+            ex.applyQuaternion(q); ey.applyQuaternion(q); ez.applyQuaternion(q);
+        }
+        const n = list.length;
+        let E = 0;
+        list.forEach(function (g) { E = Math.max(E, g.edge); });
+        const pl = _hyHostPlan(R, n, isGal, E);
+        const nodes = list.map(function (g) { return { c: null, R: g.R, edge: g.edge, ext: g.edge, big: g.big, own: g.own }; });
+        const others = col.holes.filter(function (o) { return o !== h; }).map(function (o) {
+            const oR = _hyBodyR(o);
+            return { c: o.position, R: oR, edge: HY_BH.CLEAR_RADII * oR, body: o };
+        });
+        const ownNode = { c: c, R: R, edge: HY_BH.CLEAR_RADII * R, body: h };
+        const phase = Math.random() * Math.PI * 2;
+        const jit = list.map(function () { return { j: Math.random() * HY_GALAXY.RING_JITTER, t: (Math.random() * 2 - 1) * HY_GALAXY.RING_TILT }; });
+        let ring = pl.ring, ok = false, it = 0;
+        for (; it < 80 && !ok; it++) {
+            nodes.forEach(function (nd, i) {
+                const a = phase + (i / n) * Math.PI * 2, rr = ring * (1 + jit[i].j);
+                nd.c = c.clone().addScaledVector(ex, Math.cos(a) * rr).addScaledVector(ez, Math.sin(a) * rr).addScaledVector(ey, ring * jit[i].t);
+            });
+            ok = true;
+            for (let i = 0; i < n && ok; i++) {
+                const a = nodes[i];
+                if (a.c.distanceTo(c) < _hyReq(a, ownNode)) ok = false;
+                // a galaxy is moved as a whole afterwards (_hyRelayGalaxies);
+                // the Gateway stays where it is, so it checks the world here
+                if (!isGal) {
+                    if (ok && a.c.distanceTo(solNode.c) < _hyReq(a, solNode)) ok = false;
+                    for (let k = 0; k < others.length && ok; k++) if (a.c.distanceTo(others[k].c) < _hyReq(a, others[k])) ok = false;
+                }
+                for (let j = i + 1; j < n && ok; j++) if (a.c.distanceTo(nodes[j].c) < _hyReq(a, nodes[j])) ok = false;
+            }
+            if (!ok) ring *= 1.04;
+        }
+        nodes.forEach(function (nd, i) {
+            const g = list[i];
+            const d = nd.c.clone().sub(g.center);
+            if (d.length() > 1) { _hyMoveSystem(g, d); moved++; }
+            g.members.forEach(function (p) { p.userData._hyPlaced = true; });
+        });
+        let reach = 0;
+        nodes.forEach(function (nd) { reach = Math.max(reach, nd.c.distanceTo(c) + nd.edge); });
+        if (isGal) reach = Math.max(reach, HY_BH.CLEAR_RADII * R + HY_BH.GALAXY_SCALE * HY_GALAXY.FIELD_REACH);
+        h.userData._hyGalaxyReach = Math.round(reach);
+        h.userData._hySystemRing = Math.round(ring);
+        if (!ok) console.warn('HYBRID galaxy layout: ' + h.userData.name + ' ring not clear after ' + it + ' steps');
+    });
+    console.log('HYBRID galaxy layout: arranged ' + moved + ' systems round ' + hosts.size + ' hosts');
+    return moved;
+}
+if (typeof window !== 'undefined') {
+    window._hyArrangeHostSystems = _hyArrangeHostSystems;
+    // A galaxy's place radius (its systems ring / asteroid fields), or null.
+    window._hyGalaxyReach = function (g) {
+        const bh = _hyGalaxyCore(g);
+        return (bh && g !== 7 && bh.userData._hyGalaxyReach) || null;
+    };
+}
+// The galaxy's black hole (Sgr A* for the home galaxy 7), or null.
+function _hyGalaxyCore(g) {
+    if (typeof planets === 'undefined' || !planets) return null;
+    for (let i = 0; i < planets.length; i++) {
+        const u = planets[i] && planets[i].userData;
+        if (!u || u.type !== 'blackhole') continue;
+        if (g === 7 ? u.isSagittariusA : (u.isGalacticCore && !u.isCompanionCore && u.galaxyId === g)) return planets[i];
+    }
+    return null;
+}
+// A spot in galaxy g's field: out past its disc, inside its place, clear of
+// every body. null = use ORIGINAL's draw.
+function _hyGalaxyFieldPos(g) {
+    if (!_hyGalaxyOn()) return null;
+    const bh = _hyGalaxyCore(g);
+    if (!bh || !bh.userData._hyBig) return null;
+    const R = _hyBodyR(bh), c = bh.position;
+    const reach = bh.userData._hyGalaxyReach || (HY_BH.CLEAR_RADII * R + HY_BH.GALAXY_SCALE * HY_GALAXY.FIELD_REACH);
+    const r0 = HY_GALAXY.FIELD_FROM_RADII * R, r1 = Math.max(r0 * 1.2, reach * HY_GALAXY.FIELD_TO_K);
+    const p = new THREE.Vector3();
+    for (let t = 0; t < 12; t++) {
+        const r = r0 + Math.random() * (r1 - r0);
+        const th = Math.random() * Math.PI * 2, ph = Math.acos(1 - 2 * Math.random());
+        p.set(c.x + r * Math.sin(ph) * Math.cos(th), c.y + r * Math.cos(ph) * 0.5, c.z + r * Math.sin(ph) * Math.sin(th));
+        if (!_hyBHArrivalBlocked(p, null)) break;
+    }
+    return p;
+}
+// Is `pos` inside any hole's keep-clear sphere (CLEAR_RADII; the `target`
+// hole only inside its 2.5-radius warp threshold) or within ARRIVE_BODY_K
+// radii of a star / planet / moon?
+function _hyBHArrivalBlocked(pos, target) {
+    if (typeof planets === 'undefined' || !planets) return false;
+    const wp = new THREE.Vector3();
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i], u = p && p.userData;
+        if (!u || u.type === 'asteroid' || u.isAsteroid) continue;
+        let need;
+        const r = _hyBodyR(p);
+        if (!(r > 0)) continue;
+        if (u.type === 'blackhole') need = (p === target) ? r * 2.5 : r * HY_BH.CLEAR_RADII;
+        else if (u.type === 'star' || u.type === 'planet' || u.type === 'moon') need = Math.max(100, r * HY_GALAXY.ARRIVE_BODY_K);
+        else continue;
+        if (p.parent && typeof scene !== 'undefined' && p.parent !== scene) p.getWorldPosition(wp); else wp.copy(p.position);
+        if (wp.distanceToSquared(pos) < need * need) return true;
+    }
+    return false;
+}
+if (typeof window !== 'undefined') {
+    window._hyBHArrivalBlocked = _hyBHArrivalBlocked;
+    window._hyGalaxyFieldPos = _hyGalaxyFieldPos;
+}
 
 function createOptimizedPlanets3D() {
     console.log('Creating comprehensive 3D universe with full local solar system...');

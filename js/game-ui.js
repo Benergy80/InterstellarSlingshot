@@ -2478,6 +2478,8 @@ function getCurrentGalaxyId() {
         const _big = !!(window.HYBRID && window.HYBRID.is('solScale', 'big'));
         if (_big) {
             let best = -1, bestD = 50000 * ((typeof window._hyU === 'function') ? window._hyU() : 1);   // x the universe factor (package N)
+            // package Q (bhplace): ... and never short of the widest galaxy place
+            if (typeof window._hyGalaxyReachMax === 'function') bestD = Math.max(bestD, window._hyGalaxyReachMax() * 1.15);
             for (const blackHole of galaxyBlackHoles) {
                 const distance = camera.position.distanceTo(blackHole.position);
                 if (distance < bestD) { bestD = distance; best = blackHole.userData.galaxyId; }

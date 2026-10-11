@@ -2162,6 +2162,11 @@
                     });
                     (planetsArray() || []).forEach(function (b) {
                         var bu = b && b.userData;
+                        // package Q (bhplace): a black-hole galaxy is a whole place (its reach)
+                        if (bu && bu.type === 'blackhole' && bu._hyGalaxyReach) {
+                            hyObstacles.push({ p: b.position, ext: bu._hyGalaxyReach, big: 0 });
+                            return;
+                        }
                         if (!bu || bu.isProcedural || (bu.type !== 'star' && bu.type !== 'planet') || bu.parentPlanet) return;
                         var br = (b.geometry && b.geometry.parameters && b.geometry.parameters.radius) || bu.radius || 0;
                         if (br >= 200) hyObstacles.push({ p: b.position, ext: 0, big: br });
