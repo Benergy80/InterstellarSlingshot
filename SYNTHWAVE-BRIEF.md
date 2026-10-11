@@ -28,6 +28,15 @@ deploy other agents as needed."
 - "PewPew series was a good example of effects but not UI so much, we need something modern that also
   has the retro aesthetic but with modern polish." → UI = modern polish (type hierarchy, easing, layered
   glass + neon accents, readable), PewPew only for effects (line debris, spawn-in, glow, grid).
+- "I like the Mission failed screen in 8805 but it needs mountains being generated like beat lines
+  horizontally so it makes crazy alien landscapes. It is a little too miami and needs to be otherworldly
+  while matching the font look and feel of the rest of the game UI - which could evolve as well." →
+  W1b (20261012g): `SW_LAND` landscape — 30 rows of horizontal beat lines displaced by 3-octave value
+  noise (taller toward the viewer), drawn far-to-near with a dark fill below each ridge (occlusion), a
+  centre valley (VALLEY 0.8 / VALLEY_W 0.2) so the tally and CONTINUE sit on a plain, an eclipsed black
+  hole with a pulsing bright rim instead of the striped sun; palette violet (far) → cyan → mint (near),
+  CONTINUE and the button moved off magenta. Fonts unchanged (Orbitron titles, Rajdhani body). Gotcha
+  hit on the way: the rows must be painted far→near or the far rows' fills wipe the near ridges.
 
 ## Research (`research/`)
 - `retrowave.md` — menu UI patterns, Mission Failed concepts, Three.js r128 effects (the bloom recipe:
