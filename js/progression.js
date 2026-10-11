@@ -123,7 +123,7 @@
 
     // ── comms (one at a time, never over the tutorial) ───────────────────────
     const _q = []; let _lastSayAt = 0;
-    function say(title, text) { _q.push({ title: title, text: text, at: now() }); }
+    function say(title, text) { _q.push({ title: title, text: text, at: now(), phase: C.idx }); }
     function pumpComms() {
         if (!_q.length || typeof showIncomingTransmission !== 'function') return;
         const tut = ie('tutorialSystem');
@@ -285,6 +285,8 @@
     // ── phases ───────────────────────────────────────────────────────────────
     function enter(i, how) {
         C.idx = i; C.enteredAt = now();
+        // briefings of phases already behind the player are stale
+        for (let k = _q.length - 1; k >= 0; k--) if (_q[k].phase < i - 1) _q.splice(k, 1);
         C.log.push({ t: Math.round((now() - C.startedAt) / 1000), phase: PHASES[i], how: how || 'event' });
         const fn = ENTER[PHASES[i]]; if (fn) { try { fn(); } catch (e) { console.warn('campaign enter ' + PHASES[i], e); } }
     }
@@ -382,7 +384,17 @@
             const g = gs(); if (g) g.galaxiesCleared = GALAXIES;
             say('Mission Control - Victory',
                 'All eight black-hole galaxies are free. The occupation is broken, Captain Bo. Well flown.');
-            setTimeout(function () { try { if (typeof showVictoryScreen === 'function') showVictoryScreen(); } catch (e) {} }, 6000);
+            // the game's own campaign-win beat: fireworks + victory music, then
+            // the best-moments replay (victory-replay.js); the static victory
+            // screen only when the replay system is missing
+            try { if (typeof createFireworkCelebration === 'function') createFireworkCelebration(); } catch (e) {}
+            try { if (typeof playVictoryMusic === 'function') playVictoryMusic(); } catch (e) {}
+            setTimeout(function () {
+                try {
+                    if (window.replaySystem && typeof window.replaySystem.start === 'function') window.replaySystem.start();
+                    else if (typeof showVictoryScreen === 'function') showVictoryScreen();
+                } catch (e) {}
+            }, 6000);
         },
     };
 
