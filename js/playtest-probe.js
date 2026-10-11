@@ -116,6 +116,15 @@
                 if (!o.isMesh || !o.geometry || o.geometry.type !== 'SphereGeometry') return;
                 if (!o.material || !o.material.transparent) return;
                 if (_SKYBOX_RE.test(o.name || '')) return;
+                // A star's or world's own glow shell is not a shield: since the
+                // size ladder (package N) stars are 650-880 and their 1.5-2.5x
+                // glow shells pass 900. Skip spheres owned by a celestial body.
+                let _cel = false;
+                for (let a = o, k = 0; a && k < 4 && !_cel; a = a.parent, k++) {
+                    const t = a.userData && a.userData.type;
+                    _cel = t === 'star' || t === 'planet' || t === 'moon' || t === 'blackhole' || t === 'outer_interstellar_system';
+                }
+                if (_cel) return;
                 const r = (o.geometry.parameters && o.geometry.parameters.radius) || 0;
                 if (r >= 50000) return; // a skybox by size
                 o.getWorldScale(_ws);

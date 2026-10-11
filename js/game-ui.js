@@ -759,7 +759,11 @@ function populateTargets() {
 
     // Helper to get distance for any object (handles nested outer system objects)
     const getObjectDistance = (obj) => {
-        if (obj.userData.isOuterSystem && obj.parent) {
+        // (package N) and any body parented below the scene root — a moon
+        // under its planet has a LOCAL .position, which after a floating-origin
+        // rebase listed every such moon in the universe ~500 u away
+        if ((obj.userData.isOuterSystem && obj.parent) ||
+            (obj.parent && typeof scene !== 'undefined' && obj.parent !== scene && !obj.parent.isScene)) {
             const worldPos = new THREE.Vector3();
             obj.getWorldPosition(worldPos);
             return camera.position.distanceTo(worldPos);
@@ -779,7 +783,7 @@ function populateTargets() {
     const targetObjects = nearbyObjects.slice(0, 15);
 
     targetObjects.forEach((obj, index) => {
-        const distance = camera.position.distanceTo(obj.position);
+        const distance = getObjectDistance(obj);
         const energyCost = Math.ceil(distance / 50); // Adjusted for doubled scale
         
         let typeDisplay = obj.userData.type;
@@ -2473,7 +2477,7 @@ function getCurrentGalaxyId() {
         // core wins (with a wider reach the first match is no longer the right one).
         const _big = !!(window.HYBRID && window.HYBRID.is('solScale', 'big'));
         if (_big) {
-            let best = -1, bestD = 50000;
+            let best = -1, bestD = 50000 * ((typeof window._hyU === 'function') ? window._hyU() : 1);   // x the universe factor (package N)
             for (const blackHole of galaxyBlackHoles) {
                 const distance = camera.position.distanceTo(blackHole.position);
                 if (distance < bestD) { bestD = distance; best = blackHole.userData.galaxyId; }
@@ -2492,7 +2496,7 @@ function getCurrentGalaxyId() {
     }
     
     // Fallback: Use 3D galaxy center positions
-    const universeRadius = 150000;  // Increased for wider map coverage (accommodates exotic/borg systems with larger margins)
+    const universeRadius = 150000 * ((typeof window._hyU === 'function') ? window._hyU() : 1);  // x the universe factor (package N); wider map coverage (accommodates exotic/borg systems with larger margins)
     
     if (typeof getGalaxy3DPosition === 'function' && typeof galaxyTypes !== 'undefined') {
         let closestGalaxy = -1;
@@ -3971,7 +3975,7 @@ function updateGalaxyMap() {
     const playerMapPos = document.getElementById('playerMapPosition');
     const targetMapPos = document.getElementById('targetMapPosition');
     const mapDirectionArrow = document.getElementById('mapDirectionArrow');
-    const universeRadius = 150000;  // Increased for wider map coverage (accommodates exotic/borg systems with larger margins)
+    const universeRadius = 150000 * ((typeof window._hyU === 'function') ? window._hyU() : 1);  // x the universe factor (package N); wider map coverage (accommodates exotic/borg systems with larger margins)
     
     if (!playerMapPos) return;
     
@@ -4050,11 +4054,18 @@ planets.forEach(planet => {
             });
         }
     } else {
-        // Non-asteroids use direct position (fast)
-        const distance = camera.position.distanceTo(planet.position);
+        // Non-asteroids use direct position (fast) — except a moon parented to
+        // its planet, whose .position is LOCAL: after a floating-origin rebase
+        // (the camera at 0,0,0) every such moon read as "within range"
+        // (package N: the start point now rebases on frame one).
+        let _pp = planet.position;
+        if (planet.parent && typeof scene !== 'undefined' && planet.parent !== scene) {
+            _pp = planet.getWorldPosition(new THREE.Vector3());
+        }
+        const distance = camera.position.distanceTo(_pp);
         if (distance < radarRange && distance > 10) {
             nearbyObjects.push({
-                position: planet.position,
+                position: _pp,
                 type: planet.userData.type,
                 name: planet.userData.name,
                 distance: distance

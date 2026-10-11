@@ -65,6 +65,12 @@ function _hyOuterK() {
     return (typeof _hyScaleOn === 'function' && _hyScaleOn() && window.HY_LADDER) ? window.HY_LADDER.OUTER_K : 1;
 }
 
+// package N (scale2): the universe factor (HY_SCALE.UNIVERSE_K, game-objects.js) —
+// the outer shells move out with everything else; 1 under ?hy=solScale:overhaul.
+function _hyOuterU() {
+    return (typeof window !== 'undefined' && typeof window._hyU === 'function') ? window._hyU() : 1;
+}
+
 function createOuterInterstellarSystems() {
     console.log('🌌 Creating outer interstellar systems in deep space...');
 
@@ -87,10 +93,10 @@ function createOuterInterstellarSystems() {
 // =============================================================================
 
 function createExoticCoreSystems() {
-    const innerBoundary = 45000;
-    const outerBoundary = 75000;
+    const innerBoundary = 45000 * _hyOuterU();
+    const outerBoundary = 75000 * _hyOuterU();
     const targetRadius = (innerBoundary + outerBoundary) / 2; // ~67,500
-    const radiusVariation = 12500;
+    const radiusVariation = 12500 * _hyOuterU();
 
     // Randomly select half the systems to be 2x size
     const indices = Array.from({length: 16}, (_, i) => i);
@@ -203,8 +209,8 @@ function createExoticSystem(center, name, centerType, systemId, scale) {
 // =============================================================================
 
 function createBorgPatrolSystems() {
-    const minDistance = 65000;
-    const maxDistance = 90000;
+    const minDistance = 65000 * _hyOuterU();
+    const maxDistance = 90000 * _hyOuterU();
 
     for (let i = 0; i < 12; i++) {
         // Random spherical distribution (not along any single axis plane)
@@ -269,7 +275,12 @@ function createBorgSystem(center, systemId) {
 
     for (let i = 0; i < planetCount; i++) {
         // Original orbit radii
-        const orbitRadius = (800 + (i * 600) + Math.random() * 400) * _hyOuterK();
+        // package N (scale2): the planets joined HY_LADDER.FIELD (240-620),
+        // so the orbits widen (OUTER_ORBIT_K) and the jitter shrinks — two
+        // 620 worlds need >= ORBIT_K x 1,240 between orbits, never 200 x K.
+        const orbitRadius = _hyOuterK() > 1
+            ? (800 + (i * 600) + Math.random() * 150) * window.HY_LADDER.OUTER_ORBIT_K
+            : (800 + (i * 600) + Math.random() * 400) * _hyOuterK();
         maxOrbitRadius = Math.max(maxOrbitRadius, orbitRadius);
         createOrbitingPlanet(systemGroup, orbitRadius, i);
         createSystemOrbitLine(center, orbitRadius, systemGroup);
@@ -280,7 +291,7 @@ function createBorgSystem(center, systemId) {
     createSystemStarfield(starfieldRadius, systemGroup);
 
     // Create 1 BORG Cube (100HP boss) patrolling the system
-    systemGroup.userData._hyEdge = maxOrbitRadius + 60 * _hyOuterK();   // HYBRID: placement edge
+    systemGroup.userData._hyEdge = maxOrbitRadius + (_hyOuterK() > 1 ? window.HY_LADDER.FIELD[1] : 60);   // HYBRID: placement edge
     createBorgCubeForSystem(systemGroup, maxOrbitRadius);
 
     // Create 1 cosmic feature in orbit
@@ -602,8 +613,11 @@ function createBrightStar(systemGroup, starType) {
     // Central star — original size.
     // (stars get their own factor: the 2.5x glow shell below must stay under
     // the self-test's 900 u bubble limit)
-    const starRadius = (100 + Math.random() * 50) *
-        (_hyOuterK() > 1 ? window.HY_LADDER.OUTER_STAR_K : 1);
+    // package N (scale2): onto the star class (HY_LADDER.star, 650-880).
+    const _rawStar = 100 + Math.random() * 50;
+    const starRadius = _hyOuterK() > 1
+        ? window.HY_LADDER.star[0] + (_rawStar - 100) / 50 * (window.HY_LADDER.star[1] - window.HY_LADDER.star[0])
+        : _rawStar;
     systemGroup.userData._hyR = starRadius;
 
     const starGeo = new THREE.SphereGeometry(starRadius, 32, 32);
@@ -661,7 +675,11 @@ function createBrightStar(systemGroup, starType) {
 // =============================================================================
 
 function createOrbitingPlanet(systemGroup, orbitRadius, index) {
-    const planetRadius = (20 + Math.random() * 40) * _hyOuterK();
+    // package N (scale2): onto the planet band (HY_LADDER.FIELD, 240-620).
+    const _rawPlanet = 20 + Math.random() * 40;
+    const planetRadius = _hyOuterK() > 1
+        ? window.HY_LADDER.FIELD[0] + (_rawPlanet - 20) / 40 * (window.HY_LADDER.FIELD[1] - window.HY_LADDER.FIELD[0])
+        : _rawPlanet;
 
     const planetColors = [
         0x8B7355, 0x4A90E2, 0xE86A17, 0x9B59B6,
@@ -696,7 +714,7 @@ function createOrbitingPlanet(systemGroup, orbitRadius, index) {
         systemName: systemGroup.userData.name,
         location: 'Unexplored Interstellar Space',
         radius: planetRadius,
-        mass: planetRadius / 40,
+        mass: (_hyOuterK() > 1 ? _rawPlanet * _hyOuterK() : planetRadius) / 40,   // mass as before package N (gravity tuning)
         slingshotMultiplier: 1.5,
         rotationSpeed: (Math.random() - 0.5) * 0.02,
         isOuterSystem: true
