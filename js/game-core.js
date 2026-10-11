@@ -1319,7 +1319,8 @@ const HY_ORBIT_LINE = {
     R_TOL: 0.002,               // radius match tolerance (fraction of radius)
     C_TOL: 0.002,               // centre match tolerance (fraction of radius)
     LOCAL_EDGE: true,           // add a 1-px LineLoop to each local (Sol) ring
-    EDGE_OPACITY: 0.6
+    EDGE_OPACITY: 0.6,
+    SOL_BRIGHT: false           // Ben 2026-10-11 "dim sol too": Sol's rings render like every other ring (0.3 band, additive, no edge)
 };
 if (typeof window !== 'undefined') window.HY_ORBIT_LINE = HY_ORBIT_LINE;
 function _hyOrbitHalfWidth(r, floor) {
@@ -1411,7 +1412,7 @@ function createOrbitLines() {
         // their green but render like every other system's ring (0.3 band, the
         // overhaul's additive polish in updateOrbitLineVisibility).
         const _so = (typeof window !== 'undefined' && window.localSystemOffset) || null;
-        const _isSolLocal = !!(planet.userData.isLocal && _so && systemCenter &&
+        const _isSolLocal = !!(HY_ORBIT_LINE.SOL_BRIGHT && planet.userData.isLocal && _so && systemCenter &&
             Math.abs(systemCenter.x - _so.x) < 1 && Math.abs(systemCenter.z - _so.z) < 1);
         const orbitMaterial = new THREE.MeshBasicMaterial({
             color: orbitColor,
@@ -1574,7 +1575,7 @@ function createSingleOrbitLine(planet, isLocal, noTilt) {
         // Ben, 2026-10-11: only SOL's own rings get the ORIGINAL HUD treatment
         // (see createOrbitLines); the gateway's local systems render like the rest.
         const _so = (typeof window !== 'undefined' && window.localSystemOffset) || null;
-        const _isSolLocal = !!(isLocal && _so && systemCenter &&
+        const _isSolLocal = !!(HY_ORBIT_LINE.SOL_BRIGHT && isLocal && _so && systemCenter &&
             Math.abs(systemCenter.x - _so.x) < 1 && Math.abs(systemCenter.z - _so.z) < 1);
         // FIXED: Adjust orbit line thickness based on distance and type
         const baseThickness = _hyOrbitHalfWidth(orbitRadius, _isSolLocal ? 3 : 2);   // package T

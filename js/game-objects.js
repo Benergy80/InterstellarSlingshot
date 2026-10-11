@@ -16684,7 +16684,7 @@ function updateOrbitLineVisibility() {
             const _culled = !!p.userData._distCulled;
             if (_culled) { if (line.visible) { line.visible = false; line.userData._hyRingHidden = true; } }
             else if (line.userData._hyRingHidden) { line.userData._hyRingHidden = false; line.visible = _toggleOn; }
-            if (_isSolRing(p)) continue;
+            if (_isSolRing(p) && (typeof HY_ORBIT_LINE === 'undefined' || HY_ORBIT_LINE.SOL_BRIGHT)) continue;   // Ben: "dim sol too"
             // The overhaul's ring polish ("the newer version"): additive blending so
             // a sub-pixel sliver dims instead of sparkling, no fog grey, and fainter
             // when seen edge-on. Colour stays what createOrbitLines chose (green for
