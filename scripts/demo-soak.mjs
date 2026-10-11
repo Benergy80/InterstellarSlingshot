@@ -147,7 +147,8 @@ for (let run = 1; run <= RUNS; run++) {
                 ks: window.__keepout || null,
                 counters: dp ? { parks: dp.arrivalParks, ignitions: dp.ignitionCounts, corridorAborts: dp.corridorAborts,
                     jumpsRefused: dp.jumpsRefused, warpCorridorRefusals: dp.warpCorridorRefusals,
-                    keepout: dp.keepout ? dp.keepout.counts : undefined } : null });
+                    keepout: dp.keepout ? dp.keepout.counts : undefined,
+                    avoid: dp.avoid ? Object.assign({}, dp.avoid, { cfg: undefined }) : undefined } : null });
         });
         rec = Object.assign(rec, S, { pageErrors });
     } catch (e) { rec.err = e.message; rec.pageErrors = pageErrors; }
@@ -156,7 +157,8 @@ for (let run = 1; run <= RUNS; run++) {
     const d = rec.deaths && rec.deaths[0];
     console.log(`run ${run}: ${rec.err ? 'ERROR ' + rec.err : ''}flew ${rec.tEnd}s, frames ${rec.frames}, ` +
         (d ? `DIED @${d.t}s ${d.title} [${d.msg}] phase=${d.phase} rails=${JSON.stringify(d.rails)} speed=${d.speed} nearest=${d.nearest} d/R=${d.dOverR}` : 'no death') +
-        (rec.counters ? ` parks=${rec.counters.parks} ignitions=${JSON.stringify(rec.counters.ignitions)}` + (rec.counters.keepout ? ` keepout=${JSON.stringify(rec.counters.keepout)}` : '') : '') + (rec.pageErrors && rec.pageErrors.length ? ` pageErrors=${rec.pageErrors.length}` : ''));
+        (rec.counters ? ` parks=${rec.counters.parks} ignitions=${JSON.stringify(rec.counters.ignitions)}` + (rec.counters.keepout ? ` keepout=${JSON.stringify(rec.counters.keepout)}` : '') +
+            (rec.counters.avoid ? `\n  avoid=${JSON.stringify(rec.counters.avoid)}` : '') : '') + (rec.pageErrors && rec.pageErrors.length ? ` pageErrors=${rec.pageErrors.length}` : ''));
 }
 server.close();
 await writeFile(join(OUT, NAME + '.json'), JSON.stringify(results, null, 1));
