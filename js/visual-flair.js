@@ -1714,7 +1714,12 @@ const HY_WARP_FX = {
     PULSE: 0.6,
     SHAKE: 0.55,
     FOV: 0.7,
-    HYPERSPACE: 1      // line bursts at ignition (was 3)
+    HYPERSPACE: 1,     // line bursts at ignition (was 3)
+    // Ben 2026-10-11: "can the short jump warp lines be toned down" — the W-jump's own show
+    JUMP_STREAK: 0.4,      // streak burst + envelope (was 0.75 burst, full envelope)
+    JUMP_TUNNEL: 0.3,      // half-tunnel strength (was 0.5)
+    JUMP_HYPERSPACE: 0,    // DOM line bursts (was 2)
+    JUMP_STARFIELD: false  // the 3D warp starfield streaks (were toggled on)
 };
 if (typeof window !== 'undefined') window.HY_WARP_FX = HY_WARP_FX;
 function _hyWarpCalm() {
@@ -2558,6 +2563,7 @@ function _updateWarpStreaks() {
     // you are whipping round is what you see (HY_SLING_FX.STREAK).
     if (_hySlingSubtle() && _warpMode() === 'slingshot') target *= HY_SLING_FX.STREAK;
     if (_hyWarpCalmMode(_warpMode())) target *= HY_WARP_FX.STREAK;   // HYBRID calm emergency warp
+    if (_hyWarpCalm() && _warpMode() === 'jump') target *= HY_WARP_FX.JUMP_STREAK;   // …and the toned-down jump
     if (target <= 0.001 && _wsf.env <= 0.004) {
         if (_wsf.mesh && _wsf.mesh.visible) _wsf.mesh.visible = false;
         _wsf.env = 0;
@@ -3372,7 +3378,7 @@ function _updateWarpTunnel() {
     // ── WHO WANTS A TUNNEL ───────────────────────────────────────────────
     let target = 0, bh = false;
     const ew = gs.emergencyWarp;
-    if (ew && ew.active) target = ew.isJump ? 0.5 : (_hyWarpCalmMode(_warpMode()) ? HY_WARP_FX.TUNNEL : 1);   // HYBRID calm emergency warp
+    if (ew && ew.active) target = ew.isJump ? (_hyWarpCalm() ? HY_WARP_FX.JUMP_TUNNEL : 0.5) : (_hyWarpCalmMode(_warpMode()) ? HY_WARP_FX.TUNNEL : 1);   // HYBRID calm emergency warp / toned-down jump
     if (gs.isBlackHoleWarping || gs.warping) { target = 1; bh = true; }
     if (_wtu.forceUntil > now) {
         target = Math.max(target, _wtu.forceAmp);
