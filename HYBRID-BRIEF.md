@@ -423,9 +423,11 @@ Sent while testing build 20261010a. Each is a package (N–T below) or already l
 Guard flake, root-caused (integrator, 20261010m): keep-check rows 1-4 failed together about 1 run in 2 after wave 2. The slingshot check staged its whip 0.6 × range from the SMALLEST nebula world; since package N that world's moons (40-150 u) orbit through the arc, so some runs whipped into a moon (velocity 80 → 0.4 in a second) and every later check failed on the stunned ship. keep-check now picks the smallest world with no other body inside 2.5 × its slingshot range, and sets `window.__campaignTetherOff` (the guard tests KEEP physics independent of the campaign).
 
 Demo showcase (integrator, 20261010m): with 48 pirates at Sol the demo never left Sol (150 s soaks: 0 O-warps, 0 parks). `HY_DEMO` in js/autopilot.js caps the opening fight at 6 kills or 75 s, then the showcase makes for the nebulae.
-| warpfx | T — warp colours by sector (`warpTint: sector`) + Sol orbit lines from the start + regional haze | 3 |
-| sun | U — the local Sun as a bright burning star emitting light | 3 |
-| outer | V — outer systems makeover, much further away | 3 |
+| warpfx | T — warp colours by sector (`warpTint: sector`) + Sol orbit lines from the start + regional haze (`haze: regional`) — **MERGED 20261010n** (Sol gold/lime, nebula/galaxy hues, black holes violet; 8 Sol rings from frame one, wider + 1-px edge; HY_HAZE recolours only, cull unchanged) | 3 |
+| sun | U — the local Sun as a bright burning star emitting light (`sun: burning`) — **MERGED 20261010n** (HY_SUN: white-gold disc, corona, glare, streak, light to Sol's edge ×1.65; foreign Dune star lights capped — they were lighting Sol's night sides) | 3 |
+| outer | V — outer systems makeover, much further away (`outerSystems: frontier`) — **MERGED 20261010n** (HY_OUTER: 28 frontier systems 313-360k from Sgr A*, themed, stars emit light, dt-scaled, Borg cube no longer teleports; nav DESTINATIONS list the two nearest; map shows them on the rim until map2 raises universeRadius) | 3 |
+| map2 | W — the map's Universal View shows relevant information | 3b |
+| guardflake | X — the keep-check slingshot flake (whip exit through the body) | 3b |
 
 ## Open questions for Ben
 

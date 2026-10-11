@@ -4351,7 +4351,7 @@ const HY_SUN = {
 };
 if (typeof window !== 'undefined') window.HY_SUN = HY_SUN;
 function _hySunOn() {
-    return HY_SUN.ON && (typeof window === 'undefined' || !window.HYBRID || HYBRID.is('solScale', 'big'));
+    return HY_SUN.ON && (typeof window === 'undefined' || !window.HYBRID || (HYBRID.is('solScale', 'big') && HYBRID.is('sun', 'burning')));   // ?hy=sun:overhaul = the overhaul's photosphere
 }
 
 const _HY_SUN_DISC_VERT = `
@@ -13589,7 +13589,8 @@ const HY_HAZE = {
 if (typeof window !== 'undefined') window.HY_HAZE = HY_HAZE;
 const _hyHaze = { v: -1, m: 1, fogK: 1, fogNear: 0, fogFar: 0, parts: null };
 function _hyHazeOn() {
-    return HY_HAZE.ON && typeof window !== 'undefined' && !!window.HYBRID && window.HYBRID.is('farPlanetFade', 'bySize');
+    return HY_HAZE.ON && typeof window !== 'undefined' && !!window.HYBRID && window.HYBRID.is('farPlanetFade', 'bySize') &&
+        window.HYBRID.is('haze', 'regional');   // ?hy=haze:global = one curve everywhere
 }
 function _hyHash3(i, j, k) {
     let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1) ^ Math.imul(k, 0x9e3779b1) ^ HY_HAZE.SEED;

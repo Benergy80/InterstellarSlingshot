@@ -1236,7 +1236,10 @@ const _OS_THEMES = {
 };
 const _OS_EXOTIC_ORDER = ['supernova', 'plasma_storm', 'solar_storm', 'crystal_garden', 'dead_star'];
 
-function _osFrontierOn() { return typeof _hyScaleOn === 'function' && _hyScaleOn() && !!window.HY_LADDER; }
+function _osFrontierOn() {
+    return typeof _hyScaleOn === 'function' && _hyScaleOn() && !!window.HY_LADDER &&
+        (!window.HYBRID || window.HYBRID.is('outerSystems', 'frontier'));   // ?hy=outerSystems:classic = the old exotic/Borg sets
+}
 function _osRand(a, b) { return a + Math.random() * (b - a); }
 function _osPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 

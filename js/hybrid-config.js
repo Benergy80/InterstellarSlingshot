@@ -59,6 +59,9 @@
         progression:     'campaign',   // Ben's campaign (Sol pirates → boss → Sgr A* → nebulae → 8 galaxies)  'campaign' | 'overhaul'
         warpTint:        'sector',     // warp streaks/tunnel coloured by where you are (nebula / Sol / galaxy)  'sector' | 'overhaul'
         slingshotFx:     'subtle',     // Ben 2026-10-10: tone the whip's flash/streaks/debris down so the swing round the planet reads  'subtle' | 'overhaul'
+        haze:            'regional',   // distance haze varies by region: murky in nebulae, clear between galaxies (HY_HAZE)  'regional' | 'global'
+        sun:             'burning',    // the local Sun as a burning star emitting light (HY_SUN)  'burning' | 'overhaul'
+        outerSystems:    'frontier',   // outer systems rebuilt as the far frontier (HY_OUTER)  'frontier' | 'classic'
     };
 
     const KEY = 'hybridSwitches';
