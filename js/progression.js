@@ -501,6 +501,9 @@
             if (site.kind === 'convoy') site.civilians = spawnConvoy(site.site, site.label);
             try { createDiscoveryPathToPosition(neb.position, site.site, color, faction, 'core', g); } catch (e) { /* path optional */ }
             entry = DP[DP.length - 1] || null;
+            // same legibility as the guide lines (the mission checker recolours
+            // material.color to white on completion; that still works)
+            if (entry && entry.line && entry.line.material) { entry.line.material.toneMapped = false; entry.line.material.opacity = 0.9; entry.line.userData.__dbTris = Infinity; }
         }
         C.mission = { entry: entry, site: site.site, kind: site.kind, label: site.label, civilians: site.civilians || 0, enemies: entry && entry.missionEnemies ? entry.missionEnemies.length : 0 };
         if (C.usedNebulae.indexOf(neb) === -1) C.usedNebulae.push(neb);
