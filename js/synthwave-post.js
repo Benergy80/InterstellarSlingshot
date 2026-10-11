@@ -15,7 +15,12 @@
     'use strict';
 
     const SW_POST = {
-        STRENGTH: 0.8, RADIUS: 0.4, THRESHOLD: 1.0,
+        // Measured 20261012a: strength 0.8 / threshold 1.0 at half res bloomed the
+        // whole additive star field (its overlaps sum past 1.0) and cost a full
+        // frame (16.7 → 33 ms on the headless GPU). Softer, higher threshold,
+        // quarter-res mips, and the composer only in the normal quality tier.
+        STRENGTH: 0.5, RADIUS: 0.35, THRESHOLD: 1.35, BLOOM_DIV: 4,
+        TIER_COOLDOWN_MS: 60000,
         HDR_K: 3.0,              // neon multiplier that lifts a colour over the threshold
         EDGE_ANGLE: 25,          // EdgesGeometry threshold angle (deg)
         EDGE_WIDTH: 1.6,         // px
@@ -42,11 +47,15 @@
             let rt = null;
             try {
                 rt = new THREE.WebGLRenderTarget(Math.round(w * pr), Math.round(h * pr), { type: THREE.HalfFloatType, format: THREE.RGBAFormat, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+                // Render into the buffer with the renderer's OWN output encoding, so the
+                // composed frame matches the plain render (otherwise the scene lands
+                // linear and the copy to screen skips the gamma step).
+                rt.texture.encoding = renderer.outputEncoding;
                 P.halfFloat = true;
             } catch (e) { rt = null; P.halfFloat = false; }
             const composer = rt ? new THREE.EffectComposer(renderer, rt) : new THREE.EffectComposer(renderer);
             const renderPass = new THREE.RenderPass(scene, camera);
-            const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(Math.max(1, w / 2), Math.max(1, h / 2)), SW_POST.STRENGTH, SW_POST.RADIUS, P.halfFloat ? SW_POST.THRESHOLD : 0.85);
+            const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(Math.max(1, w / SW_POST.BLOOM_DIV), Math.max(1, h / SW_POST.BLOOM_DIV)), SW_POST.STRENGTH, SW_POST.RADIUS, P.halfFloat ? SW_POST.THRESHOLD : 0.85);
             composer.addPass(renderPass); composer.addPass(bloom);
             composer.setSize(w, h);
             P.composer = composer; P.renderPass = renderPass; P.bloom = bloom; P.rt = rt; P.w = w; P.h = h; P.pr = pr;
@@ -67,7 +76,12 @@
     window.addEventListener('resize', () => { try { resize(); } catch (e) {} });
 
     function postActive() {
-        return sw('postFx', 'bloom') && !P.failed && postLibsReady() && tierName() !== 'minimal' && !(window.anaglyphMode && window.anaglyphMode.enabled);
+        if (!sw('postFx', 'bloom') || P.failed || !postLibsReady() || (window.anaglyphMode && window.anaglyphMode.enabled)) return false;
+        // Only in the normal quality tier; a drop below it switches the composer off
+        // for TIER_COOLDOWN_MS so the ladder cannot oscillate on the composer's cost.
+        const now = Date.now();
+        if (tierName() !== 'normal') { P.cooldownUntil = now + SW_POST.TIER_COOLDOWN_MS; return false; }
+        return !(P.cooldownUntil && now < P.cooldownUntil);
     }
     function install() {
         const orig = window.gameRender;
@@ -160,8 +174,10 @@
         // lasers: push their colour over the bloom threshold once
         if (typeof activeLasers !== 'undefined' && Array.isArray(activeLasers)) {
             for (let i = 0; i < activeLasers.length; i++) {
-                const L = activeLasers[i], m = L && (L.material || (L.mesh && L.mesh.material));
-                if (m && m.color && !m.userData._swHdr) { m.userData._swHdr = true; m.color.multiplyScalar(SW_POST.HDR_K); }
+                const L = activeLasers[i];
+                [L && L.material, L && L.glowMaterial, L && L.mesh && L.mesh.material].forEach((m) => {
+                    if (m && m.color && !m.userData._swHdr) { m.userData._swHdr = true; m.color.multiplyScalar(SW_POST.HDR_K); }
+                });
             }
         }
     }
@@ -174,6 +190,8 @@
             get on() { return !!(P.composer && postActive()); }, get halfFloat() { return P.halfFloat; }, get failed() { return P.failed; },
             set: function (strength, radius, threshold) { if (P.bloom) { if (strength != null) P.bloom.strength = strength; if (radius != null) P.bloom.radius = radius; if (threshold != null) P.bloom.threshold = threshold; } },
             edges: function () { return { lineMaterials: E.lineMats.length, enemies: E.enemyEdged.size, cached: E.cache.size }; },
+            resume: function () { P.cooldownUntil = 0; },   // clear the tier cool-down (probes / console)
+            get cooldownMs() { return Math.max(0, (P.cooldownUntil || 0) - Date.now()); },
             vectorize: vectorize, devectorize: devectorize
         };
     }

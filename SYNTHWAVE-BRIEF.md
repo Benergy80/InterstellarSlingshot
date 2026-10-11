@@ -1,0 +1,61 @@
+# SYNTHWAVE — the retro-vector arcade pass (branch `claude/synthwave`)
+
+Served for Ben at **http://localhost:8805/** (`node scripts/serve.mjs 8805 <this dir>`), watched in a
+Claude-controlled Chrome tab that is reloaded after every wave. Worktree:
+`~/InterstellarSlingshot/.claude/worktrees/synthwave`. Base: the hybrid branch
+(`claude/star-explorer-hybrid`, merged in regularly — its gameplay fixes keep flowing here).
+
+## Ben's goal (verbatim, 2026-10-11, `/goal`)
+"The game is meant to be a Synthwave Retrowave Vaporwave Gravity Based Space Explorer with elements
+reminiscent of the 3D Vector graphic arcade games of the late 80's and also the aesthetic of PewPew,
+PewPew 2, and PewPew Live. I have these applications in my applications folder on this computer. Use
+REI tools to investigate the PewPew applications and do additional research on the retrowave and
+cyberpunk aesthetic to help me come up with better menu UI and Mission Failed screen ideas as well as
+more effects that would blend this amazing space world with the neon aesthetic of classic vector
+synthwave games. This amalgamated aesthetic is the heart of Interstellar Slingshot and it is already
+very good. Research and show me ways we can improve and recreate any elements in the current game that
+do not reflect this intention. Can the intro screens or launch sequence be improved? Can we choose from
+multiple branches on the intro screen? Can the game be made to be more arcade like? Build this new
+version in a new branch and open it in a new window so I can watch the game development. Explore if
+you can improve character models and anything you like in this version, just make sure you update the
+claude controlled tab often with the most recent changes. Keep waves small and check in's often, but
+deploy other agents as needed."
+
+### Ben's direction notes (verbatim)
+- "research the best neon synthwave retrowave cyberpunk aesthetics on the internet and in gaming and
+  add that info to the special branch goal research" → `research/aesthetics.md` (+ the canon section
+  in `research/retrowave.md`).
+- "PewPew series was a good example of effects but not UI so much, we need something modern that also
+  has the retro aesthetic but with modern polish." → UI = modern polish (type hierarchy, easing, layered
+  glass + neon accents, readable), PewPew only for effects (line debris, spawn-in, glow, grid).
+
+## Research (`research/`)
+- `retrowave.md` — menu UI patterns, Mission Failed concepts, Three.js r128 effects (the bloom recipe:
+  half-float target, neon ×3, threshold ≥ 1), fonts, arcade feel, vector ship ideas; section 7 = the
+  aesthetic canon (Outrun / synthwave / cyberpunk / vaporwave split, film + game references, rules).
+- `pewpew.md` — the PewPew apps' DNA from their own Lua/shaders (black ground, white meshes tinted per
+  enemy with exact hex, line-quad glow + 4-tap bloom pyramid, CRT pass, spawn-in and line-debris
+  explosion timings, spring grid, vector glyph text, death screens). Shots in `research/pewpew-shots/`.
+- `aesthetics.md` — the canon + style rules + what to avoid + surface-by-surface mapping (agent report).
+
+## Switches (js/hybrid-config.js, this branch)
+`deathScreen: synthwave | original` · `postFx: bloom | off` · `vectorShips: edges | off`
+(the hybrid's switches all still apply; `?hy=key:value` overrides for a session).
+
+## Waves
+| Wave | What | Status |
+|---|---|---|
+| W1 | MISSION FAILED as an arcade sequence: freeze-through overlay, RGB-split glitch, scanlines, scrolling neon grid + striped sun (2D canvas), chrome title slam, stat tally with blips, CONTINUE? 9→0, GAME OVER + INSERT COIN, any key restarts (`js/synthwave-fx.js`, `css/synthwave.css`) | done 20261011p |
+| W2 | EffectComposer with HDR-threshold bloom (only emissive > threshold glows: ship edge lines, lasers ×3); vector edge lines (EdgesGeometry → LineSegments2) on the player, wingmen and the nearest enemies in faction colours (`js/synthwave-post.js`) | done 20261012a, retuned 20261012b (see below) |
+| W3 | Intro / launch: neon grid + striped sun behind the title, chrome title, modern-polish menu with BRANCHES (Campaign · Arcade · Free flight · Daily run · Galaxy select), attract loop | next |
+| W4 | Arcade feel in play: combo + grade display (js/arcade.js already tracks it), kill call-outs, boss WARNING card, high-score initials | after W3 |
+| W5 | Vector ship models: fresnel rim via onBeforeCompile, faction style grammar, vector break-apart death | after W4 |
+
+## Measurements
+- W1: headless death at 6 s → overlay at 11 s (after the ship's own death animation), tally, CONTINUE 7 at 16 s,
+  GAME OVER + INSERT COIN at 27 s, 0 errors (`.critic/probe-gameover.js`).
+- W2 first cut (strength 0.8, threshold 1.0, half-res mips): composer on, half-float OK, player + 3 wingmen
+  edged (4 line materials), BUT the additive star field summed past 1.0 and bloomed the whole frame, and the
+  frame cost doubled on the headless GPU (16.7 → 33 ms median, 60 → 30 fps). Retune 20261012b: strength 0.5,
+  radius 0.35, threshold 1.35, quarter-res mips, composer only in the `normal` quality tier with a 60 s
+  cool-down after a tier drop, buffer keeps the renderer's output encoding.
