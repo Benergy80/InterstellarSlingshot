@@ -1362,9 +1362,15 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         );
 
         // Verify position isn't inside another object (collision avoidance)
+        // package Q (bhplace): radius-aware — out of every other hole's
+        // keep-clear sphere and ARRIVE_BODY_K radii from any star / planet.
+        const _arrBlocked = (typeof window._hyBHArrivalBlocked === 'function' && _arrR)
+            ? function (p) { return window._hyBHArrivalBlocked(p, targetBlackHole); }
+            : function (p) { return isPositionTooClose(p, 100); };
+        const _arrStep = _arrR ? _destRadius * 0.6 : 40;
         let attempts = 0;
-        while (isPositionTooClose(safePosition, 100) && attempts < 10) {
-            const adjustedDistance = warpDistance + attempts * 40;
+        while (_arrBlocked(safePosition) && attempts < (_arrR ? 24 : 10)) {
+            const adjustedDistance = warpDistance + attempts * _arrStep;
             safePosition.set(
                 targetBlackHole.position.x + Math.cos(warpAngle + attempts * 0.3) * adjustedDistance,
                 targetBlackHole.position.y + (Math.random() - 0.5) * 200,
@@ -1395,9 +1401,16 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         
         // Determine which galaxy we warped to based on proximity to DESTINATION (safePosition)
         let arrivedGalaxyId = -1;
-
-        if (typeof getGalaxy3DPosition === 'function') {
+        // package Q (bhplace): a galaxy core names its own galaxy (the 15,000
+        // sphere below misses the 11.5-17.5-radii landing of a scaled core).
+        const _tu = targetBlackHole.userData || {};
+        if (_tu._hyBHK && _tu.isGalacticCore && !_tu.isCompanionCore && typeof _tu.galaxyId === 'number' && _tu.galaxyId < galaxyDiscoveryNames.length) {
+            arrivedGalaxyId = _tu.galaxyId;
+        } else if (typeof getGalaxy3DPosition === 'function') {
             for (let g = 0; g < 8; g++) {
+                // package Q: the table's home entry (7) now IS Sgr A*; a Sgr A* /
+                // Companion arrival keeps naming itself as it always did
+                if (g === 7 && _tu._hyBHK) continue;
                 const galaxyCenter = getGalaxy3DPosition(g);
 
                 // FIXED: Check against safePosition (destination), not camera.position (old location)
@@ -1865,8 +1878,13 @@ function resolveShipLocationName() {
         let bestName = null, bestScore = Infinity;
         for (let g = 0; g < GALAXY_LOCATION_NAMES.length; g++) {
             const name = GALAXY_LOCATION_NAMES[g];
+            // package Q (bhplace): the table is the real cores now; a galaxy's
+            // name reaches its whole place (HY_GALAXY), and the home entry (7,
+            // now Sgr A*) keeps the Sagittarius names below
+            const _reach = (typeof window._hyGalaxyReach === 'function') ? window._hyGalaxyReach(g) : null;
+            if (g === 7 && window.__hyGalaxyLayout) continue;
             const d = pos.distanceTo(getGalaxy3DPosition(g));
-            if (d >= edge(name, GALAXY_MATCH_RADIUS * ((typeof window._hyU === 'function') ? window._hyU() : 1))) continue;
+            if (d >= edge(name, _reach || GALAXY_MATCH_RADIUS * ((typeof window._hyU === 'function') ? window._hyU() : 1))) continue;
             // Nearest wins, not first-within-range: first-match made the name
             // depend on table order rather than on where the ship actually is.
             // The one we're already in is scored slightly closer so it doesn't

@@ -2478,6 +2478,8 @@ function getCurrentGalaxyId() {
         const _big = !!(window.HYBRID && window.HYBRID.is('solScale', 'big'));
         if (_big) {
             let best = -1, bestD = 50000 * ((typeof window._hyU === 'function') ? window._hyU() : 1);   // x the universe factor (package N)
+            // package Q (bhplace): ... and never short of the widest galaxy place
+            if (typeof window._hyGalaxyReachMax === 'function') bestD = Math.max(bestD, window._hyGalaxyReachMax() * 1.15);
             for (const blackHole of galaxyBlackHoles) {
                 const distance = camera.position.distanceTo(blackHole.position);
                 if (distance < bestD) { bestD = distance; best = blackHole.userData.galaxyId; }
@@ -4839,7 +4841,13 @@ mapDotPool.releaseAll();
         if (index < galaxyTypes.length) {
             // Top-down X/Z projection — convert 3D spherical → cartesian → linear map
             let mapPos;
-            if (typeof galaxy3DPositions !== 'undefined' && galaxy3DPositions[index]) {
+            if (window.__hyGalaxyLayout && typeof getGalaxy3DPosition === 'function') {
+                // package Q (bhplace): the table IS the cores now — plot them on the
+                // same TRUE-coords / universeRadius scale as the player marker (the
+                // table's own scale is 100k x U, so the old line drew them 1.5x out)
+                const _gp = getGalaxy3DPosition(index), _wg = window.worldOriginOffset || { x: 0, z: 0 };
+                mapPos = { x: 0.5 + ((_gp.x + _wg.x) / universeRadius) * 0.5, y: 0.5 + ((_gp.z + _wg.z) / universeRadius) * 0.5 };
+            } else if (typeof galaxy3DPositions !== 'undefined' && galaxy3DPositions[index]) {
                 const galaxy3D = galaxy3DPositions[index];
                 // Spherical → cartesian using full universe radius scale
                 const r = galaxy3D.distance * universeRadius;
