@@ -545,6 +545,10 @@ const _WSHIFT_UD_KEYS = [
 
 function _wshiftVecLike(v, offset) {
     if (!v) return;
+    // Sol's 8 planets share window.localSystemOffset as userData.systemCenter;
+    // its own world-shift handler moves it once — shifting it per planet too
+    // moved Sol's centre 9x the offset on every rebase.
+    if (typeof window !== 'undefined' && v === window.localSystemOffset) return;
     if (v.isVector3) { v.sub(offset); return; }
     if (typeof v.x === 'number' && typeof v.y === 'number' && typeof v.z === 'number' &&
         v.isObject3D === undefined) {
