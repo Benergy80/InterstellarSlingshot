@@ -39,7 +39,9 @@ const LANES = [
   'bhplace: where the black-hole galaxies and their systems SIT (galaxy3DPositions, HY_BH placement constants, _hyBHClearSystems)',
   'enemies2: enemy and boss PLACEMENT, numbers and behaviour (spawners in js/game-objects.js, behaviour fns in js/game-controls.js)',
   'nebula2: nebula visibility — the crisp ORIGINAL swirl inside the overhaul cloud (_hyCombineNebulae in js/game-objects.js)',
-  'warpfx: warp-effect colours (js/visual-flair.js warp style) and the Sol orbit lines (createOrbitLines / updateOrbitLineVisibility)',
+  'warpfx: warp-effect colours (js/visual-flair.js warp style), the Sol orbit lines (createOrbitLines / updateOrbitLineVisibility) and regional distance haze (_aerialFactor, fog)',
+  'sun: the local Sun\'s look — corona, flares, bloom, light (the Sun builder in js/game-objects.js, its lights, the sun parts of js/visual-flair.js)',
+  'outer: the outer interstellar systems — their look and how far out they sit (js/outer-systems.js)',
 ]
 
 function common(key, title) {
@@ -645,6 +647,7 @@ const PACKAGES = {
       '## Do',
       '1. Port ORIGINAL\'s particle generator from `createNebulas` in `' + ORIG + '/js/game-objects.js` (lines ~11219-11470: the per-shape distribution loop, the colour jitter `offsetHSL(±0.1, 0, ±0.15)`, the quasar jet tint, the material) into a helper `_hyOriginalNebulaGeometry(shapeIndex, size, baseColor)` and use it for the crisp layer of every combined nebula: ORIGINAL shapes cycling through the 8 types, ORIGINAL counts (mobile ~40%), size = clamp(overhaul size x 0.5, 900, 2000), hue from the overhaul cloud\'s `userData.color` at ORIGINAL saturation/lightness (0.7, 0.6), opacity 0.65 x crispK, size 2.5, additive, `toneMapped = false`, depthWrite false, random orientation, placed at the group origin. Keep the volumetric thinning and the distant/exotic range fade as they are. Switch stays `nebulae: combined` (default) | `original` | `overhaul`.',
       '2. If the crisp swirl still reads weaker than ORIGINAL from the Sol start (nebulae are now 28-60k away against ORIGINAL\'s ~19k), scale the crisp opacity/size with distance so it reads the same on screen — measure, do not guess.',
+      '3. **Traffic and junk.** Ben, 2026-10-10, verbatim: "nebulas need more space traffic and space junk so they feel more crowded." Inside each nebula (within ~1.5 x its size): more civilian traffic — trading ships, mining vessels, caravans, shuttles between the nebula\'s planets (the civilian builders in js/game-objects.js around `createNebulaShip`, `tradingShips`, `createBlackHoleMiningShip`, and js/civilian-combat.js) — and space junk: drifting wreckage, hull plates, containers, derelicts, small debris fields, in the ORIGINAL flat-colour vector style, cheap (instanced or merged geometry, no per-piece lights), culled by range like the asteroids. Target: a nebula interior that reads as a busy harbour from inside at 60 fps; count ships and junk pieces per nebula before/after and the fps inside one nebula back to back.',
       '',
       '## Verify',
       'A contact sheet: the same nebula from the Sol start and from 8,000 u, ORIGINAL vs hybrid (stage with `.critic/stage-nebula.js`, it looks at the nearest named nebula HUD-hidden); pixel measure of the swirl (bright-pixel count / mean luminance in its screen box) for both; fps back to back; keep-check 9/9. Report the constants Ben can tune.',
@@ -666,6 +669,32 @@ const PACKAGES = {
       'Measured (`.critic/probe-orbits.js`, `.critic/probe-sol.js`): Sol\'s 8 rings exist with correct radii (1,394-14,675) and centre, visible, opacity 0.3 — but they are RingGeometry ±2 u thick, which is sub-pixel at that scale (ORIGINAL\'s Sol was 250-19,238 with the same ±2); and `createOrbitLines()` (js/game-core.js ~1292) is re-run on galaxy load (see js/proc-galaxies.js) and one run rebuilt 422 lines with NONE for Sol (a later run: 226 with all 8) — a race with the Sol layout.',
       'Do: (a) thickness scales with radius in BOTH creators (`createOrbitLines` inline and `createSingleOrbitLine`): half-width = max(2, orbitRadius x 0.0028); local rings opacity 0.45, `toneMapped: false`; record `userData.planet = planet` on every line. (b) `_hyOrbitLineSync()` in js/game-core.js: for every planet with `orbitRadius > 0`, `systemCenter` and no `parentPlanet`, make sure exactly one line exists (match by the planet object, name as fallback) whose radius and centre match — create via `createSingleOrbitLine`, replace on mismatch, never rebuild the same planet more than once per 300 frames; call it from `updateOrbitLineVisibility` (js/game-objects.js ~15283, the 30-frame cadence, before the `orbitLines.length === 0` early return). `systemCenter` is in `_WSHIFT_UD_KEYS`, so the floating-origin rebase moves it with the lines. Keep `__dbTris = Infinity` on every ring.',
       'Verify: `.critic/probe-orbits.js` at 4 s, 12 s, 30 s and after a galaxy load, play mode, three runs: 8 Sol lines every time, radii matching, thickness in pixels at the start >= 2; a frame at the start showing the green rings; keep-check 9/9.',
+      '',
+      '### 3. Regional haze — some places clear, some murky',
+      'Ben, verbatim: "Some distance blurring for further universes may be good or some areas of the universe it is harder to see far and other places it is very clear".',
+      'Today the distance haze is one global curve (`_aerialFactor` / `_aerialApply`, AERIAL_NEAR / AERIAL_SCALE in js/game-objects.js, plus whatever fog the overhaul sets in js/atmospheric-perspective.js). Make it REGIONAL: a smooth per-position visibility field (a few seeded low-frequency noise octaves over world position, plus "inside a nebula = murky", "open deep space between galaxies = crystal clear", "near a galaxy core = dusty") that scales the haze distance and strength — far planets, stars and nebulae dim and desaturate sooner in a murky region, stay sharp in a clear one. Keep `farPlanetFade: bySize` (big-on-screen bodies keep their colour). No post-process blur pass unless it is cheap and switchable; a depth-tinted haze is enough. Switch `skyWash` stays off. Name the constants. Verify: the same vista from a murky and a clear region, side by side, with the measured haze factor; fps unchanged back to back; keep-check 9/9.',
+    ].join('\n'),
+  },
+  sun: {
+    title: 'U — THE LOCAL SUN: a bright burning star emitting light',
+    effort: 'high',
+    body: [
+      '## Your goal',
+      'Ben, verbatim: "The local sun needs to look more like it is a bright burning star emitting light."',
+      'The Sun today: radius 300 (`HY_SOL.SUN`), a stock material graded by `gradeSolarBody` / `SOL_ALBEDO_GRADE`, one PointLight at Sol (intensity 3, range 25,000) plus two dim ambients. Find the Sun builder in js/game-objects.js (the body named "Sol", `type: \'star\'`, the local-system builder around `HY_SOL`), its light(s), and any corona/flare/bloom code the overhaul left (js/visual-flair.js "hero star", sun sprites, `_installPointSpriteDefault`).',
+      'Make it burn: a hot white-gold core, a limb that falls off to orange, an animated corona (layered additive sprites or a shader with slow flicker and prominences), a lens-flare / bloom glow sized by on-screen angle so it reads from across the system, and LIGHT: the planets lit by it with proper falloff (raise/shape the PointLight range to Sol\'s edge ~15,183, keep the ambient low so the dark side is dark). Retro-vector feel, saturated, additive, `toneMapped = false` on the Sun\'s own materials. When the camera is inside ~1.1 radii hide the DoubleSide shells (the known wash-out). Keep the asteroid belt, orbit rings and planets exactly where they are (`HY_SOL` numbers are the scale package\'s). Expose constants (`HY_SUN`: core colour, corona size, flicker, light intensity/range).',
+      'Verify: the Sun from the start point, from Earth, from Neptune and from 1.3 radii, before/after; a planet\'s lit/dark side before/after; fps at the start back to back; keep-check 9/9.',
+    ].join('\n'),
+  },
+  outer: {
+    title: 'V — OUTER SYSTEMS: a makeover, much further away',
+    effort: 'high',
+    body: [
+      '## Your goal',
+      'Ben, verbatim: "Outer Systems need a makeover and should be much further away."',
+      'The outer interstellar systems live in js/outer-systems.js (exotic cores, BORG patrol systems, crystal structures pushed into `cosmicFeatures.crystalFormations`, "Scatter" rocks). Read how they are placed today (a radius from the universe centre / from Sol), measure where they sit relative to the galaxies and nebulae after package N (scale2, merged under you — read its universe extents in `git log` and HY_SCALE), and move them MUCH further out: beyond every galaxy and nebula, at distances that make them a true frontier (state the numbers), with the map/radar, nav list, discovery paths, `getCurrentGalaxyId` and the demo pilot still reaching them (demo-soak must not die or stall).',
+      'Makeover: each outer system should read as its own distinct place in the retro-vector style — a dominant colour, a signature structure (the exotic core, a BORG cube lattice, a crystal garden, a dead star), its own planets on the size ladder (package N\'s band), lighting from its own star, cheap and culled by range. Keep the BORG and their optional mission hooks working (js/civilian-combat.js, the campaign\'s optional missions). Enemies there obey `HY_ENEMIES.KEEPOUT_RADII` from any black hole.',
+      'Verify: a before/after frame of three outer systems from the same relative vantage; a table of outer-system positions (distance from Sol, from the nearest galaxy, from the nearest nebula) before/after; the galactic map showing them; demo-soak 2 runs 0 deaths; keep-check 9/9; fps inside one outer system.',
     ].join('\n'),
   },
 }

@@ -3822,7 +3822,10 @@ function resetCameraToGamePosition() {
     const earthX = localSystemOffset.x + earthDistance;
     const earthY = localSystemOffset.y;
     const earthZ = localSystemOffset.z;
-    camera.position.set(earthX + earthOrbitOffset, earthY + 120, earthZ + earthOrbitOffset);
+    // HYBRID — Ben, 2026-10-10: "The players starting position should be 150
+    // units above the orbit plane at the beginning of the game." (was 120)
+    const HY_START_HEIGHT = 150;
+    camera.position.set(earthX + earthOrbitOffset, earthY + HY_START_HEIGHT, earthZ + earthOrbitOffset);
     // Open the game facing Sagittarius A* (galactic center at the origin)
     // so the player's first view is the heart of the Milky Way — Earth
     // and Sol still sit just behind/below the camera and are easy to
