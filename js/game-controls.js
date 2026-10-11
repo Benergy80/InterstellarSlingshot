@@ -12543,6 +12543,12 @@ if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHi
 // shatters into flying shards. Borg cubes/drones and UFOs are excluded
 // (they have their own hit mechanics).
 // =============================================================================
+// Enemy shield bubble proportion (see _ensureEnemyShield): radius = K x the
+// hull's longest dimension, every class alike; MIN/MAX are world-unit sanity
+// clamps only. 0.31 was ORIGINAL's fighter factor; 0.36 lets the bubble sit
+// just outside the hull on every ship.
+const HY_ENEMY_SHIELD = { K: 0.36, MIN: 12, MAX: 600 };
+if (typeof window !== 'undefined') window.HY_ENEMY_SHIELD = HY_ENEMY_SHIELD;
 function _ensureEnemyShield(enemy) {
     // HYBRID enemyLook: the ORIGINAL orange bubble (below) by default.
     if (typeof _enemyLookOverhaul === 'function' && _enemyLookOverhaul()) return _ensureEnemyShield_overhaul(enemy);
@@ -12561,11 +12567,22 @@ function _ensureEnemyShield(enemy) {
     // like _ensureShipThrusterCones — enemy GLB models are scaled ~48×,
     // so the raw hitboxSize is hugely inflated. Then convert that world
     // radius into the enemy's LOCAL frame (the shield is a child).
+    // HYBRID — Ben, 2026-10-10: "enemy shields should be relative to their
+    // model size galactic empire support shields seem oversized currently".
+    // ONE proportion for every class — HY_ENEMY_SHIELD.K of the hull's longest
+    // dimension — measured in the ship's LOCAL frame, so a yawed or pitched
+    // ship does not get a swollen world-box bubble. Boss-support ships used to
+    // take the boss factor (0.62 against a fighter's 0.31) and a 360 ceiling:
+    // twice a fighter's bubble on a support-sized hull.
     let worldR = 90;
+    const ws = new THREE.Vector3();
+    try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
+    const s = Math.max(0.0001, (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3);
     try {
         enemy.updateWorldMatrix(true, true);
+        const inv = new THREE.Matrix4().copy(enemy.matrixWorld).invert();
         const box = new THREE.Box3(); box.makeEmpty();
-        const mb = new THREE.Box3();
+        const mb = new THREE.Box3(), m = new THREE.Matrix4();
         let any = false;
         enemy.traverse(node => {
             if (!node.isMesh || !node.geometry) return;
@@ -12573,35 +12590,16 @@ function _ensureEnemyShield(enemy) {
             if (u.isHitbox || u.isGlowLayer || u._isThrusterCone || u.isEnemyShield) return;
             if (!node.geometry.boundingBox) node.geometry.computeBoundingBox();
             if (!node.geometry.boundingBox) return;
-            mb.copy(node.geometry.boundingBox).applyMatrix4(node.matrixWorld);
+            m.multiplyMatrices(inv, node.matrixWorld);          // child -> enemy-local
+            mb.copy(node.geometry.boundingBox).applyMatrix4(m);
             box.union(mb); any = true;
         });
-        // Bubble hugs the hull for normal fighters (0.31); bosses,
-        // boss-support, elite + black-hole guardians keep the larger
-        // bubble (0.62) so their bigger silhouette reads correctly.
-        const _ud0 = enemy.userData || {};
-        const _bigShield = _ud0.isBoss || _ud0.isBossSupport ||
-                           _ud0.isEliteGuardian || _ud0.isBlackHoleGuardian;
         if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
             const sz = box.getSize(new THREE.Vector3());
-            worldR = Math.max(sz.x, sz.y, sz.z) * (_bigShield ? 0.62 : 0.31);
+            worldR = Math.max(sz.x, sz.y, sz.z) * s * HY_ENEMY_SHIELD.K;   // same K for every class
         }
     } catch (e) {}
-    {
-        const _ud1 = enemy.userData || {};
-        const _bigShield = _ud1.isBoss || _ud1.isBossSupport ||
-                           _ud1.isEliteGuardian || _ud1.isBlackHoleGuardian;
-        // Big-shield ceiling 360 (was briefly 640 for the 2×-boss
-        // experiment; with boss scale reverted, 640 left guardians inside
-        // screen-filling orange spheres whenever the player got close).
-        const minR = _bigShield ? 45 : 22;
-        const maxR = _bigShield ? 360 : 140;
-        worldR = Math.max(minR, Math.min(worldR, maxR));
-    }
-
-    const ws = new THREE.Vector3();
-    try { enemy.getWorldScale(ws); } catch (e) { ws.set(1, 1, 1); }
-    const s = Math.max(0.0001, (Math.abs(ws.x) + Math.abs(ws.y) + Math.abs(ws.z)) / 3);
+    worldR = Math.max(HY_ENEMY_SHIELD.MIN, Math.min(worldR, HY_ENEMY_SHIELD.MAX));
     const localR = worldR / s;
 
     const mat = new THREE.MeshBasicMaterial({
