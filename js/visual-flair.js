@@ -1590,6 +1590,91 @@ const _WARP_STYLE = {
     blackhole: { colA: 0xb26bff, colB: 0x3a2bff, len: 1.28, wid: 1.05, white: 0.30, swirl: 0.11, shear: 0.09, chroma: 1.6, tunA: 0xb26bff, tunB: 0x2f1a6b }
 };
 
+// ── HYBRID: WARP COLOURS BY SECTOR (package T, `warpTint: sector`) ───────────
+// Ben, 2026-10-10: "The warp effects should change colors depending on where
+// you are in the universe and not just be in the purple and pink spectrum."
+// The sector colour is the nebula you are inside or near, else Sol gold, else
+// the galaxy you are in, else the house cyan. From its hue a pair is derived
+// (A bright, B deeper and hue-rotated) that replaces the fixed cyan/magenta
+// pair in the streak field, the tunnel, the entry flash and the four
+// game-physics call sites (_hyWarpPair there). Black-hole transits keep their
+// violet. `?hy=warpTint:overhaul` restores the fixed pairs.
+const HY_WARP_TINT = {
+    NEBULA_K: 2.2,          // inside/near a nebula = within NEBULA_K x its userData.size
+    SOL_COLOR: 0xffc46b,    // Sol gold
+    SOL_R: 24000,           // Sol's reach when window._hySolAreaRadius() is unavailable
+    HOUSE: 0x6be6ff,        // nothing nearby: the house cyan
+    A_SL: [0.85, 0.66],     // pair A = HSL(h, 0.85, 0.66)
+    B_DH: 0.13,             // pair B = HSL(h + 0.13, 0.9, 0.5)
+    B_SL: [0.90, 0.50],
+    CACHE_MS: 1500          // re-sample the sector at most every 1.5 s
+};
+const _hyWT = { t: 0, pal: null, c: null };
+function hyWarpSectorPalette() {
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    if (_hyWT.pal && now - _hyWT.t < HY_WARP_TINT.CACHE_MS) return _hyWT.pal;
+    if (typeof THREE === 'undefined') return null;
+    if (!_hyWT.c) _hyWT.c = new THREE.Color();
+    const c = _hyWT.c;
+    let src = 'house', hex = HY_WARP_TINT.HOUSE, name = '';
+    const cam = (typeof camera !== 'undefined') ? camera : null;
+    const p = cam && cam.position;
+    try {
+        // 1) the nearest nebula within NEBULA_K x its size
+        if (p && typeof nebulaClouds !== 'undefined' && nebulaClouds && nebulaClouds.length) {
+            let best = Infinity, bestN = null;
+            for (let i = 0; i < nebulaClouds.length; i++) {
+                const n = nebulaClouds[i]; const ud = n && n.userData;
+                if (!ud || !ud.color || !(ud.size > 0) || !n.position) continue;
+                const s = n.scale ? Math.max(n.scale.x, n.scale.y, n.scale.z) : 1;
+                const d = n.position.distanceTo(p) / (ud.size * s);
+                if (d < HY_WARP_TINT.NEBULA_K && d < best) { best = d; bestN = n; }
+            }
+            if (bestN) {
+                const col = bestN.userData.color;
+                hex = (col && col.isColor) ? col.getHex() : (+col || hex);
+                src = 'nebula'; name = bestN.userData.name || '';
+            }
+        }
+        // 2) Sol
+        if (src === 'house' && p && typeof window !== 'undefined' && window.localSystemOffset) {
+            const solR = (typeof window._hySolAreaRadius === 'function' && window._hySolAreaRadius()) || HY_WARP_TINT.SOL_R;
+            const o = window.localSystemOffset;
+            const dx = p.x - o.x, dy = p.y - o.y, dz = p.z - o.z;
+            if (dx * dx + dy * dy + dz * dz < solR * solR) { hex = HY_WARP_TINT.SOL_COLOR; src = 'sol'; name = 'Sol'; }
+        }
+        // 3) the galaxy you are in
+        if (src === 'house' && typeof getCurrentGalaxyId === 'function' && typeof galaxyTypes !== 'undefined') {
+            const g = getCurrentGalaxyId();
+            if (g >= 0 && galaxyTypes[g] && galaxyTypes[g].color !== undefined) {
+                hex = galaxyTypes[g].color; src = 'galaxy'; name = galaxyTypes[g].name || String(g);
+            }
+        }
+    } catch (e) { /* fall through to the house colour */ }
+    c.setHex(hex);
+    const hsl = { h: 0, s: 0, l: 0 }; c.getHSL(hsl);
+    const a = new THREE.Color().setHSL(hsl.h, HY_WARP_TINT.A_SL[0], HY_WARP_TINT.A_SL[1]).getHex();
+    const b = new THREE.Color().setHSL((hsl.h + HY_WARP_TINT.B_DH) % 1, HY_WARP_TINT.B_SL[0], HY_WARP_TINT.B_SL[1]).getHex();
+    _hyWT.pal = { a: a, b: b, src: src, name: name, base: hex, hue: hsl.h };
+    _hyWT.t = now;
+    return _hyWT.pal;
+}
+// The pair a warp MODE should wear, or null to keep the fixed overhaul look.
+// Black holes keep violet; a jump keeps its white head with the sector A tail.
+function _hyWarpTintFor(mode) {
+    if (typeof window === 'undefined' || !window.HYBRID || window.HYBRID.is('warpTint', 'overhaul')) return null;
+    if (mode === 'blackhole') return null;
+    const pal = hyWarpSectorPalette();
+    if (!pal) return null;
+    if (mode === 'jump') return { a: 0xffffff, b: pal.a, src: pal.src, name: pal.name };
+    return pal;
+}
+if (typeof window !== 'undefined') {
+    window.HY_WARP_TINT = HY_WARP_TINT;
+    window.hyWarpSectorPalette = hyWarpSectorPalette;
+    window._hyWarpTintFor = _hyWarpTintFor;
+}
+
 // ── HYBRID: SUBTLE SLINGSHOT ────────────────────────────────────────────────
 // Ben, 2026-10-10: "can we tone down the effects when the Gravitational
 // Slingshot is engaged so we can see the swinging around the planet better?"
@@ -1703,8 +1788,9 @@ function _wsfUpdateStyle(dt, mode) {
     _wsfStyle.shearX += (sx * k - _wsfStyle.shearX) * (1 - Math.exp(-dt / 0.2));
     _wsfStyle.shearY += (sy * k - _wsfStyle.shearY) * (1 - Math.exp(-dt / 0.2));
 
-    _wsfStyle.colA.copy(_wsfStyle.baseA).lerp(_wsfStyle._c(st.colA, 0), k);
-    _wsfStyle.colB.copy(_wsfStyle.baseB).lerp(_wsfStyle._c(st.colB, 1), k);
+    const _tint = _hyWarpTintFor(_wsfStyle.name);   // package T: sector pair (null = fixed)
+    _wsfStyle.colA.copy(_wsfStyle.baseA).lerp(_wsfStyle._c(_tint ? _tint.a : st.colA, 0), k);
+    _wsfStyle.colB.copy(_wsfStyle.baseB).lerp(_wsfStyle._c(_tint ? _tint.b : st.colB, 1), k);
 }
 
 // Two scratch colours so the lerp above allocates nothing per frame.
@@ -3177,7 +3263,18 @@ function _wtuBuild() {
 // only because 'blackhole' IS a mode in that table, so the two agree.
 function _wtuPalette(bh) {
     if (!_wtu.inner) return;
-    const st = _WARP_STYLE[_warpMode()];
+    const _md = _warpMode();
+    const st = _WARP_STYLE[_md];
+    // package T: the sector pair replaces the fixed tunnel colours (never for holes)
+    const _tint = _hyWarpTintFor(_md || (bh ? 'blackhole' : ''));
+    if (_tint) {
+        const tA = (_md === 'jump') ? 0xdafcff : _tint.a, tB = _tint.b;
+        _wtu.outer.mat.uniforms.uColA.value.setHex(tB);
+        _wtu.outer.mat.uniforms.uColB.value.setHex(tA);
+        _wtu.inner.mat.uniforms.uColA.value.setHex(tA);
+        _wtu.inner.mat.uniforms.uColB.value.setHex(tB);
+        return;
+    }
     if (st) {
         // Outer shell is the deeper/duller half of the pair so the two tubes
         // still read as two tubes rather than one flat wall of colour.
@@ -3222,7 +3319,8 @@ function _wtuThreshold(entering, bh) {
             window.warpFovPulse(15, 950);
         }
         if (typeof whipScreenPulse === 'function') {
-            whipScreenPulse(bh ? 0xb26bff : 0x6be6ff, entering ? 0.85 : 0.6);
+            const _tint = bh ? null : _hyWarpTintFor(_warpMode());   // package T
+            whipScreenPulse(bh ? 0xb26bff : (_tint ? _tint.a : 0x6be6ff), entering ? 0.85 : 0.6);
         }
         if (typeof whipScreenShake === 'function') {
             whipScreenShake(entering ? 8 : 5, entering ? 520 : 380);
