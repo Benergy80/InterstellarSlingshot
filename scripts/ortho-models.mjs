@@ -14,6 +14,9 @@ const opt = (k, d) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] :
 const OUT = resolve(opt('--out', join(os.homedir(), 'Desktop', 'InterstellarSlingshot-models')));
 const SIZE = +opt('--size', '1024');
 const VIEWS = opt('--views', 'front,back,left,right,top,bottom,iso').split(',');
+// flat = the game's neon colouring (faction colour + emissive + facet edges) → <Model>-<view>.png
+// lit  = the GLB's own materials, brightened → <Model>-<view>-lit.png
+const STYLES = opt('--styles', 'flat,lit').split(',');
 let MODELS = opt('--models', '').split(',').filter(Boolean);
 if (!MODELS.length) MODELS = (await readdir(join(ROOT, 'models'))).filter((f) => f.endsWith('.glb')).map((f) => basename(f, '.glb')).sort();
 
@@ -43,23 +46,25 @@ const browser = await chromium.launch({
     args: ['--use-angle=metal', '--mute-audio', `--window-size=${SIZE},${SIZE}`]
 });
 const page = await browser.newPage({ viewport: { width: SIZE, height: SIZE } });
-const readme = ['Interstellar Slingshot — orthographic model turnarounds', `rendered ${new Date().toISOString()} from models/*.glb at ${SIZE}px, three.js r128, model materials, three-point light`,
+const readme = ['Interstellar Slingshot — orthographic model turnarounds', `rendered ${new Date().toISOString()} from models/*.glb at ${SIZE}px, three.js r128, three-point light`,
     'View names say where the camera sits: front = camera on -Z looking +Z, back = camera on +Z, left = -X, right = +X, top, bottom, iso = (+X,+Y,+Z).',
-    'Nose axes in the game: standard enemies -Z (front = head-on); the player ship, wingmen, Enemy1/Boss1 and Enemy8/Boss8 +Z (back = head-on).', ''];
+    'Nose axes in the game: standard enemies -Z (front = head-on); the player ship, wingmen, Enemy1/Boss1 and Enemy8/Boss8 +Z (back = head-on).',
+    '<Model>-<view>.png     = the game\'s look: faction colour (Enemy1/Boss1 Federation blue … Enemy8/Boss8 Vulcan peach), player cyan, civilians green, UFO white, plus facet edge lines.',
+    '<Model>-<view>-lit.png = the GLB\'s own materials, brightened (the stock files are authored near-black and rely on in-game recolouring).', ''];
 let ok = 0, failed = 0;
 for (const m of MODELS) {
     const dir = join(OUT, m); await mkdir(dir, { recursive: true });
-    for (const v of VIEWS) {
-        const url = `http://127.0.0.1:${port}/tools/ortho-render.html?model=${encodeURIComponent(m)}&view=${v}&size=${SIZE}`;
+    for (const v of VIEWS) for (const st of STYLES) {
+        const url = `http://127.0.0.1:${port}/tools/ortho-render.html?model=${encodeURIComponent(m)}&view=${v}&size=${SIZE}&style=${st}`;
         try {
             await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
             await page.waitForFunction(() => window.__done === true, null, { timeout: 60000 });
             const err = await page.evaluate(() => window.__error || null);
-            if (err) { failed++; console.log(`  ✗ ${m} ${v}: ${err}`); continue; }
-            await page.screenshot({ path: join(dir, `${m}-${v}.png`), clip: { x: 0, y: 0, width: SIZE, height: SIZE } });
+            if (err) { failed++; console.log(`  ✗ ${m} ${v} ${st}: ${err}`); continue; }
+            await page.screenshot({ path: join(dir, `${m}-${v}${st === 'flat' ? '' : '-' + st}.png`), clip: { x: 0, y: 0, width: SIZE, height: SIZE } });
             ok++;
-            if (v === VIEWS[0]) { const info = await page.evaluate(() => window.__info); readme.push(`${m}: ${info.meshes} mesh(es), size ${info.size.map((x) => x.toFixed(3)).join(' × ')} (model units)`); }
-        } catch (e) { failed++; console.log(`  ✗ ${m} ${v}: ${e.message}`); }
+            if (v === VIEWS[0] && st === STYLES[0]) { const info = await page.evaluate(() => window.__info); readme.push(`${m}: ${info.meshes} mesh(es), size ${info.size.map((x) => x.toFixed(3)).join(' × ')} (model units)`); }
+        } catch (e) { failed++; console.log(`  ✗ ${m} ${v} ${st}: ${e.message}`); }
     }
     console.log(`  ✓ ${m}`);
 }

@@ -19,21 +19,49 @@
     const model = q.get('model') || 'Player', view = q.get('view') || 'iso';
     const size = Math.max(64, Math.min(4096, +(q.get('size') || 1024)));
     const bg = '#' + (q.get('bg') || '0b0f1a');
+    const style = q.get('style') || 'flat';   // flat = the game's neon colouring + facet edges; lit = the GLB's own materials, brightened
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: false });
     renderer.setPixelRatio(1); renderer.setSize(size, size); renderer.setClearColor(bg);
     renderer.outputEncoding = THREE.sRGBEncoding;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.05;
+    renderer.toneMapping = style === 'flat' ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
     document.body.appendChild(renderer.domElement);
     const scene = new THREE.Scene();
-    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a1030, 0.9));
-    const key = new THREE.DirectionalLight(0xffffff, 1.15); key.position.set(3, 5, 4); scene.add(key);
+    scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a1030, style === 'flat' ? 0.55 : 0.9));
+    const key = new THREE.DirectionalLight(0xffffff, style === 'flat' ? 0.85 : 1.15); key.position.set(3, 5, 4); scene.add(key);
     const fill = new THREE.DirectionalLight(0x8fd3ff, 0.55); fill.position.set(-4, 2, -3); scene.add(fill);
     const rim = new THREE.DirectionalLight(0xff2bd6, 0.35); rim.position.set(0, -3, -5); scene.add(rim);
     const DIRS = { front: [0, 0, -1], back: [0, 0, 1], left: [-1, 0, 0], right: [1, 0, 0], top: [0, 1, 0], bottom: [0, -1, 0], iso: [1, 0.8, 1] };
+    // The game's own colours: galaxy factions 0-7 (js/game-objects.js galaxyTypes) for Enemy(g+1) / Boss(g+1),
+    // cyan for the player, green for civilians, white for the UFO.
+    const FACTION = [0x4488ff, 0xff8844, 0x88ff44, 0xff4488, 0x44ffff, 0xff44ff, 0xff8888, 0xffaa88];
+    function kindColor(name) {
+        let m = /^(Enemy|Boss)(\d)$/.exec(name); if (m) return FACTION[(+m[2] - 1) % 8];
+        if (/^Player$/i.test(name)) return 0x00ffff;
+        if (/^UFO/i.test(name)) return 0xffffff;
+        if (/^XT-/i.test(name)) return 0x00ffff;
+        return 0x00ff88;   // civilians: freighters, shuttles, satellites …
+    }
     function countMeshes(r) { let n = 0; r.traverse((o) => { if (o.isMesh) n++; }); return n; }
     new THREE.GLTFLoader().load('../models/' + model + '.glb', function (g) {
         const root = g.scene; scene.add(root);
-        root.traverse((o) => { if (o.isMesh && o.material) { (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { m.side = THREE.DoubleSide; m.needsUpdate = true; }); } });
+        const col = new THREE.Color(kindColor(model));
+        root.traverse((o) => {
+            if (!o.isMesh || !o.material) return;
+            if (style === 'flat') {
+                const hasMap = !!(o.material.map);
+                // textured hulls (civilians, UFO, XT-7) are authored dark: let the texture itself glow so they sit at the neon hulls' brightness
+                o.material = new THREE.MeshStandardMaterial({ color: hasMap ? 0xffffff : col, map: o.material.map || null, emissive: hasMap ? 0xffffff : col, emissiveMap: hasMap ? o.material.map : null, emissiveIntensity: hasMap ? 0.9 : 0.22, metalness: 0.15, roughness: 0.6, side: THREE.DoubleSide, flatShading: true });
+                try { const eg = new THREE.EdgesGeometry(o.geometry, 22); const ln = new THREE.LineSegments(eg, new THREE.LineBasicMaterial({ color: 0x06080f, transparent: true, opacity: 0.85 })); o.add(ln); } catch (e) {}
+            } else {
+                (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => {
+                    m.side = THREE.DoubleSide;
+                    if (m.color && !m.map) { const hsl = {}; m.color.getHSL(hsl); if (hsl.l < 0.4) m.color.setHSL(hsl.h, Math.max(hsl.s, 0.3), 0.55); }
+                    if (m.emissive && !m.map) { m.emissive.copy(m.color).multiplyScalar(0.18); }
+                    if (m.map) { m.emissiveMap = m.map; m.emissive.setHex(0xffffff); m.emissiveIntensity = 0.7; }
+                    m.needsUpdate = true;
+                });
+            }
+        });
         root.updateWorldMatrix(true, true);
         const box = new THREE.Box3().setFromObject(root);
         const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3());
