@@ -759,7 +759,11 @@ function populateTargets() {
 
     // Helper to get distance for any object (handles nested outer system objects)
     const getObjectDistance = (obj) => {
-        if (obj.userData.isOuterSystem && obj.parent) {
+        // (package N) and any body parented below the scene root — a moon
+        // under its planet has a LOCAL .position, which after a floating-origin
+        // rebase listed every such moon in the universe ~500 u away
+        if ((obj.userData.isOuterSystem && obj.parent) ||
+            (obj.parent && typeof scene !== 'undefined' && obj.parent !== scene && !obj.parent.isScene)) {
             const worldPos = new THREE.Vector3();
             obj.getWorldPosition(worldPos);
             return camera.position.distanceTo(worldPos);
@@ -779,7 +783,7 @@ function populateTargets() {
     const targetObjects = nearbyObjects.slice(0, 15);
 
     targetObjects.forEach((obj, index) => {
-        const distance = camera.position.distanceTo(obj.position);
+        const distance = getObjectDistance(obj);
         const energyCost = Math.ceil(distance / 50); // Adjusted for doubled scale
         
         let typeDisplay = obj.userData.type;
