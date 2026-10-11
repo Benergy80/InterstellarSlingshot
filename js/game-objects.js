@@ -21680,6 +21680,169 @@ function _hyNebDensity() {
 function _hySkyWashOff() {
     return typeof window !== 'undefined' && !!window.HYBRID && window.HYBRID.is('skyWash', 'off');
 }
+// ORIGINAL createNebulas' 8 formations (main-baseline js/game-objects.js
+// ~11228), in ORIGINAL order. The crisp layer of every combined nebula takes
+// one of these — the cloud's own ORIGINAL shape when it has one, else cycling.
+const HY_NEB_ORIG_TYPES = [
+    { shape: 'spiral', arms: 3 }, { shape: 'elliptical' }, { shape: 'ring', arms: 1 },
+    { shape: 'irregular' }, { shape: 'quasar' }, { shape: 'lenticular' },
+    { shape: 'ancient' }, { shape: 'spiral', arms: 2 }
+];
+// Crisp swirl extent = clamp(overhaul cloud size x K, MIN, MAX). ORIGINAL ran 1,200-2,000.
+const HY_NEB_CRISP_SIZE_K = 0.5, HY_NEB_CRISP_SIZE_MIN = 900, HY_NEB_CRISP_SIZE_MAX = 2000;
+// Range hold. ORIGINAL's swirls sat ~19-26k from the start; the hybrid's sit
+// 49-124k out, where a true-size swirl is a 15 px smudge. Beyond REF_DIST the
+// swirl grows as (dist / REF_DIST)^EXP (capped at MAX_SCALE), so it keeps the
+// on-screen size — and, with the same particle count per pixel, the brightness —
+// ORIGINAL's had at REF_DIST. Inside REF_DIST it is true size. OPACITY_K is a
+// plain multiplier on the crisp opacity (1 = ORIGINAL's 0.65).
+const HY_NEB_CRISP_REF_DIST = 22000, HY_NEB_CRISP_RANGE_EXP = 1.0, HY_NEB_CRISP_MAX_SCALE = 3.0;
+const HY_NEB_CRISP_OPACITY_K = 1.0;
+function _hyNebCrispRangeScale(dist) {
+    if (!(dist > HY_NEB_CRISP_REF_DIST) || HY_NEB_CRISP_MAX_SCALE <= 1) return 1;
+    return Math.min(HY_NEB_CRISP_MAX_SCALE, Math.pow(dist / HY_NEB_CRISP_REF_DIST, HY_NEB_CRISP_RANGE_EXP));
+}
+let _hyNebShapeSeq = 0;
+function _hyNebShapeIndex(ud) {
+    const sh = ud && ud.shape;
+    if (sh === 'spiral') return /^Chronos/.test(ud.name || '') ? 7 : ((_hyNebShapeSeq++ & 1) ? 7 : 0);
+    for (let k = 1; k < 7; k++) if (HY_NEB_ORIG_TYPES[k].shape === sh) return k;
+    return (_hyNebShapeSeq++) % HY_NEB_ORIG_TYPES.length;
+}
+function _hyNebCrispSize(ud) {
+    const s = ud && isFinite(ud.size) ? ud.size * HY_NEB_CRISP_SIZE_K : 1600;
+    return Math.max(HY_NEB_CRISP_SIZE_MIN, Math.min(HY_NEB_CRISP_SIZE_MAX, s));
+}
+// ORIGINAL createNebulas' per-particle generator, ported unchanged apart from
+// taking its shape/size/colour as arguments: the per-shape distribution loop,
+// the colour jitter offsetHSL(+-0.1, 0, +-0.15) and the quasar jet tint.
+function _hyOriginalNebulaGeometry(shapeIndex, size, baseColor) {
+    const nebulaType = HY_NEB_ORIG_TYPES[((shapeIndex | 0) % 8 + 8) % 8];
+    const particleCount = _isMobileRenderTier()
+        ? (1600 + Math.floor(Math.random() * 800))
+        : (4000 + Math.floor(Math.random() * 2000));
+    const positions = new Float32Array(particleCount * 3);
+    const colors = new Float32Array(particleCount * 3);
+    const nebulaSize = size;
+    const hsl = { h: Math.random(), s: 0.7, l: 0.6 };
+    if (baseColor) {
+        const bc = baseColor.isColor ? baseColor : new THREE.Color(baseColor);
+        bc.getHSL(hsl);
+    }
+    const nebulaColor = new THREE.Color().setHSL(hsl.h, 0.7, 0.6);
+    for (let p = 0; p < particleCount; p++) {
+        const i3 = p * 3;
+        let x, y, z;
+        if (nebulaType.shape === 'spiral' || nebulaType.shape === 'ring') {
+            if (Math.random() < 0.4) {
+                const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.3);
+                const bulgeAngle = Math.random() * Math.PI * 2;
+                const bulgePhi = (Math.random() - 0.5) * Math.PI;
+                x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
+                z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
+                y = bulgeRadius * Math.sin(bulgePhi) * 0.8;
+            } else {
+                const arm = Math.floor(p / (particleCount / nebulaType.arms)) % nebulaType.arms;
+                const armAngle = (p / (particleCount / nebulaType.arms)) * Math.PI * 2;
+                const armDistance = Math.pow(Math.random(), 1.8) * nebulaSize;
+                const armWidth = nebulaType.shape === 'ring' ? 0.03 : 0.12;
+                if (nebulaType.shape === 'ring' && armDistance < nebulaSize * 0.4) {
+                    p--;
+                    continue;
+                }
+                const angle = armAngle + (armDistance / nebulaSize) * Math.PI * 2;
+                x = Math.cos(angle + arm * (Math.PI * 2 / nebulaType.arms)) * armDistance +
+                    (Math.random() - 0.5) * armWidth * armDistance;
+                z = Math.sin(angle + arm * (Math.PI * 2 / nebulaType.arms)) * armDistance +
+                    (Math.random() - 0.5) * armWidth * armDistance;
+                y = (Math.random() - 0.5) * 30;
+            }
+        } else if (nebulaType.shape === 'elliptical') {
+            const distance = Math.pow(Math.random(), 1.3) * nebulaSize;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = (Math.random() - 0.5) * Math.PI * 0.6;
+            x = distance * Math.sin(phi) * Math.cos(theta);
+            z = distance * Math.sin(phi) * Math.sin(theta);
+            y = distance * Math.cos(phi) * 0.5;
+        } else if (nebulaType.shape === 'lenticular') {
+            if (Math.random() < 0.4) {
+                const bulgeRadius = Math.pow(Math.random(), 3) * (nebulaSize * 0.3);
+                const bulgeAngle = Math.random() * Math.PI * 2;
+                x = Math.cos(bulgeAngle) * bulgeRadius;
+                z = Math.sin(bulgeAngle) * bulgeRadius;
+                y = (Math.random() - 0.5) * 50;
+            } else {
+                const distance = Math.pow(Math.random(), 1.5) * nebulaSize;
+                const theta = Math.random() * Math.PI * 2;
+                x = Math.cos(theta) * distance;
+                z = Math.sin(theta) * distance;
+                y = (Math.random() - 0.5) * 20;
+            }
+        } else if (nebulaType.shape === 'irregular') {
+            if (Math.random() < 0.3) {
+                const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.25);
+                const bulgeAngle = Math.random() * Math.PI * 2;
+                const bulgePhi = (Math.random() - 0.5) * Math.PI;
+                x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
+                z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
+                y = bulgeRadius * Math.sin(bulgePhi) * 0.7;
+            } else {
+                const arms = 2;
+                const arm = Math.floor(p / (particleCount / arms)) % arms;
+                const armAngle = (p / (particleCount / arms)) * Math.PI * 2;
+                const armDistance = Math.pow(Math.random(), 1.6) * nebulaSize;
+                const armWidth = arm === 0 ? 0.15 : 0.20;
+                const spiralTightness = arm === 0 ? 2.5 : 3.0;
+                const angle = armAngle + (armDistance / nebulaSize) * Math.PI * spiralTightness;
+                x = Math.cos(angle + arm * Math.PI) * armDistance +
+                    (Math.random() - 0.5) * armWidth * armDistance;
+                z = Math.sin(angle + arm * Math.PI) * armDistance +
+                    (Math.random() - 0.5) * armWidth * armDistance;
+                y = (Math.random() - 0.5) * 40;
+            }
+        } else if (nebulaType.shape === 'quasar') {
+            if (Math.random() < 0.7) {
+                const bulgeRadius = Math.pow(Math.random(), 2.5) * (nebulaSize * 0.4);
+                const bulgeAngle = Math.random() * Math.PI * 2;
+                const bulgePhi = (Math.random() - 0.5) * Math.PI * 0.5;
+                x = bulgeRadius * Math.cos(bulgeAngle) * Math.cos(bulgePhi);
+                z = bulgeRadius * Math.sin(bulgeAngle) * Math.cos(bulgePhi);
+                y = bulgeRadius * Math.sin(bulgePhi);
+            } else {
+                const jetDirection = Math.random() < 0.5 ? 1 : -1;
+                const jetDistance = Math.random() * nebulaSize * 1.5;
+                const jetSpread = nebulaSize * 0.08;
+                x = (Math.random() - 0.5) * jetSpread;
+                y = jetDirection * jetDistance;
+                z = (Math.random() - 0.5) * jetSpread;
+            }
+        } else { // ancient/dwarf
+            const clusterRadius = Math.pow(Math.random(), 1.5) * nebulaSize;
+            const theta = Math.random() * Math.PI * 2;
+            const phi = Math.acos(1 - 2 * Math.random());
+            x = clusterRadius * Math.sin(phi) * Math.cos(theta);
+            y = clusterRadius * Math.cos(phi) * 0.6;
+            z = clusterRadius * Math.sin(phi) * Math.sin(theta);
+        }
+        positions[i3] = x;
+        positions[i3 + 1] = y;
+        positions[i3 + 2] = z;
+        let colorVar = nebulaColor.clone();
+        if (nebulaType.shape === 'quasar' && Math.abs(y) > nebulaSize * 0.5) {
+            colorVar = new THREE.Color(0xaaddff);
+        } else {
+            colorVar.offsetHSL((Math.random() - 0.5) * 0.2, 0, (Math.random() - 0.5) * 0.3);
+        }
+        colors[i3] = colorVar.r;
+        colors[i3 + 1] = colorVar.g;
+        colors[i3 + 2] = colorVar.b;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    return geo;
+}
+if (typeof window !== 'undefined') window._hyOriginalNebulaGeometry = _hyOriginalNebulaGeometry;
 let _hyNebSeq = 0;
 function _hyCombineNebulae() {
     if (_hyNebOverhaul() || typeof nebulaClouds === 'undefined' || !nebulaClouds) return 0;
@@ -21697,18 +21860,13 @@ function _hyCombineNebulae() {
         g.userData._hyNeb = true;
         n++;
         const pos = vol.geometry.attributes.position, col = vol.geometry.attributes.color;
-        // ORIGINAL swirl: same positions, colours normalised back to full
-        // saturation (the overhaul darkened them for additive stacking).
-        if (crispK > 0 && pos && col) {
-            const cc = new Float32Array(col.count * 3);
-            for (let p = 0; p < col.count; p++) {
-                const r = col.getX(p), gg = col.getY(p), b = col.getZ(p);
-                const m = Math.max(r, gg, b, 1e-3), s = 0.85 / m;
-                cc[p * 3] = r * s; cc[p * 3 + 1] = gg * s; cc[p * 3 + 2] = b * s;
-            }
-            const cg = new THREE.BufferGeometry();
-            cg.setAttribute('position', pos);
-            cg.setAttribute('color', new THREE.BufferAttribute(cc, 3));
+        // ORIGINAL swirl: a compact galaxy-shaped cloud built by ORIGINAL's
+        // own particle generator (createNebulas, main-baseline), not the
+        // overhaul blob's positions — that 2,000-5,000 u diffuse puff had no
+        // shape to see. Hue from the overhaul cloud, ORIGINAL sat/lightness.
+        if (crispK > 0) {
+            const ud = g.userData;
+            const cg = _hyOriginalNebulaGeometry(_hyNebShapeIndex(ud), _hyNebCrispSize(ud), ud.color);
             const base = HY_NEB_CRISP_OPACITY * crispK;
             const cm = new THREE.PointsMaterial({
                 size: 2.5, vertexColors: true, transparent: true, opacity: base,
@@ -21717,14 +21875,24 @@ function _hyCombineNebulae() {
             cm.map = null; cm.alphaTest = 0; cm.toneMapped = false; // hard pixels, outside ACES
             const crisp = new THREE.Points(cg, cm);
             crisp.name = 'HybridOriginalNebula';
-            crisp.frustumCulled = vol.frustumCulled;
-            crisp.position.copy(vol.position); crisp.rotation.copy(vol.rotation); crisp.scale.copy(vol.scale);
+            crisp.frustumCulled = true;
+            crisp.rotation.set(Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, Math.random() * Math.PI * 2);
             // Distant / exotic clouds fade in by range (updateNebulaVisibility
-            // drives the group's currentOpacity toward 0.65); follow it.
-            crisp.onBeforeRender = function () {
-                const ud = g.userData;
-                cm.opacity = (ud.isDistant || ud.isExoticCore) && typeof ud.currentOpacity === 'number'
-                    ? base * Math.min(1, ud.currentOpacity / 0.65) : base;
+            // drives the group's currentOpacity toward 0.65); follow it. Past
+            // HY_NEB_CRISP_REF_DIST the swirl is held at the on-screen size
+            // ORIGINAL's had (see _hyNebCrispRangeScale).
+            const _wp = new THREE.Vector3(), _cp = new THREE.Vector3();
+            crisp.onBeforeRender = function (renderer, scene, camera) {
+                cm.opacity = HY_NEB_CRISP_OPACITY_K * ((ud.isDistant || ud.isExoticCore) && typeof ud.currentOpacity === 'number'
+                    ? base * Math.min(1, ud.currentOpacity / 0.65) : base);
+                if (!camera || !camera.matrixWorld) return;
+                _wp.setFromMatrixPosition(crisp.matrixWorld);
+                _cp.setFromMatrixPosition(camera.matrixWorld);
+                const k = _hyNebCrispRangeScale(_wp.distanceTo(_cp));
+                if (Math.abs(crisp.scale.x - k) > 1e-3) {
+                    crisp.scale.setScalar(k);
+                    crisp.updateMatrixWorld(true);   // the renderer reads matrixWorld right after this hook
+                }
             };
             g.add(crisp);
         }
