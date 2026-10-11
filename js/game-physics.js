@@ -2991,7 +2991,8 @@ const HY_NAVWARP = {
     SPEED_MAX: 45,       // ...but never faster than this (u/frame; stock warp is 15)
     BURN_MAX_MS: 25000,  // the burn may be stretched to reach the target, up to this
     CUT_K: 1.25,         // the burn is cut so the exit ramp ends this x the standoff out
-    PLANET_PICK_K: 1.5   // a nebula-sized target parks at its biggest planet within this x its size
+    PLANET_PICK_K: 1.5,  // a nebula-sized target parks at its biggest planet within this x its size
+    HOLD_MS: 20000       // station-keeping hands the stick back after this long even untouched
 };
 if (typeof window !== 'undefined') window.HY_NAVWARP = HY_NAVWARP;
 
@@ -3061,12 +3062,21 @@ function _hyNWHeld() {
     _HY_NW_LOOK.concat(_HY_NW_FLY).forEach(function (k) { h[k] = !!keys[k]; });
     return h;
 }
+// Last few nav-warp events, for the console and the guards: window.__hyNavWarpLog
+function _hyNWLog(ev, nav, info) {
+    if (typeof window === 'undefined') return;
+    const L = window.__hyNavWarpLog || (window.__hyNavWarpLog = []);
+    L.push({ t: Math.round(performance.now()), ev: ev, name: nav && nav.name, phase: nav && nav.phase, info: info,
+        range: nav && nav.range != null ? Math.round(nav.range) : undefined });
+    if (L.length > 20) L.shift();
+}
 function _hyNWFinish(nav, why) {
     const ew = gameState.emergencyWarp;
     if (ew && nav._baseBoost != null && ew.boostSpeed === nav._boost) ew.boostSpeed = nav._baseBoost;
     nav._baseBoost = null;
     gameState._hyNavWarp = null;
     gameState._hyNavWarpLast = { name: nav.name, why: why, phase: nav.phase, t: Date.now() };
+    _hyNWLog('end', nav, why);
     if (why !== 'parked') console.log('🧭 Nav-warp ended (' + why + ') in ' + nav.phase);
 }
 
@@ -3106,6 +3116,7 @@ function _hyStageNavWarp(fwd) {
     gameState.autoNavigating = false;
     gameState.autoNavOrienting = false;
     gameState._hyNavWarp = nav;
+    _hyNWLog('stage', nav, Math.round(range) + '/' + Math.round(stand));
     console.log('🧭 Nav-warp: ' + nav.name + ' at ' + Math.round(range) + ' u, park ' + Math.round(stand) +
         ' u (R ' + Math.round(R) + '), burn ' + spd.toFixed(1) + ' u/frame');
     return nav;
@@ -3118,6 +3129,14 @@ function _hyNavWarpTick(forwardDirection, dtF) {
     if (!nav) return;
     const ew = gameState.emergencyWarp;
     if (!_hyNavWarpOn() || !nav.obj || !nav.obj.position || !nav.obj.parent) { _hyNWFinish(nav, 'lost'); return; }
+    // Yield to anything else that takes the ship: a slingshot, a jump or a
+    // new warp over a park, death; and hand the stick back after HOLD_MS.
+    const _sl = gameState.slingshot;
+    if ((_sl && _sl.active) || gameState.slingshotWhip) { _hyNWFinish(nav, 'slingshot'); return; }
+    if (ew.isJump) { _hyNWFinish(nav, 'jump'); return; }
+    if ((nav.phase === 'park' || nav.phase === 'hold') && (ew.active || ew.transitioning)) { _hyNWFinish(nav, 'new-warp'); return; }
+    if (gameState.gameOver) { _hyNWFinish(nav, 'game-over'); return; }
+    if (nav.phase === 'hold' && Date.now() - nav.holdT0 > HY_NAVWARP.HOLD_MS) { _hyNWFinish(nav, 'hold-done'); return; }
     // Manual override: a look key ends it in every phase, a flight key ends the
     // park. A key already held at the press only counts once released and pressed again.
     if (typeof keys !== 'undefined') {
