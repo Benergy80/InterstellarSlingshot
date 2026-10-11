@@ -21920,6 +21920,328 @@ if (typeof window !== 'undefined') {
     });
 }
 
+// =============================================================================
+// HYBRID NEBULA HARBOURS — more civilian traffic + space junk in every nebula
+// =============================================================================
+// Ben, 2026-10-10: "nebulas need more space traffic and space junk so they feel
+// more crowded." Runs after createTradingShipsInNebulas() (wrapped below) under
+// nebulae: combined | original; nebulae: overhaul leaves the overhaul as it was.
+//   TRAFFIC — extra ships from the stock civilian builders (createTradingShip /
+//     createNebulaShip, so the stock AI, hails, distress, map dots and civilian
+//     combat all apply), held in a tighter, taller band than the stock 0.3-0.7
+//     ring, with errands parked OUTSIDE the nebula's planets (the stock errand
+//     flies to a planet's centre). SHUTTLES start mid-errand so the lanes move.
+//   JUNK — hull plates, cargo containers, girders, rock-and-slag chunks and a
+//     few derelict hulls, in ORIGINAL's flat unlit vector colours (face shade
+//     baked into vertex colours, no lights, no tone mapping). One InstancedMesh
+//     per kind per nebula (5 draws), drawn only while the camera is within
+//     1.5 x size + CULL_PAD of the centre, tumbling only within ANIM_PAD.
+const HY_NEB_HARBOUR = {
+    TRADERS: 14,          // extra createTradingShip() per named nebula (stock: 15-25)
+    MINERS: 6,            // extra mining vessels (stock: 8-15)
+    SCIENCE: 2,           // extra research ships (stock: 3-6)
+    SHUTTLES: 8,          // extra traders that start out flying a planet-to-planet errand
+    BAND_MIN: 0.10,       // orbit band of the extra ships, x nebula size (stock 0.3-0.7)
+    BAND_MAX: 0.55,
+    BAND_Y: 900,          // vertical spread of the extra ships (stock +-100)
+    PARK_K: 1.8,          // errands park this many planet radii from the planet's centre
+    MOBILE_K: 0.4         // count multiplier on the mobile render tier
+};
+const HY_NEB_JUNK = {
+    FIELDS: 8,                 // debris fields per nebula
+    BODY_FIELDS: 2,            // of which this many hang around the nebula's planets (a wrecked-harbour ring)
+    BODY_FIELD_K: 2.4,         // ... centred this many planet radii out
+    FIELD_R_MIN: 350, FIELD_R_MAX: 900,
+    FIELD_AT_MIN: 0.12, FIELD_AT_MAX: 1.2,   // field centre distance from the nebula centre, x size
+    LOOSE: 0.25,               // share of each kind scattered loose through 1.3 x size
+    PLATES: 140, CONTAINERS: 110, GIRDERS: 70, CHUNKS: 300, DERELICTS: 6,
+    CULL_PAD: 6000,            // drawn while camera < 1.5 x size + CULL_PAD from the centre
+    ANIM_PAD: 3000,            // tumbles while camera < 1.5 x size + ANIM_PAD
+    SPIN: 0.006,               // max tumble, rad per 60fps frame
+    DRIFT: 0.00004,            // the whole junk cloud's turn about the centre, rad per frame
+    PLANET_CLEAR: 1.5,         // no piece inside this many planet radii
+    MOBILE_K: 0.4
+};
+if (typeof window !== 'undefined') { window.HY_NEB_HARBOUR = HY_NEB_HARBOUR; window.HY_NEB_JUNK = HY_NEB_JUNK; }
+
+function _hyBodyRadius(p) {
+    if (!p) return 0;
+    let r = 0;
+    if (p.geometry) {
+        if (!p.geometry.boundingSphere) p.geometry.computeBoundingSphere();
+        r = p.geometry.boundingSphere ? p.geometry.boundingSphere.radius : 0;
+    }
+    if (!(r > 0) && p.userData) r = p.userData.radius || p.userData.size || 0;
+    const s = p.scale ? Math.max(p.scale.x, p.scale.y, p.scale.z) : 1;
+    return (r || 100) * (s || 1);
+}
+// Real bodies (no asteroid rocks) within reach of a nebula's centre.
+function _hyNebBodies(neb, reach) {
+    const out = [];
+    if (typeof planets === 'undefined' || !planets) return out;
+    const c = neb.position, r2 = reach * reach;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.position || !p.userData) continue;
+        const ty = p.userData.type;
+        if (ty === 'asteroid' || ty === 'blackhole' || p.userData.isAsteroid) continue;
+        if (p.position.distanceToSquared(c) > r2) continue;
+        out.push({ p: p.position, r: _hyBodyRadius(p) });
+    }
+    return out;
+}
+function _hyParkPoint(body) {
+    const d = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 0.5, Math.random() - 0.5).normalize();
+    return body.p.clone().addScaledVector(d, body.r * HY_NEB_HARBOUR.PARK_K);
+}
+
+function _hyNebTraffic(neb) {
+    const H = HY_NEB_HARBOUR, size = neb.userData.size || 1500;
+    const k = _isMobileRenderTier() ? H.MOBILE_K : 1;
+    const bodies = _hyNebBodies(neb, size * 2);
+    const before = tradingShips.length;
+    const make = (fn) => {
+        const n0 = tradingShips.length;
+        try { fn(); } catch (e) { return null; }
+        return tradingShips.length > n0 ? tradingShips[tradingShips.length - 1] : null;
+    };
+    const tidy = (s, shuttle) => {
+        if (!s || !s.userData) return;
+        const ud = s.userData;
+        ud.orbitRadius = size * (H.BAND_MIN + Math.random() * (H.BAND_MAX - H.BAND_MIN));
+        ud.verticalOffset = (Math.random() - 0.5) * H.BAND_Y;
+        ud.orbitAngle = Math.random() * Math.PI * 2;
+        ud._hyHarbour = true;
+        s.position.set(neb.position.x + Math.cos(ud.orbitAngle) * ud.orbitRadius,
+            neb.position.y + ud.verticalOffset,
+            neb.position.z + Math.sin(ud.orbitAngle) * ud.orbitRadius);
+        if (bodies.length) {
+            ud.nearbyPlanets = bodies.map(_hyParkPoint);
+            if (shuttle) {
+                ud.aiState = 'traveling';
+                ud.stateTimer = 0; ud.waitTime = 0; ud.fleeDirection = null; ud.hasHailedPlayer = false;
+                ud.currentDestination = ud.nearbyPlanets[Math.floor(Math.random() * ud.nearbyPlanets.length)].clone();
+                // start somewhere along the lane, not on the ring
+                const from = ud.nearbyPlanets[Math.floor(Math.random() * ud.nearbyPlanets.length)];
+                s.position.lerpVectors(from, ud.currentDestination, Math.random() * 0.8);
+                if (s.position.distanceTo(ud.currentDestination) < 150) s.position.add(new THREE.Vector3(300, 60, -300));
+            }
+        }
+    };
+    const n = (v) => Math.round(v * k);
+    for (let i = 0; i < n(H.TRADERS); i++) tidy(make(() => createTradingShip(neb, 100 + i)), false);
+    for (let i = 0; i < n(H.SHUTTLES); i++) tidy(make(() => createTradingShip(neb, 200 + i)), true);
+    for (let i = 0; i < n(H.MINERS); i++) tidy(make(() => createNebulaShip(neb, 100 + i, 'mining')), false);
+    for (let i = 0; i < n(H.SCIENCE); i++) tidy(make(() => createNebulaShip(neb, 100 + i, 'science')), false);
+    return tradingShips.length - before;
+}
+
+// --- junk ---------------------------------------------------------------------
+let _hyJunkGeo = null;
+function _hyJunkGeometries() {
+    if (_hyJunkGeo) return _hyJunkGeo;
+    const L = new THREE.Vector3(0.4, 0.8, 0.45).normalize();
+    const shade = (g) => {
+        const geo = g.index ? g.toNonIndexed() : g;
+        geo.computeVertexNormals();
+        const nrm = geo.attributes.normal, cnt = nrm.count, col = new Float32Array(cnt * 3);
+        for (let i = 0; i < cnt; i++) {
+            const d = nrm.getX(i) * L.x + nrm.getY(i) * L.y + nrm.getZ(i) * L.z;
+            const s = 0.38 + 0.62 * Math.max(0, d);
+            col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = s;
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+        return geo;
+    };
+    const hull = new THREE.ConeGeometry(0.5, 2, 5); hull.rotateX(Math.PI / 2);
+    _hyJunkGeo = {
+        plates: shade(new THREE.BoxGeometry(1, 0.08, 0.7)),
+        containers: shade(new THREE.BoxGeometry(1, 0.45, 0.45)),
+        girders: shade(new THREE.BoxGeometry(1, 0.07, 0.07)),
+        chunks: shade(new THREE.IcosahedronGeometry(1, 0)),
+        derelicts: shade(hull)
+    };
+    return _hyJunkGeo;
+}
+const _HY_JUNK_KINDS = [
+    // kind, count key, size range [min,max] (x,y,z multipliers via geometry), palette
+    { k: 'plates',     n: 'PLATES',     s: [25, 70],   pal: [0x8899aa, 0x6f7f92, 0xa0a8b4, 0x7a6a5a] },
+    { k: 'containers', n: 'CONTAINERS', s: [24, 50],   pal: [0xff8844, 0xffdd44, 0x44aaff, 0xaaffaa, 0xff4444, 0x44ff88, 0xff88ff] },
+    { k: 'girders',    n: 'GIRDERS',    s: [40, 120],  pal: [0x99a3ad, 0xb0703a, 0x7d8790] },
+    { k: 'chunks',     n: 'CHUNKS',     s: [5, 18],    pal: [0x777f88, 0x8a7a66, 0x5f6670, 0x9a8f80] },
+    { k: 'derelicts',  n: 'DERELICTS',  s: [60, 120],  pal: [0x556070, 0x6a5040, 0x4a5a50] }
+];
+const _hyJunkMats = {};
+function _hyJunkMaterial(kind) {
+    if (_hyJunkMats[kind]) return _hyJunkMats[kind];
+    const m = new THREE.MeshBasicMaterial({ vertexColors: true, fog: false });
+    m.toneMapped = false;   // ORIGINAL flat colours, outside ACES
+    return (_hyJunkMats[kind] = m);
+}
+const _hyJunkGroups = [];
+function _hyNebJunk(neb) {
+    const J = HY_NEB_JUNK, size = neb.userData.size || 1500;
+    const k = _isMobileRenderTier() ? J.MOBILE_K : 1;
+    const bodies = _hyNebBodies(neb, size * 1.8);
+    const group = new THREE.Group();
+    group.name = 'HybridNebulaJunk';
+    group.position.copy(neb.position);
+    group.userData = { nebula: neb, size: size, pieces: 0, meshes: [], _tick: 0 };
+    const fields = [];
+    for (let f = 0; f < J.FIELDS; f++) {
+        const d = new THREE.Vector3(Math.random() - 0.5, (Math.random() - 0.5) * 0.6, Math.random() - 0.5).normalize();
+        if (f < J.BODY_FIELDS && bodies.length) {
+            const b = bodies[f % bodies.length];
+            fields.push({ c: b.p.clone().sub(neb.position).addScaledVector(d, b.r * J.BODY_FIELD_K),
+                r: J.FIELD_R_MIN + Math.random() * (J.FIELD_R_MAX - J.FIELD_R_MIN) });
+            continue;
+        }
+        fields.push({ c: d.multiplyScalar(size * (J.FIELD_AT_MIN + Math.random() * (J.FIELD_AT_MAX - J.FIELD_AT_MIN))),
+            r: J.FIELD_R_MIN + Math.random() * (J.FIELD_R_MAX - J.FIELD_R_MIN) });
+    }
+    const tmp = new THREE.Vector3(), wp = new THREE.Vector3();
+    const clear = (local) => {
+        wp.copy(local).add(neb.position);
+        for (let b = 0; b < bodies.length; b++) {
+            const lim = bodies[b].r * J.PLANET_CLEAR;
+            if (wp.distanceToSquared(bodies[b].p) < lim * lim) return false;
+        }
+        return true;
+    };
+    const pick = (out) => {
+        for (let tries = 0; tries < 6; tries++) {
+            if (Math.random() < J.LOOSE) {
+                const r = size * 1.3 * Math.cbrt(Math.random());
+                out.set(Math.random() - 0.5, (Math.random() - 0.5) * 0.5, Math.random() - 0.5).normalize().multiplyScalar(r);
+            } else {
+                const fd = fields[Math.floor(Math.random() * fields.length)];
+                // sum of three uniforms ~ a soft gaussian clump
+                out.set((Math.random() + Math.random() + Math.random() - 1.5),
+                        (Math.random() + Math.random() + Math.random() - 1.5) * 0.6,
+                        (Math.random() + Math.random() + Math.random() - 1.5)).multiplyScalar(fd.r).add(fd.c);
+            }
+            if (clear(out)) return true;
+        }
+        return false;
+    };
+    const geos = _hyJunkGeometries(), col = new THREE.Color();
+    _HY_JUNK_KINDS.forEach((kind) => {
+        const want = Math.max(1, Math.round(J[kind.n] * k));
+        const st = { pos: new Float32Array(want * 3), rot: new Float32Array(want * 3), spin: new Float32Array(want * 3), scl: new Float32Array(want * 3) };
+        let n = 0;
+        for (let i = 0; i < want; i++) {
+            if (!pick(tmp)) continue;
+            const s = kind.s[0] + Math.random() * (kind.s[1] - kind.s[0]);
+            st.pos[n * 3] = tmp.x; st.pos[n * 3 + 1] = tmp.y; st.pos[n * 3 + 2] = tmp.z;
+            st.rot[n * 3] = Math.random() * 6.283; st.rot[n * 3 + 1] = Math.random() * 6.283; st.rot[n * 3 + 2] = Math.random() * 6.283;
+            const sp = kind.k === 'derelicts' ? J.SPIN * 0.1 : J.SPIN;
+            st.spin[n * 3] = (Math.random() - 0.5) * sp; st.spin[n * 3 + 1] = (Math.random() - 0.5) * sp; st.spin[n * 3 + 2] = (Math.random() - 0.5) * sp;
+            st.scl[n * 3] = s; st.scl[n * 3 + 1] = s * (0.8 + Math.random() * 0.4); st.scl[n * 3 + 2] = s * (0.8 + Math.random() * 0.4);
+            n++;
+        }
+        if (!n) return;
+        const im = new THREE.InstancedMesh(geos[kind.k], _hyJunkMaterial(kind.k), n);
+        im.name = 'HybridNebulaJunk_' + kind.k;
+        im.frustumCulled = false;            // r128 culls instanced meshes by the base geometry's sphere
+        im.userData.__dbTris = Infinity;     // exempt from the draw budget (<150-tri hide)
+        im.userData._hyJunk = st;
+        im.userData.count = n;
+        for (let i = 0; i < n; i++) {
+            col.setHex(kind.pal[Math.floor(Math.random() * kind.pal.length)]).multiplyScalar(0.75 + Math.random() * 0.25);
+            im.setColorAt(i, col);
+        }
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
+        _hyJunkCompose(im, 0);
+        group.add(im);
+        group.userData.meshes.push(im);
+        group.userData.pieces += n;
+    });
+    group.visible = false;
+    scene.add(group);
+    _hyJunkGroups.push(group);
+    neb.userData._hyJunkGroup = group;
+    return group.userData.pieces;
+}
+const _hyJunkDummy = (typeof THREE !== 'undefined') ? new THREE.Object3D() : null;
+function _hyJunkCompose(im, adv) {
+    const st = im.userData._hyJunk, n = im.count, d = _hyJunkDummy;
+    for (let i = 0; i < n; i++) {
+        const i3 = i * 3;
+        if (adv) { st.rot[i3] += st.spin[i3] * adv; st.rot[i3 + 1] += st.spin[i3 + 1] * adv; st.rot[i3 + 2] += st.spin[i3 + 2] * adv; }
+        d.position.set(st.pos[i3], st.pos[i3 + 1], st.pos[i3 + 2]);
+        d.rotation.set(st.rot[i3], st.rot[i3 + 1], st.rot[i3 + 2]);
+        d.scale.set(st.scl[i3], st.scl[i3 + 1], st.scl[i3 + 2]);
+        d.updateMatrix();
+        im.setMatrixAt(i, d.matrix);
+    }
+    im.instanceMatrix.needsUpdate = true;
+}
+// Per frame (rides updateNebulaBreathing): follow the cloud, cull by range,
+// tumble the near field at 30 Hz, dt-scaled.
+function _hyNebJunkTick() {
+    if (!_hyJunkGroups.length || typeof camera === 'undefined' || !camera) return;
+    const gs = (typeof gameState !== 'undefined') ? gameState : null;
+    const dtF = gs && gs.dtFrames ? gs.dtFrames : 1;
+    const paused = gs && (gs.paused || gs.gameOver);
+    const cp = camera.position;
+    for (let i = 0; i < _hyJunkGroups.length; i++) {
+        const g = _hyJunkGroups[i], ud = g.userData, neb = ud.nebula;
+        if (neb && neb.position) g.position.copy(neb.position);
+        const dist = g.position.distanceTo(cp), reach = ud.size * 1.5;
+        const vis = dist < reach + HY_NEB_JUNK.CULL_PAD;
+        if (g.visible !== vis) g.visible = vis;
+        if (!vis || paused) continue;
+        g.rotation.y += HY_NEB_JUNK.DRIFT * dtF;
+        ud._dt = (ud._dt || 0) + dtF;
+        if (dist > reach + HY_NEB_JUNK.ANIM_PAD || (++ud._tick & 1)) continue;
+        for (let m = 0; m < ud.meshes.length; m++) _hyJunkCompose(ud.meshes[m], ud._dt);
+        ud._dt = 0;
+    }
+}
+
+function _hyNebHarbours() {
+    if (_hyNebOverhaul() || typeof nebulaClouds === 'undefined' || !nebulaClouds || typeof scene === 'undefined') return;
+    let ships = 0, junk = 0, n = 0;
+    for (let i = 0; i < nebulaClouds.length; i++) {
+        const neb = nebulaClouds[i];
+        if (!neb || !neb.userData || neb.userData._hyHarbour || !neb.position) continue;
+        neb.userData._hyHarbour = true;
+        n++;
+        // traffic on the nebulae the stock builder staffs (the named ones);
+        // junk in every nebula
+        if (!neb.userData.isDistant && !neb.userData.isExoticCore && typeof createTradingShip === 'function') {
+            try { ships += _hyNebTraffic(neb); } catch (e) { console.warn('HYBRID harbour traffic:', e); }
+        }
+        try { junk += _hyNebJunk(neb); } catch (e) { console.warn('HYBRID harbour junk:', e); }
+    }
+    if (n) console.log(`HYBRID harbours: +${ships} ships, ${junk} junk pieces across ${n} nebulae`);
+}
+if (typeof window !== 'undefined') {
+    window.__hyNebJunk = {
+        groups: _hyJunkGroups,
+        count: function (neb) { const g = neb && neb.userData && neb.userData._hyJunkGroup; return g ? g.userData.pieces : 0; },
+        tick: _hyNebJunkTick
+    };
+    const f = window.createTradingShipsInNebulas;
+    if (typeof f === 'function' && !f._hyHarbour) {
+        window.createTradingShipsInNebulas = function () {
+            const r = f.apply(this, arguments);
+            try { _hyNebHarbours(); } catch (e) { console.warn('HYBRID harbours:', e); }
+            return r;
+        };
+        window.createTradingShipsInNebulas._hyHarbour = true;
+    }
+    const b = window.updateNebulaBreathing;
+    if (typeof b === 'function' && !b._hyHarbour) {
+        window.updateNebulaBreathing = function () {
+            const r = b.apply(this, arguments);
+            try { _hyNebJunkTick(); } catch (e) { /* never break the frame */ }
+            return r;
+        };
+        window.updateNebulaBreathing._hyHarbour = true;
+    }
+}
+
 /**
  * Synthwave hue wheel. The old code used `Math.random()` for hue, which walks
  * the whole spectrum including muddy yellow-greens. Walking a fixed palette
