@@ -5013,6 +5013,7 @@ function _efOn() {
 const HY_ENEMY_SPEED_K = 0.8;
 if (typeof window !== 'undefined') window.HY_ENEMY_SPEED_K = HY_ENEMY_SPEED_K;
 function _efClass(ud) {
+    if (ud.isAlly) return ud._jumpUntil ? WINGMAN_FLIGHT.dash : WINGMAN_FLIGHT.wingman;   // HYBRID (package AA): wingmen fly the same model
     if (ud.guardianRole === 'ram') return ENEMY_FLIGHT.elite;   // HYBRID (package R): a rammer needs the thrust
     if (ud.isBoss) return ENEMY_FLIGHT.boss;
     if (ud.isBossSupport) return ENEMY_FLIGHT.support;
@@ -5027,7 +5028,8 @@ function _efBegin(enemy) {
     if (ud.isUFO || ud.isBorgCube || ud.type === 'borg_drone') return false;
     let ef = ud._ef;
     if (!ef) {
-        const nose = new THREE.Vector3(0, 0, -1).applyQuaternion(enemy.quaternion).normalize();
+        // Wingmen are clones of the +Z-forward player model; enemies fly -Z.
+        const nose = new THREE.Vector3(0, 0, ud.isAlly ? 1 : -1).applyQuaternion(enemy.quaternion).normalize();
         const up = new THREE.Vector3(0, 1, 0).applyQuaternion(enemy.quaternion);
         up.addScaledVector(nose, -up.dot(nose)).normalize();
         ef = ud._ef = {
@@ -5152,6 +5154,7 @@ function _efStep(enemy) {
 
     // ---- 1. the intent: what the behaviours asked for this tick ----------
     _efI.subVectors(enemy.position, ef.p0);
+    const _vMax = spec.maxSpeed * (ud.isAlly ? 1 : HY_ENEMY_SPEED_K);   // the 20% slow-down is for hostiles only
     // The per-frame swarm pull (autopilot.js swarmEnemiesNearPlayer) is
     // banked between ticks as a wish, not applied as a shove.
     if (ud._efPull) { _efI.add(ud._efPull); ud._efPull.set(0, 0, 0); }
@@ -5163,8 +5166,11 @@ function _efStep(enemy) {
         _efOrient(enemy, ef); return;
     }
     _efI.divideScalar(dt);                        // desired velocity, u/s
+    // A wingman behaviour may state its wish as a velocity (u/s) instead
+    // of a displacement; anything else that moved it this tick adds on.
+    if (ud.isAlly && ud._efWish) { _efI.add(ud._efWish); ud._efWish = null; }
     ef.ask = _efI.length();                       // (instrumentation: what the AI asked for)
-    if (_efI.length() > spec.maxSpeed * HY_ENEMY_SPEED_K) _efI.setLength(spec.maxSpeed * HY_ENEMY_SPEED_K);
+    if (_efI.length() > _vMax) _efI.setLength(_vMax);
     enemy.position.copy(ef.p0);                   // rewind: only the flight model moves the hull
 
     // ---- 2. where the nose should point -----------------------------------
@@ -5182,10 +5188,10 @@ function _efStep(enemy) {
         _efA.normalize();
         // Lining up a shot: nose onto the target (it crabs a little, the way
         // a starfighter holds its guns on you through a pass).
-        const ap = (typeof _factionAttackProfile === 'function') ? _factionAttackProfile(enemy) : null;
-        const shooting = ud._telegraphing || (ap && ud._burstLeft !== undefined && ud._burstLeft < ap.burst);
+        const ap = (!ud.isAlly && typeof _factionAttackProfile === 'function') ? _factionAttackProfile(enemy) : null;
+        const shooting = ud.isAlly ? !!ud._wmAimPos : (ud._telegraphing || (ap && ud._burstLeft !== undefined && ud._burstLeft < ap.burst));
         if (shooting && !ud.isBoss) {
-            const tp = (typeof _engagedTargetPos === 'function') ? _engagedTargetPos(enemy) : null;
+            const tp = ud.isAlly ? ud._wmAimPos : ((typeof _engagedTargetPos === 'function') ? _engagedTargetPos(enemy) : null);
             if (tp) {
                 _efB.subVectors(tp, enemy.position);
                 if (_efB.lengthSq() > 1) {
@@ -5201,11 +5207,13 @@ function _efStep(enemy) {
     // A hull at speed commits to an arc: the nose may lead its velocity by
     // at most maxSlip, so a reversal is a turn you can watch and lead, not
     // a flip-and-burn.
-    if (!_efMan.evading) {
+    // (A wingman keeps a looser limit through its evasive manoeuvres too: its
+    // nose never swings past WM_EVADE_SLIP off the way it is really moving.)
+    if (!_efMan.evading || ud.isAlly) {
         const vs = ef.v.length();
         if (vs > EF_SLIP_SPEED) {
             _efB.copy(ef.v).divideScalar(vs);
-            const lim = spec.maxSlip * _EF_D2R;
+            const lim = (_efMan.evading ? WM_EVADE_SLIP : spec.maxSlip) * _EF_D2R;
             const off = Math.acos(Math.max(-1, Math.min(1, _efB.dot(_efA))));
             if (off > lim) {
                 _efC.crossVectors(_efB, _efA);
@@ -5278,7 +5286,7 @@ function _efStep(enemy) {
     _efLv.subVectors(ef.v, _efC);
     const aCap = (spec.mainThrust + spec.manThrust) * dt;
     if (_efLv.length() > aCap) { _efLv.setLength(aCap); ef.v.copy(_efC).add(_efLv); }
-    if (ef.v.length() > spec.maxSpeed * HY_ENEMY_SPEED_K) ef.v.setLength(spec.maxSpeed * HY_ENEMY_SPEED_K);
+    if (ef.v.length() > _vMax) ef.v.setLength(_vMax);
     // Plume = what the main engine is doing: accelerating, or hauling the
     // velocity round in a turn. Straight and level at speed, it coasts.
     const thrTarget = Math.min(1, (Math.max(0, aMain) + aGrip) / spec.mainThrust);
@@ -5287,7 +5295,7 @@ function _efStep(enemy) {
     // ---- 5. move ----------------------------------------------------------
     enemy.position.addScaledVector(ef.v, dt);
     // Event horizons stay a hard wall (rare): push out, lose the inward speed.
-    if (typeof _enemyAvoidBlackHoles === 'function') {
+    if (!ud.isAlly && typeof _enemyAvoidBlackHoles === 'function') {   // (wingmen keep their own posts: Beta + Gamma hold the Sgr A* line)
         _efC.copy(enemy.position);
         _enemyAvoidBlackHoles(enemy);
         if (_efC.distanceToSquared(enemy.position) > 1e-6) {
@@ -5318,7 +5326,7 @@ function _efStep(enemy) {
             _efB.crossVectors(ef.w, ef.nose);
             const lateral = _efB.dot(_efRt);
             let bank = spec.bankMax * _EF_D2R * Math.max(-1, Math.min(1, lateral / Math.max(1e-3, spec.maxTurn * _EF_D2R)));
-            if (ud._telegraphing) bank *= 0.3;                        // wings level while lining up the shot
+            if (ud._telegraphing || ud._wmAimPos) bank *= 0.3;        // wings level while lining up the shot
             // current roll: angle from level-up to canopy about the nose, + = right wing down
             const cur = Math.atan2(ef.up.dot(_efRt), ef.up.dot(_efLv));
             let err = bank - cur;
@@ -5344,6 +5352,7 @@ function _efOrient(enemy, ef) {
     _efRt.crossVectors(ef.nose, ef.up).normalize();           // right wing (+X)
     ef.up.crossVectors(_efRt, ef.nose).normalize();           // re-orthogonalise canopy (+Y)
     _efA.copy(ef.nose).negate();                              // tail (+Z) — hulls fly -Z forward
+    if (enemy.userData.isAlly) { _efRt.negate(); _efA.copy(ef.nose); }   // wingmen: +Z nose (player model)
     _efM.makeBasis(_efRt, ef.up, _efA);
     enemy.quaternion.setFromRotationMatrix(_efM);
     _efWriteEuler(enemy);
@@ -6680,6 +6689,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
                 .addScaledVector(new THREE.Vector3(0, 1, 0), _vert);
         }
         createLaserBeam(enemyPos, beamEnd, laserColor, false);
+        if (targetWingman && targetWingman.userData) targetWingman.userData._shotAtAt = Date.now();   // HYBRID (package AA): the wingman sees it is under fire
 
         playEnemyLaserSound(enemy);
 
@@ -17405,7 +17415,9 @@ function recruitNebulaWingman(nebulaName, spawnPos, opts) {
         missileCooldownMs: profile.missileCooldownMs,
         aiState: _pending ? 'stranded' : 'patrol',
         recruitPending: _pending,
-        roleLabel: profile.label,
+        // HYBRID (package AA): the flight personality rides on the role label
+        // ("Defender · Hammer"), so the join hails name it too.
+        roleLabel: profile.label + ((_wmFlightOn() && WINGMAN_STYLE_BY_NAME[recruit.name]) ? ' \u00b7 ' + WINGMAN_PERSONALITIES[WINGMAN_STYLE_BY_NAME[recruit.name]].label : ''),
         patrolTarget: null,
         patrolArriveTime: 0,
         patrolDwellMs: profile.patrolDwellMs,
@@ -17421,13 +17433,14 @@ function recruitNebulaWingman(nebulaName, spawnPos, opts) {
     // is visible at a glance (Aggressor/Defender/Sniper/Scout)
     if (!_pending && typeof showIncomingTransmission === 'function') {   // HYBRID: bottom comms channel, squad blue
         showIncomingTransmission(
-            recruit.name + ' (' + profile.label + ') has joined',
-            'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron, Captain.',
+            recruit.name + ' (' + group.userData.roleLabel + ') has joined',
+            'Hailing from ' + (nebulaName || 'the nebula') + '. Welcome to the squadron, Captain.' +
+            ((_wmFlightOn() && WINGMAN_STYLE_BY_NAME[recruit.name]) ? ' I fly ' + WINGMAN_PERSONALITIES[WINGMAN_STYLE_BY_NAME[recruit.name]].blurb + '.' : ''),
             'wingman');
     }
     if (!_pending && typeof flashEventText === 'function') {
         flashEventText('WINGMAN ACQUIRED', '#66ffcc',
-            recruit.name + ' · ' + profile.label);
+            recruit.name + ' · ' + group.userData.roleLabel);
     }
     if (!_pending && typeof playSound === 'function') {
         playSound('achievement', 880, 0.4);
@@ -17545,6 +17558,288 @@ function triggerWingmanCelebration(durationMs) {
 }
 if (typeof window !== 'undefined') window.triggerWingmanCelebration = triggerWingmanCelebration;
 
+// =============================================================================
+// WINGMAN FLIGHT — hybrid switch wingmanFlight: 'physical' (default) | 'kinematic'
+// -----------------------------------------------------------------------------
+// Ben, 2026-10-11: "Wingmen should fly with propulsion and should have
+// different behaviors as the enemies now do."
+//
+// Wingmen ride the enemies' flight model (_efBegin / _efStep, ENEMY_FLIGHT
+// above): the ally AI still decides WHAT to do (patrol, engage, follow,
+// stranded, celebrate, the dash); what it asks for is only an intent, and the
+// model flies the hull there with momentum, a bounded nose, banking and a
+// throttle that lights the engines. During a real warp (the carrier-frame
+// follow in _executeFollow) the model is PARKED — the carrier frame moves
+// the wingman exactly as before — and resumes from the carrier's velocity.
+// Each wingman has a flight personality (WINGMAN_PERSONALITIES): how wide
+// it flies its slot, how it runs at a target (flank / strafe / pursue /
+// evade approach; aim -> burst -> break phases) and how it dodges fire.
+// Flip back with ?hy=wingmanFlight:kinematic.
+// =============================================================================
+const WINGMAN_FLIGHT = {
+    //            maxSpeed  mainThrust manThrust  brake    maxTurn  evadeTurn turnAccel  maxSlip  bankMax  rollRate rollAccel align
+    // A fighter-class hull with headroom: keeps station with the player at
+    // full cruise (4 u/frame = 240 u/s) and still closes a gap at 560 u/s.
+    wingman: { maxSpeed: 560, mainThrust: 640, manThrust: 140, brake: 320, maxTurn: 110, evadeTurn: 135, turnAccel: 340, maxSlip: 45, bankMax: 60, rollRate: 280, rollAccel: 1200, align: 2.8 },
+    // The wingman's double-tap-W dash (ud._jumpUntil): afterburner for 0.85 s.
+    dash:    { maxSpeed: 900, mainThrust: 1150, manThrust: 140, brake: 320, maxTurn: 90, evadeTurn: 110, turnAccel: 300, maxSlip: 35, bankMax: 45, rollRate: 220, rollAccel: 1000, align: 3.2 },
+};
+const WM_EVADE_SLIP = 70;      // deg — a wingman's nose stays within this of its velocity even mid-manoeuvre
+const WM_IDLE_GLOW = 0.18;     // engine glow when coasting (throttle 0); full throttle = 1
+const WM_FOLLOW_GAIN = 1.6;    // 1/s — follow: how hard the slot error is closed (on top of the player's velocity)
+
+// Flight personalities. One per wingman, by roster name (the three starting
+// wingmen, then the nebula recruits in NEBULA_WINGMAN_ROSTER order).
+//   slotK        formation slot spread (1 = the standard V)
+//   modes        attack approaches, [primary, alternate]; the primary is flown 3 runs in 4
+//   flankDeg     how far round the target's flank the approach swings
+//   standoffK    approach distance, x firing range
+//   diveUp       approach height above the target, x firing range (then it dives)
+//   aimMs / burst / gapMs / breakMs   the attack run: telegraph, shots, spacing, break-away
+//   breakMove    evasive flown on the break (null = a plain pull-out)
+//   evade        evasive weights when dodging fire
+//   onShot / onHit  chance to dodge when shot at / when hit;  evadeCdMs between dodges
+//   jinkMs       unprovoked corkscrew this often while engaged (0 = never)
+const WINGMAN_PERSONALITIES = {
+    lancer: { label: 'Lancer', blurb: 'flanks wide and dives through, breaks with a split-S',
+              slotK: 1.35, modes: ['flank', 'pursue'], flankDeg: 70, standoffK: 1.25, diveUp: 0.5,
+              aimMs: 380, burst: 4, gapMs: 200, breakMs: 1300, breakMove: 'splitS',
+              evade: { barrel: 0.3, corkscrew: 0.1, splitS: 0.6 }, onShot: 0.25, onHit: 0.8, evadeCdMs: 3500, jinkMs: 0 },
+    anchor: { label: 'Anchor', blurb: 'holds a tight slot and strafes across the target',
+              slotK: 0.7, modes: ['strafe', 'flank'], flankDeg: 90, standoffK: 0.9, diveUp: 0,
+              aimMs: 300, burst: 4, gapMs: 170, breakMs: 800, breakMove: null,
+              evade: { barrel: 0.85, corkscrew: 0.15, splitS: 0 }, onShot: 0.15, onHit: 0.5, evadeCdMs: 5000, jinkMs: 0 },
+    ghost:  { label: 'Ghost', blurb: 'never flies straight: corkscrews in, jinks under fire',
+              slotK: 1.0, modes: ['evade', 'flank'], flankDeg: 40, standoffK: 1.0, diveUp: 0.15,
+              aimMs: 450, burst: 3, gapMs: 220, breakMs: 1100, breakMove: 'corkscrew',
+              evade: { barrel: 0.35, corkscrew: 0.6, splitS: 0.05 }, onShot: 0.7, onHit: 1.0, evadeCdMs: 1600, jinkMs: 6000 },
+    hammer: { label: 'Hammer', blurb: 'brawler: closes head-on, long bursts, barrel-roll breaks',
+              slotK: 1.0, modes: ['pursue', 'strafe'], flankDeg: 10, standoffK: 0.6, diveUp: 0,
+              aimMs: 250, burst: 5, gapMs: 150, breakMs: 900, breakMove: 'barrel',
+              evade: { barrel: 0.5, corkscrew: 0, splitS: 0.5 }, onShot: 0.1, onHit: 0.6, evadeCdMs: 4000, jinkMs: 0 },
+};
+const WINGMAN_STYLE_BY_NAME = {
+    'Wingman Alpha': 'lancer', 'Wingman Beta': 'anchor', 'Wingman Gamma': 'ghost',
+    'Wingman Delta': 'hammer', 'Wingman Epsilon': 'lancer', 'Wingman Zeta': 'ghost',
+    'Wingman Eta': 'anchor', 'Wingman Theta': 'hammer', 'Wingman Iota': 'ghost', 'Wingman Kappa': 'lancer',
+};
+function _wmFlightOn() {
+    return !!(typeof window !== 'undefined' && window.HYBRID && !window.HYBRID.is('wingmanFlight', 'kinematic'));
+}
+function _wmPersonality(ud) {
+    if (!ud) return WINGMAN_PERSONALITIES.anchor;
+    if (!ud._wmStyle) ud._wmStyle = WINGMAN_STYLE_BY_NAME[ud.name] ||
+        (ud.role === 'aggressor' ? 'lancer' : ud.role === 'scout' ? 'ghost' : ud.role === 'sniper' ? 'anchor' : 'hammer');
+    return WINGMAN_PERSONALITIES[ud._wmStyle] || WINGMAN_PERSONALITIES.anchor;
+}
+function _wmCount(ud, key) {
+    if (!ud._wmMoves) ud._wmMoves = {};
+    ud._wmMoves[key] = (ud._wmMoves[key] || 0) + 1;
+}
+const _wmA = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wmB = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wmS = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wmG = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+const _wmUp = (typeof THREE !== 'undefined') ? new THREE.Vector3(0, 1, 0) : null;
+
+// Fly an evasive manoeuvre (the enemies' barrel / corkscrew / split-S, flown
+// by _efManeuver) picked from this wingman's weights.
+function _wmEvade(ally, ud, P, now, cause, forceType) {
+    if (ud._evade || now < (ud._wmEvadeCd || 0) || typeof _startEvasive !== 'function') return false;
+    let type = forceType;
+    if (!type) {
+        const w = P.evade, tot = (w.barrel || 0) + (w.corkscrew || 0) + (w.splitS || 0);
+        let r = Math.random() * (tot || 1);
+        type = (r -= (w.barrel || 0)) < 0 ? 'barrel' : ((r -= (w.corkscrew || 0)) < 0 ? 'corkscrew' : 'splitS');
+    }
+    if (!_startEvasive(ally, type)) return false;
+    ud._wmEvadeCd = now + P.evadeCdMs;
+    _wmCount(ud, type);
+    _wmCount(ud, 'evade:' + cause);
+    return true;
+}
+
+// Once per tick, before the behaviour runs: dodge when shot at or hit.
+function _wmReact(ally, ud, now) {
+    const P = _wmPersonality(ud);
+    const hit = (typeof ud._wmHp === 'number') && ud.health < ud._wmHp - 1e-6;
+    ud._wmHp = ud.health;
+    const shot = (ud._shotAtAt || 0) > (ud._wmShotSeen || 0);
+    if (shot) ud._wmShotSeen = ud._shotAtAt;
+    if (ud.aiState === 'follow' || ud.aiState === 'celebrate') return;   // formation flying: no dodging
+    const want = hit ? P.onHit : (shot ? P.onShot : 0);
+    if (want && Math.random() < want) { _wmEvade(ally, ud, P, now, hit ? 'hit' : 'shot'); return; }
+    const _ph = ud._wmRun && ud._wmRun.phase;
+    if (P.jinkMs && ud.aiState === 'engage' && _ph !== 'aim' && _ph !== 'burst' && now - (ud._wmJinkAt || 0) > P.jinkMs) {
+        ud._wmJinkAt = now;
+        _wmEvade(ally, ud, P, now, 'jink', 'corkscrew');
+    }
+}
+
+// Speed from which the hull can still stop within d under its brake, so an
+// approach settles instead of overshooting into a fly-by every time.
+function _wmApproachSpeed(d, vmax) {
+    return Math.min(vmax, Math.sqrt(2 * 0.7 * WINGMAN_FLIGHT.wingman.brake * Math.max(0, d)), 1.6 * d);
+}
+
+// ── Engage (physical): attack runs, like the enemies' ──────────────────────
+// setup  fly the personality's approach (flank / strafe / pursue / evade)
+// aim    telegraph: wings level, nose onto the target, closing
+// burst  P.burst shots, P.gapMs apart (only with the nose within 40 deg of it)
+// break  pull away (flying P.breakMove), then set up the next run
+function _executeEngagePhysical(ally, ud, now) {
+    const et = ud.engageTarget;
+    const P = _wmPersonality(ud);
+    const spec = WINGMAN_FLIGHT.wingman;
+    const enemyPos = et.position ? et.position.clone() : new THREE.Vector3();
+    if (et.parent && et.parent.type === 'Group' && et.parent.parent) et.getWorldPosition(enemyPos);
+    const role = _roleFor(ally);
+    const firingRange = ud.firingRange * (role.firingRangeMult || 1.0);
+    const ef = ud._ef;
+
+    const toT = _wmA.subVectors(enemyPos, ally.position);
+    const dist = Math.max(1e-3, toT.length());
+    toT.divideScalar(dist);
+    const nose = ef ? ef.nose : toT;
+    const facing = nose.dot(toT);
+    // the target's own motion (enemy flight model), so the approach leads it
+    const tv = (et.userData && et.userData._ef && et.userData._ef.v) ? et.userData._ef.v : null;
+
+    let run = ud._wmRun;
+    // A new target, or a run left cold (the state machine dropped out of
+    // engage for a while), starts a fresh run.
+    if (!run || run.target !== et || now - run.seen > 1500) {
+        run = ud._wmRun = { target: et, phase: 'setup', t0: now, seen: now, shots: 0, nextShot: 0, mode: P.modes[0],
+                            side: Math.random() < 0.5 ? -1 : 1, flown: false, app: null, brk: null };
+        _wmCount(ud, 'mode:' + run.mode);
+    }
+    run.seen = now;
+    const age = now - run.t0;
+    const wish = _wmB.set(0, 0, 0);
+    ud._wmAimPos = null;
+
+    if (run.phase === 'setup') {
+        const R = firingRange * P.standoffK;
+        if (!run.app) {
+            // The approach point is fixed RELATIVE TO THE TARGET when the run
+            // is set up (re-deriving it from the live sightline every tick
+            // just orbits the target): which flank, how far, how high.
+            const sd = _wmS.crossVectors(toT, _wmUp);
+            if (sd.lengthSq() < 1e-6) sd.set(1, 0, 0);
+            sd.normalize().multiplyScalar(run.side);
+            let ax, ay = P.diveUp, back;
+            if (run.mode === 'strafe') { ax = 0.95; back = 0.25; ay = 0; }   // abeam: the pass crosses its nose
+            else if (run.mode === 'pursue') { ax = 0; ay = 0; back = 1; }    // straight in
+            else { ax = Math.sin(P.flankDeg * _EF_D2R); back = Math.cos(P.flankDeg * _EF_D2R); }   // flank / evade
+            run.app = new THREE.Vector3().copy(toT).multiplyScalar(-back).addScaledVector(sd, ax).addScaledVector(_wmUp, ay * firingRange / Math.max(1, R));
+            run.side0 = sd.clone();
+        }
+        const goal = _wmG.copy(enemyPos).addScaledVector(run.app, R);
+        if (tv) goal.addScaledVector(tv, 0.5);
+        wish.subVectors(goal, ally.position);
+        const dG = wish.length();
+        if (dG > 1e-3) wish.multiplyScalar(_wmApproachSpeed(dG, spec.maxSpeed * 0.9) / dG);
+        if (tv) wish.addScaledVector(tv, 0.85);
+        if (run.mode === 'evade' && !run.flown && dist < firingRange * 2) { run.flown = true; _wmEvade(ally, ud, P, now, 'approach', 'corkscrew'); }
+        const inPos = dG < Math.max(150, R * 0.4) || age > 3500;
+        // in position — or the target has wandered into the guns on the way
+        const chance = age > 1000 && dist < firingRange * 1.4 && facing > Math.cos(35 * _EF_D2R);
+        if ((inPos && dist < firingRange * 2.5 && (facing > Math.cos(55 * _EF_D2R) || age > 3500)) || chance) {
+            run.phase = 'aim'; run.t0 = now; _wmCount(ud, 'aim');
+        } else if (age > 3500 && run.mode !== 'pursue') {
+            // could not get into position (the target is running): go straight in
+            run.mode = 'pursue'; run.app = null; run.t0 = now; _wmCount(ud, 'mode:pursue');
+        }
+    } else if (run.phase === 'aim' || run.phase === 'burst') {
+        ud._wmAimPos = enemyPos;
+        if (run.mode === 'strafe' && run.side0) wish.copy(run.side0).multiplyScalar(-0.6).add(toT).normalize();   // a raking pass across its nose
+        else wish.copy(toT);                                                                                                      // close on it
+        wish.multiplyScalar(Math.min(spec.maxSpeed * 0.8, Math.max(160, (dist - firingRange * 0.3) * 1.4)));
+        if (tv) wish.addScaledVector(tv, 0.85);
+        if (run.phase === 'aim' && age > P.aimMs) { run.phase = 'burst'; run.t0 = now; run.shots = 0; run.nextShot = now; _wmCount(ud, 'burst'); }
+        if (run.phase === 'burst') {
+            const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
+            if (now >= run.nextShot && _gameAge >= 5000 && dist < firingRange * 1.3 && facing > Math.cos(40 * _EF_D2R)) {
+                run.nextShot = now + P.gapMs;
+                run.shots++;
+                ud.lastAttack = now;
+                _wmCount(ud, 'shot');
+                _wingmanLaserHit(ally, ud, et, enemyPos);
+            }
+            if (run.shots >= P.burst || now - run.t0 > P.burst * P.gapMs + 2500 || dist < firingRange * 0.25) {
+                run.phase = 'break'; run.t0 = now; _wmCount(ud, 'break');
+                // break direction, fixed for the break: on past it, out to the side and up
+                const sd = _wmS.crossVectors(toT, _wmUp);
+                if (sd.lengthSq() < 1e-6) sd.set(1, 0, 0);
+                sd.normalize().multiplyScalar(run.side);
+                run.brk = new THREE.Vector3().copy(nose).addScaledVector(sd, 0.8).addScaledVector(_wmUp, 0.5).normalize();
+                if (P.breakMove) _wmEvade(ally, ud, P, now, 'break', P.breakMove);
+            }
+        }
+    } else {   // break: pull out, away from its guns
+        wish.copy(run.brk || nose).multiplyScalar(spec.maxSpeed * 0.85);
+        if (age > P.breakMs) {
+            run.phase = 'setup'; run.t0 = now; run.flown = false; run.app = null; run.brk = null;
+            run.mode = (Math.random() < 0.75) ? P.modes[0] : P.modes[1];
+            if (Math.random() < 0.6) run.side = -run.side;
+            _wmCount(ud, 'mode:' + run.mode);
+        }
+    }
+    if (dist < 90) wish.addScaledVector(toT, -(90 - dist) * 6);   // never ram the target
+    ud._efWish = (ud._efWish || new THREE.Vector3()).copy(wish);
+    _allyDir.copy(wish);
+
+    // ── Missiles: the same cooldown + capacity as the kinematic engage ──
+    const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
+    if (_gameAge >= 5000 && dist < firingRange * 1.5 &&
+        (ud.missilesRemaining || 0) > 0 &&
+        now - (ud.lastMissile || 0) > (ud.missileCooldownMs || 8000)) {
+        ud.lastMissile = now;
+        ud.missilesRemaining = (ud.missilesRemaining || 0) - 1;
+        _wingmanTacticalMessage(ud, 'missile');
+        if (typeof _fireWingmanMissile === 'function') _fireWingmanMissile(ally, et, enemyPos, ud);
+    }
+}
+
+// Carrier frame this tick (a real warp): the model is parked. Keep its
+// attitude and velocity in step with the carrier so it resumes smoothly.
+function _wmPark(ally, ud) {
+    const ef = ud._ef; if (!ef) return;
+    const spec = WINGMAN_FLIGHT.wingman;
+    if (gameState && gameState.velocityVector) ef.v.copy(gameState.velocityVector).multiplyScalar(60);
+    if (ef.v.length() > spec.maxSpeed) ef.v.setLength(spec.maxSpeed);
+    ef.nose.set(0, 0, 1).applyQuaternion(ally.quaternion).normalize();
+    ef.up.set(0, 1, 0).applyQuaternion(ally.quaternion);
+    ef.up.addScaledVector(ef.nose, -ef.up.dot(ef.nose)).normalize();
+    ef.w.set(0, 0, 0); ef.rollRate = 0; ef.m = null;
+    ef.thr = 1;
+    ef.t = performance.now(); ef.dt = 1 / 60;
+    if (ud.velocity && ef.vTick) ef.vTick.copy(ud.velocity);
+    ud._evade = null; ud._wmAimPos = null; ud._efWish = null;
+}
+
+// Engine glow from the real throttle (the kinematic path drives it on/off).
+function _wmGlowThrottle(glows, state, thr) {
+    if (!glows || !glows.length || !state) return;
+    const target = WM_IDLE_GLOW + (1 - WM_IDLE_GLOW) * Math.max(0, Math.min(1, thr));
+    const cur = state.intensity || 0;
+    state.intensity = cur + (target - cur) * (target > cur ? 0.25 : 0.15);
+    const time = Date.now() * 0.01;
+    for (let index = 0; index < glows.length; index++) {
+        const glow = glows[index];
+        if (!glow || !glow.material) continue;
+        const flicker = 0.85 + Math.sin(time + index) * 0.15 * state.intensity;
+        const baseOpacity = index % 2 === 0 ? 0.8 : 0.4;   // inner glows brighter
+        glow.material.opacity = state.intensity * baseOpacity * flicker;
+        const scale = 0.5 + state.intensity * 0.5;
+        glow.scale.set(scale, scale + state.intensity * 0.3, scale);
+    }
+}
+if (typeof window !== 'undefined') {
+    window.WINGMAN_FLIGHT = WINGMAN_FLIGHT;
+    window.WINGMAN_PERSONALITIES = WINGMAN_PERSONALITIES;
+}
+
 function updateAllyShips() {
     if (typeof camera === 'undefined' || typeof THREE === 'undefined') return;
     if (!gameState || !gameState.gameStarted || gameState.gameOver) return;
@@ -17566,6 +17861,7 @@ function updateAllyShips() {
     updateAllyShips._disp.subVectors(playerPos, updateAllyShips._prevPP);
     if (updateAllyShips._disp.lengthSq() > 4000000) updateAllyShips._disp.set(0, 0, 0);
     updateAllyShips._prevPP.copy(playerPos);
+    const _wmPhys = _wmFlightOn();   // HYBRID (package AA): wingmanFlight physical | kinematic
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
@@ -17579,7 +17875,10 @@ function updateAllyShips() {
         // (model-attached exhaust glows via updateThrusterGlowArray), not
         // the procedural enemy cone system. Lit when speeding up, warping,
         // or under any meaningful thrust.
-        if (typeof updateThrusterGlowArray === 'function' && ud._thrusterGlows) {
+        if (_wmPhys && ud._ef && ud._thrusterGlows) {
+            // HYBRID (package AA): the engines show the flight model's real throttle
+            _wmGlowThrottle(ud._thrusterGlows, ud._thrusterGlowState, ud._ef.thr);
+        } else if (typeof updateThrusterGlowArray === 'function' && ud._thrusterGlows) {
             const vmag = ud.velocity ? ud.velocity.length() : 0;
             const prevSpeed = (typeof ud._prevGlowSpeed === 'number') ? ud._prevGlowSpeed : vmag;
             const accelerating = vmag > prevSpeed + 0.0006;
@@ -17726,11 +18025,22 @@ function updateAllyShips() {
             }
         }
 
+        // ── Flight model (wingmanFlight: physical) ───────────────────────
+        // From here to _efStep below, every position write is an INTENT;
+        // the model flies the hull there (see WINGMAN_FLIGHT).
+        ud._wmCarrier = false;
+        if (ud._efWish) ud._efWish = null;
+        ud._wmAimPos = null;   // set again by the physical engage while it is lining up a shot
+        const _wmFly = _wmPhys && _efBegin(ally);
+        if (_wmFly) _wmReact(ally, ud, now);
+        else if (ud._ef) { ud._ef = null; ud._wmAimPos = null; }
+
         // ── Execute current state ────────────────────────────────────────
         if (ud.aiState === 'celebrate') {
             _executeCelebrate(ally, ud, now, playerPos);
         } else if (ud.aiState === 'engage' && ud.engageTarget) {
-            _executeEngage(ally, ud, now);
+            if (_wmFly) _executeEngagePhysical(ally, ud, now);
+            else _executeEngage(ally, ud, now);
         } else if (ud.aiState === 'follow') {
             _executeFollow(ally, ud, playerPos);
         } else if (ud.aiState === 'stranded') {
@@ -17739,6 +18049,16 @@ function updateAllyShips() {
             _executeReturn(ally, ud);
         } else {
             // Always swarm the player when within 4000u (any galaxy)
+            if (_wmFly && distToPlayer < 4000) {
+                // Physical: the swarm point travels with the player, and the
+                // player's motion is part of the wish, so a wingman keeps
+                // station at full cruise instead of falling behind its waypoint.
+                const _d = updateAllyShips._disp;
+                if (ud.patrolTarget) ud.patrolTarget.add(_d);
+                ally.position.add(_d);
+                if (ud.velocity) ud.velocity.sub(_d);   // the patrol steers its velocity RELATIVE to the player
+                                                        // (else the carry would compound tick on tick)
+            }
             _executePatrol(ally, ud, now, distToPlayer < 4000 ? playerPos : null);
         }
 
@@ -17777,6 +18097,11 @@ function updateAllyShips() {
             }
         }
 
+        if (_wmFly) {
+            if (ud._wmCarrier) _wmPark(ally, ud);   // warp: the carrier frame moved it, exactly as before
+            else _efStep(ally);
+        }
+
         // ── Shield bubble: up whenever an enemy is inside detection range,
         // not only once engaged. HYBRID — Ben, 2026-10-10: "should shield up
         // when enemies are in detection range".
@@ -17807,7 +18132,7 @@ function updateAllyShips() {
         // ── Face movement direction ──────────────────────────────────────
         // lookAt points -Z toward the target; negate so the ship's +Z
         // (model forward) faces the travel direction.
-        if (_allyDir.lengthSq() > 0.001) {
+        if ((!_wmFly || ud._wmCarrier) && _allyDir.lengthSq() > 0.001) {
             const lookMat = new THREE.Matrix4().lookAt(
                 pos, pos.clone().sub(_allyDir), new THREE.Vector3(0, 1, 0));
             const targetQuat = new THREE.Quaternion().setFromRotationMatrix(lookMat);
@@ -17903,35 +18228,41 @@ function _executeEngage(ally, ud, now) {
     // ── Laser fire: 1000ms cooldown ────────────────────────────────
     if (dist < firingRange && now - ud.lastAttack > 1000) {
         ud.lastAttack = now;
-        // HYBRID (Ben, 2026-10-10: lines must match what is happening right
-        // now): "moving in" is said on the first shot at a target, not when
-        // one appears on the scope.
-        if (ud._engageMsgFor !== ud.engageTarget) {
-            ud._engageMsgFor = ud.engageTarget;
-            _wingmanTacticalMessage(ud, 'engage');
-        }
-        const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
-        _fireWingmanLaser(ally.position.clone(), enemyPos, color);
+        _wingmanLaserHit(ally, ud, et, enemyPos);
+    }
+}
 
-        // Apply 10% laser damage
-        if (et.userData) {
-            // Wingman fire is also intercepted by the orange shield
-            // (counts toward its 2-laser-hit break).
-            if (typeof _enemyShieldAbsorbHit === 'function' &&
-                _enemyShieldAbsorbHit(et, false)) {
-                _activateOnDamage(et);
-                return;
-            }
-            const wasAlive = et.userData.health > 0;
-            et.userData.health -= 0.1;
+// One wingman laser shot at a hostile: the comms line, the bolt, the 10%
+// damage, shields, the kill (shared by the kinematic and physical engage).
+function _wingmanLaserHit(ally, ud, et, enemyPos) {
+    // HYBRID (Ben, 2026-10-10: lines must match what is happening right
+    // now): "moving in" is said on the first shot at a target, not when
+    // one appears on the scope.
+    if (ud._engageMsgFor !== ud.engageTarget) {
+        ud._engageMsgFor = ud.engageTarget;
+        _wingmanTacticalMessage(ud, 'engage');
+    }
+    const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+    _fireWingmanLaser(ally.position.clone(), enemyPos, color);
+
+    // Apply 10% laser damage
+    if (et.userData) {
+        // Wingman fire is also intercepted by the orange shield
+        // (counts toward its 2-laser-hit break).
+        if (typeof _enemyShieldAbsorbHit === 'function' &&
+            _enemyShieldAbsorbHit(et, false)) {
             _activateOnDamage(et);
-            if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
+            return;
+        }
+        const wasAlive = et.userData.health > 0;
+        et.userData.health -= 0.1;
+        _activateOnDamage(et);
+        if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
 
-            // Kill notification + cleanup (remove from scene, run boss checks)
-            if (wasAlive && et.userData.health <= 0) {
-                _wingmanTacticalMessage(ud, 'kill');
-                _handleWingmanKill(et);
-            }
+        // Kill notification + cleanup (remove from scene, run boss checks)
+        if (wasAlive && et.userData.health <= 0) {
+            _wingmanTacticalMessage(ud, 'kill');
+            _handleWingmanKill(et);
         }
     }
 }
@@ -18716,10 +19047,12 @@ function _executeFollow(ally, ud, playerPos) {
 
     // Staggered forward distance — first wingman closest (200u), each
     // subsequent wingman 60u further back, so they fan out in depth
-    const forwardDist = 200 + idx * 60;
+    // HYBRID (package AA): physical wingmen fly their personality's slot spread
+    const _slotK = _wmFlightOn() ? (_wmPersonality(ud).slotK || 1) : 1;
+    const forwardDist = (200 + idx * 60) * _slotK;
 
     // Alternating lateral offset (left / right, growing wider with rank)
-    const side = ((idx % 2 === 0) ? -1 : 1) * (50 + Math.floor(idx / 2) * 40);
+    const side = ((idx % 2 === 0) ? -1 : 1) * (50 + Math.floor(idx / 2) * 40) * _slotK;
 
     // Per-wingman Y-height variation so they're not on the same plane.
     // Small consistent offset per index + a gentle sine wobble keyed to
@@ -18735,6 +19068,8 @@ function _executeFollow(ally, ud, playerPos) {
         .addScaledVector(aheadDir, forwardDist)
         .addScaledVector(right, side)
         .addScaledVector(up, heightOffset);
+    if (!ud._wmSlot) ud._wmSlot = new THREE.Vector3();
+    ud._wmSlot.copy(target);
 
     // ── WARP REGIME: carrier-frame follow ────────────────────────────
     // At warp the formation point moves ~15-150u per TICK. Chasing it
@@ -18758,6 +19093,7 @@ function _executeFollow(ally, ud, playerPos) {
         // frame's dt, which is what the physics is about to apply.
         const _dtF = (typeof gameState.dtFrames === 'number' && gameState.dtFrames > 0) ? gameState.dtFrames : 1;
         const _carry = _allyCarryTmp.copy(playerVel).multiplyScalar(_dtF);
+        ud._wmCarrier = true;   // (wingmanFlight: physical parks its model for this tick)
         ally.position.add(_carry);
         _allyDir.subVectors(target, ally.position);
         const err = _allyDir.length();
@@ -18778,6 +19114,16 @@ function _executeFollow(ally, ud, playerPos) {
     const targetSpeed = Math.max(playerSpeed * 1.2, ud.cruiseSpeed);
     _allyDir.subVectors(target, ally.position);
     const dist = _allyDir.length();
+    if (ud._ef && _wmFlightOn()) {
+        // Physical: the wish is the slot — the player's velocity plus a
+        // closing speed the hull can still brake out of; the model flies it.
+        const close = (dist > 1) ? _wmApproachSpeed(dist, WINGMAN_FLIGHT.wingman.maxSpeed) : 0;
+        if (!ud._efWish) ud._efWish = new THREE.Vector3();
+        ud._efWish.copy(playerVel).multiplyScalar(60);
+        if (dist > 1) ud._efWish.addScaledVector(_allyDir, Math.min(close, dist * WM_FOLLOW_GAIN) / dist);
+        _allyDir.copy(ud._efWish);
+        return;
+    }
     if (dist > 1) {
         _allyDir.normalize();
         // Stronger lerp factor so they accelerate hard when far behind —
