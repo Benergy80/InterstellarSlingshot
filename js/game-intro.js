@@ -2867,8 +2867,14 @@ function animateIntroSequence() {
         updateCameraView(camera);
     }
 
-    // Render the scene (this also finishes any outstanding warm slices)
-    ivIntroRender(scene, camera);
+    // Render the scene (this also finishes any outstanding warm slices) —
+    // except once the game loop is running under the transition: animate()
+    // already draws this same scene and camera every frame, so a second
+    // full render here doubled the cost of every fade-up frame (package AF).
+    if (!(introSequence.phase === 'transition' && introSequence.gameSetupStarted &&
+          typeof _loopRunning !== 'undefined' && _loopRunning && !IV_WARM.active)) {
+        ivIntroRender(scene, camera);
+    }
 
     // Continue animation loop
     requestAnimationFrame(animateIntroSequence);
@@ -2999,10 +3005,10 @@ function animateLaunchPhase(elapsed) {
 
 function animateTransitionPhase(elapsed) {
     const progress = elapsed / introSequence.duration.transition;
-    
+
     // Fade camera shake to zero quickly
     introSequence.shakeIntensity = Math.max(0, 1.0 - progress * 3);
-    
+
     if (progress < 0.1) {
         // Brief pause in black (first 10% - 1 second)
         if (!introSequence.gameSetupStarted) {
@@ -3019,12 +3025,43 @@ function animateTransitionPhase(elapsed) {
             console.log('🌅 Orbit lines created during black screen');
         }
     } else {
-        // Slow fade in from black (remaining time)
-        const fadeInProgress = (progress - 0.3) / 0.7;
-        
-        createFadeFromBlack(fadeInProgress);
+        // FADE-UP, WARM FIRST (package AF). setupNormalGameContent() blocks for
+        // ~3 s on the first frame of this phase, so the old wall-clock fade began
+        // on the very next frame — and with it the first real game frames: ~50
+        // shader programs compiling plus the hull's textures uploading, in
+        // 0.1-1.1 s stalls while the overlay jumped up to 18% a frame. Now the
+        // remaining setup finishes in the black, the scene is compiled there
+        // (_hyWarmGameScene), and the fade waits for HY_FADE.QUIET_FRAMES calm
+        // frames (no new program, no frame over SLOW_MS; capped at HOLD_MAX_MS)
+        // before it starts; it then advances per FRAME on a clamped dt, so a
+        // late hitch slows the fade for a frame instead of skipping it ahead.
+        if (!introSequence.orbitsCreated) {   // setup can outlast the 0.1-0.3 window
+            if (typeof createOrbitLines === 'function') createOrbitLines();
+            introSequence.orbitsCreated = true;
+        }
+        if (!introSequence._hyWarmed) {
+            introSequence._hyWarmed = true;
+            _hyWarmGameScene();
+            return;
+        }
+        const now = performance.now();
+        const dtMs = introSequence._hyFadeLast ? now - introSequence._hyFadeLast : 16.67;
+        introSequence._hyFadeLast = now;
+        if (!introSequence._hyFadeOn) {
+            if (introSequence._hyHoldT0 === undefined) introSequence._hyHoldT0 = now;
+            if (_hyFadeQuiet(dtMs) || now - introSequence._hyHoldT0 > HY_FADE.HOLD_MAX_MS) {
+                introSequence._hyFadeOn = true;
+                introSequence._hyFadeP = 0;
+                console.log(`🌟 Fade-up armed after ${Math.round(now - introSequence._hyHoldT0)} ms warm hold`);
+            }
+            createFadeFromBlack(0);
+        } else {
+            introSequence._hyFadeP = Math.min(1, introSequence._hyFadeP +
+                Math.min(dtMs, HY_FADE.STEP_CAP_MS) / (introSequence.duration.transition * 0.7));
+            createFadeFromBlack(introSequence._hyFadeP);
+        }
     }
-    
+
     // Fade out intro elements after game appears
     if (progress < 0.8) {
         fadeOutIntroElements(progress / 0.8);
@@ -3036,12 +3073,75 @@ function animateTransitionPhase(elapsed) {
         // Tutorial will handle the final countdown text cleanup
         setTimeout(startTutorial, 1000);
     }
-    
-    // Check for completion
-    if (elapsed >= introSequence.duration.transition) {
+
+    // Check for completion — once the (possibly held) fade-up has finished
+    if (elapsed >= introSequence.duration.transition &&
+        (introSequence._hyFadeP >= 1 || elapsed >= introSequence.duration.transition + HY_FADE.HOLD_MAX_MS + 8000)) {
         console.log('🎬 Transition phase complete');
         introSequence.phase = 'complete';
     }
+}
+
+// FADE-UP WARM (package AF) — see animateTransitionPhase.
+const HY_FADE = {
+    QUIET_FRAMES: 6,     // calm frames in a row before the fade-up starts
+    SLOW_MS: 50,         // a frame slower than this is not calm
+    HOLD_MAX_MS: 3000,   // never hold the black longer than this for the warm
+    STEP_CAP_MS: 50      // most fade progress one frame may take
+};
+function _hyFadeQuiet(dtMs) {
+    let progs = 0;
+    try { progs = renderer.info.programs.length; } catch (e) {}
+    if (progs !== introSequence._hyProgs || dtMs > HY_FADE.SLOW_MS) introSequence._hyQuiet = 0;
+    else introSequence._hyQuiet = (introSequence._hyQuiet || 0) + 1;
+    introSequence._hyProgs = progs;
+    return introSequence._hyQuiet >= HY_FADE.QUIET_FRAMES;
+}
+// Compile every material in the freshly built game scene and upload its
+// textures while the screen is still black, so the first visible frames do
+// not. renderer.compile() (r128) links a program for every object's material
+// against the lights the frame will use; initTexture() (when the build has it)
+// uploads the maps — the XT-7's three 1024² maps among them.
+function _hyWarmGameScene() {
+    const t0 = performance.now();
+    let tex = 0;
+    try {
+        if (renderer && scene && camera) {
+            // Settle what the first frames will draw FIRST: two full culling
+            // passes (it decides every 10th call) also run the light budget,
+            // and every lit program is keyed on the visible point-light count
+            // — compiling against the setup's 30 lights only for the budget to
+            // drop to 24 a frame later recompiled ~43 programs mid-fade.
+            camera.updateMatrixWorld();
+            // The game's tone curve and fog are engaged by the first
+            // updateAtmosphericPerspective() call (animate() runs it every 15
+            // frames) — which landed ~3 s into the black and recompiled every
+            // program a second time. Engage them now, then compile once.
+            if (typeof updateAtmosphericPerspective === 'function') updateAtmosphericPerspective(camera);
+            if (typeof updateDistanceCulling === 'function') {
+                for (let i = 0; i < 20; i++) updateDistanceCulling();
+            }
+            renderer.compile(scene, camera);
+            if (typeof renderer.initTexture === 'function') {
+                const seen = new Set();
+                const ship = (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) || null;
+                const up = (m) => {
+                    if (!m || seen.has(m)) return; seen.add(m);
+                    for (const k of ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap', 'aoMap', 'alphaMap']) {
+                        const t = m[k];
+                        if (t && t.isTexture && !t.isRenderTargetTexture && t.image) { renderer.initTexture(t); tex++; }
+                    }
+                };
+                if (ship) ship.traverse((o) => { if (o.material) (Array.isArray(o.material) ? o.material : [o.material]).forEach(up); });
+            }
+        }
+    } catch (e) {
+        console.warn('Fade-up warm failed:', e);
+    }
+    let progs = 0;
+    try { progs = renderer.info.programs.length; } catch (e) {}
+    window.__hyFadeWarm = { ms: Math.round(performance.now() - t0), programs: progs, textures: tex };
+    console.log(`🔥 Game scene warmed in the black: ${window.__hyFadeWarm.ms} ms, ${progs} programs, ${tex} hull textures`);
 }
 
 // =============================================================================
@@ -3066,6 +3166,9 @@ function transitionToLaunch() {
 function transitionToTransition() {
     introSequence.phase = 'transition';
     introSequence.phaseStartTime = Date.now();
+    // fade-up warm state (package AF, see animateTransitionPhase)
+    introSequence._hyWarmed = false; introSequence._hyFadeOn = false; introSequence._hyFadeP = 0;
+    introSequence._hyHoldT0 = undefined; introSequence._hyFadeLast = 0; introSequence._hyQuiet = 0;
     console.log('🌅 Intro phase: Transition to space - screen will stay black for 3 seconds during setup');
     
     // Ensure fade overlay exists and is fully black
@@ -4287,6 +4390,10 @@ function revealGameScene() {
         return;
     }
     
+    // Compile the game scene and upload the hull's textures while the overlay
+    // is still black, so the reveal's first frames don't (package AF).
+    _hyWarmGameScene();
+
     // Wait longer before starting fade up to ensure everything is ready
     setTimeout(() => {
         // Start slower fade from black to reveal the running game with orbit lines

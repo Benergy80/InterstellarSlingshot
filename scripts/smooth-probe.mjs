@@ -97,8 +97,13 @@ const INSTALL = () => {
     } catch (e) { A.ltErr = String(e); }
     let last = performance.now();
     const tick = (t) => {
-        let ph = ''; try { ph = introSequence.phase || ''; } catch (e) {}
-        A.fr.push([Math.round(t), +(t - last).toFixed(1), ph]);
+        let ph = '', ov = null, pg = 0;
+        try { ph = introSequence.phase || ''; } catch (e) {}
+        try { const o = (introSequence.fadeOverlay || window.skipSceneFade); ov = o ? +(+o.style.opacity).toFixed(3) : null; } catch (e) {}
+        try { pg = renderer.info.programs.length; } catch (e) {}
+        // phase start on the page's own clock (introSequence.phaseStartTime is Date.now based)
+        try { if (ph && !(A.phaseT || (A.phaseT = {}))[ph]) A.phaseT[ph] = Math.round(performance.now() - (Date.now() - introSequence.phaseStartTime)); } catch (e) {}
+        A.fr.push([Math.round(t), +(t - last).toFixed(1), ph, ov, pg]);
         last = t; requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -108,6 +113,16 @@ const INSTALL = () => {
         try { const o = (introSequence.fadeOverlay || window.skipSceneFade); s.ov = o ? +(+o.style.opacity).toFixed(2) : null; } catch (e) {}
         try { const p = window.__perf; s.fps = p.fps; s.med = r2(p.medianMs); s.p95 = r2(p.p95Ms); s.scr = r2(p.scriptMs); } catch (e) {}
         try { const r = renderer; s.calls = r.info.render.calls; s.tex = r.info.memory.textures; s.geo = r.info.memory.geometries; s.prog = (r.info.programs || []).length; } catch (e) {}
+        try { let pl = 0; scene.traverseVisible((o) => { if (o.isPointLight) pl++; }); s.pl = pl; } catch (e) {}
+        if (window.__hyFadeWarm) s.warm = window.__hyFadeWarm;
+        try {   // which programs appeared since the last snapshot (name x count, plus a key fingerprint)
+            const P = renderer.info.programs || [];
+            if (!A._seenP) A._seenP = new Set();
+            const fresh = {};
+            for (const p of P) if (!A._seenP.has(p)) { A._seenP.add(p); const k = (p.name || '?'); fresh[k] = (fresh[k] || 0) + 1; }
+            if (Object.keys(fresh).length) s.newProgs = fresh;
+            s.tm = renderer.toneMapping; s.fog = scene.fog ? (scene.fog.isFogExp2 ? 'exp2' : 'lin') : 'none';
+        } catch (e) {}
         A.snaps.push(s);
     }, 500);
 };
@@ -152,8 +167,9 @@ try {
         await page.waitForFunction(() => typeof gameState !== 'undefined' && gameState.gameStartTime && !(introSequence.fadeOverlay), null, { timeout: 60000 });
         const tDone = await page.evaluate(() => performance.now());
         await page.waitForTimeout(8000);
-        const A = await page.evaluate(() => ({ lt: __af.lt, fr: __af.fr, snaps: __af.snaps }));
-        const T0 = tTrans;
+        const A = await page.evaluate(() => ({ lt: __af.lt, fr: __af.fr, snaps: __af.snaps, phaseT: __af.phaseT }));
+        const T0 = (A.phaseT && A.phaseT.transition) || tTrans;
+        result.phaseStartsS = Object.fromEntries(Object.entries(A.phaseT || {}).map(([k, v]) => [k, r2((v - T0) / 1000)]));
         const lt = A.lt.filter((x) => x[0] >= tPress - 100).map(([s, d]) => [Math.round((s - T0)) / 1000, d]);
         // per-second fps from the transition start
         const fr = A.fr.filter((f) => f[0] >= T0);
@@ -170,13 +186,30 @@ try {
             if (fs.length >= 55 && Math.max(...fs.map((f) => f[1])) <= 25) { hold55 = r2(t); break; }
         }
         const fadeFr = fr.filter((f) => f[0] >= T0 && f[0] <= tDone);
+        // headless rarely reaches 55: also the first second holding 90% of the SETTLED rate (last 3 s)
+        const tEnd = fr.length ? fr[fr.length - 1][0] : T0;
+        const settled = fr.filter((f) => f[0] >= tEnd - 3000).length / 3;
+        let hold90 = null;
+        for (let t = 0; t < (tEnd - T0) / 1000 - 1; t += 0.1) {
+            const fs = fr.filter((f) => f[0] >= T0 + t * 1000 && f[0] < T0 + t * 1000 + 1000);
+            if (fs.length >= 0.9 * settled && Math.max(...fs.map((f) => f[1])) <= 3000 / settled) { hold90 = r2(t); break; }
+        }
+        // the fade itself: from the first frame the overlay is below 0.995 to the last frame it exists
+        const fv = fr.filter((f) => f[3] != null && f[3] < 0.995 && f[0] >= T0);
+        const ovSteps = []; for (let i = 1; i < fv.length; i++) ovSteps.push(Math.abs(fv[i][3] - fv[i - 1][3]));
+        result.fadeUp = fv.length ? { startS: r2((fv[0][0] - T0) / 1000), endS: r2((fv[fv.length - 1][0] - T0) / 1000), frames: fv.length,
+            fps: r2(fv.length / Math.max(0.001, (fv[fv.length - 1][0] - fv[0][0]) / 1000)),
+            frameP95: r2(pct(fv.map((f) => f[1]), 0.95)), frameMax: Math.max(...fv.map((f) => f[1])),
+            framesOver50: fv.filter((f) => f[1] > 50).length, maxOpacityStep: r2(Math.max(0, ...ovSteps)),
+            programsAtStart: fv[0][4], programsAtEnd: fv[fv.length - 1][4],
+            programTimeline: fr.filter((f, i) => i > 0 && f[4] !== fr[i - 1][4]).map((f) => [r2((f[0] - T0) / 1000), f[4]]) } : null;
         result.fade = {
             pressToTransitionS: r2((tTrans - tPress) / 1000), transitionToRevealDoneS: r2((tDone - T0) / 1000),
             longTasksFromPress: lt, longTaskMsDuringTransition: lt.filter((x) => x[0] >= 0 && x[0] <= (tDone - T0) / 1000).reduce((s, x) => s + x[1], 0),
             framesDuringFade: fadeFr.length, fadeFps: r2(fadeFr.length / ((tDone - T0) / 1000)),
             fadeFrameP95: r2(pct(fadeFr.map((f) => f[1]), 0.95)), fadeFrameMax: fadeFr.length ? Math.max(...fadeFr.map((f) => f[1])) : null,
             framesOver50: fadeFr.filter((f) => f[1] > 50).length, framesOver100: fadeFr.filter((f) => f[1] > 100).length,
-            firstSecondHolding55: hold55, perSecond: perSec,
+            firstSecondHolding55: hold55, settledFps: r2(settled), firstSecondHolding90pctOfSettled: hold90, perSecond: perSec,
             snaps: A.snaps.filter((s) => s.t >= T0 - 1000).map((s) => ({ ...s, t: r2((s.t - T0) / 1000) })),
         };
     } else if (JOB === 'turn') {
