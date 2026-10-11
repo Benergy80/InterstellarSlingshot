@@ -13722,8 +13722,14 @@ let _aerialCullK = 0;
 // above which a body is left untouched. 0.012 ~ 1.4 deg across, 0.045 ~ 5 deg.
 // Asteroid surface brightness under asteroids:original (1 = ORIGINAL albedo).
 const HY_ROCK_ALBEDO = 0.45;
-const AERIAL_SIZE_FADE = 0.012;
-const AERIAL_SIZE_FULL = 0.045;
+// Ben, 2026-10-11: "All the beautiful large planets are gone" / "look at all the
+// orbit lines without planets". With the universe 1.85x bigger the nearest
+// giants sit 45-60k from Sol (a 620 u world is 0.013 rad half-size there) and
+// the old 0.012/0.045 thresholds culled every one of them: measured, 1 of 567
+// big bodies drawn from the start. Now a world keeps its colour from 0.010 rad
+// (620 u at 62k) and is only dropped below 0.003 rad (620 u at 200k, 300 u at 100k).
+const AERIAL_SIZE_FADE = 0.003;
+const AERIAL_SIZE_FULL = 0.010;
 
 // Every material this body draws with, with its untouched colours captured, so
 // the ramp is a WRITE of an absolute value and never an accumulating multiply.
@@ -16456,6 +16462,10 @@ window.cullPixelCensus = function (minPx) {
 // Frame counter for throttling
 let _orbitVisibilityFrameCount = 0;
 
+// Orbit-ring distance fade (rings stay drawn): opacity = base x max(FLOOR, 1 - DEPTH x aerial k).
+const HY_ORBIT_FADE = { FLOOR: 0.18, DEPTH: 0.9 };
+if (typeof window !== 'undefined') window.HY_ORBIT_FADE = HY_ORBIT_FADE;
+let _orbitFadeTmp = null;
 function updateOrbitLineVisibility() {
     // HYBRID: orbit lines are part of the HUD ("Orbits ON"). ORIGINAL shows them
     // all, steady; the overhaul culled and faded them by distance.
@@ -16467,6 +16477,28 @@ function updateOrbitLineVisibility() {
     // HYBRID package T: one ring per orbiting planet, at its current radius and
     // centre, whatever createOrbitLines() last rebuilt (game-core.js).
     if (typeof _hyOrbitLineSync === 'function') { try { _hyOrbitLineSync(); } catch (e) { /* rings optional */ } }
+
+    // Ben, 2026-10-11: "look at all the orbit lines without planets" → "if the
+    // rings can fade as well perhaps that would work. We can keep them visible
+    // and not use distance culling." A non-local ring now fades with the same
+    // aerial curve as its planet (never below HY_ORBIT_FADE.FLOOR of its base
+    // opacity) and is never culled; Sol's rings are untouched.
+    if (typeof orbitLines !== 'undefined' && orbitLines && typeof camera !== 'undefined') {
+        const _wp = _orbitFadeTmp || (_orbitFadeTmp = new THREE.Vector3());
+        for (let i = 0; i < orbitLines.length; i++) {
+            const line = orbitLines[i]; if (!line || !line.userData || !line.material) continue;
+            const p = line.userData.planet;
+            if (!p || !p.userData || p.userData.isLocal || line.userData.isLocal) continue;
+            if (line.userData._baseOpacity === undefined) line.userData._baseOpacity = line.material.opacity;
+            p.getWorldPosition(_wp);
+            const d = _wp.distanceTo(camera.position);
+            let k = 0;
+            try { k = (typeof _aerialFactor === 'function') ? _aerialFactor(p, d) : 0; } catch (e) { k = 0; }
+            const f = Math.max(HY_ORBIT_FADE.FLOOR, 1 - HY_ORBIT_FADE.DEPTH * Math.max(0, Math.min(1, k)));
+            line.material.opacity = line.userData._baseOpacity * f;
+            if (line.userData.edge && line.userData.edge.material) line.userData.edge.material.opacity = (line.userData._edgeBase || (line.userData._edgeBase = line.userData.edge.material.opacity)) * f;
+        }
+    }
     
     if (typeof orbitLines === 'undefined' || orbitLines.length === 0) return;
     if (typeof camera === 'undefined') return;

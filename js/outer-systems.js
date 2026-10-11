@@ -1212,10 +1212,10 @@ const HY_OUTER = {
     BEACON_PX: 5,
     LIGHT_I: 2.6,             // star PointLight intensity at the star (linear falloff to the cutoff)
     LIGHT_REACH_K: 1.3,       // cutoff = system edge x this
-    CORONA_K: 3.6,            // corona sprite diameter = star radius x 2 x this
+    CORONA_K: 2.0,            // corona sprite diameter = star radius x 2 x this (3.6 read as one giant dim ball from 9k — Ben, 2026-10-11)
     CORONA_FADE_R: [1.4, 3.5],// corona fades out as the camera comes inside these star radii (no screen wash)
     ORBIT_GAP: [900, 1600],   // extra space between two planet orbits (on top of HY_SCALE.ORBIT_K x the two radii)
-    PLANETS: { borg: [3, 5], exotic: [1, 2], crystal_garden: [2, 3], dead_star: [2, 4] },
+    PLANETS: { borg: [4, 6], exotic: [4, 6], crystal_garden: [4, 6], dead_star: [4, 6] },   // Ben, 2026-10-11: "so large but with no planets" (was 1-5)
     ROCKS: [26, 38],          // asteroids in an exotic system's ring
     KEEPOUT_K: 1.8,           // an enemy found inside a frontier body's KEEPOUT_K x radius on first sight is moved out
     KEEPOUT_LIVE_K: 1.15,     // ...and any enemy found inside the body itself at any time

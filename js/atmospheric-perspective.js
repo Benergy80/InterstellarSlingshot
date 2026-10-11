@@ -24,8 +24,13 @@ const atmosphericConfig = {
     // game-objects.js) fall inside the ramp and pick up a light haze without
     // losing their identity; only content beyond `fogFar` fully disappears
     // into the horizon color.
-    fogNear: 55000,
-    fogFar: 130000,
+    // Ben, 2026-10-11: "what happened to all the other ... black hole systems?"
+    // Package Q laid the galaxies out 159-206k from Sol; x1.85 these bands put
+    // fog from 101k, so every galaxy disc sat 35-65% fogged and vanished.
+    // 120k/235k x 1.85 = 222k/435k (far plane 462k): galaxies read, the
+    // frontier beyond 283k still recedes. The regional haze scales these.
+    fogNear: 120000,
+    fogFar: 235000,
 
     // The horizon drifts slowly between these two synthwave hazes — deep
     // violet and a cooler neon blue — so the backdrop never reads as a flat,
