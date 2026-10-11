@@ -116,3 +116,174 @@
 #swDeath .sw-btn:hover { transform: scale(1.04); box-shadow: 0 0 30px rgba(255,43,214,0.9), inset 0 0 18px rgba(25,240,255,0.3); }
 #swDeath .sw-hint { font-size: 0.72rem; letter-spacing: 0.2em; color: rgba(244,247,255,0.55); text-transform: uppercase; }
 #swDeath.sw-over .sw-continue .n { color: var(--sw-red); text-shadow: 0 0 14px rgba(255,59,92,0.9); }
+
+/* ── TITLE SCREENS (package AG, HYBRID titleScreen: chrome | landscape | poster) ──
+   js/title-screens.js builds #hyTitle over the ORIGINAL launch flow and adopts the
+   game's own #introStartBtn / #introDemoBtn into .hyt-menu. Nothing here applies
+   under titleScreen: original (no #hyTitle, no body.hyt-on). */
+#hyTitle {
+    position: fixed; inset: 0; z-index: 10000; overflow: hidden;   /* the loading screen runs at 9999 */
+    background: var(--sw-bg); color: var(--sw-white); font-family: var(--sw-font-ui);
+    user-select: none; -webkit-user-select: none; cursor: auto;
+    transition: opacity 480ms ease;
+}
+#hyTitle.hyt-out { opacity: 0; pointer-events: none; }
+#hyTitle canvas.hyt-sky, #hyTitle canvas.hyt-land, #hyTitle canvas.hyt-stars { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hyTitle .hyt-vig { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 45%, rgba(1,2,10,0) 45%, rgba(1,2,10,0.72) 100%); }
+#hyTitle .hyt-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 7vh 16px 9vh; box-sizing: border-box; }
+#hyTitle .hyt-lockup { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+/* the chrome logotype */
+#hyTitle .hyt-logo { display: block; width: min(860px, 88vw); height: auto; overflow: visible; filter: drop-shadow(0 14px 22px rgba(0,0,0,0.65)) drop-shadow(0 0 28px rgba(110,90,255,0.28)); }
+#hyTitle .hyt-flare { animation: hytFlare 6s cubic-bezier(0.45, 0, 0.3, 1) 1.2s infinite; }
+@keyframes hytFlare { 0% { transform: translateX(0); } 20% { transform: translateX(1420px); } 100% { transform: translateX(1420px); } }
+#hyTitle .hyt-glint { transform-box: fill-box; transform-origin: center; transform: scale(0); animation: hytGlint 6s ease-out 1.2s infinite; }
+@keyframes hytGlint { 0%, 15% { transform: scale(0) rotate(0deg); opacity: 0; } 21% { transform: scale(1.15) rotate(45deg); opacity: 1; } 32% { transform: scale(0) rotate(90deg); opacity: 0; } 100% { transform: scale(0); opacity: 0; } }
+
+/* the rounded subtitle box: chrome border, dark glass inside */
+#hyTitle .hyt-sub {
+    margin-top: 14px; padding: 7px 26px; border-radius: 999px; border: 2px solid transparent;
+    background: linear-gradient(180deg, #0c1036, #04051a) padding-box,
+                linear-gradient(180deg, #ffffff 0%, #c9d2ff 44%, #2a1880 50%, #8d70ff 78%, #ffffff 100%) border-box;
+    box-shadow: 0 6px 0 #02030c, 0 0 22px rgba(110,90,255,0.35);
+    transform: skewX(-13deg);
+}
+#hyTitle .hyt-sub span {
+    display: block; transform: skewX(13deg);
+    font-family: var(--sw-font-title); font-weight: 700; font-size: clamp(0.62rem, 1.35vw, 0.95rem); letter-spacing: 0.32em; text-transform: uppercase;
+    color: #e6ebff; text-shadow: 0 0 10px rgba(140,160,255,0.75);
+}
+#hyTitle .hyt-credit { position: absolute; left: 18px; bottom: 14px; font-family: var(--sw-font-title); font-size: 0.62rem; letter-spacing: 0.4em; text-transform: uppercase; color: rgba(200,210,255,0.5); }
+
+/* the menu: the game's own buttons, adopted */
+#hyTitle .hyt-menu { display: flex; flex-direction: column; align-items: center; gap: 16px; min-height: 120px; justify-content: center; }
+#hyTitle .hyt-wait { display: flex; flex-direction: column; align-items: center; gap: 8px; font-family: var(--sw-font-title); text-transform: uppercase; letter-spacing: 0.3em; font-size: 0.68rem; color: rgba(214,222,255,0.72); }
+#hyTitle .hyt-wait-bar { width: 220px; height: 3px; background: rgba(140,150,255,0.18); border-radius: 2px; overflow: hidden; }
+#hyTitle .hyt-wait-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sw-cyan), var(--sw-violet)); box-shadow: 0 0 10px var(--sw-cyan); transition: width 300ms ease; }
+#hyTitle .hyt-wait-v { min-height: 1em; font-size: 0.6rem; letter-spacing: 0.24em; color: rgba(160,176,255,0.6); animation: swBlink 1.4s steps(2) infinite; }
+
+#hyTitle .hyt-menu #introStartBtn, #hyTitle .hyt-menu #introDemoBtn {
+    position: relative !important; top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+    transform: none !important; margin: 0 !important; z-index: auto !important; animation: none !important;
+    min-width: 300px; min-height: 52px; cursor: pointer !important; box-sizing: border-box;
+}
+#hyTitle .hyt-menu #introStartBtn .start-btn-content { font-family: var(--sw-font-title) !important; }
+#hyTitle .hyt-menu #introStartBtn .start-btn-text,
+#hyTitle .hyt-menu #introDemoBtn > div > div:nth-child(1) { font-family: var(--sw-font-title) !important; font-weight: 900 !important; font-size: 1.05rem !important; letter-spacing: 0.24em !important; margin: 0 !important; }
+#hyTitle .hyt-menu #introStartBtn .start-btn-subtext,
+#hyTitle .hyt-menu #introDemoBtn > div > div:nth-child(2) { font-family: var(--sw-font-ui) !important; font-weight: 600 !important; font-size: 0.74rem !important; letter-spacing: 0.34em !important; margin-top: 3px !important; opacity: 1 !important; }
+
+/* chrome + poster: chrome pills with the logo's bevel */
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn, #hyTitle.hyt-chrome .hyt-menu #introDemoBtn,
+#hyTitle.hyt-poster .hyt-menu #introStartBtn, #hyTitle.hyt-poster .hyt-menu #introDemoBtn {
+    padding: 13px 40px !important; border-radius: 999px !important; border: 2px solid transparent !important;
+    background: linear-gradient(180deg, #1c2256 0%, #0b0e2c 47%, #04051a 53%, #141a48 100%) padding-box,
+                linear-gradient(180deg, #ffffff 0%, #c9d2ff 42%, #2a1880 50%, #8d70ff 78%, #ffffff 100%) border-box !important;
+    box-shadow: 0 5px 0 #02030c, 0 0 0 1px rgba(2,3,12,0.9), 0 0 22px rgba(110,90,255,0.32), inset 0 1px 0 rgba(255,255,255,0.28) !important;
+    transition: filter 140ms ease, box-shadow 140ms ease !important;
+}
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn:hover, #hyTitle.hyt-chrome .hyt-menu #introDemoBtn:hover,
+#hyTitle.hyt-poster .hyt-menu #introStartBtn:hover, #hyTitle.hyt-poster .hyt-menu #introDemoBtn:hover {
+    filter: brightness(1.18); box-shadow: 0 5px 0 #02030c, 0 0 34px rgba(25,240,255,0.55), inset 0 1px 0 rgba(255,255,255,0.4) !important;
+}
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn .start-btn-text, #hyTitle.hyt-poster .hyt-menu #introStartBtn .start-btn-text {
+    background: linear-gradient(180deg, #ffffff 0%, #e2e8ff 46%, #93a2ff 50%, #d8ceff 100%); -webkit-background-clip: text; background-clip: text;
+    color: transparent !important; text-shadow: none !important; filter: drop-shadow(0 0 6px rgba(140,120,255,0.7));
+}
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn .start-btn-subtext, #hyTitle.hyt-poster .hyt-menu #introStartBtn .start-btn-subtext { color: var(--sw-cyan) !important; text-shadow: 0 0 8px rgba(25,240,255,0.7) !important; }
+#hyTitle.hyt-chrome .hyt-menu #introDemoBtn, #hyTitle.hyt-poster .hyt-menu #introDemoBtn { min-height: 46px; padding: 9px 34px !important; }
+#hyTitle.hyt-chrome .hyt-menu #introDemoBtn > div > div:nth-child(1), #hyTitle.hyt-poster .hyt-menu #introDemoBtn > div > div:nth-child(1) { font-size: 0.86rem !important; color: var(--sw-yellow) !important; text-shadow: 0 0 8px rgba(255,224,102,0.75) !important; }
+#hyTitle.hyt-chrome .hyt-menu #introDemoBtn > div > div:nth-child(2), #hyTitle.hyt-poster .hyt-menu #introDemoBtn > div > div:nth-child(2) { font-size: 0.64rem !important; color: #c9d2ff !important; text-shadow: none !important; }
+
+/* landscape: the death screen's neon buttons */
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn, #hyTitle.hyt-landscape .hyt-menu #introDemoBtn {
+    padding: 12px 34px !important; border-radius: 6px !important; border: 2px solid var(--sw-cyan) !important;
+    background: linear-gradient(180deg, rgba(40,16,96,0.94), rgba(6,30,48,0.92)) !important;
+    box-shadow: 0 0 18px rgba(25,240,255,0.45), inset 0 0 14px rgba(123,43,255,0.25) !important;
+    transition: box-shadow 120ms ease !important;
+}
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn:hover, #hyTitle.hyt-landscape .hyt-menu #introDemoBtn:hover { box-shadow: 0 0 30px rgba(123,255,224,0.85), inset 0 0 18px rgba(25,240,255,0.3) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn .start-btn-text { color: var(--sw-white) !important; text-shadow: 0 0 10px rgba(25,240,255,0.9) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn .start-btn-subtext { color: #c4ffe9 !important; text-shadow: none !important; }
+#hyTitle.hyt-landscape .hyt-menu #introDemoBtn { border-color: rgba(255,224,102,0.8) !important; min-height: 46px; padding: 8px 30px !important; background: rgba(8,4,22,0.92) !important; box-shadow: 0 0 14px rgba(255,224,102,0.25) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introDemoBtn > div > div:nth-child(1) { font-size: 0.86rem !important; color: var(--sw-yellow) !important; text-shadow: 0 0 10px rgba(255,224,102,0.9) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introDemoBtn > div > div:nth-child(2) { font-size: 0.62rem !important; color: #fff1a8 !important; text-shadow: none !important; }
+
+/* landscape: the death screen's chrome slam, scan, vignette and tear bars */
+#hyTitle .sw-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, rgba(7,3,15,0) 40%, rgba(7,3,15,0.8) 100%); }
+#hyTitle .sw-scan {
+    position: absolute; inset: 0; pointer-events: none; mix-blend-mode: overlay; opacity: 0.4;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.10) 0 1px, rgba(0,0,0,0.22) 1px 3px);
+    animation: swScanRoll 6s linear infinite;
+}
+#hyTitle .sw-glitch { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+#hyTitle .sw-glitch.on { animation: swGlitchFade 800ms steps(8) both; }
+#hyTitle .sw-glitch span {
+    position: absolute; left: 0; width: 100%; height: 9px; opacity: 0.8;
+    background: linear-gradient(90deg, var(--sw-cyan), transparent 30%, transparent 70%, var(--sw-magenta));
+    animation: swTear 160ms steps(4) infinite alternate;
+}
+#hyTitle .sw-title {
+    font-family: var(--sw-font-title); font-weight: 900; line-height: 0.95; margin: 0; text-align: center; text-transform: uppercase;
+    background: linear-gradient(180deg, #ffffff 0%, #e6fffb 38%, #7bffe0 50%, var(--sw-violet) 52%, #c49bff 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(-3px 0 0 rgba(25,240,255,0.75)) drop-shadow(3px 0 0 rgba(255,43,214,0.6)) drop-shadow(0 0 18px rgba(123,255,224,0.4));
+}
+#hyTitle .sw-title span { display: block; }
+#hyTitle .sw-title span:first-child { font-size: clamp(1.6rem, 4.6vw, 3.4rem); letter-spacing: 0.16em; }
+#hyTitle .sw-title span:last-child { font-size: clamp(2.6rem, 8.4vw, 6.4rem); letter-spacing: 0.06em; }
+#hyTitle .sw-title.slam { animation: swSlam 520ms cubic-bezier(0.2, 1.4, 0.3, 1) both; }
+#hyTitle .sw-sub {
+    margin-top: 12px; font-size: clamp(0.8rem, 1.5vw, 1.1rem); letter-spacing: 0.3em; text-transform: uppercase;
+    color: #c4ffe9; text-shadow: 0 0 10px rgba(123,255,224,0.7); animation: swFadeUp 500ms 700ms ease-out both;
+}
+#hyTitle.hyt-landscape .hyt-stage { justify-content: flex-start; padding-top: 6vh; }
+#hyTitle.hyt-landscape .hyt-menu { margin-top: auto; }
+#hyTitle .sw-hint { margin-top: 12px; font-size: 0.66rem; letter-spacing: 0.3em; color: rgba(244,247,255,0.5); text-transform: uppercase; }
+
+/* poster: logo on top, ship centre stage, menu to one side, the cast along the foot */
+#hyTitle .hyt-poster {
+    position: absolute; inset: 0; display: grid; box-sizing: border-box; padding: 3vh 3vw 2vh;
+    grid-template-columns: 1fr minmax(300px, 30%); grid-template-rows: auto 1fr auto;
+    grid-template-areas: "logo logo" "hero side" "cast cast";
+}
+#hyTitle .hyt-poster .hyt-lockup { grid-area: logo; }
+#hyTitle .hyt-poster .hyt-logo { width: min(620px, 70vw); }
+#hyTitle .hyt-hero { grid-area: hero; position: relative; min-height: 0; }
+#hyTitle .hyt-ship { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity 900ms ease; }
+#hyTitle .hyt-ship.on { opacity: 1; }
+#hyTitle .hyt-halo { position: absolute; left: 50%; top: 52%; width: 70%; aspect-ratio: 2.2; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(120,100,255,0.32), rgba(25,240,255,0.08) 45%, rgba(0,0,0,0) 70%); }
+#hyTitle .hyt-ship-tag { position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); white-space: nowrap; font-family: var(--sw-font-ui); font-weight: 600; font-size: 0.72rem; letter-spacing: 0.34em; text-transform: uppercase; color: rgba(200,210,255,0.62); }
+#hyTitle .hyt-ship-tag b { font-family: var(--sw-font-title); font-weight: 900; color: #e6ebff; letter-spacing: 0.2em; margin-right: 0.6em; }
+#hyTitle .hyt-side { grid-area: side; display: flex; align-items: center; justify-content: center; }
+#hyTitle .hyt-cast { grid-area: cast; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#hyTitle .hyt-cast-k { font-family: var(--sw-font-title); font-size: 0.6rem; letter-spacing: 0.42em; text-transform: uppercase; color: rgba(200,210,255,0.55); }
+#hyTitle .hyt-cast-row { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; width: min(1080px, 100%); }
+#hyTitle .hyt-card { margin: 0; position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 5 / 3;
+    background: linear-gradient(180deg, rgba(8,10,34,0.85), rgba(3,4,16,0.92)); border: 1px solid rgba(200,210,255,0.16);
+    box-shadow: inset 0 -3px 0 var(--c), 0 0 16px rgba(0,0,0,0.5); }
+#hyTitle .hyt-card canvas { position: absolute; left: 0; right: 0; top: 0; bottom: 15px; width: 100%; height: calc(100% - 15px); display: block; }
+#hyTitle .hyt-card figcaption { position: absolute; left: 0; right: 0; bottom: 5px; text-align: center; font-family: var(--sw-font-title); font-size: 0.52rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--c); text-shadow: 0 0 6px rgba(0,0,0,0.9); }
+
+/* the game's Skip Intro chip, out of the composition */
+body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; transform: none; }
+/* phones / tablets: the game pins the chip bottom-centre with inline !important rules (createSkipButton) — leave it there */
+@media (max-width: 768px), (max-width: 1024px) and (pointer: coarse) { body.hyt-on #skipIntroBtn { top: auto; right: auto; } }
+
+/* phones */
+@media (max-width: 760px), (max-aspect-ratio: 3/4) {
+    #hyTitle .hyt-stage { padding: 12vh 16px 12vh; }
+    #hyTitle .hyt-logo { width: 94vw; }
+    #hyTitle .hyt-sub { padding: 6px 16px; }
+    #hyTitle .hyt-sub span { letter-spacing: 0.2em; font-size: 0.62rem; }
+    #hyTitle .hyt-menu #introStartBtn, #hyTitle .hyt-menu #introDemoBtn { min-width: 260px; }
+    #hyTitle.hyt-landscape .hyt-stage { padding-top: 9vh; padding-bottom: 10vh; }
+    #hyTitle .hyt-poster { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-areas: "logo" "hero" "side" "cast"; padding: 5vh 16px 9vh; gap: 10px; }
+    #hyTitle .hyt-poster .hyt-logo { width: 92vw; }
+    #hyTitle .hyt-cast-row { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    #hyTitle .hyt-card figcaption { font-size: 0.46rem; letter-spacing: 0.14em; }
+    #hyTitle .hyt-cast-k { letter-spacing: 0.22em; font-size: 0.54rem; }
+    #hyTitle .hyt-credit { display: none; }
+    #hyTitle .sw-hint { display: none; }
+}
