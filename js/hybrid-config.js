@@ -43,7 +43,7 @@
         //   'overhaul'  = the overhaul's (culled to dots at range)
         asteroids:       'original',
         // — effects and audio —
-        explosions:      'combined',   // 'combined' (old burst + new detonation) | 'original' | 'overhaul'
+        explosions:      'original',   // 'combined' (old burst + new detonation) | 'original' | 'overhaul' — Ben 2026-10-10: newer effects PAUSED while testing ("so we can just see the original ones"); flip back to 'combined' when he says
         weaponFx:        'original',
         sfx:             'original',
         music:           'original',
