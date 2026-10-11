@@ -5053,6 +5053,9 @@ function _ensureDistressUI() {
     return { arrow, reticle };
 }
 
+// SOS arrow reach (ORIGINAL units; multiplied by the universe factor _hyU).
+const HY_SOS = { RANGE: 12000 };
+if (typeof window !== 'undefined') window.HY_SOS = HY_SOS;
 function updateDistressIndicator() {
     if (typeof tradingShips === 'undefined' || typeof camera === 'undefined') return;
     const { arrow, reticle } = _ensureDistressUI();
@@ -5062,17 +5065,44 @@ function updateDistressIndicator() {
     // SOS signals have a MAXIMUM RANGE (shared with the detection toast in
     // civilian-combat.js): a ship under attack across the universe must not
     // drive a permanent DISTRESS arrow.
-    const _sosRange = (typeof window !== 'undefined' && window.DISTRESS_DETECTION_RANGE) || 5000;
+    // HYBRID — Ben, 2026-10-10: "The SOS signal arrow was good. we can bring
+    // that back." It never left, but it only tracked trading ships with
+    // distressActive inside DISTRESS_DETECTION_RANGE (5,000 — Sol alone is
+    // now 26k across) and was blind to civilian-combat distress calls,
+    // caravans under attack and the campaign's relief convoy. One picker over
+    // every distress source, within HY_SOS.RANGE x the universe factor.
+    const _U = (typeof window !== 'undefined' && typeof window._hyU === 'function') ? window._hyU() : 1;
+    const _sosRange = (typeof window !== 'undefined' && window.HY_SOS ? window.HY_SOS.RANGE : 12000) * _U;
     let nearest = null;
     let nearestDist = Infinity;
     const camPos = camera.position;
+    const _consider = (pos, who) => {
+        if (!pos) return;
+        const d = camPos.distanceTo(pos);
+        if (d > _sosRange || d >= nearestDist) return;
+        nearestDist = d; nearest = { position: pos, who: who };
+    };
     for (let i = 0; i < tradingShips.length; i++) {
         const s = tradingShips[i];
         if (!s || !s.userData || s.userData.destroyed) continue;
         if (!s.userData.distressActive) continue;
-        const d = camPos.distanceTo(s.position);
-        if (d > _sosRange) continue;
-        if (d < nearestDist) { nearestDist = d; nearest = s; }
+        _consider(s.position, s);
+    }
+    if (typeof activeDistressCalls !== 'undefined' && activeDistressCalls) {
+        for (let i = 0; i < activeDistressCalls.length; i++) {
+            const c = activeDistressCalls[i];
+            const civ = c && c.civilian;
+            if (!civ || !civ.userData || civ.userData.destroyed || civ.userData.health <= 0) continue;
+            _consider(civ.position, civ);
+        }
+    }
+    const _caravans = (typeof freighterCaravans !== 'undefined' && freighterCaravans) ||
+                      (typeof window !== 'undefined' && (window.caravans || (window.caravanSystem && window.caravanSystem.caravans))) || [];
+    for (let i = 0; i < _caravans.length; i++) {
+        const c = _caravans[i];
+        if (!c || !c.underAttack || c.rescued || c.destroyed) continue;
+        const lead = (c.ships && c.ships[0]) || c.leader || c;
+        _consider(lead && lead.position, lead);
     }
     if (!nearest) {
         arrow.style.display = 'none';

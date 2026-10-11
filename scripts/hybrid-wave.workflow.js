@@ -42,6 +42,7 @@ const LANES = [
   'warpfx: warp-effect colours (js/visual-flair.js warp style), the Sol orbit lines (createOrbitLines / updateOrbitLineVisibility) and regional distance haze (_aerialFactor, fog)',
   'sun: the local Sun\'s look — corona, flares, bloom, light (the Sun builder in js/game-objects.js, its lights, the sun parts of js/visual-flair.js)',
   'outer: the outer interstellar systems — their look and how far out they sit (js/outer-systems.js)',
+  'map2: the galactic map widget\'s Universal View — what it shows (updateGalaxyMap / setupGalaxyMap in js/game-ui.js, the map markup in index.html, css/styles.css .round-map)',
 ]
 
 function common(key, title) {
@@ -698,6 +699,25 @@ const PACKAGES = {
       'The outer interstellar systems live in js/outer-systems.js (exotic cores, BORG patrol systems, crystal structures pushed into `cosmicFeatures.crystalFormations`, "Scatter" rocks). Read how they are placed today (a radius from the universe centre / from Sol), measure where they sit relative to the galaxies and nebulae after package N (scale2, merged under you — read its universe extents in `git log` and HY_SCALE), and move them MUCH further out: beyond every galaxy and nebula, at distances that make them a true frontier (state the numbers), with the map/radar, nav list, discovery paths, `getCurrentGalaxyId` and the demo pilot still reaching them (demo-soak must not die or stall).',
       'Makeover: each outer system should read as its own distinct place in the retro-vector style — a dominant colour, a signature structure (the exotic core, a BORG cube lattice, a crystal garden, a dead star), its own planets on the size ladder (package N\'s band), lighting from its own star, cheap and culled by range. Keep the BORG and their optional mission hooks working (js/civilian-combat.js, the campaign\'s optional missions). Enemies there obey `HY_ENEMIES.KEEPOUT_RADII` from any black hole.',
       'Verify: a before/after frame of three outer systems from the same relative vantage; a table of outer-system positions (distance from Sol, from the nearest galaxy, from the nearest nebula) before/after; the galactic map showing them; demo-soak 2 runs 0 deaths; keep-check 9/9; fps inside one outer system.',
+    ].join('\n'),
+  },
+  map2: {
+    title: 'W — THE MAP\'S UNIVERSAL VIEW: more relevant information',
+    effort: 'high',
+    body: [
+      '## Your goal',
+      'Ben, verbatim: "The Universal view should show more relevant information".',
+      'The map widget (`.round-map`, 220 px, index.html / css/styles.css) has two modes toggled by #mapViewToggle: Galaxy View and Universal View (`gameState.mapView`, drawn by `updateGalaxyMap` in js/game-ui.js, set up by `setupGalaxyMap`; `radarRange` is the detection/plot range). Read what the Universal View draws today and screenshot it at the start, at Sgr A*, in a nebula and at an outer system.',
+      'Make the Universal View answer "where am I, where am I going, what matters out there" at a glance, in the retro-vector HUD style (flat saturated colours, crisp dots/rings/lines, no textures), without clutter:',
+      '- the player as a heading wedge, Sol and Sgr A* labelled, the 8 galaxy cores with their faction colour and CLEARED / HOSTILE state (`gameState.galaxiesCleared`, the campaign\'s `window.__campaign.galaxy` state), nebulae with a charted/uncharted tick, outer systems and Borg sectors as distinct glyphs;',
+      '- the CURRENT OBJECTIVE: the campaign\'s goal (`window.__campaign.state`, its mission site, the guide line\'s destination) as a pulsing marker with its dotted line drawn on the map and the distance in units; the selected nav target as a reticle;',
+      '- live signals: active distress / SOS calls (trading ships with `distressActive`, civilian-combat calls, caravans under attack, the campaign\'s relief convoy) as pulsing red SOS dots; wingmen as small friendly dots; enemy clusters within radar range as hostile ticks;',
+      '- scale: a range ring or two with unit labels so the 1.85x universe reads (HY_SCALE.UNIVERSE_K via window._hyU()), and the view framed so the whole campaign fits (Sol, the 8 galaxies, the nebula bands, the outer shells);',
+      '- a tiny legend line (as the map already has) updated to the new glyphs.',
+      'Keep Galaxy View as it is unless something in it is wrong. Keep the draw cheap (the map updates every 3 frames); cache the static layer. Expose the few constants (ring radii, glyph sizes) in one object.',
+      '',
+      '## Verify',
+      'Before/after screenshots of the Universal View at the four spots above (the map widget cropped, 2x); the objective marker following a `__campaign.advance()` walk through three phases; an SOS dot appearing when a distress is staged (`.critic/` has civilian staging tricks; `tradingShips[i].userData.distressActive = true` works); fps unchanged back to back; keep-check 9/9.',
     ].join('\n'),
   },
 }
