@@ -485,8 +485,9 @@
         const neb = C.nebula, g = C.nebulaGalaxy; if (!neb || g < 0) return;
         const DP = window.discoveryPaths || ie('discoveryPaths') || [];
         const faction = factionOf(g), color = factionColor(g);
-        // the discovery just opened its own path from this nebula; in play the
-        // campaign re-aims it at the remote host, in the demo it adopts it as is
+        // the discovery just opened its own path from this nebula; the campaign
+        // re-aims it at the remote host (package Y: the demo flies the same
+        // mission as the player, so it no longer adopts the discovery's path)
         let own = null;
         for (let i = DP.length - 1; i >= 0; i--) {
             const e = DP[i]; if (!e || !e.line || !e.line.userData || e.line.userData.missionComplete) continue;
@@ -494,9 +495,7 @@
             if (sp && sp.distanceTo(neb.position) < 60 && (e.line.userData.createdAt || 0) >= C.visitAt - 3000) { own = e; break; }
         }
         let site, entry = null;
-        if (isDemo() && own) {
-            entry = own; site = { kind: 'outpost', site: own.line.userData.endPosition.clone(), label: faction + ' forces' };
-        } else {
+        {
             if (own) { DP.splice(DP.indexOf(own), 1); disposeEntry(own); }
             site = pickMissionSite(neb, (C.usedNebulae.length % 2 === 1) ? 'planet' : 'convoy');
             if (site.kind === 'convoy') site.civilians = spawnConvoy(site.site, site.label);
@@ -638,7 +637,9 @@
     }
     function guardOf(n) { return (n && _guards[nebulaName(n)]) || null; }
     function guardTick() {
-        const c = cam(); if (!c || isDemo()) return;   // the demo keeps its own showcase
+        // package Y (democampaign): the demo flies the campaign, so the guards
+        // run for it too — it fights the raiders and the recruit joins
+        const c = cam(); if (!c) return;
         const NC = ie('nebulaClouds') || [];
         for (let i = 0; i < NC.length; i++) {
             const n = NC[i]; if (!n || !n.userData || !n.position) continue;
@@ -868,6 +869,24 @@
         get galaxy() { return C.galaxy ? { g: C.galaxy.g, name: galaxyName(C.galaxy.g), step: C.galaxy.step, forces: C.galaxy.forces.filter(isAlive).length, guardians: C.galaxy.guardians.filter(isAlive).length } : null; },
         get nebula() { return C.nebula ? { name: C.nebulaName, galaxy: C.nebulaGalaxy, faction: factionOf(C.nebulaGalaxy), wingman: !!C.wingmanJoined } : null; },
         get queue() { return _q.length; },
+        // package Y (democampaign): live object refs for the demo's campaign
+        // director (js/autopilot.js) — what each phase is waiting on
+        get director() {
+            const tgt = C._target || C._libTarget || null, Gd = guardOf(C.nebula || tgt);
+            const ab = function (k) { const a = areaBoss(k); return a && a.bossRef && isAlive(a.bossRef) ? a.bossRef : null; };
+            const me = C.mission && C.mission.entry, mud = me && me.line && me.line.userData;
+            const mb = mud && mud.bossAreaKey ? ab(mud.bossAreaKey) : null;
+            return {
+                state: PHASES[C.idx], enteredAt: C.enteredAt, sol: sol(), solEdge: solEdge(), sgrA: sgrA(),
+                pirates: aliveEnemies(isPirate), vulcans: aliveEnemies(isVulcan),
+                pirateBoss: ab(PIRATE_BOSS), vulcanBoss: ab(VULCAN_BOSS),
+                target: tgt, nebula: C.nebula,
+                guard: Gd ? { pirates: Gd.pirates.filter(isAlive), cleared: !!Gd.cleared, none: !!Gd.none, defender: Gd.defender } : null,
+                guardArriveK: NEB_GUARD.ARRIVE_K,
+                mission: me ? { entry: me, site: C.mission.site, enemies: (me.missionEnemies || []).filter(isAlive), boss: mb, complete: !!(mud && mud.missionComplete) } : null,
+                galaxy: C.galaxy ? { g: C.galaxy.g, step: C.galaxy.step, core: _coreOf(C.galaxy.g), forces: C.galaxy.forces.filter(isAlive), guardians: C.galaxy.guardians.filter(isAlive) } : null,
+            };
+        },
         // force the current phase complete (debug: skips the fight, keeps the
         // transition, briefing, line and reward)
         advance: function () {
