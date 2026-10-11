@@ -30,6 +30,7 @@
         enemyPopulation: 'original',   // how many enemies you can see and fight
         enemyAI:         'overhaul',   // advanced behaviours (what enemies decide to do)
         enemyFlight:     'physical',   // how they move: momentum + nose + thrust  'physical' | 'overhaul'
+        wingmanFlight:   'physical',   // Ben 2026-10-11: wingmen fly the enemies' flight model with per-wingman personalities (WINGMAN_FLIGHT, WINGMAN_PERSONALITIES)  'physical' | 'kinematic'
         // — deep space —
         blackHoles:      'original',   // black hole + galaxy-core look
         nebulae:         'combined',   // 'combined' | 'overhaul' | 'original'
