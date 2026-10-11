@@ -568,15 +568,31 @@ function applyWorldShift() {
     }
     camera.position.set(0, 0, 0);
 
-    // 2) Cached positions in userData across the whole graph
+    // 2) Cached positions in userData across the whole graph.
+    // Each cached vector is shifted ONCE: one object is often shared — every
+    // Sol planet and moon holds the same window.localSystemOffset as its
+    // systemCenter, so a per-reference shift moved Sol's centre 19x and its
+    // planets orbited off into the void (package N: the start point now sits
+    // past the 30k rebase radius, so this fired on the first frame). The
+    // anchors a handler below shifts itself are pre-seeded.
+    const _wsSeen = new Set();
+    if (typeof window !== 'undefined') {
+        if (window.localSystemOffset) _wsSeen.add(window.localSystemOffset);
+        if (window.localGatewayPosition) _wsSeen.add(window.localGatewayPosition);
+    }
+    const _wsOnce = (v) => {
+        if (!v || typeof v !== 'object' || _wsSeen.has(v)) return;
+        _wsSeen.add(v);
+        _wshiftVecLike(v, offset);
+    };
     scene.traverse((o) => {
         const ud = o.userData;
         if (!ud) return;
         for (let k = 0; k < _WSHIFT_UD_KEYS.length; k++) {
-            _wshiftVecLike(ud[_WSHIFT_UD_KEYS[k]], offset);
+            _wsOnce(ud[_WSHIFT_UD_KEYS[k]]);
         }
         if (Array.isArray(ud.nearbyPlanets)) {
-            for (let p = 0; p < ud.nearbyPlanets.length; p++) _wshiftVecLike(ud.nearbyPlanets[p], offset);
+            for (let p = 0; p < ud.nearbyPlanets.length; p++) _wsOnce(ud.nearbyPlanets[p]);
         }
     });
 
@@ -2355,8 +2371,12 @@ function animate(rafTime) {
     // enough for float32 precision to degrade. Runs before any game update
     // reads positions, so the whole frame sees one consistent coordinate
     // frame.
+    // package N (scale2): the distance grows with the universe factor
+    // (HY_SCALE.UNIVERSE_K) — Sol now sits 38,900 from Sgr A*, so the old
+    // 30,000 rebased on the very first frame. Float32 at 55k is still ~0.004 u.
+    const _wrd = WORLD_REBASE_DISTANCE * ((typeof window._hyU === 'function') ? window._hyU() : 1);
     if (gameState.gameStarted && !gameState.gameOver &&
-        camera && camera.position.lengthSq() > WORLD_REBASE_DISTANCE * WORLD_REBASE_DISTANCE) {
+        camera && camera.position.lengthSq() > _wrd * _wrd) {
         applyWorldShift();
     }
     

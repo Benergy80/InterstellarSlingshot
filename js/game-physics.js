@@ -1854,7 +1854,9 @@ function resolveShipLocationName() {
     const solOrigin = (typeof window !== 'undefined') && window.localSystemOffset;
     if (solOrigin) {
         const dx = pos.x - solOrigin.x, dy = pos.y - solOrigin.y, dz = pos.z - solOrigin.z;
-        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < edge(SOL_NAME, SOL_SYSTEM_RADIUS)) {
+        // package N (scale2): Sol's own keep-clear radius when it is scaled (26k edge)
+        const _solR = (typeof window._hySolAreaRadius === 'function' && window._hySolAreaRadius()) || SOL_SYSTEM_RADIUS;
+        if (Math.sqrt(dx * dx + dy * dy + dz * dz) < edge(SOL_NAME, _solR)) {
             return SOL_NAME;
         }
     }
@@ -1864,7 +1866,7 @@ function resolveShipLocationName() {
         for (let g = 0; g < GALAXY_LOCATION_NAMES.length; g++) {
             const name = GALAXY_LOCATION_NAMES[g];
             const d = pos.distanceTo(getGalaxy3DPosition(g));
-            if (d >= edge(name, GALAXY_MATCH_RADIUS)) continue;
+            if (d >= edge(name, GALAXY_MATCH_RADIUS * ((typeof window._hyU === 'function') ? window._hyU() : 1))) continue;
             // Nearest wins, not first-within-range: first-match made the name
             // depend on table order rather than on where the ship actually is.
             // The one we're already in is scored slightly closer so it doesn't
@@ -3620,7 +3622,11 @@ if (keys.x) {
     
     if (typeof activePlanets !== 'undefined') {
         activePlanets.forEach(planet => {
-            const planetPosition = planet.position;
+            // A moon parented to its planet has a LOCAL .position: read the
+            // world one, or after a floating-origin rebase every such moon in
+            // the universe pulls (and collides) from around the camera.
+            const planetPosition = (planet.parent && typeof scene !== 'undefined' && planet.parent !== scene)
+                ? planet.getWorldPosition(new THREE.Vector3()) : planet.position;
             const distance = camera.position.distanceTo(planetPosition);
             
             // PERF: Skip objects beyond cull distance (except black holes which have long-range gravity)
