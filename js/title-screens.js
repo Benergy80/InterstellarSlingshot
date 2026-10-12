@@ -35,7 +35,7 @@
         SHIP_SPIN: 0.22,         // poster: rad/s
         SHIP_EMISSIVE: 0.08,     // poster: texture self-light (the hull is white: keep it low or it blows out)
         CAST_W: 200, CAST_H: 120,
-        TAGLINE: 'A Gravitational Space Explorer',   // the game's own line (index.html loading screen)
+        TAGLINE: 'A Gravitational Space Explorer by ChiLab+Claude',   // the game's own line (index.html loading screen)
         DAWN: {                  // landscape palette handed to swLandscape (js/synthwave-fx.js)
             sky: [[0, 'rgba(5,3,20,0)'], [0.5, 'rgba(26,12,72,0.40)'], [0.86, 'rgba(70,36,150,0.55)'], [1, 'rgba(110,255,220,0.42)']],
             corona: [[0, 'rgba(255,226,150,0.70)'], [0.28, 'rgba(110,255,220,0.26)'], [0.62, 'rgba(90,60,255,0.12)'], [1, 'rgba(5,3,20,0)']],
@@ -293,7 +293,7 @@
     if (mode === 'chrome') {
         root.innerHTML = '<canvas class="hyt-sky"></canvas><div class="hyt-vig"></div>' +
             '<div class="hyt-stage"><div class="hyt-lockup">' + logoSVG() + sub + '</div>' + menu + '</div>' +
-            '<div class="hyt-credit">ChiLab</div>';
+            '<div class="hyt-credit">ChiLab+Claude</div>';
     } else if (mode === 'landscape') {
         root.innerHTML = '<canvas class="hyt-stars"></canvas><canvas class="hyt-land"></canvas>' +
             '<div class="sw-vignette"></div><div class="sw-scan"></div>' +

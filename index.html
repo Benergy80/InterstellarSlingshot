@@ -3,18 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, minimal-ui, viewport-fit=cover">
-    <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab</title>
+    <title>Interstellar Slingshot - A Gravitational Space Explorer by ChiLab+Claude</title>
 
     <!-- Open Graph / Social Media Preview -->
     <meta property="og:title" content="Interstellar Slingshot">
-    <meta property="og:description" content="A Gravitational Space Explorer by ChiLab — explore 8 galaxies, battle hostile factions, and slingshot through the cosmos in this 3D browser game.">
+    <meta property="og:description" content="A Gravitational Space Explorer by ChiLab+Claude — explore 8 galaxies, battle hostile factions, and slingshot through the cosmos in this 3D browser game.">
     <meta property="og:image" content="https://interstellarslingshot.com/images/og-preview.jpg">
     <meta property="og:url" content="https://interstellarslingshot.com/">
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="Interstellar Slingshot">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Interstellar Slingshot">
-    <meta name="twitter:description" content="A Gravitational Space Explorer by ChiLab">
+    <meta name="twitter:description" content="A Gravitational Space Explorer by ChiLab+Claude">
     <meta name="twitter:image" content="https://interstellarslingshot.com/images/og-preview.jpg">
     <meta name="description" content="Explore 8 galaxies, battle hostile factions, recruit wingmen, and slingshot through the cosmos in this free 3D browser space game.">
 
@@ -24,7 +24,7 @@
          This lives only on the feature branch; main will not print it. -->
     <script>
       window.BUILD_ID = 'claude/star-explorer-hybrid';
-      window.BUILD_TAG = '20261012x';
+      window.BUILD_TAG = '20261012z';
       console.log(
         '%c🚀 BUILD: ' + window.BUILD_ID + '  ·  ' + window.BUILD_TAG,
         'background:#0a7d2c;color:#fff;font-size:14px;font-weight:bold;padding:4px 10px;border-radius:4px;'
@@ -70,7 +70,7 @@
 
     <!-- External Dependencies with THREE.js Backup System -->
     <!-- Tailwind (precompiled — see package.json build:css) -->
-    <link rel="stylesheet" href="css/tailwind.css?v=20261012x">
+    <link rel="stylesheet" href="css/tailwind.css?v=20261012z">
     
     <!-- PRIMARY: Try the original CDN first -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" 
@@ -120,8 +120,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
     <!-- Game Styles -->
-    <link rel="stylesheet" href="css/styles.css?v=20261012x">
-    <link rel="stylesheet" href="css/synthwave.css?v=20261012x">
+    <link rel="stylesheet" href="css/styles.css?v=20261012z">
+    <link rel="stylesheet" href="css/synthwave.css?v=20261012z">
     <style>
         /* Mobile browser UI hiding */
         html, body {
@@ -751,7 +751,7 @@
         <!-- Title Header -->
         <div class="absolute top-4 left-1/2 ui-panel title-header rounded-lg p-4 z-10">
             <h1 class="text-2xl font-bold text-cyan-400 glow-text cyber-title curved-element" id="gameTitle">INTERSTELLAR SLINGSHOT</h1>
-            <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab</div>
+            <div class="text-xs text-center text-gray-400 mt-1 opacity-80">A Gravitational Space Explorer by ChiLab+Claude</div>
         </div>
 
         <!-- Flight Controls Panel (Top Left) -->
@@ -906,7 +906,7 @@
                     <div class="rocket"></div>
                 </div>
                 <h1 class="text-4xl font-bold text-cyan-400 mb-4 glow-text cyber-title">INTERSTELLAR SLINGSHOT</h1>
-                <p class="text-gray-300 mb-2 mono-text">A Gravitational Space Explorer by ChiLab</p>
+                <p class="text-gray-300 mb-2 mono-text">A Gravitational Space Explorer by ChiLab+Claude</p>
                 <p class="text-gray-400 mb-6 mono-text">Initializing 3D space navigation system...</p>
                 <div class="w-64 h-2 bg-gray-800 rounded mx-auto border border-cyan-400">
                     <div id="loadingBar" class="loading-bar h-full rounded" style="width: 0%"></div>
@@ -1224,42 +1224,42 @@
 
     <!-- Game Scripts -->
     <!-- boot.js FIRST: init-order registry every other script signals into -->
-    <script src="js/boot.js?v=20261012x"></script>
-    <script src="js/asteroid-instancer.js?v=20261012x"></script>
+    <script src="js/boot.js?v=20261012z"></script>
+    <script src="js/asteroid-instancer.js?v=20261012z"></script>
     <!-- Hybrid switchboard: which build each system comes from (see HYBRID-BRIEF.md) -->
-    <script src="js/hybrid-config.js?v=20261012x"></script>
+    <script src="js/hybrid-config.js?v=20261012z"></script>
     <!-- Anaglyph 3D effect (red/cyan glasses) — before game scripts so gameRender() is available -->
-    <script src="js/anaglyph-3d.js?v=20261012x"></script>
+    <script src="js/anaglyph-3d.js?v=20261012z"></script>
     <!-- Load GLTFLoader before game-models.js -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="js/game-models.js?v=20261012x"></script>
-    <script src="js/camera-system.js?v=20261012x"></script>
-    <script src="js/cosmic-features.js?v=20261012x"></script>
-    <script src="js/game-objects.js?v=20261012x"></script>
-    <script src="js/proc-galaxies.js?v=20261012x"></script>
-    <script src="js/game-controls.js?v=20261012x"></script>
-    <script src="js/civilian-combat.js?v=20261012x"></script>
-    <script src="js/visual-flair.js?v=20261012x"></script>
-    <script src="js/synthwave-fx.js?v=20261012x"></script>
-    <script src="js/title-screens.js?v=20261012x"></script>
-    <script src="js/title-launch.js?v=20261012x"></script>
-    <script src="js/playtest-probe.js?v=20261012x"></script>
-    <script src="js/arcade.js?v=20261012x"></script>
-    <script src="js/outer-systems.js?v=20261012x"></script>
-    <script src="js/interstellar-asteroids.js?v=20261012x"></script>
-    <script src="js/game-physics.js?v=20261012x"></script>
-    <script src="js/game-ui.js?v=20261012x"></script>
-    <script src="js/atmospheric-perspective.js?v=20261012x"></script>
-    <script src="js/game-intro.js?v=20261012x"></script>
-    <script src="js/game-shields.js?v=20261012x"></script>
-    <script src="js/game-music.js?v=20261012x"></script>
-    <script src="js/victory-replay.js?v=20261012x"></script>
-    <script src="js/autopilot.js?v=20261012x"></script>
-    <script src="js/game-core.js?v=20261012x"></script>
-    <script src="js/progression.js?v=20261012x"></script>
+    <script src="js/game-models.js?v=20261012z"></script>
+    <script src="js/camera-system.js?v=20261012z"></script>
+    <script src="js/cosmic-features.js?v=20261012z"></script>
+    <script src="js/game-objects.js?v=20261012z"></script>
+    <script src="js/proc-galaxies.js?v=20261012z"></script>
+    <script src="js/game-controls.js?v=20261012z"></script>
+    <script src="js/civilian-combat.js?v=20261012z"></script>
+    <script src="js/visual-flair.js?v=20261012z"></script>
+    <script src="js/synthwave-fx.js?v=20261012z"></script>
+    <script src="js/title-screens.js?v=20261012z"></script>
+    <script src="js/title-launch.js?v=20261012z"></script>
+    <script src="js/playtest-probe.js?v=20261012z"></script>
+    <script src="js/arcade.js?v=20261012z"></script>
+    <script src="js/outer-systems.js?v=20261012z"></script>
+    <script src="js/interstellar-asteroids.js?v=20261012z"></script>
+    <script src="js/game-physics.js?v=20261012z"></script>
+    <script src="js/game-ui.js?v=20261012z"></script>
+    <script src="js/atmospheric-perspective.js?v=20261012z"></script>
+    <script src="js/game-intro.js?v=20261012z"></script>
+    <script src="js/game-shields.js?v=20261012z"></script>
+    <script src="js/game-music.js?v=20261012z"></script>
+    <script src="js/victory-replay.js?v=20261012z"></script>
+    <script src="js/autopilot.js?v=20261012z"></script>
+    <script src="js/game-core.js?v=20261012z"></script>
+    <script src="js/progression.js?v=20261012z"></script>
 
     <!-- Mobile Script -->
-    <script src="js/mobile-controls.js?v=20261012x"></script>
+    <script src="js/mobile-controls.js?v=20261012z"></script>
 
     <!-- Initialization Script -->
     <script>

@@ -551,3 +551,12 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
     #pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn, #pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn + .space-btn { padding-left: 40px !important; }
     #pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn + .space-btn.hyaf-focus::after { left: 20px; }
 }
+
+/* the score as a SHIP STATUS row (desktop) — Ben 2026-10-12: "Maybe it can be embedded in the UI" */
+#hyafHud.hyaf-embedded { position: static !important; transform: none !important; left: auto; top: auto; display: flex; align-items: baseline; gap: 8px; height: auto; padding: 0; margin: 0; background: none; border: 0; box-shadow: none; border-radius: 0; font: inherit; color: inherit; pointer-events: none; }
+#hyafHud.hyaf-embedded .hyaf-score { gap: 6px; }
+#hyafHud.hyaf-embedded .hyaf-lbl { font: inherit; letter-spacing: normal; text-transform: none; color: inherit; }
+#hyafHud.hyaf-embedded .hyaf-num { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; font-size: inherit; color: #facc15; min-width: 0; text-align: left; letter-spacing: 0; }
+#hyafHud.hyaf-embedded .hyaf-combo { width: auto; gap: 6px; }
+#hyafHud.hyaf-embedded .hyaf-x { font-size: inherit; font-weight: 700; transform: none; }
+#hyafHud.hyaf-embedded .hyaf-bar { position: static; width: 32px; height: 3px; bottom: auto; left: auto; right: auto; }

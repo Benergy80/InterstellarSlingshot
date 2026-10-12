@@ -538,7 +538,7 @@
     // ── SCORE + COMBO HUD ───────────────────────────────────────────────────
     let hud = null, numEl = null, comboEl = null, xEl = null, barEl = null;
     let shown = 0, target = 0, rollFrom = 0, rollT0 = 0, rolling = false, comboHideT = 0, comboMultShown = 0;
-    let placedFor = '';
+    let placedFor = '', embedded = false;
     function ensureHud() {
         if (hud) return hud;
         hud = document.createElement('div');
@@ -548,6 +548,17 @@
             '<div class="hyaf-combo"><span class="hyaf-x"></span><span class="hyaf-bar"><i></i></span></div>';
         numEl = hud.querySelector('.hyaf-num'); comboEl = hud.querySelector('.hyaf-combo');
         xEl = hud.querySelector('.hyaf-x'); barEl = hud.querySelector('.hyaf-bar i');
+        // Ben 2026-10-12: "I do not like the SCORE placement … Maybe it can be embedded in the UI" — on desktop the
+        // score lives as a row of the SHIP STATUS panel (same font and colours as its neighbours); the floating
+        // strip remains the phone fallback (the panels are hidden there).
+        const panelList = (!isPhone() && document.querySelector('.ui-panel.bottom-left .space-y-2')) || null;
+        if (panelList) {
+            hud.classList.add('hyaf-embedded', 'curved-element');
+            hud.querySelector('.hyaf-lbl').textContent = 'Score:';
+            panelList.appendChild(hud);
+            embedded = true;
+            return hud;
+        }
         document.body.appendChild(hud);
         place();
         window.addEventListener('resize', place);
@@ -555,7 +566,7 @@
     }
     // Dock under the title header when it is on screen (desktop), else top-left (phone).
     function place() {
-        if (!hud) return;
+        if (!hud || embedded) return;
         const th = document.querySelector('.ui-panel.title-header');
         let r = null;
         if (th && !isPhone()) {

@@ -146,7 +146,7 @@
             '<div class="hyl-prep" role="status"><span class="hyl-prep-bar"><i></i></span><span class="hyl-prep-t">Preparing launch systems…</span></div>' +
             '<div class="hyl-keys"><span>↑ ↓ Select</span><span>Enter Confirm</span></div>' +
         '</div></nav>' +
-        '<div class="hyl-credit">ChiLab</div><div class="hyl-build">Build ' + String(window.BUILD_TAG || '') + '</div>' +
+        '<div class="hyl-credit">ChiLab+Claude</div><div class="hyl-build">Build ' + String(window.BUILD_TAG || '') + '</div>' +
         '<div class="hyl-black"></div>';
     document.body.appendChild(root);
     const $ = (s) => root.querySelector(s);
