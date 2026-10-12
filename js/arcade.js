@@ -448,3 +448,520 @@
         };
     }
 })();
+
+// =============================================================================
+// ARCADE FEEL — HYBRID arcadeFeel: on (package AK). Ben 2026-10-12: "Can the
+// game be made to be more arcade like?" + "better menu UI … something modern
+// that also has the retro aesthetic but with modern polish".
+//
+// Surfaces what the layer above already TRACKS (gameState.score, _combo,
+// _comboMult, _comboUntil) — points are untouched:
+//   • SCORE + COMBO ×N block (rolls up, drains, tiers), docked under the
+//     title header (desktop) or top-left (phone) — never over a HUD panel
+//   • kill-streak call-outs at 3 / 5 / 8 / 12 kills inside the combo window
+//     through flashArcadeText, each with a generated sting + chromatic pulse
+//   • "+points" pop-ups at each kill (pooled, ≤ 8 live), boss + wingman variants
+//   • 2 px shake on each player-landed kill (the 45 ms kill hitstop above stays)
+//   • high score (localStorage hyHighScore) on the launch title, the MISSION
+//     FAILED tally and the pause menu, NEW RECORD slam when beaten
+//   • pause menu restyled as the title's glass plate + keyboard navigation
+// `?hy=arcadeFeel:off` skips this whole block: today's game, byte-identical.
+// Styles: css/synthwave.css, section "ARCADE FEEL".
+// =============================================================================
+(function () {
+    'use strict';
+    if (typeof window === 'undefined' || !window.arcade) return;
+    if (!window.HYBRID || !HYBRID.is('arcadeFeel', 'on')) return;
+
+    const AF = {
+        ROLL_MS: 400,          // score roll-up
+        POP_MS: 900,           // "+points" rise + fade
+        POP_POOL: 8,           // live pop-ups, oldest recycled
+        POP_RISE_PX: 36,
+        POP_START_DY: 28,      // starts just under the kill point (the kill text rises from it)
+        STREAK: [              // kills inside the combo window → call-out (flashArcadeText tier)
+            { n: 3, word: 'TRIPLE VECTOR!', tier: 4, hz: 660 },
+            { n: 5, word: 'SUPERNOVA!', tier: 5, hz: 784 },
+            { n: 8, word: 'KILLING ORBIT!', tier: 6, hz: 880 },   // the praise ladder already says RAMPAGE! at 7
+            { n: 12, word: 'SINGULARITY!', tier: 6, hz: 1046 },
+        ],
+        STING_MS: 110,         // ≤ 120 ms
+        SHAKE_PX: 2,
+        SHAKE_MS: 120,
+        LS_KEY: 'hyHighScore', // {"score": n, "date": "YYYY-MM-DD"}
+        // combo tiers: ×2 … ×8 → colour + scale (wingman mint → hostile magenta)
+        COMBO_TIERS: { 2: ['#19f0ff', 1.0], 3: ['#7bffb0', 1.06], 4: ['#ffe066', 1.12], 5: ['#ff8c3a', 1.18], 6: ['#ff8c3a', 1.2], 7: ['#ff2bd6', 1.24], 8: ['#ff2bd6', 1.28] },
+    };
+    window.HY_ARCADE_FEEL = AF;
+
+    const gs = () => (typeof gameState !== 'undefined' ? gameState : null);
+    const fmt = (n) => Math.max(0, Math.round(n || 0)).toLocaleString('en-US');
+    const isDemo = () => { try { return !!(window.demoPilot && window.demoPilot.active); } catch (e) { return false; } };
+    const isPhone = () => window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024);
+
+    // ── HIGH SCORE ──────────────────────────────────────────────────────────
+    function readBest() {
+        try {
+            const v = JSON.parse(localStorage.getItem(AF.LS_KEY) || 'null');
+            if (v && isFinite(v.score)) return { score: Math.max(0, Math.round(v.score)), date: String(v.date || '') };
+        } catch (e) { /* storage blocked */ }
+        return { score: 0, date: '' };
+    }
+    const bestAtStart = readBest();          // the record this run has to beat
+    let best = { score: bestAtStart.score, date: bestAtStart.date };
+    function commitBest(score) {
+        if (!(score > best.score) || isDemo()) return;
+        best = { score: Math.round(score), date: new Date().toISOString().slice(0, 10) };
+        try { localStorage.setItem(AF.LS_KEY, JSON.stringify(best)); } catch (e) { /* private mode */ }
+    }
+
+    // ── AUDIO: a short generated sting through the SFX bus ──────────────────
+    function sting(hz, ms, gain) {
+        try {
+            const ac = (typeof audioContext !== 'undefined' && audioContext) ? audioContext : null;
+            if (!ac || window._sfxMuted) return;
+            if (ac.state === 'suspended') ac.resume();
+            const out = (typeof effectsGain !== 'undefined' && effectsGain) ? effectsGain : ac.destination;
+            const t0 = ac.currentTime, dur = Math.min(120, ms || AF.STING_MS) / 1000;
+            [[hz, 'square', 0], [hz * 1.5, 'sawtooth', dur * 0.45]].forEach((n) => {
+                const o = ac.createOscillator(), g = ac.createGain();
+                o.type = n[1]; o.frequency.setValueAtTime(n[0], t0 + n[2]);
+                g.gain.setValueAtTime(0.0001, t0);
+                g.gain.setValueAtTime(gain || 0.07, t0 + n[2]);
+                g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+                o.connect(g); g.connect(out);
+                o.start(t0 + n[2]); o.stop(t0 + dur + 0.01);
+            });
+        } catch (e) { /* sound optional */ }
+    }
+
+    // ── SCORE + COMBO HUD ───────────────────────────────────────────────────
+    let hud = null, numEl = null, comboEl = null, xEl = null, barEl = null;
+    let shown = 0, target = 0, rollFrom = 0, rollT0 = 0, rolling = false, comboHideT = 0, comboMultShown = 0;
+    let placedFor = '';
+    function ensureHud() {
+        if (hud) return hud;
+        hud = document.createElement('div');
+        hud.id = 'hyafHud';
+        hud.setAttribute('aria-hidden', 'true');
+        hud.innerHTML = '<div class="hyaf-score"><span class="hyaf-lbl">Score</span><span class="hyaf-num">0</span></div>' +
+            '<div class="hyaf-combo"><span class="hyaf-x"></span><span class="hyaf-bar"><i></i></span></div>';
+        numEl = hud.querySelector('.hyaf-num'); comboEl = hud.querySelector('.hyaf-combo');
+        xEl = hud.querySelector('.hyaf-x'); barEl = hud.querySelector('.hyaf-bar i');
+        document.body.appendChild(hud);
+        place();
+        window.addEventListener('resize', place);
+        return hud;
+    }
+    // Dock under the title header when it is on screen (desktop), else top-left (phone).
+    function place() {
+        if (!hud) return;
+        const th = document.querySelector('.ui-panel.title-header');
+        let r = null;
+        if (th && !isPhone()) {
+            const cs = getComputedStyle(th);
+            if (cs.display !== 'none' && cs.visibility !== 'hidden') r = th.getBoundingClientRect();
+        }
+        const key = r ? 'top:' + Math.round(r.bottom) : 'phone';
+        if (key === placedFor) return;
+        placedFor = key;
+        hud.classList.toggle('hyaf-phone', !r);
+        hud.style.top = r ? Math.round(r.bottom + 4) + 'px' : '';
+    }
+    function setNum(v) {
+        const s = fmt(v);
+        if (numEl.textContent !== s) numEl.textContent = s;
+    }
+    function rollStep(now) {
+        if (!rolling) return;
+        const k = Math.min(1, (now - rollT0) / AF.ROLL_MS);   // linear tick (art bible R11)
+        shown = rollFrom + (target - rollFrom) * k;
+        setNum(shown);
+        if (k < 1) requestAnimationFrame(rollStep); else rolling = false;
+    }
+    function scoreTo(v) {
+        ensureHud();
+        if (v === target) return;
+        target = v; rollFrom = shown; rollT0 = performance.now();
+        if (!rolling) { rolling = true; requestAnimationFrame(rollStep); }
+    }
+    function showCombo(g) {
+        ensureHud();
+        const m = g._comboMult || 1, until = g._comboUntil || 0, left = until - Date.now();
+        clearTimeout(comboHideT);
+        if (m < 2 || left <= 0) { comboEl.classList.remove('on'); comboMultShown = 0; return; }
+        if (m !== comboMultShown) {
+            const t = AF.COMBO_TIERS[Math.min(8, m)] || AF.COMBO_TIERS[8];
+            xEl.textContent = '×' + m;
+            comboEl.style.setProperty('--hyaf-c', t[0]);
+            comboEl.style.setProperty('--hyaf-s', String(t[1]));
+            if (comboMultShown) xEl.animate([{ transform: 'scale(' + (t[1] * 1.35) + ')' }, { transform: 'scale(' + t[1] + ')' }], { duration: 220, easing: 'cubic-bezier(.2,.9,.3,1.3)' });
+            comboMultShown = m;
+        }
+        comboEl.classList.add('on');
+        barEl.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: left, fill: 'forwards' });
+        comboHideT = setTimeout(() => { comboEl.classList.remove('on'); comboMultShown = 0; }, left);
+    }
+
+    // ── POP-UPS (pooled) ────────────────────────────────────────────────────
+    let popLayer = null;
+    const pool = [];
+    const _v = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+    function ensurePops() {
+        if (popLayer) return;
+        popLayer = document.createElement('div');
+        popLayer.id = 'hyafPops';
+        popLayer.setAttribute('aria-hidden', 'true');
+        for (let i = 0; i < AF.POP_POOL; i++) {
+            const el = document.createElement('div'); el.className = 'hyaf-pop';
+            const sp = document.createElement('span'); el.appendChild(sp);
+            popLayer.appendChild(el);
+            pool.push({ el, sp, pos: (typeof THREE !== 'undefined') ? new THREE.Vector3() : null, born: 0, live: false, x: -1e4, y: -1e4, anim: null, kind: '' });
+        }
+        document.body.appendChild(popLayer);
+    }
+    function popAt(worldPos, text, kind, color) {
+        if (!worldPos || !_v || typeof camera === 'undefined') return;
+        ensurePops();
+        let p = null;
+        for (let i = 0; i < pool.length; i++) if (!pool[i].live) { p = pool[i]; break; }
+        if (!p) p = pool.reduce((a, b) => (a.born <= b.born ? a : b));   // recycle the oldest
+        p.pos.copy(worldPos);
+        p.born = performance.now(); p.live = true;
+        if (p.kind !== kind) { p.el.className = 'hyaf-pop hyaf-pop-' + kind; p.kind = kind; }
+        p.sp.textContent = text;
+        p.sp.style.color = color || '';
+        if (p.anim) p.anim.cancel();
+        p.anim = p.sp.animate([
+            { transform: 'translate(-50%,0) scale(1.5)', opacity: 0 },
+            { transform: 'translate(-50%,-6px) scale(1)', opacity: 1, offset: 0.14 },
+            { transform: 'translate(-50%,-' + Math.round(AF.POP_RISE_PX * 0.7) + 'px) scale(1)', opacity: 1, offset: 0.7 },
+            { transform: 'translate(-50%,-' + AF.POP_RISE_PX + 'px) scale(0.96)', opacity: 0 },
+        ], { duration: AF.POP_MS, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'forwards' });
+        p.x = p.y = -1e4;
+        p.el.style.visibility = 'visible';
+        placePop(p);
+    }
+    function placePop(p) {
+        _v.copy(p.pos).project(camera);
+        if (_v.z > 1 || _v.x < -1.1 || _v.x > 1.1 || _v.y < -1.1 || _v.y > 1.1) {
+            if (p.x !== -1e4) { p.el.style.transform = 'translate3d(-1000px,-1000px,0)'; p.x = p.y = -1e4; }
+            return;
+        }
+        const x = Math.round((_v.x + 1) / 2 * window.innerWidth);
+        const y = Math.round((1 - _v.y) / 2 * window.innerHeight) + AF.POP_START_DY;
+        if (x === p.x && y === p.y) return;
+        p.x = x; p.y = y;
+        p.el.style.transform = 'translate3d(' + x + 'px,' + y + 'px,0)';
+    }
+    function tickPops() {
+        if (!popLayer) return;
+        const now = performance.now();
+        for (let i = 0; i < pool.length; i++) {
+            const p = pool[i];
+            if (!p.live) continue;
+            if (now - p.born > AF.POP_MS) { p.live = false; p.el.style.visibility = 'hidden'; continue; }
+            placePop(p);
+        }
+    }
+    function clearPops() {
+        for (let i = 0; i < pool.length; i++) {
+            const p = pool[i];
+            if (p.anim) { p.anim.cancel(); p.anim = null; }
+            if (p.live) { p.live = false; p.el.style.visibility = 'hidden'; }
+        }
+    }
+    function cssHex(n, lift) {
+        if (typeof n !== 'number' || typeof THREE === 'undefined') return null;
+        const c = new THREE.Color(n);
+        const hsl = {}; c.getHSL(hsl);
+        c.setHSL(hsl.h, Math.max(0.75, hsl.s), Math.max(lift || 0.62, hsl.l));   // bright enough to read on black
+        return '#' + c.getHexString();
+    }
+
+    // ── SHAKE (2 px on a kill, compositor-only) ─────────────────────────────
+    function shake() {
+        const c = document.getElementById('gameCanvas') || ((typeof renderer !== 'undefined' && renderer) ? renderer.domElement : null);
+        if (!c || !c.animate) return;
+        const d = AF.SHAKE_PX;
+        c.animate([{ transform: 'translate(0,0)' }, { transform: 'translate(' + d + 'px,' + (-d / 2) + 'px)' },
+            { transform: 'translate(' + (-d) + 'px,' + (d / 2) + 'px)' }, { transform: 'translate(' + (d / 2) + 'px,' + (d / 2) + 'px)' },
+            { transform: 'translate(0,0)' }], { duration: AF.SHAKE_MS, easing: 'linear' });
+    }
+
+    // A streak call-out must not run under the HUD panels beside it: shrink it to
+    // the free corridor of its band (one write per call-out, never per frame).
+    function fitCallout() {
+        const el = document.getElementById('arcadeText');
+        if (!el) return;
+        const r = el.getBoundingClientRect(), vw = window.innerWidth, cx = vw / 2;
+        let left = 12, right = vw - 12;
+        document.querySelectorAll('.ui-panel').forEach((p) => {
+            const cs = getComputedStyle(p);
+            if (cs.display === 'none' || cs.visibility === 'hidden' || p.closest('#pauseOverlay')) return;
+            const q = p.getBoundingClientRect();
+            if (q.width < 60 || q.bottom <= r.top || q.top >= r.bottom) return;
+            const qc = (q.left + q.right) / 2;
+            if (Math.abs(qc - cx) < vw * 0.22) return;           // the title header sits above, not beside
+            if (qc < cx) left = Math.max(left, q.right + 12); else right = Math.min(right, q.left - 12);
+        });
+        const room = Math.min(cx - left, right - cx) * 2;       // centred on the viewport, as the praise is
+        const w = el.scrollWidth;
+        if (w > room && room > 120) {
+            const fs = parseFloat(getComputedStyle(el).fontSize) || 40;
+            const k = room / w;
+            el.style.fontSize = Math.max(24, Math.floor(fs * k)) + 'px';
+            const sub = el.children[1];
+            if (sub) sub.style.fontSize = Math.max(16, Math.round(parseFloat(sub.style.fontSize || '16') * k)) + 'px';
+        }
+    }
+
+    // ── KILL HOOKS ──────────────────────────────────────────────────────────
+    let lastStreakN = 0;
+    const _addKill = window.arcade.addKill;
+    window.arcade.addKill = function (enemyUd, worldPos, isBoss) {
+        const g = gs();
+        const before = g ? (g.score || 0) : 0;
+        _addKill.apply(this, arguments);
+        if (!g || g.gameOver) return;
+        const pts = (g.score || 0) - before;
+        const m = g._comboMult || 1;
+        try {
+            if (isBoss) popAt(worldPos, '+' + fmt(pts), 'boss', cssHex(enemyUd && enemyUd.galaxyColor, 0.6) || '#ff8c3a');
+            else popAt(worldPos, '+' + fmt(pts) + (m > 1 ? ' ×' + m : ''), m > 1 ? 'combo' : 'kill');
+            scoreTo(g.score || 0);
+            showCombo(g);
+            commitBest(g.score || 0);
+            shake();
+            // streak call-outs: once per rung per combo chain; never over a flagship's own call-out
+            const n = g._combo || 0;
+            if (n < lastStreakN) lastStreakN = 0;
+            const rung = AF.STREAK.find((s) => s.n === n);
+            if (rung && !isBoss && n > lastStreakN) {
+                lastStreakN = n;
+                if (typeof window.flashArcadeText === 'function') {
+                    window.flashArcadeText(rung.word, rung.tier, isPhone() ? null : (n + '-KILL STREAK · ×' + m));
+                    fitCallout();
+                }
+                sting(rung.hz, AF.STING_MS, 0.08);
+                const pulse = window.whipScreenPulse;
+                if (typeof pulse === 'function') { try { pulse(0xff2bd6, 0.26 + rung.tier * 0.02); } catch (e) {} }
+            }
+        } catch (e) { /* the feel layer must never break a kill */ }
+    };
+    // Wingman kills don't score: a smaller, dimmer mint tag.
+    function wrapWingmanKill() {
+        const orig = window._handleWingmanKill;
+        if (typeof orig !== 'function' || orig.__hyaf) return;
+        const w = function (enemy) {
+            const fresh = enemy && enemy.userData && !enemy.userData._removedByWingman;
+            const pos = fresh && enemy.position ? enemy.position.clone() : null;
+            const r = orig.apply(this, arguments);
+            if (pos) { try { const g = gs(); if (g && g.gameStarted && !g.gameOver) popAt(pos, 'WING KILL', 'wing'); } catch (e) {} }
+            return r;
+        };
+        w.__hyaf = true;
+        window._handleWingmanKill = w;
+    }
+    wrapWingmanKill();
+
+    // ── PER-FRAME: pop-up positions only (nothing else writes per frame) ────
+    let ended = false, lastScore = -1, yielded = false;
+    const _update = window.arcade.update;
+    window.arcade.update = function () {
+        _update.apply(this, arguments);
+        const g = gs(); if (!g) return;
+        if (g.gameOver) { endRun(); return; }
+        if (!g.gameStarted) return;
+        if (!hud) { ensureHud(); shown = target = g.score || 0; setNum(shown); }
+        if ((g.score || 0) !== lastScore) {          // score from any source (e.g. discoveries)
+            lastScore = g.score || 0;
+            if (lastScore !== target) scoreTo(lastScore);
+            commitBest(lastScore);
+        }
+        // The boss intro card and the event alert cards own the band under the
+        // title header: the strip steps out of their way (class flip on change only).
+        if (((g.frameCount || 0) % 6) === 0) {
+            const busy = !!(document.getElementById('bossIntroCard') || document.querySelector('.event-text-flash'));
+            if (busy !== yielded) { yielded = busy; hud.classList.toggle('hyaf-yield', busy); }
+        }
+        tickPops();
+    };
+
+    // ── END OF RUN: tear down, keep the record ──────────────────────────────
+    function endRun() {
+        if (ended) return;
+        ended = true;
+        const g = gs();
+        if (g) commitBest(g.score || 0);
+        rolling = false; clearTimeout(comboHideT);
+        clearPops();
+        if (hud) hud.classList.add('hyaf-off');
+        if (popLayer) popLayer.classList.add('hyaf-off');
+    }
+    function wrapGameOver() {
+        const sgo = window.synthwaveGameOver;
+        if (typeof sgo === 'function' && !sgo.__hyaf) {
+            const w = function () {
+                endRun();
+                const root = sgo.apply(this, arguments);
+                try { if (root) recordSlam(root); } catch (e) {}
+                return root;
+            };
+            w.__hyaf = true;
+            window.synthwaveGameOver = w;
+        }
+        const sos = window.showGameOverScreen;
+        if (typeof sos === 'function' && !sos.__hyaf) {
+            const w2 = function () { endRun(); return sos.apply(this, arguments); };
+            w2.__hyaf = true;
+            window.showGameOverScreen = w2;
+        }
+    }
+    // MISSION FAILED tally (js/synthwave-fx.js gatherStats asks for these):
+    // Score = the arcade score the HUD showed, plus a Best row.
+    function tallyRows(rows, stat) {
+        const g = gs() || {};
+        const score = Math.round(g.score || 0);
+        const out = rows.filter((r) => r.label !== 'Score');
+        out.push(stat('Score', score, fmt));
+        out.push(stat('Best', Math.max(bestAtStart.score, score), fmt));
+        return out;
+    }
+    function isNewRecord() {
+        const g = gs() || {};
+        return !isDemo() && (g.score || 0) > bestAtStart.score && (g.score || 0) > 0;
+    }
+    function recordSlam(root) {
+        if (!isNewRecord()) return;
+        const D = window.SW_DEATH || { HOLD_MS: 380, TALLY_ROW_MS: 420, TALLY_GAP_MS: 140 };
+        const rows = root.querySelectorAll('.sw-tally .row').length || 7;
+        const at = D.HOLD_MS + 650 + rows * (D.TALLY_ROW_MS + D.TALLY_GAP_MS);
+        setTimeout(() => {
+            if (!root.parentNode) return;
+            const bestRow = Array.from(root.querySelectorAll('.sw-tally .row')).find((r) => /best/i.test(r.textContent));
+            if (bestRow) bestRow.classList.add('hyaf-record');
+            const tally = root.querySelector('.sw-tally');
+            const slam = document.createElement('div');
+            slam.className = 'hyaf-newrecord';
+            slam.textContent = 'New record';
+            if (tally && tally.parentNode) tally.parentNode.insertBefore(slam, tally.nextSibling);
+            sting(1046, 110, 0.09); setTimeout(() => sting(1568, 110, 0.07), 120);
+        }, at);
+    }
+    window.hyArcadeFeel = { tallyRows, best: () => best, bestAtStart, isNewRecord, AF };
+
+    // ── LAUNCH TITLE: BEST under the menu plate ─────────────────────────────
+    function titleBest() {
+        if (!(bestAtStart.score > 0)) return;
+        const menu = document.querySelector('#hyTitle .hyl-menu');
+        if (!menu || menu.querySelector('.hyaf-best')) return;
+        const b = document.createElement('div');
+        b.className = 'hyaf-best';
+        b.innerHTML = '<span class="k">Best</span><span class="v">' + fmt(bestAtStart.score) + '</span>' +
+            (bestAtStart.date ? '<span class="d">' + bestAtStart.date + '</span>' : '');
+        menu.appendChild(b);
+    }
+
+    // ── PAUSE MENU: the title's glass plate, keyboard first ─────────────────
+    const NAV_IDS = ['pauseResumeBtn', 'mobileMusicBtn', 'mobileSkipTrackBtn', 'pauseSfxBtn', 'pauseMusicVol', 'pauseSfxVol', 'pauseFlightBtn'];
+    let navIdx = 0;
+    function navItems() {
+        const ov = document.getElementById('pauseOverlay'); if (!ov) return [];
+        return NAV_IDS.map((id) => document.getElementById(id)).filter((el) => el && ov.contains(el) && el.offsetParent !== null);
+    }
+    function setFocus(i) {
+        const items = navItems(); if (!items.length) return;
+        navIdx = (i + items.length) % items.length;
+        items.forEach((el, k) => {
+            const host = el.tagName === 'INPUT' ? el.closest('.hyaf-slider') || el : el;
+            host.classList.toggle('hyaf-focus', k === navIdx);
+        });
+    }
+    function decoratePause() {
+        const ov = document.getElementById('pauseOverlay'); if (!ov) return;
+        if (!ov.classList.contains('hyaf-pause')) {
+            ov.classList.add('hyaf-pause');
+            const panel = ov.firstElementChild;
+            const h2 = panel && panel.querySelector('h2');
+            if (h2) {
+                const stats = document.createElement('div');
+                stats.className = 'hyaf-pstats';
+                stats.innerHTML = '<div><span class="k">Score</span><span class="v" data-k="score">0</span></div>' +
+                    '<div><span class="k">Best</span><span class="v" data-k="best">0</span></div>' +
+                    '<div><span class="k">Time</span><span class="v" data-k="time">0:00</span></div>';
+                h2.parentNode.insertBefore(stats, h2.nextSibling);
+            }
+            // each slider gets its label inside one focusable row
+            ['pauseMusicVol', 'pauseSfxVol'].forEach((id) => {
+                const inp = document.getElementById(id); if (!inp) return;
+                const lbl = inp.previousElementSibling;
+                const row = document.createElement('div'); row.className = 'hyaf-slider';
+                inp.parentNode.insertBefore(row, inp);
+                if (lbl && !lbl.matches('input,button')) row.appendChild(lbl);
+                row.appendChild(inp);
+            });
+            if (!isPhone()) {
+                const keys = document.createElement('div'); keys.className = 'hyaf-pkeys';
+                keys.innerHTML = '<span>↑ ↓ Select</span><span>← → Adjust</span><span>Enter Confirm</span><span>Esc Resume</span>';
+                panel.appendChild(keys);
+            }
+            panel.addEventListener('mousemove', (e) => {
+                const items = navItems();
+                const k = items.findIndex((el) => el.contains(e.target) || (el.closest('.hyaf-slider') && el.closest('.hyaf-slider').contains(e.target)));
+                if (k >= 0 && k !== navIdx) setFocus(k);
+            });
+        }
+        const g = gs() || {};
+        const secs = g.gameStartTime ? Math.max(0, (Date.now() - g.gameStartTime) / 1000) : 0;
+        const set = (k, v) => { const el = ov.querySelector('.hyaf-pstats [data-k="' + k + '"]'); if (el && el.textContent !== v) el.textContent = v; };
+        set('score', fmt(g.score || 0));
+        set('best', fmt(Math.max(best.score, g.score || 0)));
+        set('time', Math.floor(secs / 60) + ':' + String(Math.floor(secs % 60)).padStart(2, '0'));
+        setFocus(0);
+    }
+    function wrapPause() {
+        const tp = window.togglePause;
+        if (typeof tp !== 'function' || tp.__hyaf) return;
+        const w = function () {
+            const r = tp.apply(this, arguments);
+            try { const g = gs(); if (g && g.paused) decoratePause(); } catch (e) {}
+            return r;
+        };
+        w.__hyaf = true;
+        window.togglePause = w;
+    }
+    wrapPause();
+    function pauseOpen() {
+        const g = gs(), ov = document.getElementById('pauseOverlay');
+        return !!(g && g.paused && ov && ov.classList.contains('hyaf-pause') && ov.style.display !== 'none');
+    }
+    window.addEventListener('keydown', (e) => {
+        if (!pauseOpen()) return;
+        const pop = document.getElementById('controlsPopup');
+        if (pop && pop.offsetParent !== null && getComputedStyle(pop).display !== 'none') return;   // the reference card has the keys
+        const k = e.key;
+        if (k !== 'ArrowUp' && k !== 'ArrowDown' && k !== 'ArrowLeft' && k !== 'ArrowRight' && k !== 'Enter' && k !== ' ' && k !== 'Escape') return;
+        e.preventDefault(); e.stopPropagation();
+        const items = navItems(); const el = items[navIdx];
+        if (k === 'ArrowUp') setFocus(navIdx - 1);
+        else if (k === 'ArrowDown') setFocus(navIdx + 1);
+        else if (k === 'Escape') window.togglePause();
+        else if (el && el.tagName === 'INPUT' && (k === 'ArrowLeft' || k === 'ArrowRight')) {
+            const step = parseFloat(el.step) || 0.05;
+            const v = Math.max(parseFloat(el.min) || 0, Math.min(parseFloat(el.max) || 1, parseFloat(el.value) + (k === 'ArrowRight' ? step : -step)));
+            el.value = String(Math.round(v * 100) / 100);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        } else if (el && el.tagName !== 'INPUT' && (k === 'Enter' || k === ' ')) el.click();
+        else if (k === 'ArrowLeft' || k === 'ArrowRight') {
+            // the Music / Skip / SFX row reads left-right too
+            const row = ['mobileMusicBtn', 'mobileSkipTrackBtn', 'pauseSfxBtn'];
+            if (el && row.indexOf(el.id) >= 0) setFocus(navIdx + (k === 'ArrowRight' ? 1 : -1));
+        }
+    }, true);
+
+    function lateBind() { wrapGameOver(); wrapWingmanKill(); wrapPause(); titleBest(); }
+    lateBind();
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', lateBind, { once: true });
+    else setTimeout(lateBind, 0);
+})();
