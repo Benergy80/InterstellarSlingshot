@@ -324,6 +324,12 @@ function _updateMilitaryReturnFire() {
                 }
             } else if (tgt.userData) {
                 tgt.userData.health -= 2;
+                // HYBRID (package AJ): a patrol craft never finishes a flagship — its kill
+                // path has no death set-piece and no boss-victory / campaign hook, so the
+                // boss just vanished in a small puff. The player (or a wingman) lands the
+                // last hit and the full boss death plays.
+                const _tud = tgt.userData;
+                if ((_tud.isBoss || _tud.isEliteGuardian || _tud.isBlackHoleGuardian) && _tud.health <= 0) _tud.health = 0.5;
                 if (typeof flashEnemyHit === 'function') { try { flashEnemyHit(tgt, 2); } catch (e) {} }
                 if (tgt.userData.health <= 0) _militaryKillEnemy(tgt);
             }
