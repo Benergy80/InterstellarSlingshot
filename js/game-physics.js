@@ -2906,6 +2906,10 @@ function updateWarpStarfieldFade() {
     let k = (v - 6.0) / 5.0;
     k = k < 0 ? 0 : (k > 1 ? 1 : k);
     k = k * k * (3 - 2 * k);                 // smoothstep — no linear seam
+    // HYBRID warpFx:calm — the toned-down W-jump keeps the 3D starfield streaks off
+    // (HY_WARP_FX.JUMP_STARFIELD); the fade is speed-driven and a jump's 15 u/frame lit it.
+    if (gameState.emergencyWarp && gameState.emergencyWarp.isJump && (gameState.emergencyWarp.active || gameState.emergencyWarp.autoBraking) &&
+        typeof window !== 'undefined' && window.HY_WARP_FX && window.HYBRID && window.HYBRID.is('warpFx', 'calm') && !window.HY_WARP_FX.JUMP_STARFIELD) k = 0;
     gameState._warpStarfieldFade = k;
     sf.lines.material.opacity = 0.62 * k;
     sf.lines.visible = k > 0.01;
@@ -3164,10 +3168,15 @@ function _hySlingNavTick(forwardDirection, dtF) {
     const range = T.to.length();
     if (!(range > 1)) return;
     T.to.divideScalar(range);
-    // Bend the glide onto the target (direction only; speed is untouched).
+    // Bend the glide onto the target (direction only; speed is untouched) —
+    // unless the pilot is steering: a held look key owns the heading (the
+    // glide assist slaves the camera to velocity, so guidance here would cancel
+    // the pilot's yaw; keep-check row 4 measured 9.2° → 5.9° with a stale target).
+    const _k = (typeof keys !== 'undefined') ? keys : null;
+    const _steering = !!(_k && (_k.left || _k.right || _k.up || _k.down || _k.q || _k.e));
     T.dir.copy(vel).normalize();
     const angle = Math.acos(Math.max(-1, Math.min(1, T.dir.dot(T.to))));
-    if (angle > 1e-4) {
+    if (angle > 1e-4 && !_steering) {
         T.axis.crossVectors(T.dir, T.to);
         if (T.axis.lengthSq() > 1e-10) {
             T.axis.normalize();
@@ -3788,22 +3797,26 @@ if (frameDistance > 0.01) { // Only track significant movement
             // Tactical jump gets a HALF tunnel — enough shaft to feel the
             // dash, deliberately weaker than a real warp so the two never
             // read as the same move.
+            // HYBRID warpFx:calm — Ben 2026-10-11: "can the short jump warp lines be
+            // toned down": the jump's bursts scale by HY_WARP_FX.JUMP_* (visual-flair.js).
+            const _jcalm = (typeof window !== 'undefined' && window.HY_WARP_FX && window.HYBRID &&
+                            window.HYBRID.is('warpFx', 'calm')) ? window.HY_WARP_FX : null;
             if (typeof window !== 'undefined') {
                 if (typeof window.warpTunnelBurst === 'function') {
-                    window.warpTunnelBurst(0.5, 700, false);
+                    window.warpTunnelBurst(_jcalm ? _jcalm.JUMP_TUNNEL : 0.5, 700, false);
                 }
                 if (typeof window.warpStreakBurst === 'function') {
                     const _jp = _hyWarpPair('jump', 0x6be6ff, 0xff5ccd);   // package T
                     window.warpStreakBurst(capturedForwardDirection, capturedBoostSpeed * 60,
-                        _jp[0], _jp[1], 0.75);
+                        _jp[0], _jp[1], 0.75 * (_jcalm ? _jcalm.JUMP_STREAK : 1));
                 }
             }
 
-            for (let i = 0; i < 2; i++) {
+            for (let i = 0; i < (_jcalm ? _jcalm.JUMP_HYPERSPACE : 2); i++) {
                 setTimeout(() => createHyperspaceEffect(), i * 200);
             }
 
-            if (typeof toggleWarpSpeedStarfield === 'function') {
+            if (typeof toggleWarpSpeedStarfield === 'function' && (!_jcalm || _jcalm.JUMP_STARFIELD)) {
                 toggleWarpSpeedStarfield(true);
             }
 

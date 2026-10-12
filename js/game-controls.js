@@ -722,6 +722,35 @@ function _ensureShipThrusterCones(ship, color) {
         return { mesh: cone, mat: mat, geo: geo };
     }
 
+    // HYBRID enemyModels: v2 — the cones sit on the hull's REAL nozzles (HY_HULL_POINTS entry, local frame,
+    // engines at +Z): one inner + outer pair per nozzle, the outer cone's base = the nozzle rim, length as
+    // below (22% of the hull, 5u floor) measured on the hull's own local box. Stock hulls keep the generic pair.
+    const _fe = _hyFighterHullEntry(ship);
+    const _fn = _fe ? _hyFighterNozzles(ship, _fe) : null;
+    if (_fn && _fn.length) {
+        const _lb = _hyFighterLocalBox(ship);
+        const _lenW = Math.max(_lb.max.x - _lb.min.x, _lb.max.y - _lb.min.y, _lb.max.z - _lb.min.z) * sx;
+        const _len = Math.max(_lenW * 0.22, 5) / sx;
+        ship.userData._thrusterApexSign = 1;
+        const cones = [];
+        _fn.forEach((nz) => {
+            const rad = Math.max(nz.r / 0.85, 0.5 / sx);
+            const back = nz.pos.z + _len * 0.5;
+            const inner = _makeCone(rad * 0.55, _len, innerCol, back);
+            inner.mesh.position.x = nz.pos.x; inner.mesh.position.y = nz.pos.y;
+            inner.mesh.userData._hyNozzle = nz.pos.clone();
+            ship.add(inner.mesh);
+            cones.push(inner);
+            const outer = _makeCone(rad * 0.85, _len * 1.3, outerCol, back + _len * 0.15);
+            outer.mesh.position.x = nz.pos.x; outer.mesh.position.y = nz.pos.y;
+            ship.add(outer.mesh);
+            cones.push(outer);
+        });
+        ship.userData._thrusters = cones;
+        ship.userData._thrusterIntensity = 0;
+        return;
+    }
+
     // Two side-by-side engine plumes. Anchor the cone BASE at the
     // model's actual rear edge (localBack), then push it forward by
     // coneLen/2 so the center sits at the base + apex protrudes
@@ -987,7 +1016,22 @@ function _ensureShipThrusterCones_overhaul(ship, color) {
     const back = localBack + _apex * coneLen * 0.5;
     const cones = [];
     const sideOff = Math.min(coneRad * 1.05, (hullWideLocal || coneRad * 2) * 0.20);
-    [-sideOff, sideOff].forEach(xOff => {
+    // HYBRID enemyModels: v2 — one core + streak per REAL nozzle (HY_HULL_POINTS); stock hulls keep the pair.
+    const _fe = _hyFighterHullEntry(ship);
+    const _fn = _fe ? _hyFighterNozzles(ship, _fe) : null;
+    if (_fn && _fn.length) {
+        _fn.forEach((nz) => {
+            const core = _makeCore(coneRad * 1.15, coreCol, nz.pos.z + _apex * coneRad * 0.55, 0.95);
+            core.mesh.position.x = nz.pos.x; core.mesh.position.y = nz.pos.y;
+            ship.add(core.mesh);
+            cones.push(core);
+            const streak = _makeStreak(coneRad * 0.85, coneLen, haloCol, nz.pos.z + _apex * coneLen * 0.5, 1.0);
+            streak.mesh.position.x = nz.pos.x; streak.mesh.position.y = nz.pos.y;
+            ship.add(streak.mesh);
+            cones.push(streak);
+        });
+    }
+    if (!(_fn && _fn.length)) [-sideOff, sideOff].forEach(xOff => {
         // Index parity matters: the update loop treats even = core,
         // odd = streak, and reads _thrusters[1] for the px floor.
         // The core sprite deliberately overlaps the first fifth of the
@@ -3169,6 +3213,8 @@ function _enemyPlumeTick(enemy, thrusting, dist) {
     }
     _updateShipThrusterCones(enemy, (typeof thrusting === "number") ? thrusting : !!thrusting, dist,
                              enemy.userData._telegraphPhase || 0);
+    // HYBRID enemyModels: v2 — faction light elements on the new hulls, built only near the player
+    _hyFighterLightsTick(enemy, dist);
     // DAMAGE TIER. Driven from here rather than from a new loop because this
     // is already the one function every hostile in the game passes through
     // every frame — the combat loop, the tutorial patrol branch and the
@@ -5015,7 +5061,7 @@ if (typeof window !== 'undefined') window.HY_ENEMY_SPEED_K = HY_ENEMY_SPEED_K;
 function _efClass(ud) {
     if (ud.isAlly) return ud._jumpUntil ? WINGMAN_FLIGHT.dash : WINGMAN_FLIGHT.wingman;   // HYBRID (package AA): wingmen fly the same model
     if (ud.guardianRole === 'ram') return ENEMY_FLIGHT.elite;   // HYBRID (package R): a rammer needs the thrust
-    if (ud.isBoss) return ENEMY_FLIGHT.boss;
+    if (ud.isBoss) return ud._hbHard ? ((ud._hbBoostUntil || 0) > Date.now() ? ENEMY_FLIGHT.bossBoost : ENEMY_FLIGHT.bossHard) : ENEMY_FLIGHT.boss;   // HYBRID (package AJ): hard bosses
     if (ud.isBossSupport) return ENEMY_FLIGHT.support;
     if (ud.isEliteGuardian || ud.isBlackHoleGuardian) return ENEMY_FLIGHT.elite;
     return ENEMY_FLIGHT.fighter;
@@ -5154,7 +5200,7 @@ function _efStep(enemy) {
 
     // ---- 1. the intent: what the behaviours asked for this tick ----------
     _efI.subVectors(enemy.position, ef.p0);
-    const _vMax = spec.maxSpeed * (ud.isAlly ? 1 : HY_ENEMY_SPEED_K);   // the 20% slow-down is for hostiles only
+    const _vMax = spec.maxSpeed * (ud.isAlly ? (ud._wmSpeedK || 1) : HY_ENEMY_SPEED_K);   // (wingmen: their tier, package AC)   // the 20% slow-down is for hostiles only
     // The per-frame swarm pull (autopilot.js swarmEnemiesNearPlayer) is
     // banked between ticks as a wish, not applied as a shove.
     if (ud._efPull) { _efI.add(ud._efPull); ud._efPull.set(0, 0, 0); }
@@ -5544,7 +5590,8 @@ function updateEnemyBehavior() {
         const maxAttackers = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
         const currentAttackers = isLocal ? localActiveAttackers : activeAttackers;
 
-        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
+        const _hyCapFree = _hyBossHard(enemy);   // HYBRID (package AJ): a hard boss is never benched by the attacker cap
+        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && (currentAttackers < maxAttackers || _hyCapFree)) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
@@ -5558,7 +5605,7 @@ function updateEnemyBehavior() {
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
         } else if (enemy.userData.isActive &&
-                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+                   (distanceToPlayer > detectionRange * 1.5 || (currentAttackers > maxAttackers && !_hyCapFree))) {
             enemy.userData.isActive = false;
             enemy.userData.detectedPlayer = false;
             if (isLocal) localActiveAttackers--;
@@ -5581,7 +5628,7 @@ function updateEnemyBehavior() {
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, engageSpeed, difficultySettings);
             } else {
-                if (enemy.userData.isBoss) {
+                if (enemy.userData.isBoss || (enemy.userData.isEliteGuardian && _hyBossHard(enemy))) {   // (HYBRID package AJ: elite guardians fly the boss patterns too)
                     updateBossBehavior(enemy, playerPos, engageSpeed);
                 } else if (enemy.userData.isBossSupport) {
                     updateSupportBehavior(enemy, playerPos, engageSpeed);
@@ -5673,10 +5720,12 @@ function updateEnemyBehavior() {
                 const inRange = nearestTargetDist < firingRange;
 
                 if (enemy.userData.isBoss) {
-                    if (inRange && now >= (enemy.userData.nextFire || 0)) {
+                    if (inRange && now >= (enemy.userData.nextFire || 0) && !enemy.userData._hbHoldFire) {
                         fireEnemyWeapon(enemy, difficultySettings);
                         enemy.userData.lastAttack = now;
-                        enemy.userData.nextFire = now + attackCooldown * (1.0 + Math.random() * 0.7);
+                        enemy.userData.nextFire = enemy.userData._hbHard   // HYBRID (package AJ): hard bosses fire faster, patterns faster still
+                            ? now + (enemy.userData._hbFireMs || HY_BOSS_AI.FIRE_MS) * (1.0 + Math.random() * HY_BOSS_AI.FIRE_JITTER)
+                            : now + attackCooldown * (1.0 + Math.random() * 0.7);
                     }
                 } else if (typeof _updateEnemyFireCycle === 'function') {
                     if (_updateEnemyFireCycle(enemy, attackCooldown, inRange)) {
@@ -6088,11 +6137,16 @@ function updateBossBehavior(enemy, playerPos, speed) {
     // Bosses use more complex movement patterns
     const time = Date.now() * 0.001;
     const distance = enemy.position.distanceTo(playerPos);
+    // HYBRID (package AJ, bossDifficulty: hard): stats, evasive breaks, and the
+    // attack-pattern machine (guardians keep their role underneath).
+    const _hyHard = _hyBossHard(enemy);
+    if (_hyHard) _hyBossHardPrep(enemy, playerPos, distance);
     // HYBRID (package R): Black Hole Guardians fly their own role
     if (enemy.userData.guardianRole && typeof _hyGuardianBehavior === 'function') {
         _hyGuardianBehavior(enemy, playerPos, speed, distance);
         return;
     }
+    if (_hyHard && _hyBossPatterns(enemy, playerPos, distance)) return;
 
     // Standoff scales with the (now 2×) hull so the boss circles OUTSIDE
     // the player's personal space instead of parking inside it at 120u.
@@ -6157,12 +6211,13 @@ function _spawnBossMissile(boss) {
     // Launch in a fanned direction toward the player
     const aim = _bossPlayerAimPos();
     const dir = aim.sub(boss.position).normalize();
-    dir.x += (Math.random() - 0.5) * 0.5;
-    dir.y += (Math.random() - 0.5) * 0.3;
-    dir.z += (Math.random() - 0.5) * 0.5;
+    const _sp = (boss.userData._hbSpread != null) ? boss.userData._hbSpread : 1;   // HYBRID (package AJ): a Vulcan volley is precise
+    dir.x += (Math.random() - 0.5) * 0.5 * _sp;
+    dir.y += (Math.random() - 0.5) * 0.3 * _sp;
+    dir.z += (Math.random() - 0.5) * 0.5 * _sp;
     dir.normalize();
     scene.add(m);
-    _bossMissiles.push({ mesh: m, vel: dir.multiplyScalar(2.2), born: Date.now() });
+    _bossMissiles.push({ mesh: m, vel: dir.multiplyScalar(2.2), born: Date.now(), k: boss.userData._hbDmgK || 1 });
 }
 
 // Called once per behavior pass (30 Hz) from updateEnemyBehavior.
@@ -6185,7 +6240,7 @@ function _updateBossMissiles() {
             const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
             if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
                 const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
-                gameState.hull = Math.max(0, gameState.hull - 6 * (1 - red));
+                gameState.hull = Math.max(0, gameState.hull - 6 * (bm.k || 1) * (1 - red));   // (k: HYBRID package AJ)
                 if (gameState.velocityVector) {
                     gameState.velocityVector.addScaledVector(bm.vel.clone().normalize(), 0.35);
                 }
@@ -6220,7 +6275,7 @@ function _updateBossSpecials(boss, playerPos, distance) {
     if (!ud.noVolley && now >= ud._nextVolleyAt && distance > 250 && distance < (ud.volleyRange || 3500) &&
         (typeof _hyBossTelegraph !== 'function' || _hyBossTelegraph(boss, 'volley', now))) {
         ud._nextVolleyAt = now + (11000 + Math.random() * 5000) * _hyK;
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < (ud._hbVolleyN || 5); i++) {   // (HYBRID package AJ: the pattern sizes the volley)
             setTimeout(() => _spawnBossMissile(boss), i * 170);
         }
         if (typeof showAchievement === 'function') {
@@ -6270,7 +6325,7 @@ function _updateBossSpecials(boss, playerPos, distance) {
                     const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
                     if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
                         const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
-                        gameState.hull = Math.max(0, gameState.hull - 4 * (1 - red));
+                        gameState.hull = Math.max(0, gameState.hull - 4 * (ud._hbDmgK || 1) * (1 - red));   // (_hbDmgK: HYBRID package AJ)
                         // Knock outward, away from the sweep
                         if (gameState.velocityVector && distXZ > 1) {
                             gameState.velocityVector.x += (toPlayer.x / distXZ) * 0.3;
@@ -6441,6 +6496,516 @@ function _hyGuardianBehavior(enemy, playerPos, speed, distance) {
         if (dl > 20) enemy.position.addScaledVector(dir.divideScalar(dl), Math.min(dl, speed * 0.7));
     }
     if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+}
+
+// =============================================================================
+// HYBRID (package AJ) — BOSSES THREE TIMES HARDER   switch `bossDifficulty`
+// Ben, 2026-10-11: "bosses need to be 3x more difficult with evasive maneuvers
+// and patterns of attack".
+//   STATS     health x2, shield x2 hits, weapon damage x1.5, faster fire, and a
+//             more agile flight class (ENEMY_FLIGHT.bossHard / .bossBoost) that
+//             is still slower than the player on a straight line.
+//   EVADES    under the player's guns (the nose within AIM_CONE_DEG of the boss,
+//             the lock on it, a hit or graze, a missile inbound) the boss breaks
+//             every 2-5 s: a 0.65 s wind-up (cyan shell flicker + full plume),
+//             then a barrel roll / corkscrew / split-S flown by the flight model,
+//             or a boosted jink out of the aim line. A LOCKED shot fired while
+//             it is mid-manoeuvre misses with probability DODGE (the beam goes
+//             wide); an aimed shot misses only if the hull really left the ray.
+//   PATTERNS  a rotation of telegraphed attacks — strafing run, orbit barrage,
+//             missile volley, beam sweep, ram feint, shield phase, cloak strike
+//             (Romulan), escort recall (once, at 50 %) — chosen by a small state
+//             machine gated at 100-66-33 % hull (the mix widens and the tempo
+//             rises), never the same twice running, each 4-9 s. The first one
+//             of every boss is its faction's signature (FACTION_FIRST). Each is
+//             named on the boss card (flashArcadeText) and, the first time in a
+//             fight, on the comms channel.
+//   Campaign guardians keep their role (warden / ram / volley) and add the
+//   evades, the stats and shield phases at 66 % and 33 %; elite guardians fly
+//   the pattern machine with three patterns; warlords (distress bosses) the set.
+// ?hy=bossDifficulty:original flies every boss exactly as before.
+// =============================================================================
+const HY_BOSS_AI = {
+    HEALTH_K: 2,             // x maxHealth (shield below; manoeuvres + phases supply the rest)
+    SHIELD_HITS: 4,          // laser hits to shatter the orange shield (ORIGINAL 2)
+    MISSILE_SHIELD_HITS: 2,  // a missile counts this many shield hits (ORIGINAL: shatters it)
+    DMG_K: 1.5,              // boss lasers, missiles, sweep, ram
+    FIRE_MS: 420,            // between shots outside a pattern (ORIGINAL 600 x 1-1.7)
+    FIRE_JITTER: 0.5,
+    FIRING_RANGE: 950,       // ORIGINAL 400 — the orbit and the standoff sit outside that
+    // evasion
+    AIM_CONE_DEG: 4, AIM_RANGE: 3000, MISSILE_WARN: 1600,
+    EVADE_GAP: [1500, 3800], // ms between breaks while under fire (/ tempo)
+    EVADE_TELE_MS: 650,      // wind-up before a break
+    JINK_MS: 1000, JINK_SPEED: 290,
+    DODGE: 0.7,              // P(a locked shot misses) while a break is being flown
+    // patterns
+    PAT_MS: [4500, 8500], REST_MS: [600, 1300], TEMPO: [1, 1.2, 1.45],
+    CRUISE: 170,             // u/s between patterns (player top speed 240 u/s)
+    STANDOFF: 650,
+    ORBIT_R: 700, ORBIT_SPEED: 180, REVERSE_MS: [1500, 2600], REVERSE_TELE_MS: 650,
+    STRAFE_SPEED: 240, STRAFE_FIRE_MS: 230, ORBIT_FIRE_MS: 340,
+    RAM_SPEED: 280, RAM_TELE_MS: 900, RAM_DAMAGE: 10, RAM_FEINT: 280,
+    SHIELD_MS: [4000, 6000], SHIELD_TELE_MS: 700,
+    CLOAK_MS: 2600, CLOAK_TELE_MS: 700, STRIKE_MS: 1600, STRIKE_FIRE_MS: 160,
+    RECALL_N: 3, RECALL_TELE_MS: 1000,
+    VOLLEY_N: [2, 3, 4],     // missiles per volley by hull gate
+    TELE_MS: { strafe: 700, orbit: 650, volley: 0, sweep: 0, ram: 900, shield: 700, cloak: 700, recall: 1000 },
+    MIX: [
+        ['strafe', 'orbit', 'volley'],
+        ['strafe', 'orbit', 'volley', 'sweep', 'ram', 'shield'],
+        ['strafe', 'orbit', 'volley', 'sweep', 'ram', 'shield'],
+    ],
+    ELITE_MIX: ['strafe', 'volley', 'shield'],
+    FACTION_FIRST: { 0: 'orbit', 1: 'ram', 2: 'strafe', 3: 'cloak', 4: 'shield', 5: 'volley', 6: 'sweep', 7: 'volley' },
+    NAMES: { strafe: 'STRAFING RUN', orbit: 'ORBIT BARRAGE', volley: 'MISSILE VOLLEY', sweep: 'BEAM SWEEP',
+        ram: 'RAM FEINT', shield: 'SHIELD PHASE', cloak: 'CLOAK STRIKE', recall: 'ESCORT RECALL' },
+    COLORS: { strafe: 0xff3355, orbit: 0xff9933, ram: 0xff6a00, shield: 0x66ddff, cloak: 0x55ff99, recall: 0xffe066,
+        evade: 0x66ffff, reverse: 0xffffff },
+    LINES: {
+        strafe: '%s is lining up a strafing run — break across its line, not along it.',
+        orbit: '%s is circling to bracket you — watch for the reversal.',
+        volley: '%s is spooling a missile volley — keep moving, they home in.',
+        sweep: '%s is charging a beam sweep — get clear of its hull.',
+        ram: '%s is lining up a ram — side-step when it lunges.',
+        shield: '%s raised a full shield — its escorts are covering it. Hold fire, take the escorts.',
+        cloak: '%s cloaked — check your six.',
+        recall: '%s is calling in its escorts.',
+    },
+};
+if (typeof window !== 'undefined') window.HY_BOSS_AI = HY_BOSS_AI;
+// Flight classes for hard bosses (same columns as ENEMY_FLIGHT; x HY_ENEMY_SPEED_K):
+// bossHard tops out at 200 u/s, bossBoost (jinks, charges, the cloak run) at 300.
+ENEMY_FLIGHT.bossHard = { maxSpeed: 250, mainThrust: 300, manThrust: 150, brake: 170, maxTurn: 70, evadeTurn: 115, turnAccel: 220, maxSlip: 35, bankMax: 35, rollRate: 240, rollAccel: 900, align: 1.6 };
+ENEMY_FLIGHT.bossBoost = { maxSpeed: 375, mainThrust: 420, manThrust: 170, brake: 200, maxTurn: 70, evadeTurn: 115, turnAccel: 220, maxSlip: 35, bankMax: 35, rollRate: 240, rollAccel: 900, align: 1.6 };
+
+const _hbV1 = new THREE.Vector3(), _hbV2 = new THREE.Vector3(), _hbV3 = new THREE.Vector3(), _hbV4 = new THREE.Vector3();
+const _hbUp = new THREE.Vector3(0, 1, 0);
+
+function _hyBossHard(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !(ud.isBoss || ud.isEliteGuardian)) return false;
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('bossDifficulty', 'hard'));
+}
+function _hbRand(a) { return a[0] + Math.random() * (a[1] - a[0]); }
+function _hbDt(ud) { return (ud._ef && ud._ef.dt) ? ud._ef.dt : 1 / 30; }
+
+// One-time stat lift (and kept: a difficulty refresh may rewrite maxHealth).
+function _hyBossHardInit(enemy) {
+    const ud = enemy.userData, C = HY_BOSS_AI;
+    if (ud._hbHard) {
+        if (ud._hbMaxH && ud.maxHealth < ud._hbMaxH) { ud.health = ud.health * ud._hbMaxH / Math.max(0.1, ud.maxHealth); ud.maxHealth = ud._hbMaxH; }
+        return;
+    }
+    ud._hbHard = true;
+    const frac = ud.maxHealth > 0 ? Math.max(0, Math.min(1, ud.health / ud.maxHealth)) : 1;
+    ud.maxHealth = Math.round((ud.maxHealth || 3) * C.HEALTH_K);
+    ud.health = Math.round(ud.maxHealth * frac * 10) / 10;
+    ud._hbMaxH = ud.maxHealth;
+    ud._hbShieldHits = C.SHIELD_HITS;
+    ud._hbDmgK = C.DMG_K;
+    ud.firingRange = Math.max(ud.firingRange || 0, C.FIRING_RANGE);
+    const elite = !ud.isBoss;
+    const guard = !!ud.guardianRole;
+    if (!guard) { ud._nextVolleyAt = Infinity; ud._nextSweepAt = Infinity; }
+    ud._hb = { pat: null, stage: 'rest', t0: Date.now(), until: Date.now() + 1500, last: null, seen: {}, gate: 0, tempo: 1,
+        evNext: Date.now() + 1200, evTele: null, recalled: false, elite: elite, guard: guard, shieldGates: {}, teleMs: 0, n: 0 };
+}
+
+// The shell round the hull (shared with the specials' telegraph).
+function _hbShell(boss, color, k, grow) {
+    if (typeof _hyTeleShell !== 'function') return;
+    const s = _hyTeleShell(boss);
+    s.visible = true;
+    s.material.color.setHex(color).multiplyScalar(Math.max(0.05, k));
+    s.scale.setScalar(s.userData.baseS * (1 + (grow || 0)));
+}
+function _hbShellOff(boss) { const s = boss.userData._teleShell; if (s && !boss.userData._tele) s.visible = false; }
+function _hbPulse(p, rate) { return 0.35 + 0.65 * Math.abs(Math.sin(p * Math.PI * (rate || 3))); }
+
+function _hbSay(boss, pat, now) {
+    const ud = boss.userData, hb = ud._hb;
+    const near = (typeof camera !== 'undefined') && boss.position.distanceTo(camera.position) < 5000;
+    if (!near) return;
+    const nm = HY_BOSS_AI.NAMES[pat];
+    try { if (typeof flashArcadeText === 'function') flashArcadeText(nm, 1, (ud.name || 'FLAGSHIP').toUpperCase()); } catch (e) {}
+    if (!hb.seen[pat]) {
+        hb.seen[pat] = true;
+        if (typeof _hyTeleSaidAt !== 'undefined') _hyTeleSaidAt = now;   // the specials' own call-out stays quiet
+        const line = (HY_BOSS_AI.LINES[pat] || '%s').replace('%s', ud.name || 'The flagship');
+        try { if (typeof showIncomingTransmission === 'function') showIncomingTransmission('Tactical Warning', line, 'ship'); } catch (e) {}
+    }
+}
+
+// Is the player shooting at this boss right now? Returns the cause or null.
+function _hbThreat(enemy, distance, now) {
+    const ud = enemy.userData;
+    try {
+        if (window.activeMissiles) {
+            for (let i = 0; i < window.activeMissiles.length; i++) {
+                const m = window.activeMissiles[i];
+                if (m && m.userData && m.userData.target === enemy && m.position.distanceTo(enemy.position) < HY_BOSS_AI.MISSILE_WARN) return 'missile';
+            }
+        }
+    } catch (e) {}
+    if ((ud._underFireUntil || 0) > now) return 'hit';
+    if (typeof gameState !== 'undefined' && gameState.targetLock && gameState.targetLock.active && gameState.targetLock.target === enemy) return 'lock';
+    if (typeof camera !== 'undefined' && distance < HY_BOSS_AI.AIM_RANGE) {
+        camera.getWorldDirection(_hbV1);
+        _hbV2.subVectors(enemy.position, camera.position).normalize();
+        if (_hbV1.dot(_hbV2) > Math.cos(HY_BOSS_AI.AIM_CONE_DEG * Math.PI / 180)) return 'aim';
+    }
+    return null;
+}
+
+// Evasive breaks (every hard boss, every tick).
+function _hbEvade(enemy, ud, hb, playerPos, distance, now) {
+    const C = HY_BOSS_AI;
+    if (hb.evTele) {
+        const p = (now - hb.evTele.t0) / C.EVADE_TELE_MS;
+        if (p < 1) {
+            if (!hb.shellOwned) _hbShell(enemy, C.COLORS.evade, _hbPulse(p, 4), 0.08 * p);
+            if (ud._ef) ud._ef.thr = 1;            // plume flare
+            return;
+        }
+        const type = hb.evTele.type; hb.evTele = null;
+        if (!hb.shellOwned) _hbShellOff(enemy);
+        if (type === 'jink') {
+            // out of the aim line: perpendicular to the player -> boss line
+            _hbV1.subVectors(enemy.position, playerPos).normalize();
+            _hbV2.crossVectors(_hbV1, _hbUp); if (_hbV2.lengthSq() < 1e-4) _hbV2.set(1, 0, 0);
+            _hbV2.normalize();
+            const a = Math.random() * Math.PI * 2;
+            _hbV3.crossVectors(_hbV2, _hbV1).normalize();
+            const dir = _hbV2.multiplyScalar(Math.cos(a)).addScaledVector(_hbV3, Math.sin(a) * 0.6).normalize();
+            ud._hbJink = { until: now + C.JINK_MS, dir: dir.clone() };
+            ud._hbBoostUntil = now + C.JINK_MS;
+        } else if (typeof _startEvasive === 'function') {
+            _startEvasive(enemy, type);
+        }
+        hb.evades = (hb.evades || 0) + 1;
+        return;
+    }
+    if (ud._evade || (ud._hbJink && now < ud._hbJink.until)) return;
+    if (now < hb.evNext || hb.noEvade) return;
+    const cause = _hbThreat(enemy, distance, now);
+    if (!cause) return;
+    const r = Math.random();
+    const type = cause === 'missile' ? (r < 0.6 ? 'jink' : 'splitS')
+        : cause === 'hit' ? (r < 0.4 ? 'splitS' : r < 0.75 ? 'jink' : 'barrel')
+        : (r < 0.4 ? 'barrel' : r < 0.7 ? 'corkscrew' : 'jink');
+    hb.evTele = { type: type, t0: now };
+    hb.evNext = now + C.EVADE_TELE_MS + _hbRand(C.EVADE_GAP) / hb.tempo;
+}
+
+// Is this boss flying a break right now (the lock cannot follow it)?
+function _hyBossEvading(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud._hbHard) return false;
+    const now = Date.now();
+    if (ud._hbJink && now < ud._hbJink.until) return true;
+    const m = ud._evade;
+    if (m && m.t0 && m.dur) { const p = (now - m.t0) / m.dur; return p > 0.08 && p < 0.92; }
+    return false;
+}
+// fireWeapon: a locked shot at a breaking boss goes wide. Returns the miss point or null.
+function _hyBossLockDodge(target, targetPosition) {
+    if (!target || !target.userData || !_hyBossEvading(target) || Math.random() >= HY_BOSS_AI.DODGE) return null;
+    const ud = target.userData;
+    if (typeof camera === 'undefined') return null;
+    _hbV1.subVectors(target.position, camera.position).normalize();
+    _hbV2.crossVectors(_hbV1, _hbUp); if (_hbV2.lengthSq() < 1e-4) _hbV2.set(1, 0, 0);
+    _hbV2.normalize();
+    _hbV3.crossVectors(_hbV2, _hbV1).normalize();
+    const a = Math.random() * Math.PI * 2, off = Math.max(140, (ud.hitboxSize || 72) * 1.6);
+    ud._hbDodged = (ud._hbDodged || 0) + 1;
+    return target.position.clone().addScaledVector(_hbV2, Math.cos(a) * off).addScaledVector(_hbV3, Math.sin(a) * off);
+}
+// _enemyShieldAbsorbHit: the shield phase and the cloak take every hit.
+function _hyBossInvulnHit(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud._hbHard || !(ud._hbInvulnUntil > Date.now())) return false;
+    ud._hbAbsorbed = (ud._hbAbsorbed || 0) + 1;
+    ud._hbFlashUntil = Date.now() + 160;
+    return true;
+}
+
+// Fly toward a point at up to `speed` u/s (an intent: the flight model flies it).
+function _hbFly(enemy, target, speed, dt) {
+    const d = _hbV4.subVectors(target, enemy.position), dl = d.length();
+    if (dl < 1) return;
+    enemy.position.addScaledVector(d.divideScalar(dl), Math.min(dl, speed * dt));
+}
+// A point on the standoff ring round the player.
+function _hbRing(hb, playerPos, R, ang, out) {
+    return out.set(playerPos.x + Math.cos(ang) * R, playerPos.y + Math.sin(ang * 0.37) * R * 0.25, playerPos.z + Math.sin(ang) * R);
+}
+function _hbCloak(enemy, on) {
+    const ud = enemy.userData;
+    if (on) {
+        if (ud._hbCloaked) return;
+        ud._hbCloaked = [];
+        enemy.traverse(function (o) {
+            if (o === enemy || !o.visible || (o.userData && o.userData.isTelegraphShell)) return;
+            if (o.isMesh || o.isPoints || o.isSprite || o.isLine) { o.visible = false; ud._hbCloaked.push(o); }
+        });
+    } else if (ud._hbCloaked) {
+        ud._hbCloaked.forEach(function (o) { o.visible = true; });
+        ud._hbCloaked = null;
+    }
+}
+
+function _hbPick(enemy, ud, hb) {
+    const C = HY_BOSS_AI;
+    const frac = ud.health / Math.max(0.1, ud.maxHealth);
+    if (!hb.recalled && !hb.elite && frac <= 0.5 && typeof spawnBossSupport === 'function') { hb.recalled = true; return 'recall'; }
+    if (!hb.n && C.FACTION_FIRST[ud.galaxyId] && !hb.elite) return C.FACTION_FIRST[ud.galaxyId];
+    let mix = hb.elite ? C.ELITE_MIX.slice() : C.MIX[hb.gate].slice();
+    const sig = C.FACTION_FIRST[ud.galaxyId];
+    if (!hb.elite && sig && mix.indexOf(sig) < 0) mix.push(sig);   // the signature stays in its rotation
+    mix = mix.filter(function (p) { return p !== hb.last; });
+    // never twice running, and the least-flown moves come up first (weight 1 / (1 + uses))
+    const uses = hb.uses || (hb.uses = {});
+    let tot = 0; const w = mix.map(function (p) { const v = 1 / (1 + (uses[p] || 0) * 1.5); tot += v; return v; });
+    let r = Math.random() * tot, pick = mix[mix.length - 1];
+    for (let i = 0; i < mix.length; i++) { r -= w[i]; if (r <= 0) { pick = mix[i]; break; } }
+    return pick;
+}
+
+function _hbStart(enemy, ud, hb, pat, now) {
+    const C = HY_BOSS_AI;
+    hb.pat = pat; hb.last = pat; hb.n++;
+    hb.uses = hb.uses || {}; hb.uses[pat] = (hb.uses[pat] || 0) + 1;
+    hb.t0 = now; hb.stage = C.TELE_MS[pat] ? 'tele' : 'act';
+    hb.teleMs = C.TELE_MS[pat] || 1100;      // volley / sweep wind up in _updateBossSpecials (HY_TELEGRAPH.MS)
+    hb.teleUntil = now + (C.TELE_MS[pat] || 0);
+    hb.until = hb.teleUntil + _hbRand(C.PAT_MS) / Math.sqrt(hb.tempo);
+    hb.sub = null; hb.subT = now; hb.fired = false;
+    if (ud._tele && ud._tele.kind !== pat && typeof _hyTeleCancel === 'function') _hyTeleCancel(enemy);   // a stale wind-up never blocks the next move
+    if (pat === 'volley') {
+        ud._hbVolleyN = C.VOLLEY_N[hb.gate];
+        ud._hbSpread = (ud.galaxyId === 7) ? 0.25 : 1;   // Vulcan: precise
+        ud.volleyRange = (ud.galaxyId === 7) ? 4500 : 3500;
+        ud._nextVolleyAt = now;
+    }
+    if (pat === 'sweep') ud._nextSweepAt = now;
+    if (pat === 'orbit') { hb.dir = Math.random() < 0.5 ? -1 : 1; hb.revAt = now + _hbRand(C.REVERSE_MS); hb.ang = Math.atan2(enemy.position.z - camera.position.z, enemy.position.x - camera.position.x); }
+    _hbSay(enemy, pat, now);
+}
+function _hbEnd(enemy, ud, hb, now) {
+    if (hb.pat === 'cloak') _hbCloak(enemy, false);
+    ud._hbInvulnUntil = 0; ud._hbHoldFire = false; ud._hbFireMs = 0; hb.noEvade = false; hb.shellOwned = false;
+    ud._nextVolleyAt = Infinity; if (!(ud._sweepUntil && now < ud._sweepUntil)) ud._nextSweepAt = Infinity;
+    _hbShellOff(enemy);
+    hb.pat = null; hb.stage = 'rest'; hb.t0 = now; hb.until = now + _hbRand(HY_BOSS_AI.REST_MS) / hb.tempo;
+}
+
+// The pattern machine. Owns the boss's movement and specials this tick.
+function _hyBossPatterns(enemy, playerPos, distance) {
+    const ud = enemy.userData, hb = ud._hb, C = HY_BOSS_AI, now = Date.now(), dt = _hbDt(ud);
+    if (!hb || typeof camera === 'undefined') return false;
+    const frac = ud.health / Math.max(0.1, ud.maxHealth);
+    const gate = frac > 0.66 ? 0 : frac > 0.33 ? 1 : 2;
+    if (gate !== hb.gate) { hb.gate = gate; hb.tempo = C.TEMPO[gate]; }
+    const R = Math.max(C.STANDOFF, (ud.hitboxSize || 72) * 2);
+    camera.getWorldDirection(_hbV3);      // player's forward (for "behind you")
+
+    if (hb.stage === 'rest' || !hb.pat) {
+        // Between patterns: hold the standoff ring, drifting round it.
+        const ang = Math.atan2(enemy.position.z - playerPos.z, enemy.position.x - playerPos.x) + 0.35;
+        _hbFly(enemy, _hbRing(hb, playerPos, R, ang, _hbV1), C.CRUISE, dt);
+        if (now >= hb.until && distance < 6000) _hbStart(enemy, ud, hb, _hbPick(enemy, ud, hb), now);
+        if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+        return true;
+    }
+    const pat = hb.pat;
+    const tele = hb.stage === 'tele';
+    const tp = tele ? (now - hb.t0) / Math.max(1, hb.teleUntil - hb.t0) : 1;
+    if (tele && now >= hb.teleUntil) { hb.stage = 'act'; hb.actAt = now; }
+    hb.shellOwned = false;
+
+    switch (pat) {
+    case 'strafe': {
+        if (tele) {           // nose onto the player, plume flaring
+            _hbShell(enemy, C.COLORS.strafe, _hbPulse(tp, 3), 0.12 * tp); hb.shellOwned = true;
+            _hbFly(enemy, playerPos, distance > 400 ? 35 : 10, dt); if (ud._ef) ud._ef.thr = 1;
+            break;
+        }
+        if (!hb.sub) { hb.sub = 'run'; hb.side = (Math.random() < 0.5 ? -1 : 1); }
+        if (hb.sub === 'run') {
+            _hbV1.subVectors(playerPos, enemy.position).normalize();
+            _hbV2.crossVectors(_hbV1, _hbUp).normalize().multiplyScalar(hb.side * 120);
+            ud._hbBoostUntil = now + 300;
+            _hbFly(enemy, _hbV2.add(playerPos), C.STRAFE_SPEED, dt);
+            ud._hbFireMs = C.STRAFE_FIRE_MS;
+            if (distance < 260) { hb.sub = 'break'; hb.subT = now; if (typeof _startEvasive === 'function' && !ud._evade) _startEvasive(enemy, 'splitS'); }
+        } else if (hb.sub === 'break') {
+            ud._hbFireMs = 0;
+            _hbV1.subVectors(enemy.position, playerPos).normalize();
+            _hbFly(enemy, _hbV2.copy(enemy.position).addScaledVector(_hbV1, 600), C.CRUISE, dt);
+            if (now - hb.subT > 1700) { hb.sub = 'run'; hb.side = -hb.side; }
+        }
+        break;
+    }
+    case 'orbit': {
+        if (tele) { _hbShell(enemy, C.COLORS.orbit, _hbPulse(tp, 3), 0.1 * tp); hb.shellOwned = true; }
+        const Ro = Math.max(C.ORBIT_R, (ud.hitboxSize || 72) * 2.4);
+        ud._hbFireMs = C.ORBIT_FIRE_MS;
+        if (!tele && now >= hb.revAt - C.REVERSE_TELE_MS && now < hb.revAt) {
+            // reversal wind-up: a white flash and a brake
+            _hbShell(enemy, C.COLORS.reverse, _hbPulse((hb.revAt - now) / C.REVERSE_TELE_MS, 4), 0.06); hb.shellOwned = true;
+            hb.ang += hb.dir * (C.ORBIT_SPEED * 0.35 / Ro) * dt;
+        } else {
+            if (!tele && now >= hb.revAt) { hb.dir = -hb.dir; hb.revAt = now + _hbRand(C.REVERSE_MS) / hb.tempo; ud._hbBoostUntil = now + 700; }
+            hb.ang += hb.dir * (C.ORBIT_SPEED * hb.tempo / Ro) * dt;
+        }
+        _hbFly(enemy, _hbRing(hb, playerPos, Ro, hb.ang, _hbV1), C.ORBIT_SPEED * 1.6, dt);
+        break;
+    }
+    case 'volley': {
+        // circle out to range (sliding across the player's sights, not away
+        // down them) and let _updateBossSpecials telegraph + launch
+        if (hb.ang === undefined || hb.volAng !== hb.t0) { hb.volAng = hb.t0; hb.ang = Math.atan2(enemy.position.z - playerPos.z, enemy.position.x - playerPos.x); hb.dir = Math.random() < 0.5 ? -1 : 1; }
+        hb.ang += hb.dir * (C.ORBIT_SPEED * 0.9 / 950) * dt;
+        _hbFly(enemy, _hbRing(hb, playerPos, 950, hb.ang, _hbV2), C.ORBIT_SPEED * 1.4, dt);
+        if (ud._nextVolleyAt !== Infinity && ud._nextVolleyAt > now + 1000) { hb.fired = true; ud._nextVolleyAt = Infinity; hb.until = Math.min(hb.until, now + 2500); }
+        break;
+    }
+    case 'sweep': {
+        _hbV1.subVectors(enemy.position, playerPos).normalize();
+        _hbFly(enemy, _hbV2.copy(playerPos).addScaledVector(_hbV1, 520), C.CRUISE, dt);
+        if (ud._nextSweepAt !== Infinity && ud._nextSweepAt > now + 1000) { hb.fired = true; ud._nextSweepAt = Infinity; hb.until = Math.max(hb.until, (ud._sweepUntil || now) + 800); }
+        hb.noEvade = !!(ud._sweepUntil && now < ud._sweepUntil);
+        break;
+    }
+    case 'ram': {
+        if (tele) {
+            _hbShell(enemy, C.COLORS.ram, _hbPulse(tp, 2 + 4 * tp), 0.18 * tp); hb.shellOwned = true;
+            _hbFly(enemy, playerPos, distance > 400 ? 35 : 10, dt); if (ud._ef) ud._ef.thr = 1;
+            hb.noEvade = true;
+            break;
+        }
+        if (!hb.sub) { hb.sub = 'charge'; hb.subT = now; hb.hit = false; hb.feint = (Math.random() < 0.5 ? -1 : 1); }
+        if (hb.sub === 'charge') {
+            hb.noEvade = true;
+            ud._hbBoostUntil = now + 300;
+            _hbV1.subVectors(playerPos, enemy.position).normalize();
+            const tgt = _hbV2.copy(playerPos);
+            if (distance < 700) tgt.addScaledVector(_hbV4.crossVectors(_hbV1, _hbUp).normalize(), hb.feint * C.RAM_FEINT);   // the feint: veer late
+            _hbFly(enemy, tgt, C.RAM_SPEED, dt);
+            if (!hb.hit && distance < (ud.hitboxSize || 72) * 0.5 + 60) {
+                hb.hit = true;
+                const inv = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+                if (!inv && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                    const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                    gameState.hull = Math.max(0, gameState.hull - C.RAM_DAMAGE * C.DMG_K * (1 - red));
+                    if (gameState.velocityVector) gameState.velocityVector.addScaledVector(_hbV1, 0.8);
+                    if (typeof createEnhancedScreenDamageEffect === 'function') createEnhancedScreenDamageEffect(enemy.position);
+                }
+            }
+            if (distance < 200 || now - hb.subT > 3500) { hb.sub = 'break'; hb.subT = now; if (typeof _startEvasive === 'function' && !ud._evade) _startEvasive(enemy, 'splitS'); }
+        } else {
+            hb.noEvade = false;
+            _hbV1.subVectors(enemy.position, playerPos).normalize();
+            _hbFly(enemy, _hbV2.copy(enemy.position).addScaledVector(_hbV1, 600), C.CRUISE, dt);
+            if (now - hb.subT > 2000) { hb.sub = null; hb.stage = 'tele'; hb.t0 = now; hb.teleUntil = now + C.RAM_TELE_MS; }
+        }
+        break;
+    }
+    case 'shield': {
+        if (tele) {
+            _hbShell(enemy, C.COLORS.shield, _hbPulse(tp, 2), 0.25 * tp); hb.shellOwned = true;
+            break;
+        }
+        if (!hb.sub) {
+            hb.sub = 'up';
+            ud._hbInvulnUntil = now + _hbRand(C.SHIELD_MS);
+            hb.until = ud._hbInvulnUntil + 300;
+            if (typeof playSound === 'function') { try { playSound('shield_hit'); } catch (e) {} }
+            // the escorts press the attack while the boss repositions
+            if (typeof enemies !== 'undefined') enemies.forEach(function (e) {
+                if (e && e.userData && e.userData.isBossSupport && e.userData.health > 0 && e.position.distanceTo(enemy.position) < 6000) {
+                    e.userData.isActive = true; e.userData.detectedPlayer = true;
+                }
+            });
+        }
+        const fl = (ud._hbFlashUntil || 0) > now;
+        _hbShell(enemy, fl ? 0xffffff : C.COLORS.shield, fl ? 1 : 0.55 + 0.25 * Math.sin(now * 0.012), 0.25); hb.shellOwned = true;
+        ud._hbHoldFire = true;
+        _hbV1.subVectors(enemy.position, playerPos).normalize();
+        _hbFly(enemy, _hbV2.copy(playerPos).addScaledVector(_hbV1, 1200), C.CRUISE, dt);
+        break;
+    }
+    case 'cloak': {
+        if (tele) {
+            _hbShell(enemy, C.COLORS.cloak, (Math.random() < 0.5 ? 0.2 : 1) * _hbPulse(tp, 5), 0.05); hb.shellOwned = true;
+            break;
+        }
+        if (!hb.sub) { hb.sub = 'cloaked'; hb.subT = now; _hbCloak(enemy, true); ud._hbInvulnUntil = now + C.CLOAK_MS + 400; hb.until = now + C.CLOAK_MS + C.STRIKE_MS + 400; hb.noEvade = true; }
+        if (hb.sub === 'cloaked') {
+            ud._hbHoldFire = true;
+            ud._hbBoostUntil = now + 300;
+            _hbV2.copy(playerPos).addScaledVector(_hbV3, -450).addScaledVector(_hbUp, 80);   // behind the player
+            _hbFly(enemy, _hbV2, 300, dt);
+            if (now - hb.subT > C.CLOAK_MS) { hb.sub = 'strike'; hb.subT = now; _hbCloak(enemy, false); ud._hbInvulnUntil = 0; ud._hbHoldFire = false; hb.noEvade = false; ud.nextFire = now; }
+        } else {
+            ud._hbFireMs = C.STRIKE_FIRE_MS;
+            _hbFly(enemy, _hbV2.copy(playerPos).addScaledVector(_hbV3, -380), C.CRUISE, dt);
+        }
+        break;
+    }
+    case 'recall': {
+        if (tele) { _hbShell(enemy, C.COLORS.recall, _hbPulse(tp, 3), 0.3 * tp); hb.shellOwned = true; _hbFly(enemy, playerPos, distance > 500 ? 20 : 0, dt); break; }
+        if (!hb.sub) {
+            hb.sub = 'done'; hb.until = now + 1500;
+            for (let i = 0; i < C.RECALL_N; i++) { try { spawnBossSupport(ud.galaxyId, enemy.position.clone(), i, ud.areaKey || null, null); } catch (e) {} }
+        }
+        break;
+    }
+    default: break;
+    }
+    // personal space: outside a ram charge the hull never parks on the player
+    if (distance < Math.max(220, (ud.hitboxSize || 72) * 2) && !(pat === 'ram' && hb.sub === 'charge')) {
+        _hbV1.subVectors(enemy.position, playerPos).normalize();
+        _hbFly(enemy, _hbV2.copy(enemy.position).addScaledVector(_hbV1, 400), C.CRUISE, dt);
+    }
+    if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+    if (!hb.shellOwned && !hb.evTele && !ud._tele) _hbShellOff(enemy);   // a finished wind-up lets go of the shell
+    if (now >= hb.until && !(ud._sweepUntil && now < ud._sweepUntil) && !ud._tele) _hbEnd(enemy, ud, hb, now);
+    return true;
+}
+
+// Every tick, before the behaviour: stats, evades, guardian shield phases.
+function _hyBossHardPrep(enemy, playerPos, distance) {
+    _hyBossHardInit(enemy);
+    const ud = enemy.userData, hb = ud._hb, now = Date.now();
+    if (!hb) return;
+    if (ud.health <= 0) { _hbCloak(enemy, false); return; }
+    _hbEvade(enemy, ud, hb, playerPos, distance, now);
+    if (ud._hbJink && now < ud._hbJink.until) {
+        // the jink: a boosted lunge out of the aim line on top of the behaviour
+        enemy.position.addScaledVector(ud._hbJink.dir, HY_BOSS_AI.JINK_SPEED * _hbDt(ud));
+    }
+    if (hb.guard) {
+        // Campaign guardians: their role, plus a shield phase at 66 % and 33 %.
+        const frac = ud.health / Math.max(0.1, ud.maxHealth);
+        hb.tempo = HY_BOSS_AI.TEMPO[frac > 0.66 ? 0 : frac > 0.33 ? 1 : 2];
+        [0.66, 0.33].forEach(function (g) {
+            if (frac <= g && !hb.shieldGates[g]) {
+                hb.shieldGates[g] = true;
+                hb.gShieldTele = now + HY_BOSS_AI.SHIELD_TELE_MS;
+                _hbSay(enemy, 'shield', now);
+            }
+        });
+        if (hb.gShieldTele) {
+            if (now < hb.gShieldTele) _hbShell(enemy, HY_BOSS_AI.COLORS.shield, _hbPulse(1 - (hb.gShieldTele - now) / HY_BOSS_AI.SHIELD_TELE_MS, 2), 0.2);
+            else { ud._hbInvulnUntil = now + _hbRand(HY_BOSS_AI.SHIELD_MS); hb.gShieldTele = 0; hb.gShieldOn = true; }
+        }
+        if (hb.gShieldOn) {
+            if (now < ud._hbInvulnUntil) _hbShell(enemy, HY_BOSS_AI.COLORS.shield, 0.55 + 0.25 * Math.sin(now * 0.012), 0.25);
+            else { hb.gShieldOn = false; _hbShellOff(enemy); }
+        }
+    }
 }
 
 // Support ship behavior
@@ -6651,6 +7216,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             (difficultySettings.galaxiesCleared === 0 ? 2 : 3 + difficultySettings.galaxiesCleared) :
             (enemy.userData.isBoss ? 8 : enemy.userData.isBossSupport ? 5 : 3);
         damage = Math.min(damage, 10);
+        if (enemy.userData._hbDmgK) damage = Math.round(damage * enemy.userData._hbDmgK);   // HYBRID (package AJ): hard bosses hit 1.5x
 
         let hitChance = 0.6;
         // Coefficients rescaled for the faster turn rates: the old 3.33 /
@@ -6697,7 +7263,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             // If firing at a wingman, damage the wingman and exit
             if (targetWingman && targetWingman.userData) {
                 const wasAlive = targetWingman.userData.health > 0;
-                targetWingman.userData.health = Math.max(0, targetWingman.userData.health - damage);
+                targetWingman.userData.health = Math.max(0, targetWingman.userData.health - damage / (typeof _wmShieldK === 'function' ? _wmShieldK(targetWingman) : 1));   // HYBRID (package AC): tier shields
                 if (typeof flashEnemyHit === 'function') flashEnemyHit(targetWingman, damage);
 
                 // Wingman destroyed — large explosion + notification
@@ -10468,6 +11034,7 @@ function _fxShards_overhaul(center, count, color, size, speed, life, kind, opa) 
 // the polygon rim the same way the streaks' texture feathers theirs.
 const _FX_CHUNK_MIN  = 6;         // fragments per kill, low end
 const _FX_CHUNK_MAX  = 9;         // ... and high end (critic's 6-10 window)
+const _FX_FRAG_MAX_TRIS = 600;    // HYBRID: triangles per kill chunk at most (v2 hulls are 2-12 k triangles)
 const _FX_CHUNK_LIFE = 1150;      // ms total; the colour ramp finishes at 900
 const _FX_CHUNK_COOL = 900;       // ms white -> orange -> dark
 const _FX_CHUNK_LEAD = 150;       // ms fade-in: visible as it leaves the flash
@@ -10589,7 +11156,10 @@ function _fxFragGeo(g) {
         const pos = g.attributes.position, idx = g.index;
         const triCount = Math.floor((idx ? idx.count : pos.count) / 3);
         if (triCount < 8) return g.clone();
-        const keep = Math.max(4, Math.round(triCount * (0.25 + Math.random() * 0.35)));
+        // HYBRID enemyModels: v2 — the textured hulls carry 2-12 k triangles (the stock ones 92-460), so a
+        // 25-60 % slice would be thousands per chunk x 6-9 chunks per kill; cap it (the chunk is re-fitted to
+        // its wanted size anyway). Stock hulls never reach the cap, so their chunks are unchanged.
+        const keep = Math.min(_FX_FRAG_MAX_TRIS, Math.max(4, Math.round(triCount * (0.25 + Math.random() * 0.35))));
         const start = Math.floor(Math.random() * Math.max(1, triCount - keep));
         const nrm = g.attributes.normal, uvs = g.attributes.uv;
         const P = new Float32Array(keep * 9);
@@ -11831,6 +12401,522 @@ function createBossExplosion(position, options) {
 }
 
 // =============================================================================
+// BOSS DEATH SET-PIECE  (HYBRID switch `bossExplosion`: 'epic' | 'original')
+// Ben 2026-10-11: "I want to improve the boss explosions."
+//
+// 'original' = the kill calls createBossExplosion() and the hull vanishes the
+// same frame. 'epic' = the boss visibly BREAKS:
+//   1. DEATH THROE (~1.8-2.7 s): the hull is detached from the game (it has
+//      already left `enemies` — every kill rule ran at the kill) and kept on
+//      screen as a corpse that tumbles, shudders and flickers while 9-12
+//      small ORIGINAL-style blasts pop at random points ON the hull,
+//      120-220 ms apart, each with faction sparks.
+//   2. FINAL BLAST: the ORIGINAL boss detonation (createBossExplosion) plus a
+//      white core flash, faction shockwave rings (band + vector edge) and
+//      vector debris — glowing line shards cut from the hull's own triangles
+//      and radial streaks; hitstop + slow-mo, strong shake, chromatic pulse.
+//   3. CALL-OUT 'BOSS DESTROYED' / '<FACTION> FLAGSHIP', and the boss
+//      celebration (fireworks, victory sting, ambient hand-off) moved from
+//      the kill to the blast.
+//   4. Living enemies near the blast are shoved outward by the shock.
+// Everything is one explosionManager entry (disposed in its cleanup), timed
+// by the manager's dt — so it freezes in hitstop and pause like every fx.
+// =============================================================================
+const HY_BOSS_FX = {
+    POPS_MIN: 9, POPS_MAX: 12,          // secondary blasts across the hull
+    POP_GAP_MIN: 120, POP_GAP_MAX: 220, // ms between them
+    THROE_LEAD: 260,                    // ms from the kill to the first pop
+    FINAL_AFTER_LAST: 340,              // ms from the last pop to the blast
+    POP_LIFE: 700,                      // ms, one secondary blast
+    POP_R_K: 0.07, POP_R_MIN: 1.0,      // pop fireball radius × hull radius (floor in world u)
+    POP_GROW: 5,                        // a pop grows to (1 + POP_GROW) × its radius
+    MIN_VIS_R: 45,                      // blast layers size off max(hull radius, this): bosses are 25-60 u hulls
+    TUMBLE0: 0.25, TUMBLE1: 2.2,        // rad/s at the start / end of the throe
+    SHUDDER_K: 0.025,                   // hull jitter × hull radius
+    FLASH_R_K: 1.1, FLASH_LIFE: 320,    // white core flash
+    RING_R0_K: 0.8, RING_R1_K: 11, RING_LIFE: 1250,
+    SHARDS: 42,                         // hull triangles thrown as wire shards
+    STREAKS: 56,                        // radial glowing streaks
+    DEBRIS_LIFE: 2300,
+    DEBRIS_PX: 2.6,                     // on-screen width of a debris line (px floor)
+    SHARD_SPEED_K: [1.4, 4.2],          // × hull radius per second
+    STREAK_SPEED_K: [5, 12],
+    BLAST_SCALE_BOSS: 1.8,              // createBossExplosion scale (ORIGINAL values)
+    BLAST_SCALE_GUARD: 1.3,
+    HITSTOP_MS: 110, SLOWMO_MS: 850,
+    SHAKE_AMP: 16, SHAKE_MS: 1100, PULSE: 1.15,
+    PUSH_RANGE_K: 40, PUSH_RANGE_MAX: 4500, PUSH_K: 4, PUSH_MS: 700,
+    CALLOUT_RETRY_MS: 1600,
+};
+if (typeof window !== 'undefined') window.HY_BOSS_FX = HY_BOSS_FX;
+
+function _hyBossFxOn() {
+    return !window.HYBRID || window.HYBRID.is('bossExplosion', 'epic');
+}
+
+// Hull meshes of a ship (no shields, hitboxes, glow shells or plumes).
+function _hyBossHullMeshes(ship) {
+    const out = [];
+    ship.traverse(function (o) {
+        if (!o.isMesh || !o.geometry || !o.geometry.attributes || !o.geometry.attributes.position) return;
+        const u = o.userData || {};
+        if (u.isHitbox || u.isGlowLayer || u._isThrusterCone || u._isHullRead || u.isEnemyShield) return;
+        out.push(o);
+    });
+    return out;
+}
+
+// A random point on the hull, in WORLD space (a mesh vertex).
+function _hyBossHullPoint(meshes, out) {
+    const m = meshes[Math.floor(Math.random() * meshes.length)];
+    const p = m.geometry.attributes.position;
+    out.fromBufferAttribute(p, Math.floor(Math.random() * p.count));
+    return out.applyMatrix4(m.matrixWorld);
+}
+
+// Start the set-piece for a dying boss. Returns false (and does nothing) when
+// the switch is 'original', so the caller falls back to createBossExplosion.
+// Call it BEFORE the kill path's scene.remove(enemy).
+function hyBossDeath(enemy, opts) {
+    if (!_hyBossFxOn() || !enemy || !enemy.userData || typeof scene === 'undefined' ||
+        typeof THREE === 'undefined' || typeof explosionManager === 'undefined') return false;
+    const ud = enemy.userData;
+    if (ud._hyBossFx) return true;
+    if (ud._hbCloaked && typeof _hbCloak === 'function') _hbCloak(enemy, false);   // HYBRID (package AJ): a boss dies visible
+    opts = opts || {};
+    const C = HY_BOSS_FX;
+    const color = opts.color || ud.galaxyColor || 0xff5522;
+    const isBoss = !!ud.isBoss;
+    const blastScale = opts.scale || (isBoss ? C.BLAST_SCALE_BOSS : C.BLAST_SCALE_GUARD);
+
+    enemy.updateMatrixWorld(true);
+    const meshes = _hyBossHullMeshes(enemy);
+    // Hull radius from the hull meshes' world box (shields excluded).
+    let R = (ud.hitboxSize || 144) * 0.5;
+    try {
+        const box = new THREE.Box3(), mb = new THREE.Box3();
+        meshes.forEach(function (m) {
+            if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+            mb.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld);
+            box.union(mb);
+        });
+        if (!box.isEmpty()) {
+            const s = box.getSize(new THREE.Vector3());
+            const r = Math.max(s.x, s.y, s.z) * 0.5;
+            if (isFinite(r) && r > 5) R = Math.min(r, 1200);
+        }
+    } catch (e) {}
+
+    // Detach the corpse: re-parent the hull to a holder at the scene root, so
+    // the kill path's scene.remove(enemy) finds nothing and the hull stays
+    // drawn (identity holder → same world transform; a floating-origin shift
+    // moves the holder, and the hull with it).
+    const holder = new THREE.Group();
+    holder.name = 'hyBossCorpse';
+    holder.userData.__dbTris = Infinity;
+    scene.add(holder);
+    holder.add(enemy);
+    enemy.traverse(function (o) {
+        if (o.userData && o.userData.isEnemyShield) o.visible = false;   // the bubble pops at death
+    });
+    ud._hyBossFx = true;
+
+    const V = Math.max(R, C.MIN_VIS_R);   // blast-layer radius
+    const fx = {
+        t: 0, R: R, V: V, color: color, phase: 'throe', name: ud.name,
+        pops: 0, popsPlanned: C.POPS_MIN + Math.floor(Math.random() * (C.POPS_MAX - C.POPS_MIN + 1)),
+        tFinal: 0, debris: 0, rings: 0, callout: null, hitstop: false, shake: false, pulse: false,
+        pushed: 0, startedAt: performance.now(), finalAt: 0, doneAt: 0, center: null,
+    };
+    const popTimes = [];
+    let tp = C.THROE_LEAD;
+    for (let i = 0; i < fx.popsPlanned; i++) {
+        popTimes.push(tp);
+        tp += C.POP_GAP_MIN + Math.random() * (C.POP_GAP_MAX - C.POP_GAP_MIN);
+    }
+    fx.tFinal = popTimes[popTimes.length - 1] + C.FINAL_AFTER_LAST;
+    if (typeof window !== 'undefined') window.__bossFx = fx;   // read by probes
+
+    const popGeo = new THREE.SphereGeometry(1, 8, 8);   // shared by this set-piece's spheres
+    function mkDebrisMat() {
+        const m = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 1,
+            side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(m); return m;
+    }
+    function mkLoopMat() {
+        const m = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(m); return m;
+    }
+    // SHADER PREWARM: the blast's two uncommon programs (vertex-coloured
+    // additive ribbons, additive line loop) would compile on the blast frame
+    // (measured: a 200-270 ms hitch). Degenerate stand-ins drawn during the
+    // throe compile them early; they stay alive until cleanup so the real
+    // materials reuse the cached programs.
+    const warm = [];
+    try {
+        const wg = new THREE.BufferGeometry();
+        wg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3));
+        wg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(9), 3));
+        const wm = new THREE.Mesh(wg, mkDebrisMat());
+        const wl = new THREE.LineLoop(wg, mkLoopMat());
+        [wm, wl].forEach(function (o) { o.frustumCulled = false; o.userData.__dbTris = Infinity; o.position.copy(enemy.position); scene.add(o); warm.push(o); });
+    } catch (e) {}
+    const live = [];
+    const tumbleAxis = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+    const jitter = new THREE.Vector3();
+    const tmp = new THREE.Vector3();
+    const tmpQ = new THREE.Quaternion();
+    let flickT = 0;
+    let pushList = null;
+
+    const rnd3 = function (v) { return v.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5); };
+
+    // One secondary blast: the ORIGINAL createExplosionEffect look (orange
+    // sphere + square-particle burst) sized to the hull, stuck to the hull.
+    function addPop(big) {
+        if (!meshes.length) return;
+        enemy.updateMatrixWorld(true);
+        const wp = _hyBossHullPoint(meshes, new THREE.Vector3());
+        const local = enemy.worldToLocal(wp.clone());
+        const r = Math.max(C.POP_R_MIN, R * C.POP_R_K) * (big ? 2.2 : (0.8 + Math.random() * 0.6));
+        const mat = new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, depthWrite: false });
+        _hyFlatMat(mat);
+        const s = new THREE.Mesh(popGeo, mat);
+        s.position.copy(wp); s.scale.setScalar(r); s.frustumCulled = false;
+        scene.add(s);
+        const N = 30, pg = new THREE.BufferGeometry(), arr = new Float32Array(N * 3), vel = new Float32Array(N * 3);
+        for (let i = 0; i < N * 3; i++) { arr[i] = (Math.random() - 0.5) * r * 3; vel[i] = arr[i] * 1.5; }
+        pg.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+        const pm = new THREE.PointsMaterial({ color: 0xff8800, size: Math.max(1, r * 0.18), transparent: true, opacity: 1, depthWrite: false });
+        _hyFlatMat(pm);
+        const pts = new THREE.Points(pg, pm);
+        pts.position.copy(wp); pts.frustumCulled = false;
+        scene.add(pts);
+        live.push({ kind: 'pop', obj: s, mat: mat, local: local, r: r, age: 0, life: C.POP_LIFE });
+        live.push({ kind: 'popPts', obj: pts, geo: pg, mat: pm, local: local, vel: vel, age: 0, life: C.POP_LIFE * 1.3 });
+        if (typeof createHitSparks === 'function') { try { createHitSparks(wp, color, Math.max(1, R / 60)); } catch (e) {} }
+        if (typeof playSound === 'function') { try { playSound(fx.pops % 2 ? 'hit' : 'explosion'); } catch (e) {} }
+        fx.pops++;
+    }
+
+    function addRing(r0, r1, life, tilt, col, delay) {
+        const mat = new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.95, side: THREE.DoubleSide,
+            blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(mat);
+        const geo = new THREE.RingGeometry(0.94, 1, 96);
+        const ring = new THREE.Mesh(geo, mat);
+        const pts = [];   // vector edge: a hairline loop just outside the band
+        for (let i = 0; i < 128; i++) { const a = i / 128 * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * 1.02, Math.sin(a) * 1.02, 0)); }
+        const lgeo = new THREE.BufferGeometry().setFromPoints(pts);
+        const lmat = mkLoopMat();
+        const loop = new THREE.LineLoop(lgeo, lmat);
+        loop.frustumCulled = false;
+        loop.userData.__dbTris = Infinity;
+        ring.add(loop);
+        ring.position.copy(fx.center);
+        if (typeof camera !== 'undefined') ring.lookAt(camera.position);
+        ring.rotateX(tilt.x); ring.rotateY(tilt.y);
+        ring.scale.setScalar(r0); ring.frustumCulled = false;
+        ring.visible = !(delay > 0);
+        ring.userData.__dbTris = Infinity;
+        scene.add(ring);
+        live.push({ kind: 'ring', obj: ring, geo: geo, mat: mat, lgeo: lgeo, lmat: lmat, r0: r0, r1: r1, age: -(delay || 0), life: life });
+        fx.rings++;
+    }
+
+    // Vector debris: hull triangles as spinning wire shards + radial streaks,
+    // all in ONE LineSegments (vertex colours, additive) centred on the blast.
+    function addDebris() {
+        const shards = [];
+        const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+        const maxEdge = V * 0.45;
+        for (let i = 0; i < C.SHARDS && meshes.length; i++) {
+            const m = meshes[Math.floor(Math.random() * meshes.length)];
+            const pa = m.geometry.attributes.position, ix = m.geometry.index;
+            const triCount = Math.floor(ix ? ix.count / 3 : pa.count / 3);
+            if (triCount < 1) continue;
+            const tri = Math.floor(Math.random() * triCount);
+            a.fromBufferAttribute(pa, ix ? ix.getX(tri * 3) : tri * 3).applyMatrix4(m.matrixWorld);
+            b.fromBufferAttribute(pa, ix ? ix.getX(tri * 3 + 1) : tri * 3 + 1).applyMatrix4(m.matrixWorld);
+            c.fromBufferAttribute(pa, ix ? ix.getX(tri * 3 + 2) : tri * 3 + 2).applyMatrix4(m.matrixWorld);
+            const cen = new THREE.Vector3().add(a).add(b).add(c).multiplyScalar(1 / 3);
+            const off = [a.clone().sub(cen), b.clone().sub(cen), c.clone().sub(cen)];
+            // keep shards readable: tiny triangles grow, huge ones shrink
+            const ext = Math.max(off[0].length(), off[1].length(), off[2].length());
+            const want = Math.min(maxEdge, Math.max(V * 0.15, ext));
+            if (ext > 1e-6) off.forEach(function (o) { o.multiplyScalar(want / ext); });
+            else off.forEach(function (o) { rnd3(o).multiplyScalar(want); });
+            const rel = cen.sub(fx.center);
+            const dir = rel.lengthSq() > 1 ? rel.clone().normalize() : rnd3(new THREE.Vector3()).normalize();
+            dir.add(rnd3(tmp).multiplyScalar(0.6)).normalize();
+            const sp = V * (C.SHARD_SPEED_K[0] + Math.random() * (C.SHARD_SPEED_K[1] - C.SHARD_SPEED_K[0]));
+            shards.push({ p: rel, v: dir.multiplyScalar(sp), off: off,
+                axis: rnd3(new THREE.Vector3()).normalize(),
+                w: (Math.random() - 0.5) * 9, life: 0.6 + Math.random() * 0.4 });
+        }
+        const streaks = [];
+        for (let i = 0; i < C.STREAKS; i++) {
+            streaks.push({ d: rnd3(new THREE.Vector3()).normalize(), r: V * Math.random() * 0.3,
+                v: V * (C.STREAK_SPEED_K[0] + Math.random() * (C.STREAK_SPEED_K[1] - C.STREAK_SPEED_K[0])),
+                len: V * (0.5 + Math.random() * 1.1), life: 0.45 + Math.random() * 0.55 });
+        }
+        // Each segment is drawn as a thin camera-facing ribbon (4 verts), so
+        // the vector lines keep a few pixels of width (GL lines are 1 px).
+        const nSeg = shards.length * 3 + streaks.length;
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nSeg * 12), 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(nSeg * 12), 3));
+        const idx = new (nSeg * 4 > 65535 ? Uint32Array : Uint16Array)(nSeg * 6);
+        for (let i = 0; i < nSeg; i++) {
+            const v0 = i * 4;
+            idx[i * 6] = v0; idx[i * 6 + 1] = v0 + 1; idx[i * 6 + 2] = v0 + 2;
+            idx[i * 6 + 3] = v0 + 2; idx[i * 6 + 4] = v0 + 1; idx[i * 6 + 5] = v0 + 3;
+        }
+        geo.setIndex(new THREE.BufferAttribute(idx, 1));
+        const mat = mkDebrisMat();
+        const lines = new THREE.Mesh(geo, mat);
+        lines.position.copy(fx.center); lines.frustumCulled = false;
+        lines.userData.__dbTris = Infinity;
+        scene.add(lines);
+        live.push({ kind: 'debris', obj: lines, geo: geo, mat: mat, age: 0, life: C.DEBRIS_LIFE,
+            shards: shards, streaks: streaks, fc: new THREE.Color(color), hot: new THREE.Color(0xffffff), mix: new THREE.Color(),
+            seg: new Float32Array(nSeg * 6), segCol: new Float32Array(nSeg * 6), nSeg: nSeg });
+        fx.debris = nSeg;
+    }
+
+    function addFlash() {
+        const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1,
+            blending: THREE.AdditiveBlending, depthWrite: false });
+        _hyFlatMat(mat);
+        const s = new THREE.Mesh(popGeo, mat);
+        s.position.copy(fx.center); s.scale.setScalar(V * C.FLASH_R_K); s.frustumCulled = false;
+        scene.add(s);
+        live.push({ kind: 'flash', obj: s, mat: mat, age: 0, life: C.FLASH_LIFE, r: V * C.FLASH_R_K });
+    }
+
+    // 'BOSS DESTROYED' / '<FACTION> FLAGSHIP'. flashArcadeText yields to the
+    // boss intro card and event alerts, so the blast retries for a moment.
+    function callout() {
+        if (typeof flashArcadeText !== 'function') return true;
+        const flagship = isBoss && !ud.isGuardian;
+        const word = flagship ? 'BOSS DESTROYED' : 'GUARDIAN DESTROYED';
+        let sub = null;
+        try { sub = (typeof _killLabel === 'function') ? _killLabel(ud) : null; } catch (e) {}
+        if (sub) sub = sub + (flagship ? ' FLAGSHIP' : ' GUARDIAN');
+        flashArcadeText(word, 6, sub);
+        const el = document.getElementById('arcadeText');
+        if (el && el.textContent.indexOf(word) >= 0) { fx.callout = word + (sub ? ' / ' + sub : ''); return true; }
+        return false;
+    }
+
+    function finalBlast() {
+        fx.phase = 'final';
+        fx.finalAt = performance.now();
+        enemy.updateMatrixWorld(true);
+        fx.center = enemy.getWorldPosition(new THREE.Vector3());
+        addDebris();                                   // cut from the hull before it goes
+        for (let i = 0; i < warm.length; i++) if (warm[i].parent) warm[i].parent.remove(warm[i]);
+        holder.remove(enemy);
+        scene.remove(holder);
+        addFlash();
+        if (typeof createBossExplosion === 'function') {
+            try { createBossExplosion(fx.center, { color: color, scale: blastScale }); } catch (e) {}
+        }
+        addRing(V * C.RING_R0_K, V * C.RING_R1_K, C.RING_LIFE, { x: -1.0, y: 0.25 }, color, 0);
+        addRing(V * C.RING_R0_K * 0.7, V * C.RING_R1_K * 0.7, C.RING_LIFE * 0.9, { x: 0.35, y: 1.2 }, color, 140);
+        addRing(V * C.RING_R0_K * 0.5, V * C.RING_R1_K * 0.45, C.RING_LIFE * 0.7, { x: 0, y: 0 }, 0xffffff, 0);
+        if (window.arcade) {
+            try { window.arcade.flash('rgba(255,236,190,1)', 0.6); } catch (e) {}
+            try { window.arcade.hitstop(C.HITSTOP_MS); fx.hitstop = true; } catch (e) {}
+            try { window.arcade.slowmo(C.SLOWMO_MS); } catch (e) {}
+        }
+        const shake = window.whipScreenShake || (typeof whipScreenShake === 'function' ? whipScreenShake : null);
+        if (shake) { try { shake(C.SHAKE_AMP, C.SHAKE_MS); fx.shake = true; } catch (e) {} }
+        const pulse = window.whipScreenPulse || (typeof whipScreenPulse === 'function' ? whipScreenPulse : null);
+        if (pulse) { try { pulse(color, C.PULSE); fx.pulse = true; } catch (e) {} }
+        if (!callout()) fx._calloutUntil = fx.t + C.CALLOUT_RETRY_MS;
+        // the kill paths' celebration, moved from the kill to the blast
+        if (opts.celebrate && typeof createFireworkCelebration === 'function') { try { createFireworkCelebration(); } catch (e) {} }
+        if (opts.music && typeof playBossVictoryMusic === 'function') { try { playBossVictoryMusic(); } catch (e) {} }
+        if (opts.ambient) setTimeout(function () { if (typeof switchToAmbientMusic === 'function') switchToAmbientMusic(); }, 800);
+        // shock pulse: shove living ships near the blast outward
+        pushList = [];
+        if (typeof enemies !== 'undefined') {
+            const range = Math.min(C.PUSH_RANGE_MAX, V * C.PUSH_RANGE_K);
+            for (let i = 0; i < enemies.length; i++) {
+                const e = enemies[i];
+                if (!e || !e.userData || e.userData.health <= 0 || e === enemy) continue;
+                const d = e.position.distanceTo(fx.center);
+                if (d > range || d < 1) continue;
+                pushList.push({ e: e, dir: e.position.clone().sub(fx.center).normalize(), k: 1 - d / range });
+            }
+        }
+        fx.pushed = pushList.length;
+    }
+
+    function disposeLive(L) {
+        if (L.obj.parent) L.obj.parent.remove(L.obj);
+        if (L.geo) L.geo.dispose();
+        if (L.mat) L.mat.dispose();
+        if (L.lgeo) L.lgeo.dispose();
+        if (L.lmat) L.lmat.dispose();
+    }
+
+    const _rA = new THREE.Vector3(), _rB = new THREE.Vector3(), _rD = new THREE.Vector3(), _rS = new THREE.Vector3(), _rC = new THREE.Vector3();
+    function stepDebris(L, k, dt) {
+        const pos = L.seg, col = L.segCol, f = dt / 1000;
+        let w = 0;
+        for (let s = 0; s < L.shards.length; s++) {
+            const S = L.shards[s];
+            S.p.addScaledVector(S.v, f); S.v.multiplyScalar(Math.pow(0.55, f));
+            tmpQ.setFromAxisAngle(S.axis, S.w * L.age / 1000);
+            const kk = Math.min(1, k / S.life), fade = 1 - kk;
+            L.mix.copy(L.hot).lerp(L.fc, Math.min(1, kk * 2.5)).multiplyScalar(fade);
+            for (let e = 0; e < 3; e++) {
+                tmp.copy(S.off[e]).applyQuaternion(tmpQ).add(S.p);
+                pos[w] = tmp.x; pos[w + 1] = tmp.y; pos[w + 2] = tmp.z;
+                tmp.copy(S.off[(e + 1) % 3]).applyQuaternion(tmpQ).add(S.p);
+                pos[w + 3] = tmp.x; pos[w + 4] = tmp.y; pos[w + 5] = tmp.z;
+                col[w] = col[w + 3] = L.mix.r; col[w + 1] = col[w + 4] = L.mix.g; col[w + 2] = col[w + 5] = L.mix.b;
+                w += 6;
+            }
+        }
+        for (let s = 0; s < L.streaks.length; s++) {
+            const S = L.streaks[s];
+            const kk = Math.min(1, k / S.life), fade = 1 - kk;
+            S.r += S.v * f * (1 - kk * 0.7);
+            const len = S.len * (1 - kk * 0.8);
+            pos[w] = S.d.x * S.r; pos[w + 1] = S.d.y * S.r; pos[w + 2] = S.d.z * S.r;
+            pos[w + 3] = S.d.x * (S.r + len); pos[w + 4] = S.d.y * (S.r + len); pos[w + 5] = S.d.z * (S.r + len);
+            L.mix.copy(L.hot).lerp(L.fc, Math.min(1, kk * 1.6)).multiplyScalar(fade);
+            col[w] = L.mix.r * 0.35; col[w + 1] = L.mix.g * 0.35; col[w + 2] = L.mix.b * 0.35;
+            col[w + 3] = L.mix.r; col[w + 4] = L.mix.g; col[w + 5] = L.mix.b;
+            w += 6;
+        }
+        // ribbons: offset each segment sideways, perpendicular to the view
+        const P = L.geo.attributes.position.array, Q = L.geo.attributes.color.array;
+        _rC.set(0, 0, 0);
+        let halfW = V * 0.012;
+        if (typeof camera !== 'undefined') {
+            _rC.copy(camera.position).sub(L.obj.position);   // camera in the debris' (unrotated) frame
+            const px = (typeof _plumePxPerUnit === 'function') ? _plumePxPerUnit(Math.max(1, _rC.length())) : 0;
+            if (px > 0) halfW = Math.max(halfW, C.DEBRIS_PX * 0.5 / px);
+        }
+        for (let i = 0; i < L.nSeg; i++) {
+            const o = i * 6;
+            _rA.set(pos[o], pos[o + 1], pos[o + 2]); _rB.set(pos[o + 3], pos[o + 4], pos[o + 5]);
+            _rD.subVectors(_rB, _rA);
+            _rS.subVectors(_rC, _rA).cross(_rD);
+            const sl = _rS.length();
+            if (sl > 1e-9) _rS.multiplyScalar(halfW / sl); else _rS.set(halfW, 0, 0);
+            const w = i * 12;
+            P[w] = _rA.x - _rS.x; P[w + 1] = _rA.y - _rS.y; P[w + 2] = _rA.z - _rS.z;
+            P[w + 3] = _rA.x + _rS.x; P[w + 4] = _rA.y + _rS.y; P[w + 5] = _rA.z + _rS.z;
+            P[w + 6] = _rB.x - _rS.x; P[w + 7] = _rB.y - _rS.y; P[w + 8] = _rB.z - _rS.z;
+            P[w + 9] = _rB.x + _rS.x; P[w + 10] = _rB.y + _rS.y; P[w + 11] = _rB.z + _rS.z;
+            Q[w] = Q[w + 3] = col[o]; Q[w + 1] = Q[w + 4] = col[o + 1]; Q[w + 2] = Q[w + 5] = col[o + 2];
+            Q[w + 6] = Q[w + 9] = col[o + 3]; Q[w + 7] = Q[w + 10] = col[o + 4]; Q[w + 8] = Q[w + 11] = col[o + 5];
+        }
+        L.geo.attributes.position.needsUpdate = true;
+        L.geo.attributes.color.needsUpdate = true;
+    }
+
+    function stepLive(dt) {
+        for (let i = live.length - 1; i >= 0; i--) {
+            const L = live[i];
+            L.age += dt;
+            if (L.age < 0) continue;
+            if (L.kind === 'ring' && !L.obj.visible) L.obj.visible = true;
+            const k = Math.min(1, L.age / L.life);
+            if (L.kind === 'pop' || L.kind === 'popPts') {
+                if (fx.phase === 'throe') { tmp.copy(L.local); enemy.localToWorld(tmp); L.obj.position.copy(tmp); }
+                if (L.kind === 'pop') L.obj.scale.setScalar(L.r * (1 + C.POP_GROW * Math.sqrt(k)));
+                else {
+                    const a = L.geo.attributes.position.array, f = dt / 1000;
+                    for (let j = 0; j < a.length; j++) a[j] += L.vel[j] * f;
+                    L.geo.attributes.position.needsUpdate = true;
+                }
+                L.mat.opacity = 1 - k;
+            } else if (L.kind === 'flash') {
+                L.obj.scale.setScalar(L.r * (1 + 2.4 * Math.sqrt(k)));
+                L.mat.opacity = (1 - k) * (1 - k);
+            } else if (L.kind === 'ring') {
+                L.obj.scale.setScalar(L.r0 + (L.r1 - L.r0) * (1 - Math.pow(1 - k, 3)));
+                L.mat.opacity = 0.95 * (1 - k);
+                L.lmat.opacity = 1 - k * k;
+            } else if (L.kind === 'debris') {
+                stepDebris(L, k, dt);
+            }
+            if (k >= 1) { disposeLive(L); live.splice(i, 1); }
+        }
+    }
+
+    let nextPop = 0;
+    explosionManager.addExplosion({
+        update(dtIn) {
+            const dt = Math.min(50, Math.max(0, dtIn || 0));
+            fx.t += dt;
+            if (fx.phase === 'throe') {
+                while (nextPop < popTimes.length && fx.t >= popTimes[nextPop]) {
+                    addPop(nextPop === popTimes.length - 1);
+                    nextPop++;
+                }
+                const prog = Math.min(1, fx.t / fx.tFinal);
+                // tumble, ramping up
+                tmpQ.setFromAxisAngle(tumbleAxis, (C.TUMBLE0 + (C.TUMBLE1 - C.TUMBLE0) * prog * prog) * dt / 1000);
+                enemy.quaternion.premultiply(tmpQ);
+                // shudder, applied as a delta so a world shift cannot strand it
+                enemy.position.sub(jitter);
+                rnd3(jitter).multiplyScalar(R * C.SHUDDER_K * (0.4 + prog) * 2);
+                enemy.position.add(jitter);
+                // flicker: blinks faster and longer as it fails
+                flickT -= dt;
+                if (flickT <= 0) {
+                    const off = Math.random() < 0.08 + 0.4 * prog;
+                    enemy.visible = !off;
+                    flickT = off ? 30 + Math.random() * 50 : 60 + Math.random() * (160 - 110 * prog);
+                }
+                if (fx.t >= fx.tFinal) {
+                    enemy.visible = true;
+                    enemy.position.sub(jitter); jitter.set(0, 0, 0);
+                    finalBlast();
+                }
+            } else {
+                if (fx._calloutUntil && !fx.callout && fx.t < fx._calloutUntil) callout();
+                const since = fx.t - fx.tFinal;
+                if (pushList && pushList.length && since < C.PUSH_MS) {
+                    const kk = 1 - since / C.PUSH_MS;
+                    for (let i = 0; i < pushList.length; i++) {
+                        const P = pushList[i];
+                        if (!P.e.parent || P.e.userData.health <= 0) continue;
+                        P.e.position.addScaledVector(P.dir, V * C.PUSH_K * P.k * kk * 2 * dt / C.PUSH_MS);
+                    }
+                }
+            }
+            stepLive(dt);
+            return !(fx.phase === 'final' && live.length === 0);
+        },
+        cleanup() {
+            for (let i = 0; i < live.length; i++) disposeLive(live[i]);
+            live.length = 0;
+            for (let i = 0; i < warm.length; i++) {
+                if (warm[i].parent) warm[i].parent.remove(warm[i]);
+                warm[i].material.dispose();
+                if (i === 0) warm[i].geometry.dispose();
+            }
+            warm.length = 0;
+            if (enemy.parent === holder) holder.remove(enemy);
+            if (holder.parent) holder.parent.remove(holder);
+            popGeo.dispose();
+            fx.phase = 'done';
+            fx.doneAt = performance.now();
+        }
+    });
+    return true;
+}
+if (typeof window !== 'undefined') window.hyBossDeath = hyBossDeath;
+
+// =============================================================================
 // MASSIVE BORG CUBE EXPLOSION - For 100 HP BORG destruction
 // =============================================================================
 
@@ -12321,6 +13407,476 @@ function createLaserBeam(startPos, endPos, color = '#00ff96', isPlayer = true) {
 // once (so a pitched/yawed first shot baked a swollen box in for good) and
 // first person ignored the ship entirely (fixed camera offsets).
 const _HY_GUN = { SPREAD: 0.85, DOWN: 0.10, FWD: 0.75 }; // fraction of half-width out, of height down, of the way to the nose
+// HULL FIT (package hullfit, Ben 2026-10-11: "The thrusters, gun, and charge
+// locations will needs some adjusting to match the new model" + "thrusters
+// should generate light. there should be some kind of light elements on the
+// ship"). One anchor table per hull, keyed by model name (the playerModel
+// switch value; default 'Player'). Every point is a FRACTION of the hull's own
+// local box (_hyShipLocalBox): x -1..1 of half-width, y -1..1 of half-height,
+// z -1..1 of half-length measured from the box centre, nose = +1 — so the
+// numbers survive any scale and any warp pull-back. In the ship's frame +X is
+// the PORT side (the ship's +Z is camera-forward, so its +X is screen-left).
+//   thrusters [{x,y,z, r}]  nozzle exit centre; r = cone radius / hull width
+//   guns      [{x,y,z}]     barrel muzzles (2 or more; [0] is the -X gun)
+//   charge    {x,y,z, r}    where a charged shot gathers; r = glow / hull width
+//   lights    [{x,y,z, kind, size}]  hull light elements; size / hull width
+//             kind: port | starboard | strobe | cockpit | throat | panel
+// The stock hull's thrusters and bloom sprites were hand-tuned in its LOCAL
+// units long before this table; `exact` keeps those numbers verbatim so the
+// stock hull (and any wingman flying it) is byte-identical to before. Its guns
+// are _HY_GUN written as fractions (computed bit-exactly the same way).
+// XT-7small: measured from models/XT-7small.glb itself after the in-game bake
+// (yaw +90 about Y: x' = z_raw, z' = -x_raw; box half 0.676 x 0.398 x 0.951
+// raw, 0.0723 x 0.0425 x 0.1016 local): vertices within 6% of the rear plane
+// clustered on a 0.1 x/y grid give two round nozzle rims centred x ±0.20,
+// y 0.56 (ring ±0.10 of half-width, ±0.18 of half-height), exit plane z -0.95;
+// the wingtip gun pods are vertex clusters at |x| 0.868-0.914, y -0.61..-0.77
+// whose forward-most rings stop at z -0.073 (the muzzle); the nose tip is
+// z 1.0 at y -0.07..-0.15. The turnarounds agree (rear view: nozzles 0.20 of
+// half-width out, 0.58 of half-height up; top view: pod muzzles 0.08 of
+// half-length behind centre). Surface heights for the lights were read off the
+// same vertices (canopy top y 0.30 at z 0.30; red dot strips on the shoulders
+// y 0.15 at x ±0.24, z 0.27; spine y 0.34 at z 0; fin top y 1.0 at z -0.9;
+// wingtip top y -0.66 at |x| 0.95, z -0.4).
+const HY_HULL_POINTS = {
+    Player: {
+        exact: {
+            // camera-system.js createThrusterGlowsForModel (cones) and
+            // game-models.js engine-bloom sprites, verbatim
+            thrusters: [[-0.022, 0, -0.125], [0.022, 0, -0.125]],
+            cone: { r: 0.01, len: 0.035, r2: 0.015, len2: 0.05, back: 0.008 },
+            bloom: [[-0.024, 0, -0.14], [0.024, 0, -0.14]]
+        },
+        guns: [{ x: -0.85, y: -0.2, z: 0.75 }, { x: 0.85, y: -0.2, z: 0.75 }],   // == _HY_GUN
+        charge: null,                       // legacy: the midpoint of the two guns
+        // light elements on the stock vector craft: kept small and few so it
+        // still reads as the flat-cyan vector ship (box half 0.096 x 0.036 x 0.102)
+        lights: [
+            { x:  1.00, y: -0.80, z:  0.00, kind: 'port',      size: 0.10 },
+            { x: -1.00, y: -0.80, z:  0.00, kind: 'starboard', size: 0.10 },
+            { x:  0.00, y:  0.50, z: -0.62, kind: 'strobe',    size: 0.12 },
+            { x:  0.00, y:  0.48, z:  0.25, kind: 'cockpit',   size: 0.14 },
+            { x: -0.23, y:  0.00, z: -1.08, kind: 'throat',    size: 0.10 },
+            { x:  0.23, y:  0.00, z: -1.08, kind: 'throat',    size: 0.10 },
+            { x:  0.42, y:  0.34, z: -0.40, kind: 'panel',     size: 0.045 },
+            { x: -0.42, y:  0.34, z: -0.40, kind: 'panel',     size: 0.045 }
+        ]
+    },
+    'XT-7small': {
+        thrusters: [{ x: -0.20, y: 0.56, z: -0.95, r: 0.036 }, { x: 0.20, y: 0.56, z: -0.95, r: 0.036 }],
+        guns: [{ x: -0.891, y: -0.69, z: -0.073 }, { x: 0.891, y: -0.69, z: -0.073 }],
+        charge: { x: 0, y: -0.11, z: 1.02, r: 0.55 },
+        lights: [
+            { x:  0.98, y: -0.58, z: -0.45, kind: 'port',      size: 0.14 },
+            { x: -0.98, y: -0.58, z: -0.45, kind: 'starboard', size: 0.14 },
+            { x:  0.00, y:  1.04, z: -0.88, kind: 'strobe',    size: 0.16 },
+            { x:  0.00, y:  0.40, z:  0.30, kind: 'cockpit',   size: 0.20 },
+            { x: -0.20, y:  0.56, z: -0.97, kind: 'throat',    size: 0.10 },
+            { x:  0.20, y:  0.56, z: -0.97, kind: 'throat',    size: 0.10 },
+            // the red dot strips beside the canopy (seen from the side / above)
+            { x:  0.24, y:  0.18, z:  0.27, kind: 'panel',     size: 0.05 },
+            { x: -0.24, y:  0.18, z:  0.27, kind: 'panel',     size: 0.05 },
+            // amber deck lights on the wings' trailing edge and the nacelle tops (seen from the chase cam)
+            { x:  0.62, y:  0.05, z: -0.78, kind: 'panel',     size: 0.05, color: 0xffb040 },
+            { x: -0.62, y:  0.05, z: -0.78, kind: 'panel',     size: 0.05, color: 0xffb040 },
+            { x:  0.00, y:  0.37, z: -0.02, kind: 'panel',     size: 0.045, color: 0xffb040 }
+        ]
+    },
+    // ── v2 FIGHTERS (package AI enemyhulls, Ben 2026-10-11: "these will need scaling and the thruster plumes
+    // as well" + "and lights"). `nose: -1` = written in the FIGHTER'S OWN local frame: nose at z = -1, the
+    // engines at +Z, +X = starboard (port lights at -X). Measured on the BAKED geometry (models/Enemy<n>-v2.glb
+    // after _hyBakeAltModel, .critic/eh probes): the nozzle centres are where the glowing exhaust parts sit on
+    // a rear view framed on the hull box (cross-checked against the rear-facing vertices: the exit plane z is
+    // the rear-most rear-facing vertex within the rim), r = rim radius / hull width. Light heights are a
+    // straight-down raycast onto the hull (+0.04 lift); nav lights sit on the wingtip / leg-tip vertices.
+    // Cockpit + panel lights take the FACTION colour (color: 'faction'), throats the plume's.
+    'Enemy1-v2': { nose: -1,   // spider: one orange engine panel low on the rear face
+        thrusters: [{ x: 0.00, y: -0.13, z: 0.62, r: 0.045 }],
+        lights: [
+            { x: -0.98, y:  0.76, z:  0.88, kind: 'port',      size: 0.06 },
+            { x:  0.98, y:  0.76, z:  0.88, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.45, z:  0.00, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.19, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x:  0.00, y: -0.13, z:  0.66, kind: 'throat',    size: 0.08 },
+            { x:  0.30, y:  0.07, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.30, y:  0.07, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy2-v2': { nose: -1,   // long insect hull: one cyan engine ring, recessed in the rear face
+        thrusters: [{ x: 0.00, y: -0.02, z: 0.69, r: 0.075 }],
+        lights: [
+            { x: -1.00, y:  0.09, z: -0.82, kind: 'port',      size: 0.08 },
+            { x:  1.00, y:  0.09, z: -0.82, kind: 'starboard', size: 0.08 },
+            { x:  0.00, y:  0.89, z:  0.30, kind: 'strobe',    size: 0.09 },
+            { x:  0.00, y:  0.93, z:  0.00, kind: 'cockpit',   size: 0.11, color: 'faction' },
+            { x:  0.00, y: -0.02, z:  0.72, kind: 'throat',    size: 0.12 },
+            { x:  0.45, y:  0.89, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' },
+            { x: -0.45, y:  0.89, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' }
+        ] },
+    'Enemy3-v2': { nose: -1,   // flat fork: the two side pods' white exhausts, mid-ship
+        thrusters: [{ x: -0.636, y: -0.19, z: 0.28, r: 0.035 }, { x: 0.636, y: -0.19, z: 0.28, r: 0.035 }],
+        lights: [
+            { x: -1.00, y: -0.24, z: -0.35, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.24, z: -0.35, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  1.01, z: -0.80, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.79, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.636, y: -0.19, z: 0.31, kind: 'throat',    size: 0.06 },
+            { x:  0.636, y: -0.19, z: 0.31, kind: 'throat',    size: 0.06 },
+            { x:  0.45, y:  0.10, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.10, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy4-v2': { nose: -1,   // crystal wings: two round nozzles under the tail of the centre body
+        thrusters: [{ x: -0.11, y: 0.00, z: 0.72, r: 0.033 }, { x: 0.11, y: 0.00, z: 0.72, r: 0.033 }],
+        lights: [
+            { x: -1.00, y: -0.26, z: -0.54, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.26, z: -0.54, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.47, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.95, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.11, y:  0.00, z:  0.75, kind: 'throat',    size: 0.06 },
+            { x:  0.11, y:  0.00, z:  0.75, kind: 'throat',    size: 0.06 },
+            { x:  0.70, y:  0.20, z:  0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.70, y:  0.20, z:  0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy5-v2': { nose: -1,   // crab: the glowing cyan grille across the rear face, two plumes on it
+        thrusters: [{ x: -0.22, y: 0.05, z: 0.99, r: 0.06 }, { x: 0.22, y: 0.05, z: 0.99, r: 0.06 }],
+        lights: [
+            { x: -1.00, y:  0.00, z:  0.06, kind: 'port',      size: 0.06 },
+            { x:  1.00, y:  0.00, z:  0.06, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.51, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.37, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.22, y:  0.05, z:  1.02, kind: 'throat',    size: 0.08 },
+            { x:  0.22, y:  0.05, z:  1.02, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y:  0.48, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.48, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy6-v2': { nose: -1,   // hex pod: one cyan nozzle high in the rear face's hexagon
+        thrusters: [{ x: 0.00, y: 0.434, z: 0.95, r: 0.045 }],
+        lights: [
+            { x: -1.00, y:  0.47, z: -0.04, kind: 'port',      size: 0.06 },
+            { x:  1.00, y:  0.47, z: -0.04, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  1.01, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.97, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x:  0.00, y:  0.434, z: 0.98, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y:  0.73, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.73, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy7-v2': { nose: -1,   // armoured eye: no modelled nozzle — two plumes low on the rear dome
+        thrusters: [{ x: -0.30, y: -0.30, z: 0.78, r: 0.06 }, { x: 0.30, y: -0.30, z: 0.78, r: 0.06 }],
+        lights: [
+            { x: -1.00, y:  0.71, z:  0.04, kind: 'port',      size: 0.06 },
+            { x:  1.00, y:  0.71, z:  0.04, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.99, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.96, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.30, y: -0.30, z:  0.81, kind: 'throat',    size: 0.08 },
+            { x:  0.30, y: -0.30, z:  0.81, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y:  0.59, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.59, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy8-v2': { nose: -1,   // swept wedge: one big nozzle over a row of three
+        thrusters: [{ x: 0.00, y: 0.09, z: 0.98, r: 0.067 },
+                    { x: -0.36, y: -0.37, z: 0.98, r: 0.05 }, { x: 0.00, y: -0.37, z: 0.98, r: 0.05 }, { x: 0.36, y: -0.37, z: 0.98, r: 0.05 }],
+        lights: [
+            { x: -1.00, y: -1.00, z: -1.00, kind: 'port',      size: 0.08 },
+            { x:  1.00, y: -1.00, z: -1.00, kind: 'starboard', size: 0.08 },
+            { x:  0.00, y:  1.00, z:  0.70, kind: 'strobe',    size: 0.09 },
+            { x:  0.00, y:  0.34, z: -0.45, kind: 'cockpit',   size: 0.11, color: 'faction' },
+            { x:  0.00, y:  0.09, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x: -0.36, y: -0.37, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.00, y: -0.37, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.36, y: -0.37, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y: -0.26, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' },
+            { x: -0.45, y: -0.26, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' }
+        ] },
+    // ── BOSSES (Ben 2026-10-11: "boss enemies need illumination as well as all new enemies"): nozzles from the
+    // rear-plane vertex blobs of each baked hull (the integrator's tmp/glb-nozzles.py) checked against the turnarounds;
+    // lights laid out generically on the box (nav at the wing extremes, strobe on top, cockpit forward, panels aft).
+    'Boss1-v2': { nose: -1,   // spread-wing prow: two red engine rings either side of the tail (placed from the turnaround; the rear slab only caught the leg tips)
+        thrusters: [{ x: -0.32, y: +0.05, z: 0.98, r: 0.060 }, { x: +0.32, y: +0.05, z: 0.98, r: 0.060 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.32, y: +0.05, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x: +0.32, y: +0.05, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss2-v2': { nose: -1,   // orb: the single hex engine port on the rear face
+        thrusters: [{ x: +0.00, y: -0.09, z: 0.98, r: 0.140 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.09, z:  1.01, kind: 'throat',    size: 0.13 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss3-v2': { nose: -1,   // bat: one central exhaust under the twin cannon (the two rear blobs at y +0.82 are the barrel ends)
+        thrusters: [{ x: +0.00, y: -0.10, z: 0.98, r: 0.120 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.10, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss4-v2': { nose: -1,   // three exhaust cylinders: two big outer rings and a centre one
+        thrusters: [{ x: -0.71, y: -0.21, z: 0.98, r: 0.120 }, { x: +0.00, y: -0.21, z: 0.98, r: 0.090 }, { x: +0.71, y: -0.21, z: 0.98, r: 0.120 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.71, y: -0.21, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x: +0.00, y: -0.21, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x: +0.71, y: -0.21, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss5-v2': { nose: -1,   // dart: two outer pods and two inner nozzles
+        thrusters: [{ x: -0.70, y: -0.23, z: 0.98, r: 0.080 }, { x: -0.36, y: -0.21, z: 0.98, r: 0.045 }, { x: +0.36, y: -0.21, z: 0.98, r: 0.045 }, { x: +0.70, y: -0.23, z: 0.98, r: 0.080 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.70, y: -0.23, z:  1.01, kind: 'throat',    size: 0.07 },
+            { x: -0.36, y: -0.21, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x: +0.36, y: -0.21, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x: +0.70, y: -0.23, z:  1.01, kind: 'throat',    size: 0.07 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss6-v2': { nose: -1,   // wedge: three pods in a row below the hull
+        thrusters: [{ x: -0.55, y: -0.62, z: 0.98, r: 0.100 }, { x: +0.00, y: -0.62, z: 0.98, r: 0.100 }, { x: +0.55, y: -0.62, z: 0.98, r: 0.100 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.20, z: -0.75, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.55, y: -0.62, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x: +0.00, y: -0.62, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x: +0.55, y: -0.62, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss7-v2': { nose: -1,   // crystal spike: two rear facets, one above the other
+        thrusters: [{ x: +0.00, y: -0.07, z: 0.98, r: 0.100 }, { x: +0.00, y: +0.38, z: 0.98, r: 0.080 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.10, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.10, z: -0.90, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.07, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x: +0.00, y: +0.38, z:  1.01, kind: 'throat',    size: 0.07 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss8-v2': { nose: -1,   // crescent: the one orange exhaust low on the tail
+        thrusters: [{ x: +0.00, y: -0.30, z: 0.98, r: 0.090 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.00, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.00, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.30, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] }
+};
+// The table entry for a hull object (player ship, wingman clone, any model
+// built from modelCache.player): the baked alternate hull carries its name in
+// userData._hyAltHull (clones copy userData); anything else is the stock hull.
+function hyHullKey(model) {
+    if (model && model.userData && model.userData._hyHullKey) return model.userData._hyHullKey;
+    let name = null;
+    if (model) {
+        if (model.userData && model.userData._hyAltHull) name = model.userData._hyAltHull.name;
+        else if (model.traverse) model.traverse((o) => { if (!name && o.userData && o.userData._hyAltHull) name = o.userData._hyAltHull.name; });
+    }
+    const key = (name && HY_HULL_POINTS[name]) ? name : 'Player';
+    if (model && model.userData) model.userData._hyHullKey = key;
+    return key;
+}
+function hyHullPoints(model) { return HY_HULL_POINTS[hyHullKey(model)]; }
+// A box-fraction anchor → the hull's local frame (out = Vector3).
+function hyHullLocal(box, p, out) {
+    const cx = (box.min.x + box.max.x) / 2, cy = (box.min.y + box.max.y) / 2, cz = (box.min.z + box.max.z) / 2;
+    return out.set(cx + (box.max.x - box.min.x) / 2 * p.x,
+                   cy + (box.max.y - box.min.y) / 2 * p.y,
+                   cz + (box.max.z - box.min.z) / 2 * p.z);
+}
+// Thruster + bloom anchors in the hull's local frame, for the cone builder
+// (camera-system.js) and the engine-bloom sprites (game-models.js / visual-flair.js).
+//   { key, nozzles: [{pos, r, len, r2, len2, back}], bloom: [Vector3], fxK }
+// fxK = size of this hull's plume relative to the stock hull's (1 for it).
+function hyHullThrusters(model) {
+    const key = hyHullKey(model), e = HY_HULL_POINTS[key];
+    if (e.exact) {
+        const c = e.exact.cone;
+        return { key: key, fxK: 1,
+            nozzles: e.exact.thrusters.map((p) => ({ pos: new THREE.Vector3(p[0], p[1], p[2]), r: c.r, len: c.len, r2: c.r2, len2: c.len2, back: c.back })),
+            bloom: e.exact.bloom.map((p) => new THREE.Vector3(p[0], p[1], p[2])) };
+    }
+    const box = _hyShipLocalBox(model);
+    if (!box) return null;
+    const width = box.max.x - box.min.x;
+    const ref = HY_HULL_POINTS.Player.exact.cone;
+    const nozzles = [], bloom = [];
+    let fxK = 1;
+    e.thrusters.forEach((t) => {
+        const r = t.r * width, k = r / ref.r;
+        fxK = k;
+        const exit = hyHullLocal(box, t, new THREE.Vector3());
+        // the cone's base sits on the nozzle exit plane, as the stock cones sit
+        // just behind the stock hull's tail (base 0.17 x len behind it)
+        const len = ref.len * k;
+        const pos = exit.clone(); pos.z -= len * 0.67;
+        nozzles.push({ pos: pos, r: r, len: len, r2: ref.r2 * k, len2: ref.len2 * k, back: ref.back * k });
+        // stock bloom sprites sit 1.5 cone radii behind the cone centre
+        bloom.push(new THREE.Vector3(pos.x, pos.y, pos.z - 1.5 * r));
+    });
+    return { key: key, fxK: fxK, nozzles: nozzles, bloom: bloom };
+}
+if (typeof window !== 'undefined') {
+    window.HY_HULL_POINTS = HY_HULL_POINTS;
+    window.hyHullKey = hyHullKey;
+    window.hyHullPoints = hyHullPoints;
+    window.hyHullLocal = hyHullLocal;
+    window.hyHullThrusters = hyHullThrusters;
+}
+// ── v2 FIGHTER anchors + LIGHTS (package AI enemyhulls) ───────────────────
+// A fighter built from a baked v2 hull (meshes flagged userData._hyAltMesh = 'Enemy<n>-v2') whose
+// HY_HULL_POINTS entry says `nose: -1`. Its fractions are in the fighter's own local frame (nose -Z,
+// engines +Z), so hyHullLocal reads them directly and "aft" is +Z for its readers (the plume builders
+// above and the lights below), the opposite of the player's +Z-nosed entries read by hyHullThrusters.
+// LIGHTS: one THREE.Points per fighter (the player's hull-light builder, js/camera-system.js), built
+// LAZILY only while the fighter is alive, visible and within RANGE of the camera, and disposed when it
+// leaves, dies or stops being ticked; all fighters share ONE material. No PointLights (a light-count
+// change recompiles every lit material).
+const HY_FIGHTER_LIGHTS = {
+    RANGE: 3000,          // build within this distance (u) of the player/camera, dispose beyond RANGE x 1.1
+    STALE_FRAMES: 30,     // a fighter not ticked for this many frames loses its lights
+    GAIN: 1.0,            // overall brightness of the elements
+    THROAT_WHITE: 0.35    // engine throats: the faction colour this far toward white (the plume core reads hot)
+};
+function _hyFighterHullEntry(ship) {
+    if (!ship || !ship.userData) return null;
+    const ud = ship.userData;
+    if (ud._hyFighterKey === undefined) {
+        let name = null;
+        if (ship.traverse) ship.traverse((o) => { if (!name && o.userData && o.userData._hyAltMesh) name = o.userData._hyAltMesh; });
+        const e = name ? HY_HULL_POINTS[name] : null;
+        ud._hyFighterKey = (e && e.nose === -1) ? name : null;
+    }
+    return ud._hyFighterKey ? HY_HULL_POINTS[ud._hyFighterKey] : null;
+}
+// The hull's local box over the v2 hull meshes ONLY (no hitbox sphere, no rim / glow, no cones).
+function _hyFighterLocalBox(ship) {
+    const ud = ship.userData;
+    if (ud._hyFighterBox) return ud._hyFighterBox;
+    ship.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(ship.matrixWorld).invert();
+    const box = new THREE.Box3(), m = new THREE.Matrix4(), bb = new THREE.Box3();
+    let any = false;
+    ship.traverse((c) => {
+        if (!c.isMesh || !c.geometry || !c.userData || !c.userData._hyAltMesh || c.userData.isGlowLayer) return;
+        if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+        m.multiplyMatrices(inv, c.matrixWorld);
+        bb.copy(c.geometry.boundingBox).applyMatrix4(m);
+        box.union(bb);
+        any = true;
+    });
+    if (!any || !(box.max.x - box.min.x > 1e-9)) return null;
+    ud._hyFighterBox = box;
+    return box;
+}
+// Nozzle exits in the ship's local frame: [{pos: Vector3, r: rim radius (local units)}]
+function _hyFighterNozzles(ship, entry) {
+    const box = _hyFighterLocalBox(ship);
+    if (!box || !entry || !entry.thrusters) return null;
+    const W = box.max.x - box.min.x;
+    return entry.thrusters.map((t) => ({ pos: hyHullLocal(box, t, new THREE.Vector3()), r: t.r * W }));
+}
+const _hyFL = { ships: new Set(), mat: null, frame: -1, size: null };
+function _hyFighterLightsDispose(ship) {
+    const L = ship && ship.userData && ship.userData._hyLights;
+    if (L) {
+        if (L.points.parent) L.points.parent.remove(L.points);
+        L.points.geometry.dispose();                 // the material is shared
+        ship.userData._hyLights = null;
+    }
+    _hyFL.ships.delete(ship);
+}
+function _hyFighterLightsBuild(ship, entry) {
+    if (typeof window._hyMakeHullLightPoints !== 'function') return null;
+    const box = _hyFighterLocalBox(ship);
+    if (!box) return null;
+    if (!_hyFL.mat) _hyFL.mat = window._hyHullLightMaterial();
+    const fac = new THREE.Color(ship.userData.galaxyColor != null ? ship.userData.galaxyColor : 0xff5522);
+    const hot = fac.clone().lerp(new THREE.Color(0xffffff), HY_FIGHTER_LIGHTS.THROAT_WHITE).getHex();
+    const KC = window._HY_HULL_LIGHT_KIND_COLOR || {};
+    const made = window._hyMakeHullLightPoints(entry.lights || [], box, {
+        material: _hyFL.mat,
+        colorOf: (L) => (L.color === 'faction') ? fac.getHex() : (L.kind === 'throat') ? hot : (L.color != null ? L.color : (KC[L.kind] || 0xffffff))
+    });
+    if (!made) return null;
+    made.points.frustumCulled = true;               // off-screen fighters cost nothing
+    const bs = made.points.geometry.boundingSphere;
+    if (bs) bs.radius = bs.radius * 1.15 + (box.max.x - box.min.x) * 0.1;
+    made.points.userData._hyFighterLights = true;
+    ship.add(made.points);
+    const L = { points: made.points, gain: made.gain, kinds: made.kinds, phase: ((ship.id || 0) * 137) % 1000, tick: 0 };
+    ship.userData._hyLights = L;
+    _hyFL.ships.add(ship);
+    return L;
+}
+// Once per frame: drop the lights of fighters that died, left the scene, left range or stopped ticking.
+function _hyFighterLightsSweep(frame) {
+    if (_hyFL.frame === frame) return;
+    _hyFL.frame = frame;
+    if (_hyFL.mat && typeof renderer !== 'undefined' && renderer && renderer.getDrawingBufferSize) {
+        if (!_hyFL.size) _hyFL.size = new THREE.Vector2();
+        renderer.getDrawingBufferSize(_hyFL.size);
+        _hyFL.mat.uniforms.uHalfH.value = _hyFL.size.y * 0.5;
+    }
+    if (!_hyFL.ships.size) return;
+    const camPos = (typeof camera !== 'undefined' && camera) ? camera.position : null;
+    const far2 = Math.pow(HY_FIGHTER_LIGHTS.RANGE * 1.1, 2);
+    _hyFL.ships.forEach((ship) => {
+        const ud = ship.userData || {};
+        const L = ud._hyLights;
+        let attached = !!ship.parent;
+        if (!L || !attached || !(ud.health > 0) || !ship.visible || (frame - L.tick) > HY_FIGHTER_LIGHTS.STALE_FRAMES ||
+            (camPos && ship.position.distanceToSquared(camPos) > far2)) _hyFighterLightsDispose(ship);
+    });
+}
+function _hyFighterLightsTick(ship, dist) {
+    const frame = (typeof gameState !== 'undefined' && gameState) ? (gameState.frameCount || 0) : 0;
+    _hyFighterLightsSweep(frame);
+    const ud = ship.userData;
+    const entry = _hyFighterHullEntry(ship);
+    if (!entry || !entry.lights) return;
+    const near = (dist !== undefined && dist !== null && dist <= HY_FIGHTER_LIGHTS.RANGE) &&
+                 ship.visible && ud.health > 0 && !ud._materializing && !!ship.parent;
+    if (!near) { if (ud._hyLights) _hyFighterLightsDispose(ship); return; }
+    const L = ud._hyLights || _hyFighterLightsBuild(ship, entry);
+    if (!L) return;
+    L.tick = frame;
+    const now = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) + L.phase;
+    const thr = Math.min(1.2, ud._thrusterIntensity || 0);
+    window._hyHullLightGains(L.kinds, L.gain.array, thr, now, HY_FIGHTER_LIGHTS.GAIN);
+    L.gain.needsUpdate = true;
+}
+if (typeof window !== 'undefined') {
+    window.HY_FIGHTER_LIGHTS = HY_FIGHTER_LIGHTS;
+    window._hyFighterLights = _hyFL;
+    window._hyFighterHullEntry = _hyFighterHullEntry;
+    window._hyFighterNozzles = _hyFighterNozzles;
+}
 function _hyShipLocalBox(ship) {
     const ud = ship.userData;
     const key = (ship.scale.x || 1).toFixed(4) + ':' + ship.children.length;
@@ -12368,11 +13924,33 @@ function getPlayerWingGuns() {
     const noseZ = localZ.dot(camFwd) >= 0 ? box.max.z : box.min.z;
     const cx = (box.min.x + box.max.x) / 2, cy = (box.min.y + box.max.y) / 2, cz = (box.min.z + box.max.z) / 2;
     const halfW = (box.max.x - box.min.x) / 2, h = box.max.y - box.min.y;
-    const gy = cy - h * _HY_GUN.DOWN;
-    const gz = cz + (noseZ - cz) * _HY_GUN.FWD;
-    const mk = (side) => new THREE.Vector3((cx + side * halfW * _HY_GUN.SPREAD) * s, gy * s, gz * s)
-        .applyQuaternion(att).add(pos);
-    return { left: mk(-1), right: mk(1) };
+    // HULL FIT: the hull's own muzzles from HY_HULL_POINTS (box fractions).
+    // Written so the stock entry (x ±0.85, y -0.2, z 0.75 == _HY_GUN) gives
+    // bit-identical results to the old expressions: halfW*(-0.85) ==
+    // (-1*halfW)*0.85, h*(-0.2*0.5) == -(h*0.10) (halving is exact).
+    const entry = (typeof HY_HULL_POINTS !== 'undefined') ? HY_HULL_POINTS[hyHullKey(ship)] : null;
+    const gunPts = (entry && entry.guns && entry.guns.length >= 2) ? entry.guns : null;
+    if (!gunPts) {
+        // unknown hull: the box-fraction guess
+        const gy = cy - h * _HY_GUN.DOWN;
+        const gz = cz + (noseZ - cz) * _HY_GUN.FWD;
+        const mk = (side) => new THREE.Vector3((cx + side * halfW * _HY_GUN.SPREAD) * s, gy * s, gz * s)
+            .applyQuaternion(att).add(pos);
+        return { left: mk(-1), right: mk(1) };
+    }
+    const mkP = (g) => new THREE.Vector3((cx + halfW * g.x) * s, (cy + h * (g.y * 0.5)) * s,
+        (cz + (noseZ - cz) * g.z) * s).applyQuaternion(att).add(pos);
+    const all = gunPts.map(mkP);
+    const out = { left: all[0], right: all[1] };
+    if (all.length > 2) out.all = all;
+    // charge point + glow size (world) for hulls that name one; the stock hull
+    // keeps the legacy midpoint-of-the-guns charge (no `charge` key).
+    if (entry.charge) {
+        out.charge = mkP(entry.charge);
+        out.chargeGlow = (box.max.x - box.min.x) * s * 1.2143;   // the stock span/0.7 rule, as hull width
+        out.chargeR = entry.charge.r;
+    }
+    return out;
 }
 if (typeof window !== 'undefined') window._HY_GUN = _HY_GUN;
 if (typeof window !== 'undefined') window.getPlayerWingGuns = getPlayerWingGuns;
@@ -12416,7 +13994,9 @@ function createThirdPersonLasers(playerShip, targetPosition) {
         createThirdPersonBeam(leftWing, targetPosition, _beamCol);
         createThirdPersonBeam(rightWing, targetPosition, _beamCol);
         if (_charged) {
-            const _center = leftWing.clone().add(rightWing).multiplyScalar(0.5);
+            // HULL FIT: a hull that names a charge point fires the bolts from it
+            const _center = (guns && guns.charge) ? guns.charge.clone()
+                : leftWing.clone().add(rightWing).multiplyScalar(0.5);
             createMuzzleFlash(_center.clone());
             const _bolts = 1 + Math.round((gameState._chargedPower || 0.5) * 3);
             for (let _b = 0; _b < _bolts; _b++) createThirdPersonBeam(_center, targetPosition, '#ffee66');
@@ -12970,9 +14550,12 @@ function _setEnemyShieldEngaged(enemy, engaged) {
 // damage + kill check). isMissile=true shatters in one hit.
 function _enemyShieldAbsorbHit(enemy, isMissile) {
     const ud = enemy && enemy.userData;
+    if (typeof _hyBossInvulnHit === 'function' && _hyBossInvulnHit(enemy)) return true;   // HYBRID (package AJ): shield phase / cloak
     if (!ud || !ud.shieldActive || ud.shieldBroken || !ud._shieldMesh) return false;
     ud.shieldHits = (ud.shieldHits || 0) + 1;
-    const breakNow = isMissile || ud.shieldHits >= 2;
+    // HYBRID (package AJ): a hard boss's shield takes SHIELD_HITS lasers; a missile counts MISSILE_SHIELD_HITS
+    if (isMissile && ud._hbShieldHits) ud.shieldHits += HY_BOSS_AI.MISSILE_SHIELD_HITS - 1;
+    const breakNow = (isMissile && !ud._hbShieldHits) || ud.shieldHits >= (ud._hbShieldHits || 2);
     // Red flash on every shield hit (matches the hit-flash window
     // used by flashEnemyHit so a shield-then-hull combo doesn't
     // visually flicker between two flash lengths).
@@ -14408,10 +15991,16 @@ if (enemy.userData.health <= 0) {
         playSound('explosion');
     } else if (_bigKill && typeof createBossExplosion === 'function') {
         const _color = _enemyUD.galaxyColor || 0xff5522;
+        // HYBRID (bossExplosion: epic): the death set-piece takes the visuals
+        // and runs the boss celebration at its final blast.
+        if (!(typeof hyBossDeath === 'function' && hyBossDeath(enemy, {
+                color: _color, scale: _enemyUD.isBoss ? 1.8 : 1.3,
+                celebrate: !!(wasBoss || _enemyUD.isEliteGuardian), music: !!wasBoss, ambient: !!wasBoss }))) {
         createBossExplosion(enemy.position, {
             color: _color,
             scale: _enemyUD.isBoss ? 1.8 : 1.3
         });
+        }
     } else if (_isPirate) {
         // Martian Pirate kills roll one of three explosion variants; the
         // explosion color IS the loot tell (see PIRATE_EXPLOSION_VARIANTS):
@@ -14465,15 +16054,17 @@ if (enemy.userData.health <= 0) {
         }
     }
     
+    // HYBRID: true when the boss death set-piece owns flash/slow-mo/call-out/celebration
+    const _hyBossEpic = !!(enemy.userData && enemy.userData._hyBossFx);
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
     // Flagship kill: full-screen flash + bullet-time slow-mo as it dies.
-    if (window.arcade) {
+    if (window.arcade && !_hyBossEpic) {
         window.arcade.flash('rgba(255,200,80,0.9)', 0.85);
         window.arcade.slowmo(700);
     }
     // Top-tier arcade praise for a flagship kill, naming the faction
-    if (typeof flashArcadeText === 'function') {
+    if (typeof flashArcadeText === 'function' && !_hyBossEpic) {
         const _bw = ['TARGET ELIMINATED!', 'THREAT NEUTRALIZED!', 'FLAGSHIP DOWN!', 'REALITY BENT!'];
         let _bsub = null;
         try {
@@ -14489,13 +16080,13 @@ if (enemy.userData.health <= 0) {
         checkBossVictory(enemy);
     }
     // FIREWORKS CELEBRATION!
-    if (typeof createFireworkCelebration === 'function') {
+    if (typeof createFireworkCelebration === 'function' && !_hyBossEpic) {
         createFireworkCelebration();
     }
     // BOSS CELEBRATION MUSIC!
-    playBossVictoryMusic();
+    if (!_hyBossEpic) playBossVictoryMusic();
     // When boss is defeated, switch back to ambient music (after celebration)
-    setTimeout(() => {
+    if (!_hyBossEpic) setTimeout(() => {
         if (typeof switchToAmbientMusic === 'function') {
             switchToAmbientMusic();
         }
@@ -14602,8 +16193,8 @@ if (enemy.userData.health <= 0) {
         			} else {
             			showAchievement('BOSS DEFEATED!', `${enemy.userData.name} destroyed!`);
         			}
-        			// Call firework celebration here
-        			if (typeof createFireworkCelebration === 'function') {
+        			// Call firework celebration here (the boss set-piece fires its own at the blast)
+        			if (typeof createFireworkCelebration === 'function' && !enemy.userData._hyBossFx) {
             		createFireworkCelebration();
         }
     }
@@ -15224,10 +16815,14 @@ function handleMissileHit(missile, enemy) {
             playSound('explosion');
         } else if (_missBig && typeof createBossExplosion === 'function') {
             const _color = _missUD.galaxyColor || 0xff5522;
+            if (!(typeof hyBossDeath === 'function' && hyBossDeath(enemy, {
+                    color: _color, scale: _missUD.isBoss ? 1.8 : 1.3,
+                    celebrate: !!wasBoss, music: !!wasBoss }))) {
             createBossExplosion(enemy.position, {
                 color: _color,
                 scale: _missUD.isBoss ? 1.8 : 1.3
             });
+            }
         } else if (_missPirate) {
             createExplosionEffect(enemy);
             playSound('explosion');
@@ -15246,8 +16841,10 @@ function handleMissileHit(missile, enemy) {
         if (wasBoss) {
             showAchievement('BOSS DEFEATED!', `${bossName} destroyed by missile!`);
             if (typeof checkBossVictory === 'function') checkBossVictory(enemy);
-            if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
-            playBossVictoryMusic();
+            if (!_missUD._hyBossFx) {   // else the boss set-piece celebrates at its blast
+                if (typeof createFireworkCelebration === 'function') createFireworkCelebration();
+                playBossVictoryMusic();
+            }
 
             // Boss defeated: refill missiles (max cap 10)
             gameState.missiles.capacity = Math.min(10, gameState.missiles.capacity);
@@ -15474,6 +17071,9 @@ function fireWeapon() {
         // Auto-aim at locked target (including asteroids)
         targetPosition = gameState.targetLock.target.position.clone();
         targetObject = gameState.targetLock.target;
+        // HYBRID (package AJ): the lock cannot follow a boss through a break — the beam goes wide
+        const _hyMiss = (typeof _hyBossLockDodge === 'function') ? _hyBossLockDodge(targetObject, targetPosition) : null;
+        if (_hyMiss) { targetPosition = _hyMiss; targetObject = { userData: { type: 'miss' } }; }
     }
     
     if (!targetObject) {
@@ -17712,6 +19312,406 @@ function _wmApproachSpeed(d, vmax) {
     return Math.min(vmax, Math.sqrt(2 * 0.7 * WINGMAN_FLIGHT.wingman.brake * Math.max(0, d)), 1.6 * d);
 }
 
+// =============================================================================
+// HYBRID (package AC, gated on wingmanFlight: physical) — Ben, 2026-10-11:
+// "Wingmen should always swarm in ways that do not repeat so each wingman
+// seems independent and with its own attack personality. Wingmen should
+// upgrade regularly and heal by harvesting asteroids often."
+//
+// 1. RUNS THAT DO NOT REPEAT. Every attack run is planned by _wmPlanRun from a
+//    per-wingman seeded stream (_wmRand): approach side (a clock angle round
+//    the sightline: R / U / L / D), entry angle, standoff, height, roll
+//    direction, timing and the break move, weighted by the personality.
+//    WINGMAN_RUNS scores candidates against the wingman's own last runs (the
+//    same side + entry + break twice in a row is never flown) and against the
+//    squad's live runs (no two wingmen fly the same run at once; two on one
+//    target come in from mirrored sides, their aims staggered).
+// 2. TIERS 1-5 (WINGMAN_TIERS). Merit from kills a wingman took part in,
+//    campaign milestones, nebulae charted and time on the wing. Each tier is
+//    +12% damage, fire rate, top speed and shield strength — the player's own
+//    curve is +12.5% top speed per nebula (SPEED_BOOST_PER_NEBULA 0.5 on 4.0)
+//    — and the tier is capped by the player's upgrades (rep tiers + nebulae
+//    + galaxies freed) so the squad never outclasses its captain.
+// 3. HARVESTING (WINGMAN_HARVEST). Hull under 60 %, or every few minutes when
+//    idle, with no threat near the wingman or the player: break off to the
+//    nearest belt rock within 6k, shoot 2-4 (real hits on the proxies, the
+//    rock destruction effect plays), heal a step per rock, then rejoin.
+// =============================================================================
+const WINGMAN_RUNS = {
+    CANDIDATES: 12,        // plans scored per run
+    HISTORY: 3,            // own runs remembered for the repeat penalty
+    STAGGER_MS: 650,       // a second wingman on the same target holds its aim this long after the first
+    ENTRY_JITTER: 28,      // deg round the personality's entry angle
+    STANDOFF: [0.72, 1.32],// x the personality's standoff
+    TIMING: [0.75, 1.4],   // x aim / break times
+};
+const WINGMAN_TIERS = {
+    MAX: 5,
+    STEP: 0.12,                       // per tier: damage, fire rate, top speed, shields
+    MERIT: [0, 3, 8, 15, 25],         // merit needed for tier 1..5
+    KILL: 1,                          // a kill this wingman shot at in the last KILL_WINDOW_MS
+    KILL_WINDOW_MS: 10000,
+    MILESTONE: 3,                     // each campaign phase completed
+    NEBULA: 2,                        // each nebula charted (applyNebulaShipUpgrade)
+    SERVICE_MS: 150000,               // +1 merit per this long flying with the player
+    CAP_BASE: 2,                      // the tier cap = CAP_BASE + the player's upgrades
+};
+const WINGMAN_HARVEST = {
+    HULL_FRAC: 0.6,        // break off below this hull fraction
+    IDLE_MS: 180000,       // ... or this long since the last harvest
+    FIELD_RANGE: 6000,     // the rock must be this close to the wingman ...
+    PLAYER_LEASH: 6000,    // ... and to the player
+    ABORT_DIST: 8000,      // the player is further than this: drop it and come home
+    THREAT_RANGE: 3000,    // no hostile this close to the player (the player is not in a fight)
+    ROCKS: [2, 4],         // rocks per harvest
+    HEAL_FRAC: 0.15,       // x maxHealth per rock
+    SHOT_RANGE: 380, STANDOFF: 230, GAP_MS: 420, AIM_DEG: 28,
+    ROCK_TIMEOUT_MS: 9000, MAX_MS: 45000, RETURN_MS: 25000, SCAN_MS: 4000, COOLDOWN_MS: 45000,
+};
+
+// Per-wingman seeded stream (mulberry32): each wingman's own sequence of
+// choices, seeded from its name and this session.
+const _WM_SESSION_SEED = (Math.random() * 4294967296) >>> 0;
+function _wmRand(ud) {
+    if (ud._wmSeed === undefined) {
+        let h = 2166136261 >>> 0; const s = String(ud.name || 'wingman');
+        for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+        ud._wmSeed = (h ^ _WM_SESSION_SEED) >>> 0;
+    }
+    let t = (ud._wmSeed = (ud._wmSeed + 0x6D2B79F5) >>> 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function _wmPick(r, weights) {   // weights: { key: w }
+    let tot = 0; for (const k in weights) tot += weights[k];
+    let x = r * tot;
+    for (const k in weights) { x -= weights[k]; if (x < 0) return k; }
+    return Object.keys(weights)[0];
+}
+function _wmSideB(phi) { return ['R', 'U', 'L', 'D'][Math.round(((phi % 360) + 360) % 360 / 90) % 4]; }
+function _wmEntryB(deg) { return deg < 25 ? 'tail' : deg < 55 ? 'oblique' : deg < 85 ? 'flank' : 'beam'; }
+function _wmStandB(k) { return k < 0.85 ? 'close' : k < 1.1 ? 'mid' : 'far'; }
+function _wmAngDiff(a, b) { const d = Math.abs(((a - b) % 360 + 540) % 360 - 180); return d; }
+
+// Plan the next attack run for this wingman (fills run.* in place).
+function _wmPlanRun(ally, ud, P, run, now) {
+    const R = WINGMAN_RUNS;
+    const hist = ud._wmRunHist || (ud._wmRunHist = []);
+    const last = hist.length ? hist[hist.length - 1] : null;
+    // the squad's live runs (setup / aim / burst, planned in the last 8 s)
+    const live = [];
+    for (let i = 0; i < allyShips.length; i++) {
+        const o = allyShips[i];
+        if (!o || o === ally || !o.userData || o.userData.health <= 0) continue;
+        const or = o.userData._wmRun;
+        if (or && or.sig && or.phase !== 'break' && now - (or.planAt || 0) < 8000 && o.userData.aiState === 'engage') live.push(or);
+    }
+    const modeW = {}; modeW[P.modes[0]] = 0.55; modeW[P.modes[1]] = (modeW[P.modes[1]] || 0) + 0.3;
+    ['flank', 'strafe', 'pursue', 'evade'].forEach((m) => { if (modeW[m] === undefined) modeW[m] = 0.075; });
+    const brkW = { pull: 0.12, climb: 0.1 };
+    const pb = P.breakMove || 'pull';
+    brkW[pb] = (brkW[pb] || 0) + 0.45;
+    for (const k in P.evade) brkW[k] = (brkW[k] || 0) + P.evade[k] * 0.4;
+    let best = null, bestS = -Infinity;
+    for (let c = 0; c < R.CANDIDATES; c++) {
+        const mode = _wmPick(_wmRand(ud), modeW);
+        const j = _wmRand(ud) * 2 - 1;
+        let entry = mode === 'strafe' ? 90 + j * 20 : mode === 'pursue' ? Math.abs(j) * 24 : P.flankDeg + j * R.ENTRY_JITTER;
+        entry = Math.max(0, Math.min(120, entry));
+        const phi = _wmRand(ud) * 360;
+        const sk = P.standoffK * (R.STANDOFF[0] + _wmRand(ud) * (R.STANDOFF[1] - R.STANDOFF[0]));
+        const brk = _wmPick(_wmRand(ud), brkW);
+        const side = _wmSideB(phi), eB = _wmEntryB(entry), sB = _wmStandB(sk);
+        const sig = side + '|' + eB + '|' + brk;
+        let s = Math.log(modeW[mode] + 1e-3) * 0.6 + Math.log(brkW[brk] + 1e-3) * 0.6 + _wmRand(ud) * 0.6;
+        if (last && last.sig === sig) s -= 100;                       // never the same run twice running
+        for (let h = 0; h < hist.length; h++) {
+            const H = hist[h], w = (h + 1) / hist.length;               // the most recent counts most
+            if (H.side === side) s -= 0.7 * w;
+            if (H.entry === eB) s -= 0.6 * w;
+            if (H.brk === brk) s -= 0.6 * w;
+            if (H.stand === sB) s -= 0.3 * w;
+        }
+        for (let i = 0; i < live.length; i++) {
+            const o = live[i];
+            if (o.sig === sig) s -= 50;                                  // no two wingmen fly the same run at once
+            if (o.target === run.target) {
+                if (o.sideB === side) s -= 4;                            // mirrored sides on one target
+                s += 1.5 * _wmAngDiff(phi, o.phi) / 180;
+            }
+        }
+        if (s > bestS) { bestS = s; best = { mode, entry, phi, sk, brk, side, eB, sB, sig }; }
+    }
+    run.mode = best.mode; run.entry = best.entry; run.phi = best.phi; run.sk = best.sk;
+    run.brkMove = best.brk; run.sideB = best.side; run.sig = best.sig;
+    run.side = (best.phi > 90 && best.phi < 270) ? -1 : 1;
+    run.dive = P.diveUp * (0.5 + _wmRand(ud)) * (best.side === 'D' ? -1 : 1);
+    run.rollDir = _wmRand(ud) < 0.5 ? -1 : 1;
+    const T = WINGMAN_RUNS.TIMING, tj = () => T[0] + _wmRand(ud) * (T[1] - T[0]);
+    run.aimMs = P.aimMs * tj();
+    run.breakMs = P.breakMs * tj();
+    run.burst = Math.max(2, P.burst + Math.floor(_wmRand(ud) * 3) - 1);
+    run.gapMs = P.gapMs * (0.8 + _wmRand(ud) * 0.45) / _wmTierK(ud);   // tier: fire rate
+    run.planAt = now;
+    // stagger: a squadmate already lining this target up goes first
+    let ahead = 0;
+    for (let i = 0; i < live.length; i++) if (live[i].target === run.target) ahead++;
+    run.notBefore = now + ahead * WINGMAN_RUNS.STAGGER_MS;
+    hist.push({ sig: best.sig, side: best.side, entry: best.eB, stand: best.sB, brk: best.brk });
+    if (hist.length > R.HISTORY) hist.shift();
+    // measurement log (probe: .critic/wingmen3)
+    const log = ud._wmRunLog || (ud._wmRunLog = []);
+    log.push({ t: now, end: 0, sig: best.sig, side: best.side, entry: best.eB, stand: best.sB, brk: best.brk, mode: best.mode, tgt: run.target && run.target.id });
+    if (log.length > 80) log.shift();
+    run.logRow = log[log.length - 1];
+    _wmCount(ud, 'mode:' + run.mode);
+}
+
+// Approach direction (unit, relative to the target) for a planned run: the
+// entry angle off the sightline, swung round it by the clock angle phi.
+function _wmApproachDir(run, toT, firingRange, R, out) {
+    const sd = _wmS.crossVectors(toT, _wmUp);
+    if (sd.lengthSq() < 1e-6) sd.set(1, 0, 0);
+    sd.normalize();
+    const up2 = _wmG.crossVectors(sd, toT).normalize();
+    const ph = run.phi * _EF_D2R, en = run.entry * _EF_D2R;
+    const lat = new THREE.Vector3().copy(sd).multiplyScalar(Math.cos(ph)).addScaledVector(up2, Math.sin(ph));
+    out.copy(toT).multiplyScalar(-Math.cos(en)).addScaledVector(lat, Math.sin(en))
+       .addScaledVector(_wmUp, run.dive * firingRange / Math.max(1, R));
+    run.side0 = lat;
+    return out;
+}
+
+// ── Tiers ────────────────────────────────────────────────────────────────
+function _wmTierK(ud) { return 1 + WINGMAN_TIERS.STEP * (((ud && ud._wmTier) || 1) - 1); }
+function _wmShieldK(ally) {   // enemy fire on a wingman is divided by this (fireEnemyWeapon)
+    if (!_wmFlightOn() || !ally || !ally.userData) return 1;
+    return _wmTierK(ally.userData);
+}
+function _wmTierCap() {
+    const g = (typeof gameState !== 'undefined' && gameState) || {};
+    const up = (g.repTier || 0) + (g.nebulasDeepDiscovered || 0) + (g.galaxiesCleared || 0);
+    return Math.min(WINGMAN_TIERS.MAX, WINGMAN_TIERS.CAP_BASE + up);
+}
+// Squad-wide milestones (campaign phases completed + nebulae charted), read
+// once per AI tick. A new recruit starts from the count at its joining.
+let _wmCampPrev = null, _wmCampSteps = 0;
+function _wmMilestones() {
+    let st = null;
+    try { st = window.__campaign ? window.__campaign.state : null; } catch (e) { st = null; }
+    if (st && _wmCampPrev && st !== _wmCampPrev) _wmCampSteps++;
+    if (st) _wmCampPrev = st;
+    const neb = (typeof gameState !== 'undefined' && gameState && gameState.nebulasDeepDiscovered) || 0;
+    return { camp: _wmCampSteps, neb };
+}
+// Note a shot / missile at a target, so its death counts as this wingman's kill.
+function _wmNoteHit(ud, et) {
+    if (!et || !et.userData) return;
+    const L = ud._wmHits || (ud._wmHits = []);
+    for (let i = 0; i < L.length; i++) if (L[i].e === et) { L[i].t = Date.now(); return; }
+    L.push({ e: et, t: Date.now() });
+    if (L.length > 8) L.shift();
+}
+function _wmTierTick(ally, ud, now, ms, distToPlayer) {
+    const T = WINGMAN_TIERS;
+    if (!ud._wmTier) {
+        ud._wmTier = 1; ud._wmMerit = 0; ud._wmKills = 0;
+        ud._wmMsCamp = ms.camp; ud._wmMsNeb = ms.neb; ud._wmServiceAt = now;
+    }
+    let gain = 0;
+    const L = ud._wmHits;
+    if (L && L.length) {
+        for (let i = L.length - 1; i >= 0; i--) {
+            const h = L[i], eud = h.e.userData;
+            const dead = !eud || eud.health <= 0 || !h.e.parent;
+            if (dead) { if (now - h.t < T.KILL_WINDOW_MS) { gain += T.KILL; ud._wmKills++; } L.splice(i, 1); }
+            else if (now - h.t > T.KILL_WINDOW_MS) L.splice(i, 1);
+        }
+    }
+    if (ms.camp > ud._wmMsCamp) { gain += T.MILESTONE * (ms.camp - ud._wmMsCamp); ud._wmMsCamp = ms.camp; }
+    if (ms.neb > ud._wmMsNeb) { gain += T.NEBULA * (ms.neb - ud._wmMsNeb); ud._wmMsNeb = ms.neb; }
+    if (distToPlayer < 4000 && !ud.recruitPending) {
+        if (now - ud._wmServiceAt > T.SERVICE_MS) { gain += 1; ud._wmServiceAt = now; }
+    } else ud._wmServiceAt = Math.max(ud._wmServiceAt, now - T.SERVICE_MS * 0.5);
+    if (gain) ud._wmMerit += gain;
+    let tier = 1;
+    for (let i = 0; i < T.MERIT.length; i++) if (ud._wmMerit >= T.MERIT[i]) tier = i + 1;
+    tier = Math.min(tier, _wmTierCap());
+    if (tier > ud._wmTier) {
+        ud._wmTier = tier;
+        _wmApplyTier(ally, ud);
+        _wmTierUps.push(ud);   // announced after the squad's tick (_wmAnnounceTiers)
+        const log = ud._wmTierLog || (ud._wmTierLog = []);
+        log.push({ t: now, tier, merit: ud._wmMerit, kills: ud._wmKills });
+    }
+}
+// One comms line per tick: a single wingman's refit in its own voice, a
+// squad-wide one (a campaign milestone lifts everyone at once) as one line —
+// separate lines would queue behind Mission Control and be dropped.
+const _wmTierUps = [];
+function _wmAnnounceTiers() {
+    if (!_wmTierUps.length) return;
+    const STAT = ['Guns', 'Shields', 'Engines', 'Fire control'];
+    const u0 = _wmTierUps[0], tier = u0._wmTier;
+    const pct = Math.round((_wmTierK(u0) - 1) * 100);
+    const feat = STAT[(tier + ((u0.name || '').length)) % STAT.length];
+    if (_wmTierUps.length === 1) {
+        _enqueueWingmanComms(u0.name + ' (Comms)', feat + ' upgraded, tier ' + tier + ' — damage, fire rate, speed and shields +' + pct + '%.');
+    } else {
+        const names = _wmTierUps.map((u) => (u.name || 'Wingman').replace(/^Wingman /, '') + ' ' + u._wmTier).join(', ');
+        _enqueueWingmanComms(u0.name + ' (Comms)', 'Squadron refit: ' + feat.toLowerCase() + ' upgraded — tiers ' + names + '. Each tier is +' + Math.round(WINGMAN_TIERS.STEP * 100) + '% damage, fire rate, speed and shields.');
+    }
+    _wmTierUps.length = 0;
+}
+function _wmApplyTier(ally, ud) {
+    const k = _wmTierK(ud);
+    ud._wmSpeedK = k;   // _efStep: the wingman's top speed
+    if (ud._wmMissileCd0 === undefined) ud._wmMissileCd0 = ud.missileCooldownMs || 8000;
+    ud.missileCooldownMs = ud._wmMissileCd0 / k;
+}
+
+// ── Harvesting ───────────────────────────────────────────────────────────
+const _wmHarvTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+// Belt rocks are instancer proxies (no parent; their record says if they are gone).
+function _wmRockAlive(p) {
+    if (!p || !p.userData || p.userData._wmGone) return false;
+    return p._instRef ? !p._instRef.dead : !!p.parent;
+}
+function _wmHarvestRock(ally, fromPos, playerPos, range) {
+    if (typeof planets === 'undefined') return null;
+    const taken = [];
+    for (let i = 0; i < allyShips.length; i++) {
+        const o = allyShips[i]; if (o && o !== ally && o.userData && o.userData._wmHarvest && o.userData._wmHarvest.rock) taken.push(o.userData._wmHarvest.rock);
+    }
+    let best = null, bd2 = range * range;
+    const L2 = WINGMAN_HARVEST.PLAYER_LEASH * WINGMAN_HARVEST.PLAYER_LEASH;
+    for (let i = 0; i < planets.length; i++) {
+        const p = planets[i];
+        if (!p || !p.userData || p.userData.type !== 'asteroid' || !_wmRockAlive(p) || taken.indexOf(p) !== -1) continue;
+        p.getWorldPosition(_wmHarvTmp);
+        const d2 = fromPos.distanceToSquared(_wmHarvTmp);
+        if (d2 < bd2 && playerPos.distanceToSquared(_wmHarvTmp) < L2) { bd2 = d2; best = p; }
+    }
+    return best;
+}
+function _wmPlayerInCombat(playerPos) {
+    if (typeof enemies === 'undefined') return false;
+    const r2 = WINGMAN_HARVEST.THREAT_RANGE * WINGMAN_HARVEST.THREAT_RANGE;
+    for (let i = 0; i < enemies.length; i++) {
+        const e = enemies[i];
+        if (e && e.userData && e.userData.health > 0 && e.position.distanceToSquared(playerPos) < r2) return true;
+    }
+    return false;
+}
+// Start a harvest when it is wanted and safe (called in patrol, throttled).
+function _wmHarvestMaybe(ally, ud, now, playerPos, distToPlayer, threat) {
+    const H = WINGMAN_HARVEST;
+    if (ud._wmHarvest || ud.recruitPending || threat || now < (ud._wmHarvestCd || 0)) return;
+    if (now - (ud._wmHarvScan || 0) < H.SCAN_MS + ((ally.id || 0) % 7) * 150) return;
+    ud._wmHarvScan = now;
+    if (!ud._wmBornAt) ud._wmBornAt = now;
+    const frac = ud.health / Math.max(1, ud.maxHealth);
+    const low = frac < H.HULL_FRAC;
+    const idle = now - (ud._wmHarvestAt || ud._wmBornAt) > H.IDLE_MS;
+    if (!low && !idle) return;
+    if (distToPlayer > H.PLAYER_LEASH || _wmPlayerInCombat(playerPos)) return;
+    const rock = _wmHarvestRock(ally, ally.position, playerPos, H.FIELD_RANGE);
+    if (!rock) { if (idle && !low) ud._wmHarvestAt = now - H.IDLE_MS * 0.5; return; }   // nothing near: look again later
+    const want = H.ROCKS[0] + Math.floor(_wmRand(ud) * (H.ROCKS[1] - H.ROCKS[0] + 1));
+    ud._wmHarvest = { rock, rockAt: now, t0: now, shots: 0, rocks: 0, want, nextShot: 0, hp0: ud.health, low, rp: new THREE.Vector3(), rpPrev: null };
+    ud.patrolTarget = null;
+    const pct = Math.round(frac * 100);
+    const short = (ud.name || 'Wingman').replace(/^Wingman /, '');
+    _enqueueWingmanComms(ud.name + ' (Comms)', low
+        ? short + ': hull at ' + pct + '%, harvesting the belt.'
+        : short + ': all quiet — mining a few rocks for the plating.');
+    const log = ud._wmHarvLog || (ud._wmHarvLog = []);
+    log.push({ t0: now, hp0: Math.round(ud.health * 10) / 10, low, want, d0: Math.round(ally.position.distanceTo(rock.getWorldPosition(_wmHarvTmp))), rocks: 0, shots: 0, end: 0, why: '', hp1: 0, rejoinMs: null });
+    if (log.length > 20) log.shift();
+}
+function _wmHarvestEnd(ud, now, why) {
+    const Hs = ud._wmHarvest; if (!Hs) return;
+    ud._wmHarvest = null;
+    ud._wmHarvestAt = now;
+    ud._wmHarvestCd = now + WINGMAN_HARVEST.COOLDOWN_MS;
+    ud._wmReturnUntil = now + WINGMAN_HARVEST.RETURN_MS;
+    ud._wmAimPos = null;
+    const log = ud._wmHarvLog, row = log && log[log.length - 1];
+    if (row && !row.end) { row.end = now; row.why = why; row.rocks = Hs.rocks; row.shots = Hs.shots; row.hp1 = Math.round(ud.health * 10) / 10; row.ms = now - Hs.t0; row._ret = now; }
+}
+// One bolt on a belt rock: the rock has 2 hit points, like the player's.
+function _wmHarvestShot(ally, ud, rock, rp) {
+    const color = ud.name === 'Wingman Alpha' ? '#00ff88' : '#88aaff';
+    _fireWingmanLaser(ally.position.clone(), rp, color);
+    const rud = rock.userData;
+    rud.health = (typeof rud.health === 'number' ? rud.health : 2) - 1;
+    if (rud.health > 0) { if (typeof createHitSparks === 'function') createHitSparks(rp, 0xffcc66); return false; }
+    const r = ((rock.geometry && rock.geometry.parameters && rock.geometry.parameters.radius) || 1) * ((rock.scale && rock.scale.x) || 1);
+    if (typeof createAsteroidExplosion === 'function') createAsteroidExplosion(rp.clone(), r);
+    if (typeof playSound === 'function' && typeof camera !== 'undefined' && camera.position.distanceTo(rp) < 2500) playSound('explosion');
+    // destroyAsteroid pays the PLAYER (+0.5 hull, +1 rep) — a squadmate's rock heals the squadmate
+    const g = (typeof gameState !== 'undefined') ? gameState : null;
+    const hull0 = g ? g.hull : 0, rep0 = g ? g.reputation : 0, tier0 = g ? g.repTier : 0;
+    rud._wmGone = true;
+    if (typeof destroyAsteroid === 'function') destroyAsteroid(rock);
+    if (g) { g.hull = hull0; if (g.repTier === tier0) g.reputation = rep0; }
+    ud.health = Math.min(ud.maxHealth, ud.health + ud.maxHealth * WINGMAN_HARVEST.HEAL_FRAC);
+    return true;
+}
+// Fly the harvest (physical flight model; replaces the patrol this tick).
+function _executeHarvest(ally, ud, now, playerPos, distToPlayer) {
+    const H = WINGMAN_HARVEST, Hs = ud._wmHarvest, spec = WINGMAN_FLIGHT.wingman;
+    if (distToPlayer > H.ABORT_DIST) return _wmHarvestEnd(ud, now, 'leash');
+    if (now - Hs.t0 > H.MAX_MS) return _wmHarvestEnd(ud, now, 'timeout');
+    if (Hs.rocks >= Hs.want || (Hs.rocks >= H.ROCKS[0] && ud.health >= ud.maxHealth)) return _wmHarvestEnd(ud, now, 'done');
+    if (!_wmRockAlive(Hs.rock) || now - Hs.rockAt > H.ROCK_TIMEOUT_MS) {
+        Hs.rock = _wmHarvestRock(ally, ally.position, playerPos, Hs.rocks ? 2500 : H.FIELD_RANGE);
+        Hs.rockAt = now; Hs.rpPrev = null;
+        if (!Hs.rock) return _wmHarvestEnd(ud, now, Hs.rocks ? 'done' : 'none');
+    }
+    const rp = Hs.rock.getWorldPosition(Hs.rp);
+    // the rock's own drift (belt orbit), so the approach leads it
+    const rv = _wmHarvTmp.set(0, 0, 0);
+    const tNow = performance.now(), rdt = Hs.rpT ? (tNow - Hs.rpT) / 1000 : 0;
+    if (Hs.rpPrev && rdt > 0.004) rv.subVectors(rp, Hs.rpPrev).divideScalar(rdt);
+    Hs.rpT = tNow;
+    Hs.rpPrev = (Hs.rpPrev || new THREE.Vector3()).copy(rp);
+    if (rv.lengthSq() > 250000) rv.set(0, 0, 0);   // a rebase, not motion
+    const toR = _wmA.subVectors(rp, ally.position);
+    const d = Math.max(1e-3, toR.length()); toR.divideScalar(d);
+    const goal = _wmG.copy(rp).addScaledVector(toR, -H.STANDOFF);
+    const wish = _wmB.subVectors(goal, ally.position);
+    const dG = wish.length();
+    if (dG > 1e-3) wish.multiplyScalar(_wmApproachSpeed(dG, spec.maxSpeed * 0.85) / dG);
+    wish.addScaledVector(rv, 0.9);
+    const ef = ud._ef, facing = ef ? ef.nose.dot(toR) : 1;
+    if (d < H.SHOT_RANGE * 1.8) ud._wmAimPos = rp.clone();
+    if (d < H.SHOT_RANGE && facing > Math.cos(H.AIM_DEG * _EF_D2R) && now >= Hs.nextShot) {
+        Hs.nextShot = now + H.GAP_MS;
+        Hs.shots++;
+        _wmCount(ud, 'harvestShot');
+        if (_wmHarvestShot(ally, ud, Hs.rock, rp)) { Hs.rocks++; Hs.rock = null; Hs.nextShot = now + H.GAP_MS * 2; }
+    }
+    ud._efWish = (ud._efWish || new THREE.Vector3()).copy(wish);
+    _allyDir.copy(wish);
+}
+// The stranded rule's reach for this wingman: wider while it is out on a
+// harvest or flying home from one, so the harvest never strands it.
+function _wmStrandReach(ud, now) {
+    return (ud._wmHarvest || now < (ud._wmReturnUntil || 0)) ? WINGMAN_HARVEST.ABORT_DIST : 4000;
+}
+// Close the rejoin measurement once the wingman is back with the player.
+function _wmHarvestRejoin(ud, now, distToPlayer) {
+    const log = ud._wmHarvLog, row = log && log[log.length - 1];
+    if (row && row._ret && row.rejoinMs === null && distToPlayer < 600) { row.rejoinMs = now - row._ret; ud._wmReturnUntil = 0; }
+}
+if (typeof window !== 'undefined') {
+    window.WINGMAN_RUNS = WINGMAN_RUNS;
+    window.WINGMAN_TIERS = WINGMAN_TIERS;
+    window.WINGMAN_HARVEST = WINGMAN_HARVEST;
+}
+
 // ── Engage (physical): attack runs, like the enemies' ──────────────────────
 // setup  fly the personality's approach (flank / strafe / pursue / evade)
 // aim    telegraph: wings level, nose onto the target, closing
@@ -17739,9 +19739,10 @@ function _executeEngagePhysical(ally, ud, now) {
     // A new target, or a run left cold (the state machine dropped out of
     // engage for a while), starts a fresh run.
     if (!run || run.target !== et || now - run.seen > 1500) {
+        if (run && run.logRow && !run.logRow.end) run.logRow.end = now;
         run = ud._wmRun = { target: et, phase: 'setup', t0: now, seen: now, shots: 0, nextShot: 0, mode: P.modes[0],
                             side: Math.random() < 0.5 ? -1 : 1, flown: false, app: null, brk: null };
-        _wmCount(ud, 'mode:' + run.mode);
+        _wmPlanRun(ally, ud, P, run, now);   // HYBRID (package AC): a run that does not repeat
     }
     run.seen = now;
     const age = now - run.t0;
@@ -17749,7 +19750,10 @@ function _executeEngagePhysical(ally, ud, now) {
     ud._wmAimPos = null;
 
     if (run.phase === 'setup') {
-        const R = firingRange * P.standoffK;
+        const R = firingRange * (run.sk || P.standoffK);
+        if (!run.app && run.sig) {
+            run.app = _wmApproachDir(run, toT, firingRange, R, new THREE.Vector3());
+        }
         if (!run.app) {
             // The approach point is fixed RELATIVE TO THE TARGET when the run
             // is set up (re-deriving it from the live sightline every tick
@@ -17774,11 +19778,13 @@ function _executeEngagePhysical(ally, ud, now) {
         const inPos = dG < Math.max(150, R * 0.4) || age > 3500;
         // in position — or the target has wandered into the guns on the way
         const chance = age > 1000 && dist < firingRange * 1.4 && facing > Math.cos(35 * _EF_D2R);
-        if ((inPos && dist < firingRange * 2.5 && (facing > Math.cos(55 * _EF_D2R) || age > 3500)) || chance) {
+        const held = now < (run.notBefore || 0) && age < 3500;   // a squadmate on this target goes first
+        if (!held && ((inPos && dist < firingRange * 2.5 && (facing > Math.cos(55 * _EF_D2R) || age > 3500)) || chance)) {
             run.phase = 'aim'; run.t0 = now; _wmCount(ud, 'aim');
         } else if (age > 3500 && run.mode !== 'pursue') {
             // could not get into position (the target is running): go straight in
             run.mode = 'pursue'; run.app = null; run.t0 = now; _wmCount(ud, 'mode:pursue');
+            if (run.sig) run.entry = Math.min(run.entry || 0, 15);
         }
     } else if (run.phase === 'aim' || run.phase === 'burst') {
         ud._wmAimPos = enemyPos;
@@ -17786,33 +19792,48 @@ function _executeEngagePhysical(ally, ud, now) {
         else wish.copy(toT);                                                                                                      // close on it
         wish.multiplyScalar(Math.min(spec.maxSpeed * 0.8, Math.max(160, (dist - firingRange * 0.3) * 1.4)));
         if (tv) wish.addScaledVector(tv, 0.85);
-        if (run.phase === 'aim' && age > P.aimMs) { run.phase = 'burst'; run.t0 = now; run.shots = 0; run.nextShot = now; _wmCount(ud, 'burst'); }
+        if (run.phase === 'aim' && age > (run.aimMs || P.aimMs)) { run.phase = 'burst'; run.t0 = now; run.shots = 0; run.nextShot = now; _wmCount(ud, 'burst'); }
         if (run.phase === 'burst') {
             const _gameAge = (gameState && gameState.gameStartTime) ? (Date.now() - gameState.gameStartTime) : 0;
             if (now >= run.nextShot && _gameAge >= 5000 && dist < firingRange * 1.3 && facing > Math.cos(40 * _EF_D2R)) {
-                run.nextShot = now + P.gapMs;
+                run.nextShot = now + (run.gapMs || P.gapMs);
                 run.shots++;
+                _wmNoteHit(ud, et);
                 ud.lastAttack = now;
                 _wmCount(ud, 'shot');
                 _wingmanLaserHit(ally, ud, et, enemyPos);
             }
-            if (run.shots >= P.burst || now - run.t0 > P.burst * P.gapMs + 2500 || dist < firingRange * 0.25) {
+            const _bN = run.burst || P.burst, _bG = run.gapMs || P.gapMs;
+            if (run.shots >= _bN || now - run.t0 > _bN * _bG + 2500 || dist < firingRange * 0.25) {
                 run.phase = 'break'; run.t0 = now; _wmCount(ud, 'break');
+                if (run.sig) {
+                    // HYBRID (package AC): the planned break — out on the side it came
+                    // in from (a climb goes up and over), rolled the planned way
+                    const lat = run.side0 || _wmS.crossVectors(toT, _wmUp).normalize();
+                    run.brk = new THREE.Vector3().copy(nose);
+                    if (run.brkMove === 'climb') run.brk.addScaledVector(_wmUp, 1.1).addScaledVector(lat, 0.3);
+                    else run.brk.addScaledVector(lat, 0.8).addScaledVector(_wmUp, 0.35 * (run.sideB === 'D' ? -1 : 1));
+                    run.brk.normalize();
+                    const mv = run.brkMove;
+                    if (mv === 'barrel' || mv === 'corkscrew' || mv === 'splitS') {
+                        if (_wmEvade(ally, ud, P, now, 'break', mv) && ud._evade) ud._evade.dir = run.rollDir || 1;
+                    }
+                } else {
                 // break direction, fixed for the break: on past it, out to the side and up
                 const sd = _wmS.crossVectors(toT, _wmUp);
                 if (sd.lengthSq() < 1e-6) sd.set(1, 0, 0);
                 sd.normalize().multiplyScalar(run.side);
                 run.brk = new THREE.Vector3().copy(nose).addScaledVector(sd, 0.8).addScaledVector(_wmUp, 0.5).normalize();
                 if (P.breakMove) _wmEvade(ally, ud, P, now, 'break', P.breakMove);
+                }
             }
         }
     } else {   // break: pull out, away from its guns
         wish.copy(run.brk || nose).multiplyScalar(spec.maxSpeed * 0.85);
-        if (age > P.breakMs) {
+        if (age > (run.breakMs || P.breakMs)) {
+            if (run.logRow && !run.logRow.end) run.logRow.end = now;
             run.phase = 'setup'; run.t0 = now; run.flown = false; run.app = null; run.brk = null;
-            run.mode = (Math.random() < 0.75) ? P.modes[0] : P.modes[1];
-            if (Math.random() < 0.6) run.side = -run.side;
-            _wmCount(ud, 'mode:' + run.mode);
+            _wmPlanRun(ally, ud, P, run, now);   // HYBRID (package AC): the next run, never the last one again
         }
     }
     if (dist < 90) wish.addScaledVector(toT, -(90 - dist) * 6);   // never ram the target
@@ -17827,6 +19848,7 @@ function _executeEngagePhysical(ally, ud, now) {
         ud.lastMissile = now;
         ud.missilesRemaining = (ud.missilesRemaining || 0) - 1;
         _wingmanTacticalMessage(ud, 'missile');
+        _wmNoteHit(ud, et);
         if (typeof _fireWingmanMissile === 'function') _fireWingmanMissile(ally, et, enemyPos, ud);
     }
 }
@@ -17892,6 +19914,7 @@ function updateAllyShips() {
     if (updateAllyShips._disp.lengthSq() > 4000000) updateAllyShips._disp.set(0, 0, 0);
     updateAllyShips._prevPP.copy(playerPos);
     const _wmPhys = _wmFlightOn();   // HYBRID (package AA): wingmanFlight physical | kinematic
+    const _wmMs = _wmPhys ? _wmMilestones() : null;   // HYBRID (package AC): squad milestones for the tiers
 
     allyShips.forEach(ally => {
         if (!ally || ally.userData.health <= 0) return;
@@ -17934,6 +19957,7 @@ function updateAllyShips() {
         const threat = _scanForEnemy(ally);
         // HYBRID: where-we-are / lore / tips chatter (see WINGMAN_CONTEXT_LINES)
         _wingmanAmbientChatter(ally, ud, now, distToPlayer, threat, playerWarping);
+        if (_wmPhys) { _wmTierTick(ally, ud, now, _wmMs, distToPlayer); _wmHarvestRejoin(ud, now, distToPlayer); }   // HYBRID (package AC)
 
         // ── State transitions ────────────────────────────────────────────
         // Boss-victory celebration takes priority over everything except
@@ -17990,7 +20014,7 @@ function updateAllyShips() {
                 ud.engageTarget = threat;
                 // (the 'engage' line fires on the first SHOT, in _executeEngage —
                 // a contact on the scope is not "moving in")
-            } else if (ud.recruitPending || distToPlayer > 4000) {
+            } else if (ud.recruitPending || distToPlayer > (_wmPhys ? _wmStrandReach(ud, now) : 4000)) {   // (wider out on a harvest, package AC)
                 // Separated by >4000u — stranded, orbit local planets here
                 ud.aiState = 'stranded';
                 _wingmanTacticalMessage(ud, 'stranded');
@@ -18065,6 +20089,10 @@ function updateAllyShips() {
         if (_wmFly) _wmReact(ally, ud, now);
         else if (ud._ef) { ud._ef = null; ud._wmAimPos = null; }
 
+        // HYBRID (package AC): a harvest lives inside patrol — a fight, a warp
+        // or a celebration ends it (the wingman then flies home on _wmReturnUntil)
+        if (ud._wmHarvest && (ud.aiState !== 'patrol' || !_wmFly || celebrating)) _wmHarvestEnd(ud, now, ud.aiState);
+
         // ── Execute current state ────────────────────────────────────────
         if (ud.aiState === 'celebrate') {
             _executeCelebrate(ally, ud, now, playerPos);
@@ -18077,6 +20105,8 @@ function updateAllyShips() {
             _executeStranded(ally, ud, now);
         } else if (ud.aiState === 'return') {
             _executeReturn(ally, ud);
+        } else if (_wmFly && (ud._wmHarvest || (!celebrating && !playerWarping && (_wmHarvestMaybe(ally, ud, now, playerPos, distToPlayer, threat), ud._wmHarvest)))) {
+            _executeHarvest(ally, ud, now, playerPos, distToPlayer);   // HYBRID (package AC): heal on the belt
         } else {
             // Always swarm the player when within 4000u (any galaxy)
             if (_wmFly && distToPlayer < 4000) {
@@ -18099,7 +20129,7 @@ function updateAllyShips() {
         {
             const _objective = (ud.aiState === 'engage' && ud.engageTarget && ud.engageTarget.position)
                 ? ud.engageTarget.position
-                : (distToPlayer > 1200 ? playerPos : null);
+                : (ud._wmHarvest ? (ud._wmHarvest.rock ? ud._wmHarvest.rp : null) : (distToPlayer > 1200 ? playerPos : null));
             if (!ud._jumpUntil && _objective &&
                 pos.distanceTo(_objective) > 1200 &&
                 now - (ud._lastJumpAt || 0) > 7000 + ((ally.id || 0) % 4000)) {
@@ -18146,7 +20176,7 @@ function updateAllyShips() {
         // in range it re-scanned EVERY FRAME × every wingman — ~3ms/frame of
         // pure waste, the cause of the discovery-path chop. Stamp on every
         // scan attempt so it runs at most once per 5-9s per wingman.
-        if (ud.aiState !== 'engage' && typeof _wingmanNearestAsteroid === 'function' &&
+        if (ud.aiState !== 'engage' && !ud._wmHarvest && typeof _wingmanNearestAsteroid === 'function' &&
             now - (ud._lastAstScan || 0) > 5000 + ((ally.id || 0) % 4000)) {
             ud._lastAstScan = now;
             const ast = _wingmanNearestAsteroid(ally.position, 1400);
@@ -18174,6 +20204,7 @@ function updateAllyShips() {
             ud.health = Math.min(ud.maxHealth, ud.health + 1);
         }
     });
+    if (_wmPhys) _wmAnnounceTiers();   // HYBRID (package AC)
 }
 
 // ── Patrol: cruise between waypoints (biased toward player in home systems)
@@ -18285,9 +20316,10 @@ function _wingmanLaserHit(ally, ud, et, enemyPos) {
             return;
         }
         const wasAlive = et.userData.health > 0;
-        et.userData.health -= 0.1;
+        const _wmDmg = 0.1 * _wmTierK(ud);   // HYBRID (package AC): the wingman's tier
+        et.userData.health -= _wmDmg;
         _activateOnDamage(et);
-        if (typeof flashEnemyHit === 'function') flashEnemyHit(et, 0.1);
+        if (typeof flashEnemyHit === 'function') flashEnemyHit(et, _wmDmg);
 
         // Kill notification + cleanup (remove from scene, run boss checks)
         if (wasAlive && et.userData.health <= 0) {
@@ -18305,12 +20337,18 @@ function _handleWingmanKill(enemy) {
     if (!enemy || !enemy.userData || enemy.userData._removedByWingman) return;
     enemy.userData._removedByWingman = true;
 
-    // Visual + sound
+    // Visual + sound (HYBRID bossExplosion: epic — a boss gets the death set-piece)
+    const _wud = enemy.userData;
+    const _wBig = _wud.isBoss || _wud.isEliteGuardian || _wud.isBlackHoleGuardian;
+    if (_wBig && typeof hyBossDeath === 'function' && hyBossDeath(enemy, { color: _wud.galaxyColor })) {
+        // set-piece owns the visuals and sound
+    } else {
     if (typeof createExplosionEffect === 'function') {
         createExplosionEffect(enemy);
     }
     if (typeof playSound === 'function') {
         playSound('explosion');
+    }
     }
 
     // Cluster + intel updates (some games track per-cluster kills)

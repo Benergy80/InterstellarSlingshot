@@ -45,6 +45,7 @@
         asteroids:       'original',
         // — effects and audio —
         explosions:      'original',   // 'combined' (old burst + new detonation) | 'original' | 'overhaul' — Ben 2026-10-10: newer effects PAUSED while testing ("so we can just see the original ones"); flip back to 'combined' when he says
+        bossExplosion:   'epic',       // Ben 2026-10-11: "I want to improve the boss explosions." — death throe (hull blasts, tumble, flicker) → scaled final blast + shockwave + vector debris + hitstop + call-out (HY_BOSS_FX, hyBossDeath)  'epic' | 'original'
         weaponFx:        'original',
         sfx:             'original',
         music:           'original',
@@ -66,10 +67,18 @@
         targetBracket:   'targeted',   // Ben 2026-10-11: the overhaul's bracket + tag, but only round the targeted enemy  'targeted' | 'overhaul' | 'off'
         demoSteering:    'steady',     // Ben 2026-10-11: the demo keeps its nose on the enemy — no showmanship look/roll nudges in combat  'steady' | 'overhaul'
         missionControl:  'alert',      // Ben 2026-10-11: campaign Mission Control lines through the big green MISSION COMMAND alert, as on the live branch  'alert' | 'channel'
-        // — synthwave branch (claude/synthwave) —
-        deathScreen:     'synthwave',  // MISSION FAILED as an arcade sequence (js/synthwave-fx.js)  'synthwave' | 'original'
+        playerModel:     'XT-7small',  // Ben 2026-10-11: "keep both versions of the player ship as options, but use the new ship for now" — the player ship's GLB in models/ (file base name); ?hy=playerModel:Player flies the stock vector hull  'XT-7small' | 'Player' | '<file>'
+        playerModelYaw:  90,           // degrees about Y baked into an alternate hull so its nose points +Z (the game's forward); the XT-7 needs 90, Player.glb 0
+        bossModels:      'v2',         // Ben 2026-10-11: "These will need scaling and should replace the current boss models and UFO model. Keep the others in the github but use these instead" — models/Boss<n>-v2.glb baked to the stock Boss<n>.glb's size and nose (HY_MODEL_POSE, js/game-models.js)  'v2' | 'original'
+        enemyModels:     'v2',         // Ben 2026-10-11: "Enemy1.glb … Enemy8.glb these will need scaling and the thruster plumes as well" + "and lights" — models/Enemy<n>-v2.glb baked to the stock fighters' median size (HY_MODEL_POSE._enemyRawLongest), plumes on the real nozzles + faction light elements (HY_HULL_POINTS)  'v2' | 'original'
+        ufoModel:        'v2',         // same for models/UFO-v2.glb (laid flat, dome up)  'v2' | 'original'
+        bossDifficulty:  'hard',       // Ben 2026-10-11: "bosses need to be 3x more difficult with evasive maneuvers and patterns of attack" — 2x health + shields, 1.5x damage, breaks under fire, a rotation of telegraphed attack patterns (HY_BOSS_AI, js/game-controls.js)  'hard' | 'original'
+        startSide:       'farSide',    // Ben 2026-10-11: "the game should always start with somewhere on the opposite side of the sun from Sagittarius" — Earth's orbit phase is pinned at hand-off so the start sits across the Sun from Sgr A* (HY_START.FAR_SIDE_JITTER_DEG)  'farSide' | 'wherever'
+        fillLight:       'on',         // Ben 2026-10-11: "some slight global illumination so we can see the ships" — a hemisphere fill + a touch more ambient on lit materials (HY_FILL, js/game-intro.js)  'on' | 'off'
+        deathScreen:     'synthwave',  // Ben 2026-10-11: "keep the end screen from 8805" — MISSION FAILED as the arcade sequence with the alien beat-line landscape (js/synthwave-fx.js, css/synthwave.css)  'synthwave' | 'original'
         postFx:          'bloom',      // EffectComposer with HDR-threshold bloom: only neon (emissive > 1) glows (js/synthwave-post.js)  'bloom' | 'off'
         vectorShips:     'edges',      // glowing edge lines + fresnel rim on the ship models (js/synthwave-post.js)  'edges' | 'off'
+        titleScreen:     'launch',     // Ben 2026-10-11: "think about what a AAA game would do… The game starts with blasting off from earth" → package AH (js/title-launch.js): Earth at dawn, with an on-screen chooser (← →) for the other directions; `original` = the classic launch screen  'launch' | 'chrome' | 'landscape' | 'poster' | 'original'
         haze:            'regional',   // distance haze varies by region: murky in nebulae, clear between galaxies (HY_HAZE)  'regional' | 'global'
         sun:             'burning',    // the local Sun as a burning star emitting light (HY_SUN)  'burning' | 'overhaul'
         outerSystems:    'frontier',   // outer systems rebuilt as the far frontier (HY_OUTER)  'frontier' | 'classic'

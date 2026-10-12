@@ -105,11 +105,15 @@ function initCameraSystem(camera, scene) {
             playerModel.frustumCulled = false;
 
             // Apply optimized self-lit material to all meshes
+            // HYBRID playerModel: an alternate hull keeps its own textured GLB material
+            // (the flat cyan below is the stock vector hull's look).
+            const _altHull = !!(typeof modelCache !== 'undefined' && modelCache.player && modelCache.player.userData && modelCache.player.userData._hyAltHull);
             playerModel.traverse((child) => {
                 if (child.isMesh) {
                     // CRITICAL: Make each mesh visible
                     child.visible = true;
                     child.frustumCulled = false;
+                    if (_altHull) { child.renderOrder = 100; child.castShadow = false; child.receiveShadow = false; child.material.needsUpdate = true; return; }
 
                     // Optimized self-illuminated material - simpler for better performance
                     child.material = new THREE.MeshBasicMaterial({
@@ -381,7 +385,7 @@ function updateCameraView(camera) {
             : 1 - Math.pow(-2 * progress + 2, 2) / 2;
 
         // Interpolate between start and target offset
-        currentOffset = new THREE.Vector3();
+        currentOffset = _camViewScratch.cur;
         currentOffset.lerpVectors(
             cameraState.transitionStartOffset,
             cameraState.transitionTargetOffset,
@@ -395,13 +399,13 @@ function updateCameraView(camera) {
         }
     } else if (cameraState.mode === 'zero-offset') {
         // Zero offset - ship behind camera (matches transition target)
-        currentOffset = new THREE.Vector3(0.25, -1, 3);
+        currentOffset = _camViewScratch.cur.set(0.25, -1, 3);
     } else if (cameraState.mode === 'first-person') {
         // First-person offset
-        currentOffset = cameraState.normalFirstPersonOffset.clone();
+        currentOffset = _camViewScratch.cur.copy(cameraState.normalFirstPersonOffset);
     } else {
         // Third-person offset
-        currentOffset = cameraState.normalThirdPersonOffset.clone();
+        currentOffset = _camViewScratch.cur.copy(cameraState.normalThirdPersonOffset);
     }
 
     // ── CINEMATIC WARP FRAMING ──────────────────────────────────────────
@@ -703,115 +707,107 @@ function updateCameraView(camera) {
         }
     }
 
-    if (cameraState.mode === 'first-person') {
-        // FIRST-PERSON MODE (COCKPIT VIEW):
-        // Camera IS the player position - enemies target this location
-        // Position the ship model so the camera is at the cockpit/center of the ship
-        // The ship model is just visual - the camera position is the "real" player position
+    if (cameraState.mode === 'first-person' || cameraState.mode === 'third-person') {
+        // FIRST-PERSON (cockpit) and THIRD-PERSON (chase) place the hull the
+        // same way: camera position + the animated offset rotated into the
+        // camera frame, facing AWAY from the camera (direction of travel),
+        // then leaned into the turn by _shipLean(). The camera IS the
+        // player's position either way — the hull is only visual.
+        // Scratch objects instead of per-call new Vector3/Quaternion/Matrix4
+        // (this runs twice a frame).
+        const S = _camViewScratch;
+        S.offset.copy(currentOffset).applyQuaternion(camera.quaternion);
+        cameraState.playerShipMesh.position.copy(camera.position).add(S.offset);
 
-        // Use animated offset during transitions
-        const cockpitOffset = currentOffset.clone();
-        cockpitOffset.applyQuaternion(camera.quaternion);
-
-        cameraState.playerShipMesh.position.copy(camera.position);
-        cameraState.playerShipMesh.position.add(cockpitOffset);
-
-        // Orient ship to face AWAY from camera (direction of travel)
         // v2254: Build rotation matrix from camera vectors for proper alignment
-        const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-        
-        // Ship faces opposite direction (away from camera)
-        const shipForward = camForward.clone().negate();
-        
-        // Build rotation matrix from direction vectors
-        const shipMatrix = new THREE.Matrix4();
-        shipMatrix.lookAt(new THREE.Vector3(), shipForward, camUp);
-        const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
-        
-        // Dynamic banking + counter-roll spring for realistic feel.
-        // The ship leans into yaw turns and has a damped counter-roll
-        // at the end of Q/E rolls, like inertia overshooting then settling.
+        S.fwd.set(0, 0, 1).applyQuaternion(camera.quaternion);   // = -(camera forward)
+        S.up.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        S.mat.lookAt(S.zero, S.fwd, S.up);
+        S.quat.setFromRotationMatrix(S.mat);
+
+        // Lean (bank into yaw, tilt into pitch), SMOOTHED for both views.
+        // The chase view used to apply the raw angular velocity x 15-45 every
+        // frame: the bank snapped 0 -> 19 deg in two frames when a turn began
+        // and every per-frame wobble of the yaw rate showed as a roll — on the
+        // lit, normal-mapped XT-7 that reads as the whole hull flickering.
         if (typeof rotationalVelocity !== 'undefined') {
-            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
-            // SMOOTH the bank/pitch tilt. Previously the bank was raw
-            // angular velocity × 15-45, applied every frame — so the noisy
-            // per-frame yaw (inertia overshoot + the orient closed-form step)
-            // mapped straight to a big roll that visibly jittered/shook the
-            // ship during fast turns. Easing the applied angle removes it.
-            const targetBank = -rotationalVelocity.yaw * (demo ? 38 : 14);
-            const targetPitch = -rotationalVelocity.pitch * (demo ? 10 : 5);
-            if (cameraState._smBank === undefined) cameraState._smBank = 0;
-            if (cameraState._smPitch === undefined) cameraState._smPitch = 0;
-            cameraState._smBank += (targetBank - cameraState._smBank) * 0.18;
-            cameraState._smPitch += (targetPitch - cameraState._smPitch) * 0.18;
-            // Counter-roll spring (for Q/E rolls), gentler multiplier (3→1.5).
+            const lean = _shipLean(cameraState.mode);
+            S.axis.set(0, 0, 1);
+            S.bank.setFromAxisAngle(S.axis, lean.bank);
+            S.axis.set(1, 0, 0);
+            S.pitch.setFromAxisAngle(S.axis, lean.pitch);
+            S.quat.multiply(S.bank).multiply(S.pitch);
+        }
+
+        cameraState.playerShipMesh.quaternion.copy(S.quat);
+
+        // Make ship visible (cockpit view keeps existing material transparency;
+        // the chase view is fully visible and opaque)
+        cameraState.playerShipMesh.visible = true;
+        cameraState.playerShipMesh.traverse(_setMeshVisible);
+    }
+}
+
+// Scratch for updateCameraView's hull placement (no per-frame allocation).
+const _camViewScratch = {
+    cur: new THREE.Vector3(), offset: new THREE.Vector3(), fwd: new THREE.Vector3(), up: new THREE.Vector3(),
+    zero: new THREE.Vector3(), axis: new THREE.Vector3(), mat: new THREE.Matrix4(),
+    quat: new THREE.Quaternion(), bank: new THREE.Quaternion(), pitch: new THREE.Quaternion(),
+    lean: { bank: 0, pitch: 0 }
+};
+function _setMeshVisible(child) { if (child.isMesh) child.visible = true; }
+
+// HULL LEAN — one smoothed bank/pitch for both camera views (package AF).
+// Gains are the views' previous ones (cockpit 14/5, chase 15/5; demo 38/10
+// and 45/12) so the lean reads exactly as large; what changed is the path to
+// it: a critically damped spring (C1 — no velocity kink when a turn starts or
+// stops, unlike the cockpit's old 0.18/frame exponential) integrated ONCE per
+// game frame on the real dt (updateCameraView runs twice a frame, and the
+// intro loop calls it too). OMEGA 14 rad/s: 90% of the lean in 0.33 s; replayed
+// at 60 Hz on the physics yaw ramp the worst frame-to-frame roll acceleration
+// drops from 2.58 to 0.22 deg/frame^2 (p95 0.09).
+// The cockpit keeps its Q/E counter-roll spring; the chase view never had one.
+const HY_SHIP_LEAN = {
+    OMEGA: 14,
+    GAIN: { 'first-person': [14, 5, 38, 10], 'third-person': [15, 5, 45, 12] }
+};
+function _shipLean(mode) {
+    const L = _camViewScratch.lean;
+    const fc = (typeof gameState !== 'undefined') ? gameState.frameCount : 0;
+    if (cameraState._leanFrame !== fc || cameraState._leanMode !== mode) {
+        const first = cameraState._leanFrame === undefined;
+        cameraState._leanFrame = fc;
+        cameraState._leanMode = mode;
+        const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
+        const g = HY_SHIP_LEAN.GAIN[mode] || HY_SHIP_LEAN.GAIN['third-person'];
+        const tBank = -rotationalVelocity.yaw * (demo ? g[2] : g[0]);
+        const tPitch = -rotationalVelocity.pitch * (demo ? g[3] : g[1]);
+        if (first || !isFinite(cameraState._smBank) || !isFinite(cameraState._smPitch)) {
+            cameraState._smBank = tBank; cameraState._smPitch = tPitch;
+            cameraState._smBankV = 0; cameraState._smPitchV = 0;
+        }
+        const dt = Math.min(0.05, Math.max(0.004, ((typeof gameState !== 'undefined' && gameState.dtMs) || 16.67) / 1000));
+        const w = HY_SHIP_LEAN.OMEGA, e = Math.exp(-w * dt);
+        // exact critically damped step: x -> target with velocity v
+        let y = cameraState._smBank - tBank, v = cameraState._smBankV || 0, j = v + w * y;
+        cameraState._smBank = tBank + (y + j * dt) * e;
+        cameraState._smBankV = (v - w * j * dt) * e;
+        y = cameraState._smPitch - tPitch; v = cameraState._smPitchV || 0; j = v + w * y;
+        cameraState._smPitch = tPitch + (y + j * dt) * e;
+        cameraState._smPitchV = (v - w * j * dt) * e;
+        // Counter-roll spring for Q/E rolls (cockpit only, as before), dt-scaled.
+        let counterRoll = 0;
+        if (mode === 'first-person') {
             if (cameraState._smoothedRoll === undefined) cameraState._smoothedRoll = 0;
             const targetRoll = rotationalVelocity.roll * 8;
-            cameraState._smoothedRoll += (targetRoll - cameraState._smoothedRoll) * 0.08;
-            const counterRoll = (cameraState._smoothedRoll - targetRoll) * 1.5;
-            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), cameraState._smBank + counterRoll);
-            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), cameraState._smPitch);
-            shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
+            cameraState._smoothedRoll += (targetRoll - cameraState._smoothedRoll) *
+                (1 - Math.pow(0.92, dt * 60));
+            counterRoll = (cameraState._smoothedRoll - targetRoll) * 1.5;
         }
-
-        cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
-
-        // Make ship visible but slightly transparent for cockpit view
-        cameraState.playerShipMesh.visible = true;
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = true;
-                // Keep existing material transparency
-            }
-        });
-
-    } else if (cameraState.mode === 'third-person') {
-        // THIRD-PERSON MODE (CHASE CAMERA):
-        // Camera is behind and above the ship looking at it
-        // Ship positioned ahead of camera at a comfortable viewing distance
-
-        // Use animated offset during transitions (same as first-person: ADD)
-        const chaseOffset = currentOffset.clone();
-        chaseOffset.applyQuaternion(camera.quaternion);
-
-        // UNIFIED: Always ADD offset (third-person uses negative Z to put ship ahead)
-        cameraState.playerShipMesh.position.copy(camera.position);
-        cameraState.playerShipMesh.position.add(chaseOffset);
-
-        // Orient ship to face AWAY from camera (direction of travel)
-        // v2254: Build rotation matrix from camera vectors for proper alignment
-        const camForward = new THREE.Vector3(0, 0, -1).applyQuaternion(camera.quaternion);
-        const camUp = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
-        
-        // Ship faces opposite direction (away from camera, toward travel direction)
-        const shipForward = camForward.clone().negate();
-        
-        // Build rotation matrix from direction vectors
-        const shipMatrix = new THREE.Matrix4();
-        shipMatrix.lookAt(new THREE.Vector3(), shipForward, camUp);
-        const shipQuaternion = new THREE.Quaternion().setFromRotationMatrix(shipMatrix);
-        
-        // Add dynamic banking based on rotational velocity
-        if (typeof rotationalVelocity !== 'undefined') {
-            const demo = (typeof window !== 'undefined' && window.demoPilot && window.demoPilot.active);
-            const bankAmount = -rotationalVelocity.yaw * (demo ? 45 : 15);
-            const pitchTilt = -rotationalVelocity.pitch * (demo ? 12 : 5);
-            const bankQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), bankAmount);
-            const pitchQuat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitchTilt);
-            shipQuaternion.multiply(bankQuat).multiply(pitchQuat);
-        }
-
-        cameraState.playerShipMesh.quaternion.copy(shipQuaternion);
-
-        // Ensure the ship model is fully visible and opaque in third-person
-        cameraState.playerShipMesh.visible = true;
-        cameraState.playerShipMesh.traverse((child) => {
-            if (child.isMesh) {
-                child.visible = true;
-            }
-        });
+        L.bank = cameraState._smBank + counterRoll;
+        L.pitch = cameraState._smPitch;
     }
+    return L;
 }
 
 /**
@@ -1108,6 +1104,8 @@ function createThrusterGlows(playerModel) {
     });
 
     cameraState.thrusterGlows = createThrusterGlowsForModel(playerModel);
+    // HULL FIT: the thruster light + the hull's light elements (built once per hull)
+    try { _hyBuildHullLights(playerModel); } catch (e) { console.warn('hull lights skipped', e); }
 
     console.log(`🔥 Created ${cameraState.thrusterGlows.length} thruster glow effects`);
 }
@@ -1125,14 +1123,20 @@ function createThrusterGlowsForModel(model) {
 
     // Two thruster positions at rear engine exhausts (local model space,
     // small values — tuned to the player ship's exhaust points).
-    const thrusterPositions = [
-        new THREE.Vector3(-0.022, 0, -0.125),   // Left engine exhaust
-        new THREE.Vector3(0.022, 0, -0.125)     // Right engine exhaust
+    // HULL FIT: the nozzles come from the hull's anchor table (HY_HULL_POINTS
+    // in js/game-controls.js) — the stock hull's entry is these numbers
+    // verbatim, any other hull gets its own measured nozzles with cones sized
+    // to its width.
+    const _fit = (typeof window.hyHullThrusters === 'function') ? window.hyHullThrusters(model) : null;
+    const nozzles = _fit ? _fit.nozzles : [
+        { pos: new THREE.Vector3(-0.022, 0, -0.125), r: 0.01, len: 0.035, r2: 0.015, len2: 0.05, back: 0.008 },   // Left engine exhaust
+        { pos: new THREE.Vector3(0.022, 0, -0.125), r: 0.01, len: 0.035, r2: 0.015, len2: 0.05, back: 0.008 }     // Right engine exhaust
     ];
 
-    thrusterPositions.forEach((pos) => {
+    nozzles.forEach((nz) => {
+        const pos = nz.pos;
         // Inner glow cone for engine exhaust
-        const glowGeometry = new THREE.ConeGeometry(0.01, 0.035, 8);
+        const glowGeometry = new THREE.ConeGeometry(nz.r, nz.len, 8);
         const glowMaterial = new THREE.MeshBasicMaterial({
             color: 0xffaa00,  // Orange-yellow
             transparent: true,
@@ -1148,7 +1152,7 @@ function createThrusterGlowsForModel(model) {
         glows.push(glow);
 
         // Outer, larger, dimmer glow
-        const outerGlowGeometry = new THREE.ConeGeometry(0.015, 0.05, 8);
+        const outerGlowGeometry = new THREE.ConeGeometry(nz.r2, nz.len2, 8);
         const outerGlowMaterial = new THREE.MeshBasicMaterial({
             color: 0xff6600,  // Deeper orange
             transparent: true,
@@ -1157,7 +1161,7 @@ function createThrusterGlowsForModel(model) {
         });
         const outerGlow = new THREE.Mesh(outerGlowGeometry, outerGlowMaterial);
         outerGlow.position.copy(pos);
-        outerGlow.position.z -= 0.008;  // Slightly further back
+        outerGlow.position.z -= nz.back;  // Slightly further back
         outerGlow.rotation.x = -Math.PI / 2;
         outerGlow.renderOrder = 100;
         outerGlow.frustumCulled = false;
@@ -1204,6 +1208,7 @@ function updateThrusterGlowArray(glows, state, isThrusting) {
  * @param {boolean} isThrusting - Whether W key (or other thrust) is active
  */
 function updateThrusterGlow(isThrusting) {
+    try { _hyUpdateHullLights(isThrusting); } catch (e) {}
     if (cameraState.thrusterGlows.length === 0) return;
     
     // Smooth intensity transition
@@ -1229,4 +1234,212 @@ function updateThrusterGlow(isThrusting) {
     });
     
     cameraState.thrusterActive = isThrusting;
+}
+
+// =============================================================================
+// HULL LIGHTS (package hullfit — Ben 2026-10-11: "thrusters should generate
+// light. there should be some kind of light elements on the ship")
+// =============================================================================
+// Two pieces, both anchored in the hull's own HY_HULL_POINTS entry (box
+// fractions, js/game-controls.js) and created ONCE per hull:
+//  1. ONE THREE.PointLight at the nozzle group, plume-coloured, no shadows,
+//     distance = hull length x 3, decay 2, parented to the hull. Its intensity
+//     rides the glow cones' throttle ramp (0 at idle-coast, full under W) and,
+//     with the overhaul plume on (`thrusters: overhaul`), climbs further with
+//     the bloom's log-speed burn (boost / whip / warp). It is never hidden or
+//     re-added — a light-count change recompiles every lit material.
+//  2. ONE THREE.Points draw call for every light element on the hull: port
+//     red + starboard green nav lights at the wingtips, a white spine strobe
+//     (1 Hz double flash), a constant cockpit glow, engine throats that
+//     brighten with thrust and a few panel lights. Additive, outside the tone
+//     curve, sized in hull widths (so they shrink with the warp pull-back),
+//     faded out within a few units of the lens (cockpit view), exempt from
+//     the draw budget (__dbTris = Infinity).
+const _HL = {
+    MAX_I: 2.6,          // point-light intensity at full W
+    BURN_K: 0.7,         // extra fraction at full burn (overhaul plume only)
+    COLOR: 0xff7a1e,     // between the cones' 0xffaa00 core and 0xff6600 sheath
+    REACH_K: 3,          // light distance = hull length x 3
+    BACK_K: 0.35,        // light sits this many half-lengths behind the nozzle exit
+    STOCK_GAIN: 0.6,     // the stock vector hull keeps its elements subtle
+    KIND_COLOR: { port: 0xff2a1a, starboard: 0x22ff55, strobe: 0xffffff, cockpit: 0xa8eeff, throat: 0xff8a2a, panel: 0xff4030 }
+};
+const _hl = { model: null, points: null, light: null, gain: null, kinds: null, level: 0, key: null };
+
+function _hlDispose() {
+    if (_hl.points) {
+        if (_hl.points.parent) _hl.points.parent.remove(_hl.points);
+        _hl.points.geometry.dispose();
+        _hl.points.material.dispose();
+    }
+    if (_hl.light && _hl.light.parent) _hl.light.parent.remove(_hl.light);
+    _hl.model = null; _hl.points = null; _hl.light = null; _hl.gain = null; _hl.kinds = null; _hl.level = 0;
+}
+
+function _hlMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: { uHalfH: { value: 360 } },
+        vertexShader: [
+            'attribute float aSize;', 'attribute float aGain;', 'attribute vec3 aColor;',
+            'uniform float uHalfH;', 'varying vec3 vColor;', 'varying float vGain;',
+            '#include <common>', '#include <logdepthbuf_pars_vertex>',
+            'void main() {',
+            '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+            '  float d = max(0.001, -mv.z);',
+            '  float worldSize = aSize * length(modelMatrix[0].xyz);',
+            '  float px = worldSize * projectionMatrix[1][1] * uHalfH / d;',
+            '  gl_PointSize = clamp(px, 2.0, 72.0);',
+            '  vColor = aColor;',
+            // fade on the lens (cockpit view), and dim instead of shrinking below 2 px
+            '  vGain = aGain * smoothstep(2.0, 6.0, d) * clamp(px / 2.0, 0.35, 1.0);',
+            '  gl_Position = projectionMatrix * mv;',
+            '  #include <logdepthbuf_vertex>',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'varying vec3 vColor;', 'varying float vGain;',
+            '#include <common>', '#include <logdepthbuf_pars_fragment>',
+            'void main() {',
+            '  #include <logdepthbuf_fragment>',
+            '  vec2 q = gl_PointCoord - 0.5;',
+            '  float r = length(q) * 2.0;',
+            '  if (r > 1.0) discard;',
+            '  float core = smoothstep(0.5, 0.0, r);',
+            '  float halo = pow(1.0 - r, 2.2) * 0.55;',
+            '  float a = (core + halo) * vGain;',
+            '  gl_FragColor = vec4(mix(vColor, vec3(1.0), core * 0.55) * a, a);',
+            '}'
+        ].join('\n'),
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false
+    });
+}
+
+// GENERALISED (package AI enemyhulls): any hull with a HY_HULL_POINTS `lights` list gets ONE Points draw call.
+//   lights  [{x,y,z, kind, size[, color]}] box fractions (see HY_HULL_POINTS)
+//   box     the hull's local box
+//   opts    { local(L, out) → local position (default hyHullLocal), colorOf(L) → hex, material (default a new _hlMaterial()) }
+// Returns { points, gain (the aGain attribute, DynamicDraw), kinds } or null for an empty list.
+function _hyMakeHullLightPoints(lights, box, opts) {
+    opts = opts || {};
+    const width = box.max.x - box.min.x;
+    const n = lights.length;
+    if (!n) return null;
+    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    const size = new Float32Array(n), gain = new Float32Array(n);
+    const v = new THREE.Vector3(), c = new THREE.Color();
+    lights.forEach((L, i) => {
+        if (opts.local) opts.local(L, v); else window.hyHullLocal(box, L, v);
+        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+        c.setHex(opts.colorOf ? opts.colorOf(L) : (L.color != null ? L.color : (_HL.KIND_COLOR[L.kind] || 0xffffff)));
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        size[i] = L.size * width;
+        gain[i] = 0;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+    const ga = new THREE.BufferAttribute(gain, 1);
+    ga.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aGain', ga);
+    geo.computeBoundingSphere();
+    const pts = new THREE.Points(geo, opts.material || _hlMaterial());
+    pts.name = 'hullLights';
+    pts.frustumCulled = false;
+    pts.renderOrder = 102;
+    pts.userData.isEffect = true;
+    pts.userData.__dbTris = Infinity;
+    return { points: pts, gain: ga, kinds: lights.map((L) => L.kind) };
+}
+// Per-element brightness for one frame: strobe 1 Hz double flash, throats ride the throttle `thr`,
+// steady cockpit / nav, slow panel shimmer; `g` scales the lot. Writes `arr` (the aGain array).
+function _hyHullLightGains(kinds, arr, thr, now, g) {
+    const ph = (now % 1000) / 1000;                                   // 1 Hz
+    const strobe = (ph < 0.05 || (ph > 0.13 && ph < 0.18)) ? 1 : 0;   // short double flash
+    for (let i = 0; i < kinds.length; i++) {
+        const k = kinds[i];
+        let a;
+        if (k === 'strobe') a = strobe * 1.2;
+        else if (k === 'throat') a = 0.18 + 0.95 * thr;
+        else if (k === 'cockpit') a = 0.55;
+        else if (k === 'panel') a = 0.62 + 0.12 * Math.sin(now * 0.002 + i * 1.7);
+        else a = 1.15;                                                // nav lights: steady
+        arr[i] = a * g;
+    }
+}
+
+function _hyBuildHullLights(model) {
+    _hlDispose();
+    if (!model || typeof THREE === 'undefined' || typeof window.hyHullPoints !== 'function' ||
+        typeof _hyShipLocalBox !== 'function') return;
+    const entry = window.hyHullPoints(model);
+    const box = _hyShipLocalBox(model);
+    if (!entry || !box) return;
+    const key = window.hyHullKey(model);
+    const len = box.max.z - box.min.z;
+    const v = new THREE.Vector3();
+    const made = _hyMakeHullLightPoints(entry.lights || [], box);
+    if (made) {
+        model.add(made.points);
+        _hl.points = made.points;
+        _hl.gain = made.gain;
+        _hl.kinds = made.kinds;
+    }
+    // the thruster light, at the nozzle group's centre, a little behind the exit
+    let nx = 0, ny = 0, nz = 0, nn = 0;
+    if (entry.exact) {
+        entry.exact.thrusters.forEach((p) => { nx += p[0]; ny += p[1]; nz += p[2]; nn++; });
+    } else {
+        (entry.thrusters || []).forEach((t) => { window.hyHullLocal(box, t, v); nx += v.x; ny += v.y; nz += v.z; nn++; });
+    }
+    if (nn) {
+        const scaleW = (model.scale && model.scale.x) || 1;
+        const light = new THREE.PointLight(_HL.COLOR, 0, len * scaleW * _HL.REACH_K, 2);
+        light.name = 'thrusterLight';
+        light.castShadow = false;
+        light.position.set(nx / nn, ny / nn, nz / nn - _HL.BACK_K * len / 2);
+        model.add(light);
+        _hl.light = light;
+    }
+    _hl.model = model;
+    _hl.key = key;
+}
+
+const _hlSize = (typeof THREE !== 'undefined') ? new THREE.Vector2() : null;
+function _hyUpdateHullLights(isThrusting) {
+    const model = cameraState.playerShipMesh;
+    if (!model) return;
+    if (_hl.model !== model) { _hyBuildHullLights(model); if (_hl.model !== model) return; }
+    const dtF = (typeof gameState !== 'undefined' && gameState.dtFrames) ? gameState.dtFrames : 1;
+    // throttle: the cones' own ramp, plus the bloom's burn with the overhaul plume
+    let target = cameraState.thrusterIntensity || 0;
+    if (!window.HYBRID || window.HYBRID.is('thrusters', 'overhaul')) {
+        const spd = (typeof gameState !== 'undefined' && gameState.velocityVector) ? gameState.velocityVector.length() : 0;
+        const burn = Math.max(0, Math.min(1, Math.log(1 + spd / 6.8) / Math.log(1 + 120 / 6.8)));
+        target *= 1 + _HL.BURN_K * burn;
+    }
+    _hl.level += (target - _hl.level) * (1 - Math.pow(1 - 0.22, dtF));
+    if (_hl.light) _hl.light.intensity = _HL.MAX_I * _hl.level;
+    if (!_hl.points) return;
+    if (typeof renderer !== 'undefined' && renderer && renderer.getDrawingBufferSize) {
+        renderer.getDrawingBufferSize(_hlSize);
+        _hl.points.material.uniforms.uHalfH.value = _hlSize.y * 0.5;
+    }
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    const g = (_hl.key === 'Player') ? _HL.STOCK_GAIN : 1;
+    const thr = Math.min(1.2, _hl.level);
+    _hyHullLightGains(_hl.kinds, _hl.gain.array, thr, now, g);
+    _hl.gain.needsUpdate = true;
+}
+if (typeof window !== 'undefined') {
+    window._hyBuildHullLights = _hyBuildHullLights;
+    window._hyHullLights = _hl;
+    window._hyMakeHullLightPoints = _hyMakeHullLightPoints;
+    window._hyHullLightGains = _hyHullLightGains;
+    window._hyHullLightMaterial = _hlMaterial;
+    window._HY_HULL_LIGHT_KIND_COLOR = _HL.KIND_COLOR;
 }

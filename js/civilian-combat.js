@@ -70,6 +70,8 @@ function _updateCivilianFleeing() {
     }
 }
 
+const _ccShips = [];   // reused ship list for updateCivilianCombat
+
 // Update function to be called from main game loop
 function updateCivilianCombat() {
     if (!tradingShips || !enemies) return;
@@ -81,31 +83,53 @@ function updateCivilianCombat() {
     _updateCivilianShields();
     _updateMilitaryReturnFire();
 
-    // Check each enemy for civilian targets
-    enemies.forEach(enemy => {
-        if (!enemy.userData || enemy.userData.isDead) return;
+    // Check each enemy for civilian targets.
+    // PERF (package AF): same decisions, same Math.random() draws, without a
+    // throwaway filter() array + closure + distanceTo() per enemy x ship pair
+    // (measured ~30 ms/s of main thread at the start). The ship list is taken
+    // once per call; liveness is re-read in the loop, so a ship destroyed by an
+    // earlier enemy's attack this call is skipped exactly as before.
+    const _ships = _ccShips; _ships.length = 0;
+    for (let i = 0; i < tradingShips.length; i++) {
+        const ship = tradingShips[i];
+        if (ship && ship.userData && ship.position) _ships.push(ship);
+    }
+    const R2 = 1000 * 1000;
+    for (let ei = 0; ei < enemies.length; ei++) {
+        const enemy = enemies[ei];
+        if (!enemy || !enemy.userData || enemy.userData.isDead) continue;
         
         // 20% chance each frame to consider civilian targets
-        if (Math.random() > 0.2) return;
+        if (Math.random() > 0.2) continue;
         
-        // Find nearby civilians
-        const nearbyCivilians = tradingShips.filter(ship => {
-            if (!ship || !ship.userData || ship.userData.destroyed) return false;
-            const dist = enemy.position.distanceTo(ship.position);
-            return dist < 1000; // Within 1000 units
-        });
+        // Find nearby civilians (within 1000 units)
+        const ex = enemy.position.x, ey = enemy.position.y, ez = enemy.position.z;
+        let count = 0;
+        for (let i = 0; i < _ships.length; i++) {
+            const sh = _ships[i];
+            if (sh.userData.destroyed) continue;
+            const dx = sh.position.x - ex, dy = sh.position.y - ey, dz = sh.position.z - ez;
+            if (dx * dx + dy * dy + dz * dz < R2) count++;
+        }
         
-        if (nearbyCivilians.length === 0) return;
+        if (count === 0) continue;
         
-        // Pick random nearby civilian to attack
-        const target = nearbyCivilians[Math.floor(Math.random() * nearbyCivilians.length)];
+        // Pick random nearby civilian to attack (the k-th match, in list order)
+        let k = Math.floor(Math.random() * count), target = null;
+        for (let i = 0; i < _ships.length; i++) {
+            const sh = _ships[i];
+            if (sh.userData.destroyed) continue;
+            const dx = sh.position.x - ex, dy = sh.position.y - ey, dz = sh.position.z - ez;
+            if (dx * dx + dy * dy + dz * dz < R2 && k-- === 0) { target = sh; break; }
+        }
+        if (!target) continue;
         
         // Attack if close enough (laser range — the attack draws a beam now)
         const distToTarget = enemy.position.distanceTo(target.position);
         if (distToTarget < 500) {
             attackCivilian(enemy, target);
         }
-    });
+    }
     
     // Update distress calls
     updateDistressCalls();
@@ -300,6 +324,12 @@ function _updateMilitaryReturnFire() {
                 }
             } else if (tgt.userData) {
                 tgt.userData.health -= 2;
+                // HYBRID (package AJ): a patrol craft never finishes a flagship — its kill
+                // path has no death set-piece and no boss-victory / campaign hook, so the
+                // boss just vanished in a small puff. The player (or a wingman) lands the
+                // last hit and the full boss death plays.
+                const _tud = tgt.userData;
+                if ((_tud.isBoss || _tud.isEliteGuardian || _tud.isBlackHoleGuardian) && _tud.health <= 0) _tud.health = 0.5;
                 if (typeof flashEnemyHit === 'function') { try { flashEnemyHit(tgt, 2); } catch (e) {} }
                 if (tgt.userData.health <= 0) _militaryKillEnemy(tgt);
             }

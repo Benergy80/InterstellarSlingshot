@@ -114,12 +114,20 @@ async function loadEnemyModels() {
     console.log('🎯 === LOADING ENEMY MODELS ===');
     const promises = [];
 
+    // HYBRID enemyModels: v2 (Ben 2026-10-11, package AI) — his new fighter hulls stand in for Enemy<n>.glb,
+    // baked nose -Z to one raw size (HY_MODEL_POSE._enemyRawLongest = the stock fighters' median in game)
+    // the same way loadBossModels bakes Boss<n>-v2; the stock file stays the fallback.
+    const _v2 = !!(window.HYBRID && window.HYBRID.is && window.HYBRID.is('enemyModels', 'v2'));
     for (let i = 1; i <= 8; i++) {
         const path = `models/Enemy${i}.glb`;
-        console.log(`🎯 Queueing enemy ${i}: ${path}`);
+        console.log(`🎯 Queueing enemy ${i}: ${path}` + (_v2 ? ' (+ v2 hull)' : ''));
         promises.push(
             loadGLBModel(path)
-                .then(model => {
+                .then(async (model) => {
+                    if (_v2) {
+                        try { const alt = await loadGLBModel(`models/Enemy${i}-v2.glb`); model = _hyBakeAltModel(alt, model, `Enemy${i}-v2`, null, HY_MODEL_POSE._enemyRawLongest); }
+                        catch (e) { console.warn(`⚠️ Enemy${i}-v2.glb failed, using the stock hull:`, e && e.message); }
+                    }
                     console.log(`✅ Enemy ${i} cached successfully`);
                     modelCache.enemies[i] = model;
                     modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
@@ -149,12 +157,19 @@ async function loadBossModels() {
     console.log('👑 === LOADING BOSS MODELS ===');
     const promises = [];
 
+    // HYBRID bossModels: v2 (Ben 2026-10-11) — his new hulls stand in for Boss<n>.glb, each baked to the
+    // stock model's size and nose direction (HY_MODEL_POSE); the stock file stays as the size reference.
+    const _v2 = !!(window.HYBRID && window.HYBRID.is && window.HYBRID.is('bossModels', 'v2'));
     for (let i = 1; i <= 8; i++) {
         const path = `models/Boss${i}.glb`;
-        console.log(`👑 Queueing boss ${i}: ${path}`);
+        console.log(`👑 Queueing boss ${i}: ${path}` + (_v2 ? ' (+ v2 hull)' : ''));
         promises.push(
             loadGLBModel(path)
-                .then(model => {
+                .then(async (model) => {
+                    if (_v2) {
+                        try { const alt = await loadGLBModel(`models/Boss${i}-v2.glb`); model = _hyBakeAltModel(alt, model, `Boss${i}-v2`, null, HY_MODEL_POSE._bossRawLongest); }
+                        catch (e) { console.warn(`⚠️ Boss${i}-v2.glb failed, using the stock hull:`, e && e.message); }
+                    }
                     console.log(`✅ Boss ${i} cached successfully`);
                     modelCache.bosses[i] = model;
                     modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
@@ -179,13 +194,191 @@ async function loadBossModels() {
     console.log(`📊 Boss models: ${successCount}/8 loaded successfully`);
 }
 
+// =============================================================================
+// HYBRID: ALTERNATE HULLS (Ben 2026-10-11) — any GLB stands in for a stock model.
+// The alternate is BAKED into the stock model's frame: posed so its nose points
+// the game's way (HY_MODEL_POSE: player +Z, enemies / bosses -Z), centred, and
+// scaled so its longest dimension equals the stock model's (times `scale`).
+// Every mesh keeps the GLB's own textured material: the builders' faction
+// re-keying, the nose flip and the hull re-keys skip meshes flagged
+// `userData._hyAltMesh` (the root's userData is often overwritten by builders,
+// the meshes' survive clone()).
+// Poses were read off the turnarounds (tools/ortho-render.html) and the
+// end-slab cross-sections of each file: the generator authors noses at -X.
+// =============================================================================
+const HY_MODEL_POSE = {
+    // rx / ry / rz in degrees (Euler XYZ about the model's own axes); scale = extra size multiplier; emissive = the texture's own glow (0-1)
+    'XT-7small': { ry: 90 },            // player: raw nose -X → +Z
+    'Boss1-v2':  { ry: -90 , emissive: 0.9 },           // raw nose -X → -Z (enemy convention); red exhausts at +X go aft
+    'Boss2-v2':  { ry: 180 , emissive: 0.9 },           // orb: the iris face (+Z) forward, the orange hex engine port (-Z) aft
+    'Boss3-v2':  { ry: 0 , emissive: 0.9 },             // twin cannon already points -Z
+    'Boss4-v2':  { ry: 180 , emissive: 0.9 },           // the three exhaust cylinders sit at -Z → turned aft
+    'Boss5-v2':  { ry: -90 , emissive: 0.9 },           // dart, raw nose -X
+    'Boss6-v2':  { ry: 0 , emissive: 0.9 },             // wedge tip and cyan visor at -Z, pods aft
+    'Boss7-v2':  { ry: -90 , emissive: 0.9 },           // crystal spike, raw nose -X
+    'Boss8-v2':  { ry: -90 , emissive: 0.9 },           // crescent: cockpit at -X, orange exhaust at +X
+    'UFO-v2':    { rx: -90 , emissive: 0.9 },           // authored standing on edge (disc in XY, dome +Z) → laid flat, dome up
+    // FIGHTERS (package AI enemyhulls): poses read off the turnarounds + end-slab cross-sections, checked nose-on in game
+    'Enemy1-v2': { ry: 0 , emissive: 0.9 },             // spider body: legs and the orange engine panel trail at +Z
+    'Enemy2-v2': { ry: 0 , emissive: 0.9 },             // long hull along Z, cyan engine ring at +Z
+    'Enemy3-v2': { rx: -90 , emissive: 0.9 },           // authored upright (nose +Y, canopy on +Z) → laid flat, nose -Z, canopy up
+    'Enemy4-v2': { rx: -90 , emissive: 0.9 },           // same as Enemy3
+    'Enemy5-v2': { ry: 0 , emissive: 0.9 },             // twin cannons point -Z
+    'Enemy6-v2': { ry: 0 , emissive: 0.9 },             // prongs trail at +Z
+    'Enemy7-v2': { ry: 180 , emissive: 0.9 },           // the red eye faces +Z → turned forward
+    'Enemy8-v2': { ry: -90 , emissive: 0.9 },           // cockpit at -X, three nozzles at +X
+    // Every v2 fighter is baked to this raw longest dimension; the fighter builder scales x48 (scaleOverride 96 x 0.5),
+    // so 0.257 = 12.35 u across in game = the MEDIAN of the stock fighters measured in play (9.8 / 11.0 / 11.3 / 11.9 /
+    // 12.8 / 14.1 / 16.0 / 22.7 u for Enemy4 / 3 / 8 / 1 / 2 / 5 / 6 / 7). A per-model `scale` multiplies it.
+    _enemyRawLongest: 0.257,
+    // Every v2 boss is baked to this raw longest dimension; the boss builder scales x72, so 1.0 = 72 u across in game
+    // (the stock bosses ranged 3-87 u because of per-file sizes and the Sith x0.25 fix-up). A per-model `scale` multiplies it.
+    _bossRawLongest: 1.0,
+    // The v2 saucer is baked to this raw longest dimension; createUFOEnemy scales x3, so 63.3 = 190 u across = the
+    // hitbox the UFO author sized (radius 95). The STOCK UFO.glb is 424 raw → 1,273 u across under the original look
+    // (its x0.149 fix-up lives in the overhaul-only presence patch) — a pre-existing oversize, left as it is.
+    _ufoRawLongest: 63.3
+};
+if (typeof window !== 'undefined') window.HY_MODEL_POSE = HY_MODEL_POSE;
+function _hyIsAltModel(obj) {
+    if (!obj) return false;
+    if (obj.userData && obj.userData._hyAltModel) return true;
+    let hit = false;
+    obj.traverse((o) => { if (!hit && o.userData && o.userData._hyAltMesh) hit = true; });
+    return hit;
+}
+// HYBRID: the game's per-pixel HULL LIGHT RIG on a new textured hull (Ben 2026-10-11: "boss enemies need
+// illumination as well as all new enemies"). The same camera-locked key / fill / back lamps the stock hull
+// material carries (_HULL_LIGHT_RIG, evaluated in view space inside the hull's own shader, so planets keep
+// their sun-lit terminator and nothing else in the scene changes) plus a thin faction rim. Once per material.
+const HY_ALT_RIG = { KEY: 1.7, FILL: 0.4, BACK: 0.45, RIM: 0.35, RIM_POW: 2.6, ALBEDO: 0.85 };
+if (typeof window !== 'undefined') window.HY_ALT_RIG = HY_ALT_RIG;
+function _hyRigAltMaterial(m, color) {
+    if (!m || !m.isMeshStandardMaterial || typeof _addFresnelRim !== 'function') return m;
+    if (m.userData && m.userData._hyRigged) return m;
+    const R = HY_ALT_RIG;
+    _addFresnelRim(m, { hullLightRig: true, keyStrength: R.KEY, fillStrength: R.FILL, backStrength: R.BACK, rigAlbedo: R.ALBEDO,
+        idle: color !== undefined ? color : 0x66aaff, baseStrength: R.RIM, boostStrength: R.RIM, power: R.RIM_POW, coreDarken: 0 });
+    m.userData._hyRigged = true;
+    m.needsUpdate = true;
+    return m;
+}
+if (typeof window !== 'undefined') window._hyRigAltMaterial = _hyRigAltMaterial;
+function _hyBakeAltModel(model, ref, name, poseOverride, targetLongest) {
+    const pose = Object.assign({}, HY_MODEL_POSE[name] || {}, poseOverride || {});
+    model.updateWorldMatrix(true, true);
+    const bA = new THREE.Box3().setFromObject(model), sA = bA.getSize(new THREE.Vector3());
+    let k = 1, sR = sA.clone();
+    if (ref) {
+        ref.updateWorldMatrix(true, true);
+        const bR = new THREE.Box3().setFromObject(ref); sR = bR.getSize(new THREE.Vector3());
+        k = Math.max(sR.x, sR.y, sR.z) / Math.max(1e-6, Math.max(sA.x, sA.y, sA.z));
+    }
+    if (targetLongest) k = targetLongest / Math.max(1e-6, Math.max(sA.x, sA.y, sA.z));   // a fixed raw size instead of the stock model's
+    k *= (pose.scale || 1);
+    const c = bA.getCenter(new THREE.Vector3());
+    const d2r = Math.PI / 180;
+    const rot = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler((pose.rx || 0) * d2r, (pose.ry || 0) * d2r, (pose.rz || 0) * d2r, 'XYZ'));
+    const _m = new THREE.Matrix4().makeScale(k, k, k).multiply(rot).multiply(new THREE.Matrix4().makeTranslation(-c.x, -c.y, -c.z));
+    model.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        o.geometry = o.geometry.clone();
+        o.geometry.applyMatrix4(new THREE.Matrix4().multiplyMatrices(_m, o.matrixWorld));
+        if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals();
+        o.geometry.computeBoundingBox(); o.geometry.computeBoundingSphere();
+        o.userData._hyAltMesh = name;
+        o.castShadow = false; o.receiveShadow = false;
+        // The generator's textures are authored dark and the stock faction materials glow (emissive 0.35):
+        // let the hull's own texture glow by `emissive` (0-1) so it reads at the same brightness in play.
+        if (pose.emissive) { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((m) => { if (!m) return; if (m.map) { m.emissiveMap = m.map; m.emissive = new THREE.Color(0xffffff); } else if (m.emissive) { m.emissive.copy(m.color); } m.emissiveIntensity = pose.emissive; m.needsUpdate = true; }); }
+        // The generator bakes high metalness into its roughness/metal map; with no environment map a metallic
+        // surface reflects nothing and reads black under any light. Cap it so the hull answers the Sun and the fill.
+        { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((m) => { if (!m || !m.isMeshStandardMaterial) return; m.metalness = Math.min(m.metalness, pose.metalness !== undefined ? pose.metalness : 0.3); m.needsUpdate = true; }); }
+    });
+    model.traverse((o) => { o.position.set(0, 0, 0); o.quaternion.identity(); o.scale.set(1, 1, 1); });
+    model.updateWorldMatrix(true, true);
+    model.userData._hyAltModel = { name: name, k: k, size: [sA.x, sA.y, sA.z], refSize: [sR.x, sR.y, sR.z], pose: pose };
+    console.log('🧩 Alternate hull ' + name + ': ' + sA.x.toFixed(2) + 'x' + sA.y.toFixed(2) + 'x' + sA.z.toFixed(2) + ' baked x' + k.toFixed(3) + (ref ? " to the stock model's size" : '') + ' pose ' + JSON.stringify(pose));
+    return model;
+}
+if (typeof window !== 'undefined') { window._hyBakeAltModel = _hyBakeAltModel; window._hyIsAltModel = _hyIsAltModel; }
+// HYBRID enemyModels: v2 — the faction RIM on a textured fighter hull. The stock look clones every hull
+// mesh in an additive faction colour (opacity pulsed 0.35-0.85 by the enemy-glow loop in game-core.js);
+// over a texture that is a coloured wash. This shell is the same clone (same geometry, same transform,
+// same draw count, tagged isGlowLayer so the pulse loop drives it and every hull measurement skips it),
+// but its alpha is a fresnel term: the faction colour sits on the silhouette and grazing faces, the
+// texture reads untouched face-on. One material per faction colour, shared (the pulse value is global).
+const HY_FIGHTER_RIM = { POW: 2.4, GAIN: 1.15, BASE: 0.05 };   // rim falloff, rim strength x pulse, face-on tint x pulse
+const _hyRimMats = {};
+function _hyFighterRimMaterial(color) {
+    const key = new THREE.Color(color).getHexString();
+    if (_hyRimMats[key]) return _hyRimMats[key];
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uColor: { value: new THREE.Color(color).multiplyScalar(1.2) },
+            uPow: { value: HY_FIGHTER_RIM.POW }, uGain: { value: HY_FIGHTER_RIM.GAIN }, uBase: { value: HY_FIGHTER_RIM.BASE },
+            uOpacity: { value: 0.2 }
+        },
+        vertexShader: [
+            'varying vec3 vN;', 'varying vec3 vV;',
+            '#include <common>', '#include <logdepthbuf_pars_vertex>',
+            'void main() {',
+            '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+            '  vN = normalMatrix * normal;',
+            '  vV = -mv.xyz;',
+            '  gl_Position = projectionMatrix * mv;',
+            '  #include <logdepthbuf_vertex>',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'uniform vec3 uColor;', 'uniform float uPow;', 'uniform float uGain;', 'uniform float uBase;', 'uniform float uOpacity;',
+            'varying vec3 vN;', 'varying vec3 vV;',
+            '#include <common>', '#include <logdepthbuf_pars_fragment>',
+            'void main() {',
+            '  #include <logdepthbuf_fragment>',
+            '  float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uPow);',
+            '  gl_FragColor = vec4(uColor, clamp((uBase + uGain * f) * uOpacity, 0.0, 1.0));',
+            '}'
+        ].join('\n'),
+        transparent: true, depthWrite: false, depthTest: true,
+        blending: THREE.AdditiveBlending, side: THREE.FrontSide, toneMapped: false
+    });
+    // the pulse loop writes material.opacity; the shader reads it through this uniform
+    Object.defineProperty(mat.uniforms.uOpacity, 'value', { get() { return mat.opacity; }, set(v) { mat.opacity = v; } });
+    mat.opacity = 0.2;
+    mat.userData._hyFighterRim = true;
+    _hyRimMats[key] = mat;
+    return mat;
+}
+function _hyFighterRimMesh(geometry, color) {
+    const m = new THREE.Mesh(geometry, _hyFighterRimMaterial(color));   // shares the hull's geometry: same vertices, same depth
+    m.userData.isGlowLayer = true;
+    m.userData._hyFighterRim = true;
+    m.renderOrder = 1;
+    return m;
+}
+
 // Load player model (Player.glb)
 async function loadPlayerModel() {
     console.log('🚀 === LOADING PLAYER MODEL ===');
-    const path = 'models/Player.glb';
+    // HYBRID playerModel: another hull from models/ (Ben 2026-10-11: "Can we see what
+    // it looks like to use this as the ship model?"). An alternate hull is scaled to
+    // Player.glb's bounding size and centred, inside a wrapper group so the game's own
+    // scaling of the root still applies on top.
+    const _alt = (window.HYBRID && typeof window.HYBRID.get === 'function' && window.HYBRID.get('playerModel')) || 'Player';
+    const path = 'models/' + _alt + '.glb';
 
     try {
-        const model = await loadGLBModel(path);
+        let model = await loadGLBModel(path);
+        if (_alt !== 'Player') {
+            try {
+                const ref = await loadGLBModel('models/Player.glb');
+                // optional yaw (playerModelYaw, degrees) overrides the pose table's ry so the nose points +Z like Player.glb
+                const _yawDeg = Number((window.HYBRID && window.HYBRID.get && window.HYBRID.get('playerModelYaw')) || 0) || 0;
+                _hyBakeAltModel(model, ref, _alt, _yawDeg ? { ry: _yawDeg } : null);
+                model.userData._hyAltHull = model.userData._hyAltModel;   // the player-hull guards read this name
+            } catch (e) { console.warn('alternate hull normalisation skipped', e); }
+        }
 
         // Debug: Log what's in the model
         let meshCount = 0;
@@ -348,6 +541,7 @@ const _enemyModelNoseFlip = {
 // group keeps identity rotation so flight code can drive it normally.
 function _applyNoseFlip(model, regionId) {
     if (!_enemyModelNoseFlip[regionId]) return;
+    if (_hyIsAltModel(model)) return;   // HYBRID: a v2 hull is baked nose -Z already
     const inner = new THREE.Group();
     inner.rotation.y = Math.PI;
     while (model.children.length) inner.add(model.children[0]);
@@ -1773,6 +1967,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 const baseColor = new THREE.Color(material.color || 0xff0000);
                 baseColor.multiplyScalar(0.4);
 
+                if (child.userData && child.userData._hyAltMesh) child.material = _hyRigAltMaterial(child.material.clone(), material.color || 0xff0000);   // HYBRID enemyModels: v2 hulls keep their own textured material (one per ship, like the stock path)
+                else
                 child.material = new THREE.MeshStandardMaterial({
                     color: baseColor,
                     transparent: false,
@@ -1803,6 +1999,9 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
 
         // STEP 3: NOW add glow layers (after centering)
         baseMeshes.forEach((child) => {
+            // HYBRID enemyModels: v2 — a full additive copy would wash the texture out; the faction
+            // colour rides a thin fresnel RIM instead (same draw count, same pulse: isGlowLayer).
+            if (child.userData && child.userData._hyAltMesh) { child.add(_hyFighterRimMesh(child.geometry, material.color || 0xff0000)); return; }
             const glowGeometry = child.geometry.clone();
             const glowColor = new THREE.Color(material.color || 0xff0000);
             glowColor.multiplyScalar(1.2);
@@ -1833,7 +2032,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // size. Bosses are unaffected (separate createBossMeshWithModel).
         const ENEMY_SCALE_FACTOR = 0.5;
         const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
-        const correction = _enemyModelScaleCorrection[regionId] || 1.0;
+        const correction = _hyIsAltModel(model) ? 1.0 : (_enemyModelScaleCorrection[regionId] || 1.0);   // HYBRID: v2 hulls are baked to one size, no per-region fix-up
         model.scale.multiplyScalar(finalScale * correction);
 
         // Nose-flip models authored +Z-forward so they fly nose-first
@@ -1940,11 +2139,14 @@ function createEnemyMeshWithModel_overhaul(regionId, fallbackGeometry, material,
                 // measured, not something the player sees, and paying for it
                 // with a brighter constant flattened every dense hull in the
                 // game to buy a better median on one sparse one.
+                if (child.userData && child.userData._hyAltMesh) _hyRigAltMaterial(child.material, material.color || 0xff0000);   // HYBRID: the hull light rig on a v2 hull
+                if (!(child.userData && child.userData._hyAltMesh))   // HYBRID: v2 hulls keep their own textured material
                 child.material = createFactionHullMaterial(material.color || 0xff0000, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
                     panelCellSize: _hullPanelCellSize(child.geometry),
                     // Nose direction in MESH-LOCAL space: the nose-flipped
                     // regions are authored +Z-forward, everything else -Z.
-                    formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
+                    // HYBRID: a baked v2 hull is nose -Z whatever its region.
+                    formNoseSign: (_enemyModelNoseFlip[regionId] && !_hyIsAltModel(model)) ? 1.0 : -1.0
                 }));
 
                 child.castShadow = false;
@@ -2020,7 +2222,7 @@ function createEnemyMeshWithModel_overhaul(regionId, fallbackGeometry, material,
         // 350/470u, well above anything this changes.
         const ENEMY_SCALE_FACTOR = 2.02;
         const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
-        const correction = _enemyModelScaleCorrection[regionId] || 1.0;
+        const correction = _hyIsAltModel(model) ? 1.0 : (_enemyModelScaleCorrection[regionId] || 1.0);   // HYBRID: v2 hulls are baked to one size, no per-region fix-up
         model.scale.multiplyScalar(finalScale * correction);
 
         // Nose-flip models authored +Z-forward so they fly nose-first
@@ -2105,6 +2307,8 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 const baseColor = new THREE.Color(material.color || 0xff0000);
                 const tintColor = baseColor.clone().multiplyScalar(0.7);
 
+                if (child.userData && child.userData._hyAltMesh) _hyRigAltMaterial(child.material, material.color || 0xff0000);   // HYBRID: the hull light rig on a v2 hull
+                if (!(child.userData && child.userData._hyAltMesh))   // HYBRID bossModels: v2 hulls keep their own textured material
                 child.material = new THREE.MeshStandardMaterial({
                     color: tintColor,
                     emissive: baseColor.clone().multiplyScalar(0.35),
@@ -2138,7 +2342,7 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
         // Bosses are larger than enemies. BOSS_SCALE_FACTOR=0.5 halves
         // every boss to match the enemy ship halving (144 -> 72 base).
         const BOSS_SCALE_FACTOR = 0.5;
-        const bossCorrection = _enemyModelScaleCorrection[regionId] || 1.0;
+        const bossCorrection = _hyIsAltModel(model) ? 1.0 : (_enemyModelScaleCorrection[regionId] || 1.0);   // HYBRID: v2 hulls are baked to one size, no per-region fix-up
         model.scale.multiplyScalar(144.0 * BOSS_SCALE_FACTOR * bossCorrection);
 
         // Boss1/Boss8 share the +Z-nose authoring of their fighter models
@@ -2196,6 +2400,8 @@ function createBossMeshWithModel_overhaul(regionId, fallbackGeometry, material) 
                 // view-dependent terms, rather than a bigger constant floor.
                 // A boss that out-read its escorts by carrying more emissive
                 // was out-reading them by being flatter than they are.
+                if (child.userData && child.userData._hyAltMesh) _hyRigAltMaterial(child.material, material.color || 0xff0000);   // HYBRID: the hull light rig on a v2 hull
+                if (!(child.userData && child.userData._hyAltMesh))   // HYBRID: v2 hulls keep their own textured material
                 child.material = createFactionHullMaterial(material.color || 0xff0000, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
                     hullHeat: 0.40,
                     roughness: 0.4,
@@ -2230,7 +2436,7 @@ function createBossMeshWithModel_overhaul(regionId, fallbackGeometry, material) 
         // Bosses are larger than enemies. BOSS_SCALE_FACTOR=0.5 halves
         // every boss to match the enemy ship halving (144 -> 72 base).
         const BOSS_SCALE_FACTOR = 0.5;
-        const bossCorrection = _enemyModelScaleCorrection[regionId] || 1.0;
+        const bossCorrection = _hyIsAltModel(model) ? 1.0 : (_enemyModelScaleCorrection[regionId] || 1.0);   // HYBRID: v2 hulls are baked to one size, no per-region fix-up
         model.scale.multiplyScalar(144.0 * BOSS_SCALE_FACTOR * bossCorrection);
 
         // Boss1/Boss8 share the +Z-nose authoring of their fighter models
@@ -2493,9 +2699,13 @@ function _runPlayerHullUpgradeLoop() {
         const wantBloom = !window.HYBRID || window.HYBRID.is('thrusters', 'overhaul');
         let hullMeshes = 0;
 
+        // An alternate hull (playerModel switch) keeps its own textured GLB material —
+        // the rim-lit cyan swap below is authored for the UV-less stock hull.
+        const _altHull = !!(typeof modelCache !== 'undefined' && modelCache.player && modelCache.player.userData && modelCache.player.userData._hyAltHull);
         mesh.traverse((child) => {
             if (child.isMesh && child.material && child.material.blending !== THREE.AdditiveBlending) {
                 hullMeshes++;
+                if (_altHull) { child.material.needsUpdate = true; return; }
                 if (!swapHull) {
                     // ORIGINAL rendered with no tone mapping; the overhaul's
                     // ACES curve turns the flat 0x00ffff hull teal-grey.
@@ -2512,10 +2722,15 @@ function _runPlayerHullUpgradeLoop() {
         });
 
         if (hullMeshes > 0) {
-            (wantBloom ? [
+            // HULL FIT: nozzle points from the hull's anchor table
+            // (HY_HULL_POINTS, js/game-controls.js); the stock hull's entry is
+            // the old (±0.024, 0, -0.14) verbatim.
+            const _fit = (typeof window.hyHullThrusters === 'function') ? window.hyHullThrusters(mesh) : null;
+            mesh.userData._bloomK = _fit ? _fit.fxK : 1;
+            (wantBloom ? (_fit ? _fit.bloom : [
                 new THREE.Vector3(-0.024, 0, -0.14),
                 new THREE.Vector3(0.024, 0, -0.14)
-            ] : []).forEach((pos) => {
+            ]) : []).forEach((pos) => {
                 const sprite = _createEngineBloomSprite();
                 sprite.position.copy(pos);
                 mesh.add(sprite);
@@ -2545,7 +2760,7 @@ function _runPlayerHullUpgradeLoop() {
         // sprite placement above) so full boost halos the nozzle instead
         // of ballooning into a screen-filling blob (was 0.03->0.18, i.e.
         // bigger than half the ship itself, at full boost).
-        const s = 0.012 + t * 0.045;
+        const s = (0.012 + t * 0.045) * (mesh.userData._bloomK || 1);
         sprite.scale.set(s, s, 1);
     });
 }
@@ -2844,6 +3059,7 @@ function _applyUFOHullPresenceFloor(ufo) {
         if (!child.isMesh || !child.material) return;
         const mat = child.material;
         if (!mat.isMeshStandardMaterial || mat.transparent === true) return;
+        if (child.userData && child.userData._hyAltMesh) { _hyRigAltMaterial(child.material, UFO_HULL_COLOR); return; }   // HYBRID ufoModel: v2 keeps its own textured material, rigged
         // models/UFO.glb's hull mesh ships with NO normal attribute at all
         // (verified live: geometry.attributes.normal is undefined even on
         // a fresh GLTFLoader parse) — every other enemy/boss GLB in the

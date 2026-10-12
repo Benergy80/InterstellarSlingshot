@@ -173,6 +173,9 @@ const HELPERS = `(() => {
     Object.keys(keys).forEach((k) => { if (keys[k] === true) keys[k] = false; });
     if (gs.slingshot) Object.assign(gs.slingshot, { active: false, postSlingshot: false, timeRemaining: 0, exitRamp: null });
     gs.slingshotWhip = null; gs.slingshotLaunchRamp = null; gs.slingshotCooldownUntil = 0;
+    // A stale nav target (left by the demo) would steer the open glide (warpHold:open guidance)
+    // and skew rows 1/4; the rows measure the unguided whip and warp.
+    gs.currentTarget = null; gs._hyNavWarp = null;
     Object.assign(gs.emergencyWarp, { active: false, transitioning: false, postWarp: false, exitRamp: null, isJump: false, autoBraking: false });
     gs.emergencyWarp.available = Math.max(5, gs.emergencyWarp.available || 0);
     gs.energy = 100; gs.hull = gs.maxHull || 100; gs.gameOver = false;
@@ -196,7 +199,9 @@ const HELPERS = `(() => {
     ie('gameState').velocityVector.copy(dir).multiplyScalar(1);
     return dir;
   };
-  K.additiveVisible = () => { let n = 0; ie('scene').traverse((o) => { if (o.visible && o.material && o.material.blending === THREE.AdditiveBlending) n++; }); return n; };
+  // fighter light elements (package AI) are built/disposed by distance to the player, so a whip away from a
+  // fight drops them — hull decoration, not slingshot fx: not counted
+  K.additiveVisible = () => { let n = 0; ie('scene').traverse((o) => { if (o.visible && o.material && o.material.blending === THREE.AdditiveBlending && !(o.userData && o.userData._hyFighterLights)) n++; }); return n; };
   // per-frame FOV watcher: short kicks fall between setTimeout samples
   K.fov = { max: 0, min: 999 }; K.fovReset = () => { K.fov.max = 0; K.fov.min = 999; };
   (function tick() { try { const f = ie('camera').fov; if (f > K.fov.max) K.fov.max = f; if (f < K.fov.min) K.fov.min = f; } catch (e) {} requestAnimationFrame(tick); })();
@@ -318,6 +323,8 @@ check('scale', async () => {
 check('park', async () => {
     const K = window.__kc, ie = K.ie, sleep = K.sleep; const cam = ie('camera'), gs = ie('gameState');
     const D = window.__warpdiag, dp = window.demoPilot;
+    // the boot stops the pilot (so a late start cannot take the controls in rows 1/2/4); this row drives it, so start it here
+    if (dp && !dp.active && typeof dp.start === 'function') { try { dp.start(); } catch (e) { /* reported below */ } await sleep(400); }
     if (!dp || !dp.active) return { err: 'demo pilot not active' };
     if (!D || !D.goPhase) return { err: 'window.__warpdiag missing (autopilot.js warpdiag hooks)' };
     K.stashEnemies(); K.reset();
@@ -371,6 +378,9 @@ check('thrusters', async () => {
         const ship = window.cameraState && window.cameraState.playerShipMesh; if (!ship) return { err: 'no playerShipMesh' };
         const seen = new Set(); let n = 0, nv = 0, e = 0; const ws = new THREE.Vector3();
         const add = (o) => { if (!o || seen.has(o)) return; seen.add(o); const m = o.material;
+            // the hull's always-on light elements (nav lights, strobe, cockpit, panels — package hullfit, 20261012k) are
+            // additive too but not thrust-driven: at idle they read ~48 of 'energy' and drowned the 3x thrust test
+            if (o.name === 'hullLights' || (o.userData && o.userData.isHullLight)) return;
             if (!m || m.blending !== THREE.AdditiveBlending) return; n++;
             for (let q = o; q; q = q.parent) if (!q.visible) return; nv++;
             o.getWorldScale(ws); const op = m.uniforms && m.uniforms.uOpacity ? m.uniforms.uOpacity.value : (m.opacity !== undefined ? m.opacity : 1);
@@ -462,6 +472,10 @@ check('warp', async () => {
     if (typeof oeb === 'function') window.warpExitBeat = function () { beats++; return oeb.apply(this, arguments); };
     const run = async (steerKey) => {
         K.reset(); K.openSpace(); await sleep(600);
+        // The slingshot row's FOV kick is still decaying (0.6 deg per tick) when this row starts;
+        // capturing fov0 mid-decay read 'FOV -7..-12 deg from start after exit' on a build whose
+        // warp lands back at exactly 75 (probe-warpfov.js). Wait for the FOV to stand still first.
+        for (let i = 0, last = cam.fov; i < 50; i++) { await sleep(100); if (Math.abs(cam.fov - last) < 0.05) break; last = cam.fov; }
         const b0 = beats, fov0 = cam.fov; const r = { fov0: +fov0.toFixed(1) }; K.fovReset();
         keys.o = true;
         const t0 = Date.now(); let eng = null, end = null, engV = null, steerAt = null, fmax = 0, tun = 0, sf = false, peak = 0, ramp = false;
@@ -593,6 +607,11 @@ try {
     results.build = await page.evaluate(() => window.BUILD_TAG);
     await page.click('#introDemoBtn');
     await page.waitForFunction(() => typeof gameState !== 'undefined' && gameState.gameStarted && gameState.frameCount > 60, null, { timeout: 120000 });
+    // The demo pilot starts a few seconds AFTER the game (and ~3 s later again under the launch title's lift-off):
+    // wait for it, then stop it, so a late start cannot take the controls mid-row (rows 1/2/4 then read
+    // 'engaged @null, peak 1 u/f' and '+1s exit 0.4' — the pilot overriding the row's keys).
+    await page.waitForFunction(() => window.demoPilot && window.demoPilot.active, null, { timeout: 20000 }).catch(() => {});
+    await page.evaluate(() => { try { if (window.demoPilot) window.demoPilot.stop(); } catch (e) { /* optional */ } });
     await page.evaluate(HELPERS);
     // Name the culprit: when a draw call throws, record WHICH object and material
     // (three.min.js stack traces alone say nothing). First 6 distinct offenders.

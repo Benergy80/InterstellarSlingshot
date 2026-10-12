@@ -81,72 +81,102 @@
         v /= wsum;
         return Math.pow(Math.max(0, v - SW_LAND.FLOOR) / (1 - SW_LAND.FLOOR), SW_LAND.SHARP);   // flats stay flat, peaks spike
     }
-    function startGrid(canvas) {
+    // opts (all optional; omitted = the MISSION FAILED look, unchanged): the
+    // title screen (js/title-screens.js, titleScreen: landscape) passes a dawn
+    // palette, a slower scroll and a rising eclipse.
+    //   sky: [[stop, css]…]  corona: [[stop, css]…]  ring, horizonLine, fill: css
+    //   lines: [far, mid, near]  cols: css  speed: rows/s
+    //   rise: { from, to, ms }  (eclipse centre, in hole radii above the horizon)
+    //   onFrame(t): called after each paint
+    function startGrid(canvas, opts) {
+        const o = opts || {};
         const ctx = canvas.getContext('2d');
         let raf = 0, t0 = performance.now();
         const cyan = cssVar('--sw-cyan', '#19f0ff'), violet = cssVar('--sw-violet', '#7b2bff');
         const magenta = cssVar('--sw-magenta', '#ff2bd6'), mint = cssVar('--sw-mint', '#7bffb0');
+        const SKY = o.sky || [[0, 'rgba(7,3,15,0)'], [0.7, 'rgba(26,11,58,0.35)'], [1, 'rgba(60,20,110,0.55)']];
+        const CORONA = o.corona || [[0, 'rgba(123,43,255,0.55)'], [0.35, 'rgba(25,240,255,0.18)'], [1, 'rgba(7,3,15,0)']];
+        const RING = o.ring || 'rgba(214,250,255,0.95)', RING_GLOW = o.ringGlow || cyan;
+        const LINES = o.lines || [violet, cyan, mint], COLS = o.cols || violet;
+        const FILL = o.fill || 'rgba(8,4,20,0.96)', HLINE = o.horizonLine || 'rgba(25,240,255,0.7)', HGLOW = o.horizonGlow || cyan;
+        const SPEED = o.speed || SW_LAND.SPEED;
+        // o.view (optional, mutable, read every frame — the launch title drives it):
+        //   horizon  fraction of the height where the horizon sits (default 0.58)
+        //   squash   floor height multiplier (1 = full range; < 1 foreshortens it)
+        //   alpha    beat-line brightness multiplier (default 1)
+        //   ground   opacity of everything but the sun (default 1)
+        // and the renderer writes back view.sun = [x, y, r] in CSS px.
+        // o.manual: no rAF of its own; the caller drives stop.frame(now).
+        const V = o.view || null;
+        const hs = new Float32Array(SW_LAND.SEGS + 1);
         function frame(now) {
-            const pr = window.devicePixelRatio || 1;
-            const w = canvas.width = canvas.clientWidth * pr, h = canvas.height = canvas.clientHeight * pr;
+            const pr = o.pixelRatio || window.devicePixelRatio || 1;
+            const cw = Math.floor(canvas.clientWidth * pr), ch = Math.floor(canvas.clientHeight * pr);
+            if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+            const w = cw, h = ch;
             const t = (now - t0) / 1000;
             ctx.clearRect(0, 0, w, h);
-            const horizon = h * 0.58, floorH = h - horizon;
+            const horizon = h * (V && V.horizon != null ? V.horizon : 0.58), floorH = (h * 0.42) * (V && V.squash != null ? V.squash : 1);
+            const LG = V && V.ground != null ? V.ground : 1;                 // the ground (rows, fill, verticals, horizon line) — the sun stays
+            const LA = (V && V.alpha != null ? V.alpha : 1) * LG;
             // sky: violet dusk down to the horizon
             const sky = ctx.createLinearGradient(0, 0, 0, horizon);
-            sky.addColorStop(0, 'rgba(7,3,15,0)'); sky.addColorStop(0.7, 'rgba(26,11,58,0.35)'); sky.addColorStop(1, 'rgba(60,20,110,0.55)');
+            SKY.forEach((c) => sky.addColorStop(c[0], c[1]));
             ctx.fillStyle = sky; ctx.fillRect(0, 0, w, horizon);
             // the eclipsed hole on the horizon
-            const R = Math.min(w, h) * SW_LAND.HOLE_R, hx = w * 0.5, hy = horizon - R * 0.35;
+            let lift = 0.35;
+            if (o.rise) { const k = Math.min(1, (now - t0) / o.rise.ms), e = 1 - Math.pow(1 - k, 3); lift = o.rise.from + (o.rise.to - o.rise.from) * e; }
+            const R = Math.min(w, h) * SW_LAND.HOLE_R, hx = w * 0.5, hy = horizon - R * lift;
+            if (V) V.sun = [hx / pr, hy / pr, R / pr];
             const pulse = 0.5 + 0.5 * Math.sin(t * 1.3);
             const corona = ctx.createRadialGradient(hx, hy, R * 0.95, hx, hy, R * 2.6);
-            corona.addColorStop(0, 'rgba(123,43,255,0.55)'); corona.addColorStop(0.35, 'rgba(25,240,255,0.18)'); corona.addColorStop(1, 'rgba(7,3,15,0)');
+            CORONA.forEach((c) => corona.addColorStop(c[0], c[1]));
             ctx.fillStyle = corona; ctx.fillRect(hx - R * 2.6, hy - R * 2.6, R * 5.2, R * 5.2);
             ctx.fillStyle = '#030108'; ctx.beginPath(); ctx.arc(hx, hy, R, 0, Math.PI * 2); ctx.fill();
-            ctx.save(); ctx.shadowColor = cyan; ctx.shadowBlur = (14 + 10 * pulse) * pr; ctx.strokeStyle = 'rgba(214,250,255,0.95)'; ctx.lineWidth = 2 * pr;
+            ctx.save(); ctx.shadowColor = RING_GLOW; ctx.shadowBlur = (14 + 10 * pulse) * pr; ctx.strokeStyle = RING; ctx.lineWidth = 2 * pr;
             ctx.beginPath(); ctx.arc(hx, hy, R * 1.02, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
             // the range: rows from far to near, each a displaced beat line with a dark fill below
             const rows = SW_LAND.ROWS, segs = SW_LAND.SEGS;
-            const phase = (t * SW_LAND.SPEED) % 1, drift = t * SW_LAND.DRIFT;
-            const base = Math.floor(t * SW_LAND.SPEED);        // integer row index of the nearest row (new rows enter at the horizon)
+            const phase = (t * SPEED) % 1, drift = t * SW_LAND.DRIFT;
+            const base = Math.floor(t * SPEED);        // integer row index of the nearest row (new rows enter at the horizon)
             const vpX = w * 0.5;
-            for (let r = 0; r < rows; r++) {                   // painter's order: far (horizon) first, near last
+            for (let r = 0; r < (LG > 0.01 ? rows : 0); r++) {                   // painter's order: far (horizon) first, near last
                 const k = (r + phase) / rows;                  // 0 at the horizon … 1 at the bottom
                 const kk = k * k;                              // perspective spacing
                 const y0 = horizon + floorH * kk;
                 const depthIdx = base + (rows - 1 - r);        // continuous identity as the row scrolls
                 const amp = floorH * SW_LAND.AMP * (0.08 + 0.92 * kk);
                 const spread = 1 + 2.2 * kk;                   // near rows span wider in world units
+                if (y0 - amp > h + 4) continue;                // the whole row is below the frame (the launch drops the range away)
                 ctx.beginPath();
                 for (let i = 0; i <= segs; i++) {
                     const sx = i / segs;
                     const u = (sx - 0.5) * spread * 4 + drift;
                     const hgt = _terrain(u, depthIdx * 0.37 + kk * 0.6) * amp * (1 - SW_LAND.VALLEY * Math.exp(-Math.pow((sx - 0.5) / SW_LAND.VALLEY_W, 2)));   // a dark plain down the middle: the text sits on it
+                    hs[i] = hgt;                               // the stroke pass below reuses the same heights
                     const x = vpX + (sx - 0.5) * w * (0.35 + 0.95 * k);   // converge toward the horizon
                     const y = y0 - hgt;
                     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
                 }
                 // occlusion: fill below the ridge to the bottom in the sky-dark
                 ctx.lineTo(w * 1.2, h + 4); ctx.lineTo(-w * 0.2, h + 4); ctx.closePath();
-                ctx.fillStyle = 'rgba(8,4,20,0.96)'; ctx.fill();
+                ctx.fillStyle = FILL; if (LG !== 1) { ctx.globalAlpha = LG; ctx.fill(); ctx.globalAlpha = 1; } else ctx.fill();
                 // the beat line itself: violet far, teal near, brightest at the peaks
-                const col = k < 0.5 ? violet : (k < 0.8 ? cyan : mint);
-                ctx.save(); ctx.globalAlpha = 0.28 + 0.72 * k; ctx.shadowColor = col; ctx.shadowBlur = (4 + 10 * k) * pr;
+                const col = k < 0.5 ? LINES[0] : (k < 0.8 ? LINES[1] : LINES[2]);
+                ctx.save(); ctx.globalAlpha = (0.28 + 0.72 * k) * LA; ctx.shadowColor = col; ctx.shadowBlur = (4 + 10 * k) * pr;
                 ctx.strokeStyle = col; ctx.lineWidth = (0.8 + 1.4 * k) * pr;
                 ctx.beginPath();
                 for (let i = 0; i <= segs; i++) {
                     const sx = i / segs;
-                    const u = (sx - 0.5) * spread * 4 + drift;
-                    const hgt = _terrain(u, depthIdx * 0.37 + kk * 0.6) * amp * (1 - SW_LAND.VALLEY * Math.exp(-Math.pow((sx - 0.5) / SW_LAND.VALLEY_W, 2)));   // a dark plain down the middle: the text sits on it
                     const x = vpX + (sx - 0.5) * w * (0.35 + 0.95 * k);
-                    const y = y0 - hgt;
+                    const y = y0 - hs[i];
                     if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
                 }
                 ctx.stroke(); ctx.restore();
             }
             // faint converging verticals over the floor, for depth
             if (SW_LAND.COLS > 0) {
-                ctx.save(); ctx.globalAlpha = 0.16; ctx.strokeStyle = violet; ctx.lineWidth = 1 * pr;
+                ctx.save(); ctx.globalAlpha = 0.16 * LG; ctx.strokeStyle = COLS; ctx.lineWidth = 1 * pr;
                 for (let i = -SW_LAND.COLS; i <= SW_LAND.COLS; i++) {
                     const xb = w * 0.5 + i * (w * 0.08);
                     ctx.beginPath(); ctx.moveTo(vpX + (xb - vpX) * 0.35, horizon); ctx.lineTo(xb, h); ctx.stroke();
@@ -154,12 +184,15 @@
                 ctx.restore();
             }
             // horizon glow line
-            ctx.save(); ctx.shadowColor = cyan; ctx.shadowBlur = 16 * pr; ctx.strokeStyle = 'rgba(25,240,255,0.7)'; ctx.lineWidth = 1.5 * pr;
+            ctx.save(); ctx.globalAlpha = LG; ctx.shadowColor = HGLOW; ctx.shadowBlur = 16 * pr; ctx.strokeStyle = HLINE; ctx.lineWidth = 1.5 * pr;
             ctx.beginPath(); ctx.moveTo(0, horizon); ctx.lineTo(w, horizon); ctx.stroke(); ctx.restore();
-            raf = requestAnimationFrame(frame);
+            if (o.onFrame) o.onFrame(t);
+            if (!o.manual) raf = requestAnimationFrame(frame);
         }
-        raf = requestAnimationFrame(frame);
-        return function stop() { cancelAnimationFrame(raf); };
+        if (!o.manual) raf = requestAnimationFrame(frame);
+        const stop = function stop() { cancelAnimationFrame(raf); };
+        stop.frame = frame;
+        return stop;
     }
 
     function stat(label, value, fmt) { return { label: label, value: value, fmt: fmt || ((v) => '' + Math.round(v)) }; }
@@ -267,4 +300,5 @@
     }
 
     if (typeof window !== 'undefined') window.synthwaveGameOver = synthwaveGameOver;
+    if (typeof window !== 'undefined') window.swLandscape = startGrid;   // the title screen reuses the range (js/title-screens.js)
 })();

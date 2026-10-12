@@ -116,3 +116,332 @@
 #swDeath .sw-btn:hover { transform: scale(1.04); box-shadow: 0 0 30px rgba(255,43,214,0.9), inset 0 0 18px rgba(25,240,255,0.3); }
 #swDeath .sw-hint { font-size: 0.72rem; letter-spacing: 0.2em; color: rgba(244,247,255,0.55); text-transform: uppercase; }
 #swDeath.sw-over .sw-continue .n { color: var(--sw-red); text-shadow: 0 0 14px rgba(255,59,92,0.9); }
+
+/* ── TITLE SCREENS (package AG, HYBRID titleScreen: chrome | landscape | poster) ──
+   js/title-screens.js builds #hyTitle over the ORIGINAL launch flow and adopts the
+   game's own #introStartBtn / #introDemoBtn into .hyt-menu. Nothing here applies
+   under titleScreen: original (no #hyTitle, no body.hyt-on). */
+#hyTitle {
+    position: fixed; inset: 0; z-index: 10000; overflow: hidden;   /* the loading screen runs at 9999 */
+    background: var(--sw-bg); color: var(--sw-white); font-family: var(--sw-font-ui);
+    user-select: none; -webkit-user-select: none; cursor: auto;
+    transition: opacity 480ms ease;
+}
+#hyTitle.hyt-out { opacity: 0; pointer-events: none; }
+#hyTitle canvas.hyt-sky, #hyTitle canvas.hyt-land, #hyTitle canvas.hyt-stars { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hyTitle .hyt-vig { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 45%, rgba(1,2,10,0) 45%, rgba(1,2,10,0.72) 100%); }
+#hyTitle .hyt-stage { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: space-between; padding: 7vh 16px 9vh; box-sizing: border-box; }
+#hyTitle .hyt-lockup { display: flex; flex-direction: column; align-items: center; width: 100%; }
+
+/* the chrome logotype */
+#hyTitle .hyt-logo { display: block; width: min(860px, 88vw); height: auto; overflow: visible; filter: drop-shadow(0 14px 22px rgba(0,0,0,0.65)) drop-shadow(0 0 28px rgba(110,90,255,0.28)); }
+#hyTitle .hyt-flare { animation: hytFlare 6s cubic-bezier(0.45, 0, 0.3, 1) 1.2s infinite; }
+@keyframes hytFlare { 0% { transform: translateX(0); } 20% { transform: translateX(1420px); } 100% { transform: translateX(1420px); } }
+#hyTitle .hyt-glint { transform-box: fill-box; transform-origin: center; transform: scale(0); animation: hytGlint 6s ease-out 1.2s infinite; }
+@keyframes hytGlint { 0%, 15% { transform: scale(0) rotate(0deg); opacity: 0; } 21% { transform: scale(1.15) rotate(45deg); opacity: 1; } 32% { transform: scale(0) rotate(90deg); opacity: 0; } 100% { transform: scale(0); opacity: 0; } }
+
+/* the rounded subtitle box: chrome border, dark glass inside */
+#hyTitle .hyt-sub {
+    margin-top: 14px; padding: 7px 26px; border-radius: 999px; border: 2px solid transparent;
+    background: linear-gradient(180deg, #0c1036, #04051a) padding-box,
+                linear-gradient(180deg, #ffffff 0%, #c9d2ff 44%, #2a1880 50%, #8d70ff 78%, #ffffff 100%) border-box;
+    box-shadow: 0 6px 0 #02030c, 0 0 22px rgba(110,90,255,0.35);
+    transform: skewX(-13deg);
+}
+#hyTitle .hyt-sub span {
+    display: block; transform: skewX(13deg);
+    font-family: var(--sw-font-title); font-weight: 700; font-size: clamp(0.62rem, 1.35vw, 0.95rem); letter-spacing: 0.32em; text-transform: uppercase;
+    color: #e6ebff; text-shadow: 0 0 10px rgba(140,160,255,0.75);
+}
+#hyTitle .hyt-credit { position: absolute; left: 18px; bottom: 14px; font-family: var(--sw-font-title); font-size: 0.62rem; letter-spacing: 0.4em; text-transform: uppercase; color: rgba(200,210,255,0.5); }
+
+/* the menu: the game's own buttons, adopted */
+#hyTitle .hyt-menu { display: flex; flex-direction: column; align-items: center; gap: 16px; min-height: 120px; justify-content: center; }
+#hyTitle .hyt-wait { display: flex; flex-direction: column; align-items: center; gap: 8px; font-family: var(--sw-font-title); text-transform: uppercase; letter-spacing: 0.3em; font-size: 0.68rem; color: rgba(214,222,255,0.72); }
+#hyTitle .hyt-wait-bar { width: 220px; height: 3px; background: rgba(140,150,255,0.18); border-radius: 2px; overflow: hidden; }
+#hyTitle .hyt-wait-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--sw-cyan), var(--sw-violet)); box-shadow: 0 0 10px var(--sw-cyan); transition: width 300ms ease; }
+#hyTitle .hyt-wait-v { min-height: 1em; font-size: 0.6rem; letter-spacing: 0.24em; color: rgba(160,176,255,0.6); animation: swBlink 1.4s steps(2) infinite; }
+
+#hyTitle .hyt-menu #introStartBtn, #hyTitle .hyt-menu #introDemoBtn {
+    position: relative !important; top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+    transform: none !important; margin: 0 !important; z-index: auto !important; animation: none !important;
+    min-width: 300px; min-height: 52px; cursor: pointer !important; box-sizing: border-box;
+}
+#hyTitle .hyt-menu #introStartBtn .start-btn-content { font-family: var(--sw-font-title) !important; }
+#hyTitle .hyt-menu #introStartBtn .start-btn-text,
+#hyTitle .hyt-menu #introDemoBtn > div > div:nth-child(1) { font-family: var(--sw-font-title) !important; font-weight: 900 !important; font-size: 1.05rem !important; letter-spacing: 0.24em !important; margin: 0 !important; }
+#hyTitle .hyt-menu #introStartBtn .start-btn-subtext,
+#hyTitle .hyt-menu #introDemoBtn > div > div:nth-child(2) { font-family: var(--sw-font-ui) !important; font-weight: 600 !important; font-size: 0.74rem !important; letter-spacing: 0.34em !important; margin-top: 3px !important; opacity: 1 !important; }
+
+/* chrome + poster: chrome pills with the logo's bevel */
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn, #hyTitle.hyt-chrome .hyt-menu #introDemoBtn,
+#hyTitle.hyt-poster .hyt-menu #introStartBtn, #hyTitle.hyt-poster .hyt-menu #introDemoBtn {
+    padding: 13px 40px !important; border-radius: 999px !important; border: 2px solid transparent !important;
+    background: linear-gradient(180deg, #1c2256 0%, #0b0e2c 47%, #04051a 53%, #141a48 100%) padding-box,
+                linear-gradient(180deg, #ffffff 0%, #c9d2ff 42%, #2a1880 50%, #8d70ff 78%, #ffffff 100%) border-box !important;
+    box-shadow: 0 5px 0 #02030c, 0 0 0 1px rgba(2,3,12,0.9), 0 0 22px rgba(110,90,255,0.32), inset 0 1px 0 rgba(255,255,255,0.28) !important;
+    transition: filter 140ms ease, box-shadow 140ms ease !important;
+}
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn:hover, #hyTitle.hyt-chrome .hyt-menu #introDemoBtn:hover,
+#hyTitle.hyt-poster .hyt-menu #introStartBtn:hover, #hyTitle.hyt-poster .hyt-menu #introDemoBtn:hover {
+    filter: brightness(1.18); box-shadow: 0 5px 0 #02030c, 0 0 34px rgba(25,240,255,0.55), inset 0 1px 0 rgba(255,255,255,0.4) !important;
+}
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn .start-btn-text, #hyTitle.hyt-poster .hyt-menu #introStartBtn .start-btn-text {
+    background: linear-gradient(180deg, #ffffff 0%, #e2e8ff 46%, #93a2ff 50%, #d8ceff 100%); -webkit-background-clip: text; background-clip: text;
+    color: transparent !important; text-shadow: none !important; filter: drop-shadow(0 0 6px rgba(140,120,255,0.7));
+}
+#hyTitle.hyt-chrome .hyt-menu #introStartBtn .start-btn-subtext, #hyTitle.hyt-poster .hyt-menu #introStartBtn .start-btn-subtext { color: var(--sw-cyan) !important; text-shadow: 0 0 8px rgba(25,240,255,0.7) !important; }
+#hyTitle.hyt-chrome .hyt-menu #introDemoBtn, #hyTitle.hyt-poster .hyt-menu #introDemoBtn { min-height: 46px; padding: 9px 34px !important; }
+#hyTitle.hyt-chrome .hyt-menu #introDemoBtn > div > div:nth-child(1), #hyTitle.hyt-poster .hyt-menu #introDemoBtn > div > div:nth-child(1) { font-size: 0.86rem !important; color: var(--sw-yellow) !important; text-shadow: 0 0 8px rgba(255,224,102,0.75) !important; }
+#hyTitle.hyt-chrome .hyt-menu #introDemoBtn > div > div:nth-child(2), #hyTitle.hyt-poster .hyt-menu #introDemoBtn > div > div:nth-child(2) { font-size: 0.64rem !important; color: #c9d2ff !important; text-shadow: none !important; }
+
+/* landscape: the death screen's neon buttons */
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn, #hyTitle.hyt-landscape .hyt-menu #introDemoBtn {
+    padding: 12px 34px !important; border-radius: 6px !important; border: 2px solid var(--sw-cyan) !important;
+    background: linear-gradient(180deg, rgba(40,16,96,0.94), rgba(6,30,48,0.92)) !important;
+    box-shadow: 0 0 18px rgba(25,240,255,0.45), inset 0 0 14px rgba(123,43,255,0.25) !important;
+    transition: box-shadow 120ms ease !important;
+}
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn:hover, #hyTitle.hyt-landscape .hyt-menu #introDemoBtn:hover { box-shadow: 0 0 30px rgba(123,255,224,0.85), inset 0 0 18px rgba(25,240,255,0.3) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn .start-btn-text { color: var(--sw-white) !important; text-shadow: 0 0 10px rgba(25,240,255,0.9) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introStartBtn .start-btn-subtext { color: #c4ffe9 !important; text-shadow: none !important; }
+#hyTitle.hyt-landscape .hyt-menu #introDemoBtn { border-color: rgba(255,224,102,0.8) !important; min-height: 46px; padding: 8px 30px !important; background: rgba(8,4,22,0.92) !important; box-shadow: 0 0 14px rgba(255,224,102,0.25) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introDemoBtn > div > div:nth-child(1) { font-size: 0.86rem !important; color: var(--sw-yellow) !important; text-shadow: 0 0 10px rgba(255,224,102,0.9) !important; }
+#hyTitle.hyt-landscape .hyt-menu #introDemoBtn > div > div:nth-child(2) { font-size: 0.62rem !important; color: #fff1a8 !important; text-shadow: none !important; }
+
+/* landscape: the death screen's chrome slam, scan, vignette and tear bars */
+#hyTitle .sw-vignette { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at center, rgba(7,3,15,0) 40%, rgba(7,3,15,0.8) 100%); }
+#hyTitle .sw-scan {
+    position: absolute; inset: 0; pointer-events: none; mix-blend-mode: overlay; opacity: 0.4;
+    background: repeating-linear-gradient(to bottom, rgba(255,255,255,0.10) 0 1px, rgba(0,0,0,0.22) 1px 3px);
+    animation: swScanRoll 6s linear infinite;
+}
+#hyTitle .sw-glitch { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+#hyTitle .sw-glitch.on { animation: swGlitchFade 800ms steps(8) both; }
+#hyTitle .sw-glitch span {
+    position: absolute; left: 0; width: 100%; height: 9px; opacity: 0.8;
+    background: linear-gradient(90deg, var(--sw-cyan), transparent 30%, transparent 70%, var(--sw-magenta));
+    animation: swTear 160ms steps(4) infinite alternate;
+}
+#hyTitle .sw-title {
+    font-family: var(--sw-font-title); font-weight: 900; line-height: 0.95; margin: 0; text-align: center; text-transform: uppercase;
+    background: linear-gradient(180deg, #ffffff 0%, #e6fffb 38%, #7bffe0 50%, var(--sw-violet) 52%, #c49bff 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(-3px 0 0 rgba(25,240,255,0.75)) drop-shadow(3px 0 0 rgba(255,43,214,0.6)) drop-shadow(0 0 18px rgba(123,255,224,0.4));
+}
+#hyTitle .sw-title span { display: block; }
+#hyTitle .sw-title span:first-child { font-size: clamp(1.6rem, 4.6vw, 3.4rem); letter-spacing: 0.16em; }
+#hyTitle .sw-title span:last-child { font-size: clamp(2.6rem, 8.4vw, 6.4rem); letter-spacing: 0.06em; }
+#hyTitle .sw-title.slam { animation: swSlam 520ms cubic-bezier(0.2, 1.4, 0.3, 1) both; }
+#hyTitle .sw-sub {
+    margin-top: 12px; font-size: clamp(0.8rem, 1.5vw, 1.1rem); letter-spacing: 0.3em; text-transform: uppercase;
+    color: #c4ffe9; text-shadow: 0 0 10px rgba(123,255,224,0.7); animation: swFadeUp 500ms 700ms ease-out both;
+}
+#hyTitle.hyt-landscape .hyt-stage { justify-content: flex-start; padding-top: 6vh; }
+#hyTitle.hyt-landscape .hyt-menu { margin-top: auto; }
+#hyTitle .sw-hint { margin-top: 12px; font-size: 0.66rem; letter-spacing: 0.3em; color: rgba(244,247,255,0.5); text-transform: uppercase; }
+
+/* poster: logo on top, ship centre stage, menu to one side, the cast along the foot */
+#hyTitle .hyt-poster {
+    position: absolute; inset: 0; display: grid; box-sizing: border-box; padding: 3vh 3vw 2vh;
+    grid-template-columns: 1fr minmax(300px, 30%); grid-template-rows: auto 1fr auto;
+    grid-template-areas: "logo logo" "hero side" "cast cast";
+}
+#hyTitle .hyt-poster .hyt-lockup { grid-area: logo; }
+#hyTitle .hyt-poster .hyt-logo { width: min(620px, 70vw); }
+#hyTitle .hyt-hero { grid-area: hero; position: relative; min-height: 0; }
+#hyTitle .hyt-ship { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity 900ms ease; }
+#hyTitle .hyt-ship.on { opacity: 1; }
+#hyTitle .hyt-halo { position: absolute; left: 50%; top: 52%; width: 70%; aspect-ratio: 2.2; transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none;
+    background: radial-gradient(ellipse at center, rgba(120,100,255,0.32), rgba(25,240,255,0.08) 45%, rgba(0,0,0,0) 70%); }
+#hyTitle .hyt-ship-tag { position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); white-space: nowrap; font-family: var(--sw-font-ui); font-weight: 600; font-size: 0.72rem; letter-spacing: 0.34em; text-transform: uppercase; color: rgba(200,210,255,0.62); }
+#hyTitle .hyt-ship-tag b { font-family: var(--sw-font-title); font-weight: 900; color: #e6ebff; letter-spacing: 0.2em; margin-right: 0.6em; }
+#hyTitle .hyt-side { grid-area: side; display: flex; align-items: center; justify-content: center; }
+#hyTitle .hyt-cast { grid-area: cast; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#hyTitle .hyt-cast-k { font-family: var(--sw-font-title); font-size: 0.6rem; letter-spacing: 0.42em; text-transform: uppercase; color: rgba(200,210,255,0.55); }
+#hyTitle .hyt-cast-row { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; width: min(1080px, 100%); }
+#hyTitle .hyt-card { margin: 0; position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 5 / 3;
+    background: linear-gradient(180deg, rgba(8,10,34,0.85), rgba(3,4,16,0.92)); border: 1px solid rgba(200,210,255,0.16);
+    box-shadow: inset 0 -3px 0 var(--c), 0 0 16px rgba(0,0,0,0.5); }
+#hyTitle .hyt-card canvas { position: absolute; left: 0; right: 0; top: 0; bottom: 15px; width: 100%; height: calc(100% - 15px); display: block; }
+#hyTitle .hyt-card figcaption { position: absolute; left: 0; right: 0; bottom: 5px; text-align: center; font-family: var(--sw-font-title); font-size: 0.52rem; letter-spacing: 0.24em; text-transform: uppercase; color: var(--c); text-shadow: 0 0 6px rgba(0,0,0,0.9); }
+
+/* the game's Skip Intro chip, out of the composition */
+body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; transform: none; }
+/* phones / tablets: the game pins the chip bottom-centre with inline !important rules (createSkipButton) — leave it there */
+@media (max-width: 768px), (max-width: 1024px) and (pointer: coarse) { body.hyt-on #skipIntroBtn { top: auto; right: auto; } }
+
+/* phones */
+@media (max-width: 760px), (max-aspect-ratio: 3/4) {
+    #hyTitle .hyt-stage { padding: 12vh 16px 12vh; }
+    #hyTitle .hyt-logo { width: 94vw; }
+    #hyTitle .hyt-sub { padding: 6px 16px; }
+    #hyTitle .hyt-sub span { letter-spacing: 0.2em; font-size: 0.62rem; }
+    #hyTitle .hyt-menu #introStartBtn, #hyTitle .hyt-menu #introDemoBtn { min-width: 260px; }
+    #hyTitle.hyt-landscape .hyt-stage { padding-top: 9vh; padding-bottom: 10vh; }
+    #hyTitle .hyt-poster { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr) auto auto; grid-template-areas: "logo" "hero" "side" "cast"; padding: 5vh 16px 9vh; gap: 10px; }
+    #hyTitle .hyt-poster .hyt-logo { width: 92vw; }
+    #hyTitle .hyt-cast-row { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    #hyTitle .hyt-card figcaption { font-size: 0.46rem; letter-spacing: 0.14em; }
+    #hyTitle .hyt-cast-k { letter-spacing: 0.22em; font-size: 0.54rem; }
+    #hyTitle .hyt-credit { display: none; }
+    #hyTitle .sw-hint { display: none; }
+}
+
+/* ── THE LAUNCH TITLE (package AH, HYBRID titleScreen: launch — js/title-launch.js) ──
+   Earth at dawn from the pad; the countdown and the ascent play in this scene.
+   Type floor: nothing under 16 px. Menu text >= 7:1 on its glass plate. */
+#hyTitle.hyt-launch { background: #05030f; cursor: default; }
+#hyTitle.hyt-launch .hyl-world { position: absolute; inset: 0; overflow: hidden; will-change: transform; }
+#hyTitle.hyt-launch .hyl-skywrap { position: absolute; left: -12%; width: 124%; top: -90%; height: 190%; will-change: transform; }
+#hyTitle.hyt-launch .hyl-skywrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hyTitle.hyt-launch .hyl-night { opacity: 0; }
+#hyTitle.hyt-launch .hyl-clouds { position: absolute; left: -12%; top: 0; display: block; will-change: transform, opacity; }
+#hyTitle.hyt-launch .hyl-landwrap { position: absolute; left: -12%; width: 124%; top: 0; height: 100%; will-change: transform; }
+#hyTitle.hyt-launch .hyl-land { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hyTitle.hyt-launch .hyl-flare { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; mix-blend-mode: screen; --r: 100px; --k: 1; }
+#hyTitle.hyt-launch .hyl-flare i { position: absolute; display: block; left: 0; top: 0; transform: translate(-50%, -50%); }
+#hyTitle.hyt-launch .hyl-flare-core { width: calc(var(--r) * 6 * var(--k)); height: calc(var(--r) * 6 * var(--k)); border-radius: 50%;
+    background: radial-gradient(circle closest-side, rgba(255,240,210,0) calc(var(--r) * 0.96), rgba(255,246,226,0.9) calc(var(--r) * 1.03), rgba(255,206,140,0.42) calc(var(--r) * 1.35),
+                rgba(255,150,120,0.12) calc(var(--r) * 2.0), rgba(120,80,255,0) 100%); }
+#hyTitle.hyt-launch .hyl-limb { position: absolute; left: 50%; top: 58%; width: 300%; aspect-ratio: 1 / 1; transform: translateX(-50%); border-radius: 50%; opacity: 0; pointer-events: none;
+    background: radial-gradient(circle at 50% 0%, #0d1838 0%, #060716 6%, #030309 18%);
+    box-shadow: 0 -1px 0 1px rgba(200,245,255,0.85), 0 -4px 22px 4px rgba(110,210,255,0.55), 0 -16px 70px 18px rgba(90,120,255,0.22), inset 0 10px 30px rgba(120,200,255,0.35); }
+#hyTitle.hyt-launch .hyl-ship { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity 1200ms ease; pointer-events: none; }
+#hyTitle.hyt-launch .hyl-ship.on { opacity: 1; }
+#hyTitle.hyt-launch .hyl-vig { position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 120% 90% at 50% 46%, rgba(4,2,12,0) 55%, rgba(4,2,12,0.62) 100%),
+                radial-gradient(ellipse 34% 60% at 0% 100%, rgba(4,2,12,0.72), rgba(4,2,12,0) 70%),
+                radial-gradient(ellipse 34% 60% at 100% 100%, rgba(4,2,12,0.72), rgba(4,2,12,0) 70%); }
+#hyTitle.hyt-launch .hyl-black { position: absolute; inset: 0; z-index: 4; background: #000; opacity: 0; pointer-events: none; }
+#hyTitle.hyt-launch .sw-glitch { z-index: 3; }
+
+/* the logo: the landscape sketch's chrome logotype, top centre, ~60% of the width */
+#hyTitle.hyt-launch .hyl-lockup { position: absolute; left: 0; right: 0; top: max(5.2vh, env(safe-area-inset-top)); display: flex; flex-direction: column; align-items: center; z-index: 2;
+    transition: transform 560ms cubic-bezier(0.5, 0, 0.75, 0), opacity 560ms ease-in; }
+#hyTitle.hyt-launch .sw-title { visibility: hidden;   /* the landscape chrome, its violet half lifted so it holds 4.5:1 on the corona */
+    background: linear-gradient(180deg, #ffffff 0%, #e6fffb 38%, #7bffe0 50%, #a06aff 52%, #e2d2ff 100%); -webkit-background-clip: text; background-clip: text; }
+#hyTitle.hyt-launch.hyl-logo-in .sw-title { visibility: visible; }
+#hyTitle.hyt-launch .sw-title span:first-child { font-size: clamp(30px, 4.7vw, 80px); letter-spacing: 0.17em; }
+#hyTitle.hyt-launch .sw-title span:last-child { font-size: clamp(54px, 8.3vw, 140px); letter-spacing: 0.06em; }
+#hyTitle.hyt-launch .hyt-sub { margin-top: 16px; opacity: 0; transition: opacity 600ms ease 500ms; }
+#hyTitle.hyt-launch.hyl-logo-in .hyt-sub { opacity: 1; }
+#hyTitle.hyt-launch .hyt-sub span { font-size: 17px; letter-spacing: 0.3em; color: #eef1ff; }
+#hyTitle.hyl-reduced .sw-title.slam { animation: swFadeUp 400ms ease-out both; }
+
+/* the menu: a thin vertical list on dark glass, left-centre */
+#hyTitle.hyt-launch .hyl-menu { position: absolute; z-index: 2; left: max(56px, 5.5vw); top: 61%; transform: translateY(-50%); width: max-content; min-width: 340px; opacity: 1;
+    transition: opacity 280ms ease, transform 560ms cubic-bezier(0.5, 0, 0.75, 0); }
+#hyTitle.hyt-launch .hyl-plate { position: relative; padding: 14px 0 12px; border-radius: 12px;
+    background: rgba(3,2,10,0.72); -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
+    border: 1px solid rgba(170,200,255,0.16); box-shadow: 0 24px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05); }
+#hyTitle.hyt-launch .hyl-items { display: flex; flex-direction: column; }
+#hyTitle.hyt-launch .hyl-slot { position: relative; }
+#hyTitle.hyt-launch .hyl-item {
+    position: relative !important; inset: auto !important; transform: none !important; margin: 0 !important; z-index: auto !important; animation: none !important;
+    opacity: 1 !important; display: flex !important; flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px;
+    width: 100%; min-height: 76px; box-sizing: border-box; padding: 12px 28px 12px 46px !important;
+    background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+    color: #f4f7ff; text-align: left; font-family: var(--sw-font-ui); cursor: pointer !important; outline: none;
+    transition: background-color 160ms ease, color 160ms ease !important; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+#hyTitle.hyt-launch .hyl-k { font-family: var(--sw-font-ui); font-weight: 700; font-size: 42px; line-height: 1; white-space: nowrap; letter-spacing: 0.1em; text-transform: uppercase; color: #f4f7ff; }
+#hyTitle.hyt-launch .hyl-s { font-family: var(--sw-font-ui); font-weight: 600; font-size: 18px; line-height: 1.1; letter-spacing: 0.3em; text-transform: uppercase; color: #9fefff; }
+#hyTitle.hyt-launch .hyl-slot[data-k="demo"] .hyl-s { color: #ffe39a; }
+#hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-item { min-height: 54px; }
+#hyTitle.hyt-launch .hyl-slot[data-k="style"] .hyl-item { min-height: 58px; border-top: 1px solid rgba(150,225,255,0.14); margin-top: 4px; background: none; border-left: 0; border-right: 0; border-bottom: 0; font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer; }
+#hyTitle.hyt-launch .hyl-slot[data-k="style"] .hyl-k { font-size: 22px; font-weight: 600; letter-spacing: 0.2em; color: rgba(204,212,232,0.92); }
+#hyTitle.hyt-launch .hyl-style .hyl-arr { font-style: normal; color: var(--sw-cyan, #7bffe0); opacity: 0.85; padding: 0 6px; }
+#hyTitle.hyt-launch .hyl-style .hyl-style-name { color: #ffffff; }
+#hyTitle.hyt-launch .hyl-slot[data-k="style"] .hyl-s { font-size: 16px; letter-spacing: 0.18em; opacity: 0.8; }
+#hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-k { font-size: 22px; font-weight: 600; letter-spacing: 0.22em; color: #d9e0f2; }
+#hyTitle.hyt-launch .hyl-slot[data-k="skip"]::before { content: ''; position: absolute; left: 46px; right: 28px; top: 0; height: 1px; background: rgba(170,200,255,0.14); }
+/* pre-flight: the items dimmed, a thin progress line, a caption */
+#hyTitle.hyt-launch .hyl-ph { cursor: default !important; }
+#hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-k, #hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-s { color: rgba(204,212,232,0.86); }   /* dimmed, still 7:1 */
+#hyTitle.hyt-launch:not(.hyl-ready) .hyl-item { pointer-events: none; }
+#hyTitle.hyt-launch .hyl-prep { display: flex; flex-direction: column; gap: 9px; padding: 8px 28px 6px 46px; }
+#hyTitle.hyt-launch .hyl-prep-bar { display: block; height: 2px; background: rgba(160,190,255,0.16); border-radius: 2px; overflow: hidden; }
+#hyTitle.hyt-launch .hyl-prep-bar i { display: block; height: 100%; width: 4%; background: linear-gradient(90deg, #7bffe0, #19f0ff); box-shadow: 0 0 8px #19f0ff; transition: width 300ms ease; }
+#hyTitle.hyt-launch .hyl-prep-t { font-family: var(--sw-font-ui); font-weight: 600; font-size: 18px; letter-spacing: 0.12em; color: #dfe6f7; }
+#hyTitle.hyt-launch.hyl-ready .hyl-prep { display: none; }
+#hyTitle.hyt-launch .hyl-keys { display: none; gap: 22px; padding: 10px 28px 2px 46px; font-family: var(--sw-font-ui); font-weight: 600; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase; color: #b9c3dc; }
+#hyTitle.hyt-launch.hyl-ready .hyl-keys { display: flex; }
+@media (pointer: coarse) { #hyTitle.hyt-launch.hyl-ready .hyl-keys { display: none; } }
+/* focus: one item, a bright bar + chevron and a brighter plate */
+#hyTitle.hyt-launch .hyl-item.is-focus { background: linear-gradient(90deg, rgba(150,225,255,0.15), rgba(150,225,255,0.05) 70%, rgba(150,225,255,0)) !important; }
+#hyTitle.hyt-launch .hyl-item.is-focus::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 4px; border-radius: 0 3px 3px 0; background: #7bffe0; box-shadow: 0 0 12px #19f0ff; }
+#hyTitle.hyt-launch .hyl-item.is-focus::after { content: ''; position: absolute; left: 20px; top: 50%; width: 0; height: 0; transform: translateY(-50%);
+    border-top: 8px solid transparent; border-bottom: 8px solid transparent; border-left: 11px solid #7bffe0; filter: drop-shadow(0 0 6px #19f0ff); }
+#hyTitle.hyt-launch .hyl-item.is-focus .hyl-k { color: #ffffff; text-shadow: 0 0 18px rgba(123,255,224,0.45); }
+#hyTitle.hyt-launch .hyl-btn i { display: none; }
+/* attract: the menu steps back (any input restores it in 280 ms) */
+#hyTitle.hyt-launch.hyl-attract .hyl-menu { opacity: 0.4; transition: opacity 1600ms ease, transform 560ms cubic-bezier(0.5, 0, 0.75, 0); }
+/* activate: the menu and logo slide away (<= 0.6 s), the scene stays */
+#hyTitle.hyt-launch.hyl-go .hyl-menu { opacity: 0; transform: translate(-70px, -50%); pointer-events: none; transition: opacity 520ms ease-in, transform 560ms cubic-bezier(0.5, 0, 0.75, 0); }
+#hyTitle.hyt-launch.hyl-go .hyl-lockup { opacity: 0; transform: translateY(-60px); }
+#hyTitle.hyt-launch.hyl-go .hyl-credit, #hyTitle.hyt-launch.hyl-go .hyl-build { opacity: 0; }
+/* the credit and the build tag: bottom corners, 16 px, 60% white */
+#hyTitle.hyt-launch .hyl-credit, #hyTitle.hyt-launch .hyl-build { position: absolute; z-index: 2; bottom: max(16px, env(safe-area-inset-bottom)); font-family: var(--sw-font-ui); font-weight: 600; font-size: 16px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.6); transition: opacity 400ms ease; }
+#hyTitle.hyt-launch .hyl-credit { left: max(20px, env(safe-area-inset-left)); }
+#hyTitle.hyt-launch .hyl-build { right: max(20px, env(safe-area-inset-right)); text-transform: none; }
+
+/* the game's countdown (#introCountdownOverlay, its text and timing untouched), drawn into the scene */
+#introCountdownOverlay.hyl-cdx { background: none !important; }
+#introCountdownOverlay.hyl-cdx.hyl-cd-top { z-index: 10001 !important; }
+#introCountdownOverlay.hyl-cdx.hyl-cd-gone { opacity: 0 !important; transition: opacity 400ms ease !important; }
+#introCountdownOverlay.hyl-cdx > div { left: max(56px, 6vw) !important; top: 52% !important; right: auto !important; transform: translateY(-50%) !important; text-align: left !important; }
+#introCountdownOverlay.hyl-cdx #countdownTimer { font-family: 'Orbitron', monospace !important; font-weight: 900 !important; line-height: 0.92 !important; margin: 0 0 18px !important; animation: none !important;
+    background: linear-gradient(180deg, #ffffff 0%, #e6fffb 40%, #7bffe0 52%, #7b2bff 54%, #c49bff 100%); -webkit-background-clip: text; background-clip: text;
+    color: transparent !important; -webkit-text-fill-color: transparent; text-shadow: none !important;
+    filter: drop-shadow(-3px 0 0 rgba(25,240,255,0.7)) drop-shadow(3px 0 0 rgba(255,43,214,0.55)) drop-shadow(0 6px 18px rgba(0,0,0,0.55)); }
+#introCountdownOverlay.hyl-cdx #countdownTimer.text-8xl { font-size: clamp(120px, 25vh, 210px) !important; letter-spacing: 0.02em; }
+#introCountdownOverlay.hyl-cdx #countdownTimer.text-6xl { font-size: clamp(44px, 9.5vh, 80px) !important; letter-spacing: 0.06em; }
+#introCountdownOverlay.hyl-cdx #countdownTimer.text-orange-400 { background-image: linear-gradient(180deg, #ffffff 0%, #fff1c8 40%, #ffc26a 52%, #ff6a2b 54%, #ffb089 100%); }
+#introCountdownOverlay.hyl-cdx #countdownStatus { font-family: 'Orbitron', monospace !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: 0.2em !important; margin-bottom: 18px !important;
+    color: #eafcff !important; text-shadow: 0 0 10px rgba(25,240,255,0.45), 0 2px 10px rgba(0,0,0,0.7) !important; }
+#introCountdownOverlay.hyl-cdx #missionControl, #introCountdownOverlay.hyl-cdx #systemStatus { font-size: 18px !important; letter-spacing: 0.06em; animation: none !important; text-shadow: 0 1px 8px rgba(0,0,0,0.8) !important; }
+#introCountdownOverlay.hyl-cdx #missionControl { color: #8affc4 !important; }
+#introCountdownOverlay.hyl-cdx #systemStatus { color: #ffe27a !important; }
+#introCountdownOverlay.hyl-cdx > div > div:last-child { font-size: 18px !important; }
+#introCountdownOverlay.hyl-cdx > div::before { content: ''; position: absolute; inset: -48px -72px; z-index: -1; pointer-events: none;   /* a soft bed under the type (the sun's corona can sit behind it) */
+    background: radial-gradient(ellipse closest-side, rgba(4,2,14,0.66) 35%, rgba(4,2,14,0)); }
+#introCountdownOverlay.hyl-cdx.hyl-liftoff > div { animation: hylShake 70ms steps(2) 14; }
+@keyframes hylShake { 0% { translate: -5px 3px; } 50% { translate: 6px -4px; } 100% { translate: -3px -2px; } }
+
+/* phones: logo high, sun and range mid, the menu low in thumb reach */
+@media (max-width: 760px), (max-aspect-ratio: 3/4) {
+    #hyTitle.hyt-launch .hyl-lockup { top: max(8vh, calc(env(safe-area-inset-top) + 24px)); padding: 0 16px; }
+    #hyTitle.hyt-launch .sw-title span:first-child { font-size: min(7vw, 40px); letter-spacing: 0.14em; }
+    #hyTitle.hyt-launch .sw-title span:last-child { font-size: min(12.2vw, 68px); letter-spacing: 0.04em; }
+    #hyTitle.hyt-launch .hyt-sub { margin-top: 14px; padding: 6px 16px; }
+    #hyTitle.hyt-launch .hyt-sub span { font-family: var(--sw-font-ui); font-size: 17px; letter-spacing: 0.1em; white-space: nowrap; }
+    #hyTitle.hyt-launch .hyl-menu { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: auto; top: auto;
+        bottom: calc(max(16px, env(safe-area-inset-bottom)) + 34px); transform: none; }
+    #hyTitle.hyt-launch.hyl-go .hyl-menu { transform: translateY(80px); }
+    #hyTitle.hyt-launch .hyl-plate { padding: 8px 0 8px; }
+    #hyTitle.hyt-launch .hyl-item { min-height: 68px; padding: 10px 20px 10px 40px !important; gap: 5px; }
+    #hyTitle.hyt-launch .hyl-k { font-size: 32px; letter-spacing: 0.07em; }
+    #hyTitle.hyt-launch .hyl-s { font-size: 16px; letter-spacing: 0.24em; }
+    #hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-item { min-height: 52px; }
+    #hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-k { font-size: 20px; }
+    #hyTitle.hyt-launch .hyl-slot[data-k="skip"]::before { left: 40px; right: 20px; }
+    #hyTitle.hyt-launch .hyl-item.is-focus::after { left: 16px; }
+    #hyTitle.hyt-launch .hyl-prep { padding: 6px 20px 6px 40px; }
+    #hyTitle.hyt-launch .hyl-credit, #hyTitle.hyt-launch .hyl-build { bottom: max(10px, env(safe-area-inset-bottom)); letter-spacing: 0.12em; }
+    #introCountdownOverlay.hyl-cdx > div { left: 16px !important; right: 16px !important; top: 25% !important; text-align: center !important; }
+    #introCountdownOverlay.hyl-cdx #countdownTimer.text-8xl { font-size: clamp(110px, 17vh, 170px) !important; }
+    #introCountdownOverlay.hyl-cdx #countdownTimer.text-6xl { font-size: clamp(32px, 9vw, 48px) !important; }
+    #introCountdownOverlay.hyl-cdx #countdownStatus { font-size: 16px !important; letter-spacing: 0.05em !important; }
+    #introCountdownOverlay.hyl-cdx #missionControl, #introCountdownOverlay.hyl-cdx #systemStatus { font-size: 16px !important; letter-spacing: 0 !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #hyTitle.hyt-launch .sw-glitch { display: none; }
+    #introCountdownOverlay.hyl-cdx.hyl-liftoff > div { animation: none; }
+}
+
+/* the intro-branch chooser pill on the sketch titles (chrome / landscape / poster) */
+#hyTitle .hyt-style { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; font-family: var(--sw-font-ui); font-size: 16px; letter-spacing: 0.18em; color: rgba(204,212,232,0.9); }
+#hyTitle .hyt-style b { color: #ffffff; font-weight: 700; }
+#hyTitle .hyt-style-b { font: inherit; font-size: 26px; line-height: 1; color: var(--sw-cyan, #7bffe0); background: rgba(8,12,28,0.6); border: 1px solid rgba(150,225,255,0.35); border-radius: 8px; width: 44px; height: 44px; cursor: pointer; }
+#hyTitle .hyt-style-b:hover, #hyTitle .hyt-style-b:focus { background: rgba(150,225,255,0.18); outline: none; }

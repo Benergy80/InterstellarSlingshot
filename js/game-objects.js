@@ -1022,9 +1022,9 @@ function _hySgrA() {
 // carrying Earth's own orbital velocity (game-core's updatePlanetOrbits:
 // angle = Date.now() x 0.001 x orbitSpeed x 3 for local planets, counter-
 // clockwise in x/z) so the view holds. Falls back to Sol + HY_SOL.START.
-const HY_START = { ABOVE_K: 2.3, TOWARD_K: 0.6, LOCAL_SPEED_MULT: 3.0 };
+const HY_START = { ABOVE_K: 2.3, TOWARD_K: 0.6, LOCAL_SPEED_MULT: 3.0, FAR_SIDE_JITTER_DEG: 14 };
 if (typeof window !== 'undefined') window.HY_START = HY_START;
-function _hyStartPoint() {
+function _hyStartPoint(opts) {
     const so = (typeof window !== 'undefined' && window.localSystemOffset) || { x: 0, y: 0, z: 0 };
     const S = (typeof HY_SOL !== 'undefined' && HY_SOL.START) || { x: 1560, y: 150, z: 173 };
     const oo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
@@ -1044,6 +1044,21 @@ function _hyStartPoint() {
         const u0 = earth.userData, c0 = u0.systemCenter;
         if (c0 && u0.orbitRadius > 0 && u0.orbitSpeed) {
             const base0 = u0.orbitSpeed * HY_START.LOCAL_SPEED_MULT * Math.max(1, 500 / u0.orbitRadius);
+            // HYBRID startSide: farSide (Ben 2026-10-11: "the game should always start with somewhere on the
+            // opposite side of the sun from Sagittarius"). At the hand-off (opts.pin, or the first call if no
+            // caller pinned) Earth's orbit phase is set so Earth sits across the Sun from Sgr A*, a random
+            // ±FAR_SIDE_JITTER_DEG off the exact antipode ("somewhere"); Earth keeps orbiting from there, so the
+            // Sun stands between the player and the galactic centre and the slingshot round it is the way out.
+            const _far = typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is && window.HYBRID.is('startSide', 'farSide');
+            if (_far && sgr && ((opts && opts.pin) || !window._hyStartPinned)) {
+                const sx = look.x - c0.x, sz = look.z - c0.z;
+                if (sx * sx + sz * sz > 1) {
+                    if (window._hyStartJitter === undefined) window._hyStartJitter = (Math.random() * 2 - 1) * HY_START.FAR_SIDE_JITTER_DEG * Math.PI / 180;
+                    const thFar = Math.atan2(-sz, -sx) + window._hyStartJitter;
+                    u0.orbitPhase = thFar - Date.now() * 0.001 * base0;
+                    window._hyStartPinned = true;
+                }
+            }
             const th0 = Date.now() * 0.001 * base0 + (u0.orbitPhase || 0);
             ep.set(c0.x + Math.cos(th0) * u0.orbitRadius, c0.y, c0.z + Math.sin(th0) * u0.orbitRadius);
         }
@@ -12130,7 +12145,7 @@ if (Math.random() < moonProbability) {
                 ? new THREE.Vector3(localSystemOffset.x + HY_SOL.START.x, localSystemOffset.y + HY_SOL.START.y, localSystemOffset.z + HY_SOL.START.z)
                 : new THREE.Vector3(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
             let _lookAt = new THREE.Vector3(0, 0, 0);
-            if (_hyScaleOn() && typeof _hyStartPoint === 'function') { const _sp = _hyStartPoint(); if (_sp && _sp.earth) { earthInitialPosition = _sp.pos; _lookAt = _sp.look; } }
+            if (_hyScaleOn() && typeof _hyStartPoint === 'function') { const _sp = _hyStartPoint({ pin: true }); if (_sp && _sp.earth) { earthInitialPosition = _sp.pos; _lookAt = _sp.look; } }
             camera.position.copy(earthInitialPosition);
             camera.lookAt(_lookAt);
             
@@ -20237,9 +20252,15 @@ async function loadUFOModel() {
         loader.load(
             'models/UFO.glb',
             (gltf) => {
-                ufoModelCache = gltf.scene;
-                console.log('🛸 UFO model loaded');
-                resolve(ufoModelCache);
+                const stock = gltf.scene;
+                const _v2 = !!(window.HYBRID && window.HYBRID.is && window.HYBRID.is('ufoModel', 'v2') && typeof _hyBakeAltModel === 'function');
+                if (!_v2) { ufoModelCache = stock; console.log('🛸 UFO model loaded'); resolve(ufoModelCache); return; }
+                // HYBRID ufoModel: v2 (Ben 2026-10-11) — the new saucer, baked to UFO.glb's size and laid flat (HY_MODEL_POSE)
+                loader.load('models/UFO-v2.glb', (g2) => {
+                    try { ufoModelCache = _hyBakeAltModel(g2.scene, stock, 'UFO-v2', null, (window.HY_MODEL_POSE && window.HY_MODEL_POSE._ufoRawLongest) || 63.3); console.log('🛸 UFO model loaded (v2 hull)'); }
+                    catch (e) { console.warn('⚠️ UFO-v2 bake failed, stock saucer', e); ufoModelCache = stock; }
+                    resolve(ufoModelCache);
+                }, undefined, () => { console.warn('⚠️ UFO-v2.glb not found, stock saucer'); ufoModelCache = stock; resolve(ufoModelCache); });
             },
             undefined,
             (error) => {
@@ -20339,6 +20360,7 @@ function createUFOEnemy(position, systemName, index) {
         // GLB UFOs read as enemies (not the friendly-green default).
         ufo.traverse((child) => {
             if (child.isMesh && child.material) {
+                if (child.userData && child.userData._hyAltMesh) { if (typeof _hyRigAltMaterial === 'function') _hyRigAltMaterial(child.material, 0xff4444); return; }   // HYBRID: the v2 saucer keeps its texture, with the hull light rig
                 if (child.material.isMeshStandardMaterial) {
                     child.material.metalness = 0.85;
                     child.material.roughness = 0.15;
@@ -24503,6 +24525,11 @@ function _spawnAsteroidInstance(o) {
 // =============================================================================
 const HY_ASTEROIDS = {
     SIZE_K: 3,             // every asteroid kind x this (1 = ORIGINAL's sizes)
+    // Ben 2026-10-11: 'Where did the asteroid belts go in 8803' — with Sol's orbits x2 the belt lane
+    // moved to 18-20k from the Sun (7-9k from Earth's orbit) and the same ~100 rocks spread over twice
+    // the circumference: sparse and sub-pixel. Sol's belts get more rocks and bigger ones.
+    SOL_COUNT_K: 3.0,      // Sol belt rock count x this (lane circumference grew ~3x)
+    SOL_SIZE_K: 1.6,       // Sol belt rock size x this on top of SIZE_K
     CORE_MIN_RADII: 6.4,   // no galaxy rock nearer its core than this (disc 5.6, CLEAR_RADII 6)
     HOLE_CLEAR: 7,         // a free field's edge keeps this many hole radii from any black hole
     BODY_CLEAR_K: 3,       // ...and this many body radii from any planet, star or moon
@@ -24691,7 +24718,7 @@ function createAsteroidBelts() {
             const beltGroup = new THREE.Group();
 
             // PLENTIFUL: 50-150 asteroids
-            const asteroidCount = 75 + Math.random() * 37; // Reduced 25% for performance
+            let asteroidCount = 75 + Math.random() * 37; // Reduced 25% for performance
 
             // CLOSER: 800-2000 units from black hole
         	let beltRadius = 1600 + Math.random() * 1000;
@@ -24711,6 +24738,7 @@ function createAsteroidBelts() {
                     const _lane = _hySolLayout().belt;
                     beltRadius = (_lane[0] + _lane[1]) / 2;
                     beltWidth = _lane[1] - _lane[0];
+                    asteroidCount = Math.round(asteroidCount * (HY_ASTEROIDS.SOL_COUNT_K || 1));   // Ben 2026-10-11: the belt must read from Earth's orbit
                 }
             }
             // HYBRID (solScale:big): 1,600-2,600 u is inside a scaled core's
@@ -24745,7 +24773,7 @@ function createAsteroidBelts() {
     // goes into `planets` for targeting/collision/mining.
     const geomIndex = Math.floor(Math.random() * 3);
     const matIndex = Math.floor(Math.random() * asteroidResources.materials.length);
-    const scale = (3 + Math.random() * 6) * _hyAstK(); // Was 1-5, now 3-9 (HYBRID: x SIZE_K)
+    const scale = (3 + Math.random() * 6) * _hyAstK() * ((galaxyIndex === 7 && _hyScaleOn()) ? (HY_ASTEROIDS.SOL_SIZE_K || 1) : 1); // Was 1-5, now 3-9 (HYBRID: x SIZE_K; Sol x SOL_SIZE_K)
 
     const ringAngle = (j / asteroidCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
     const ringDistance = beltRadius + (Math.random() - 0.5) * beltWidth;
