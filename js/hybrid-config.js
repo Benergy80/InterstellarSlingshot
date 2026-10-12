@@ -72,7 +72,7 @@
         bossModels:      'v2',         // Ben 2026-10-11: "These will need scaling and should replace the current boss models and UFO model. Keep the others in the github but use these instead" — models/Boss<n>-v2.glb baked to the stock Boss<n>.glb's size and nose (HY_MODEL_POSE, js/game-models.js)  'v2' | 'original'
         ufoModel:        'v2',         // same for models/UFO-v2.glb (laid flat, dome up)  'v2' | 'original'
         deathScreen:     'synthwave',  // Ben 2026-10-11: "keep the end screen from 8805" — MISSION FAILED as the arcade sequence with the alien beat-line landscape (js/synthwave-fx.js, css/synthwave.css)  'synthwave' | 'original'
-        titleScreen:     'original',   // Ben 2026-10-11: "explore title screens in the spirit of the game over screen" (package AG, js/synthwave-fx.js) — Ben picks  'original' | 'chrome' | 'landscape' | 'poster'
+        titleScreen:     'original',   // Ben 2026-10-11: "explore title screens in the spirit of the game over screen" (package AG, js/synthwave-fx.js) — Ben picks  'original' | 'chrome' | 'landscape' | 'poster' | 'launch' (package AH, js/title-launch.js: the dawn pad, the countdown and the lift-off in one scene)
         haze:            'regional',   // distance haze varies by region: murky in nebulae, clear between galaxies (HY_HAZE)  'regional' | 'global'
         sun:             'burning',    // the local Sun as a burning star emitting light (HY_SUN)  'burning' | 'overhaul'
         outerSystems:    'frontier',   // outer systems rebuilt as the far frontier (HY_OUTER)  'frontier' | 'classic'
