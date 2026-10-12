@@ -1318,6 +1318,60 @@ function _hlMaterial() {
     });
 }
 
+// GENERALISED (package AI enemyhulls): any hull with a HY_HULL_POINTS `lights` list gets ONE Points draw call.
+//   lights  [{x,y,z, kind, size[, color]}] box fractions (see HY_HULL_POINTS)
+//   box     the hull's local box
+//   opts    { local(L, out) → local position (default hyHullLocal), colorOf(L) → hex, material (default a new _hlMaterial()) }
+// Returns { points, gain (the aGain attribute, DynamicDraw), kinds } or null for an empty list.
+function _hyMakeHullLightPoints(lights, box, opts) {
+    opts = opts || {};
+    const width = box.max.x - box.min.x;
+    const n = lights.length;
+    if (!n) return null;
+    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+    const size = new Float32Array(n), gain = new Float32Array(n);
+    const v = new THREE.Vector3(), c = new THREE.Color();
+    lights.forEach((L, i) => {
+        if (opts.local) opts.local(L, v); else window.hyHullLocal(box, L, v);
+        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
+        c.setHex(opts.colorOf ? opts.colorOf(L) : (L.color != null ? L.color : (_HL.KIND_COLOR[L.kind] || 0xffffff)));
+        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
+        size[i] = L.size * width;
+        gain[i] = 0;
+    });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+    const ga = new THREE.BufferAttribute(gain, 1);
+    ga.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute('aGain', ga);
+    geo.computeBoundingSphere();
+    const pts = new THREE.Points(geo, opts.material || _hlMaterial());
+    pts.name = 'hullLights';
+    pts.frustumCulled = false;
+    pts.renderOrder = 102;
+    pts.userData.isEffect = true;
+    pts.userData.__dbTris = Infinity;
+    return { points: pts, gain: ga, kinds: lights.map((L) => L.kind) };
+}
+// Per-element brightness for one frame: strobe 1 Hz double flash, throats ride the throttle `thr`,
+// steady cockpit / nav, slow panel shimmer; `g` scales the lot. Writes `arr` (the aGain array).
+function _hyHullLightGains(kinds, arr, thr, now, g) {
+    const ph = (now % 1000) / 1000;                                   // 1 Hz
+    const strobe = (ph < 0.05 || (ph > 0.13 && ph < 0.18)) ? 1 : 0;   // short double flash
+    for (let i = 0; i < kinds.length; i++) {
+        const k = kinds[i];
+        let a;
+        if (k === 'strobe') a = strobe * 1.2;
+        else if (k === 'throat') a = 0.18 + 0.95 * thr;
+        else if (k === 'cockpit') a = 0.55;
+        else if (k === 'panel') a = 0.62 + 0.12 * Math.sin(now * 0.002 + i * 1.7);
+        else a = 1.15;                                                // nav lights: steady
+        arr[i] = a * g;
+    }
+}
+
 function _hyBuildHullLights(model) {
     _hlDispose();
     if (!model || typeof THREE === 'undefined' || typeof window.hyHullPoints !== 'function' ||
@@ -1326,39 +1380,14 @@ function _hyBuildHullLights(model) {
     const box = _hyShipLocalBox(model);
     if (!entry || !box) return;
     const key = window.hyHullKey(model);
-    const width = box.max.x - box.min.x, len = box.max.z - box.min.z;
-    const lights = entry.lights || [];
-    const n = lights.length;
-    const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
-    const size = new Float32Array(n), gain = new Float32Array(n);
-    const v = new THREE.Vector3(), c = new THREE.Color();
-    lights.forEach((L, i) => {
-        window.hyHullLocal(box, L, v);
-        pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z;
-        c.setHex(L.color != null ? L.color : (_HL.KIND_COLOR[L.kind] || 0xffffff));
-        col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
-        size[i] = L.size * width;
-        gain[i] = 0;
-    });
-    if (n) {
-        const geo = new THREE.BufferGeometry();
-        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-        geo.setAttribute('aColor', new THREE.BufferAttribute(col, 3));
-        geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
-        const ga = new THREE.BufferAttribute(gain, 1);
-        ga.setUsage(THREE.DynamicDrawUsage);
-        geo.setAttribute('aGain', ga);
-        geo.computeBoundingSphere();
-        const pts = new THREE.Points(geo, _hlMaterial());
-        pts.name = 'hullLights';
-        pts.frustumCulled = false;
-        pts.renderOrder = 102;
-        pts.userData.isEffect = true;
-        pts.userData.__dbTris = Infinity;
-        model.add(pts);
-        _hl.points = pts;
-        _hl.gain = ga;
-        _hl.kinds = lights.map((L) => L.kind);
+    const len = box.max.z - box.min.z;
+    const v = new THREE.Vector3();
+    const made = _hyMakeHullLightPoints(entry.lights || [], box);
+    if (made) {
+        model.add(made.points);
+        _hl.points = made.points;
+        _hl.gain = made.gain;
+        _hl.kinds = made.kinds;
     }
     // the thruster light, at the nozzle group's centre, a little behind the exit
     let nx = 0, ny = 0, nz = 0, nn = 0;
@@ -1401,24 +1430,16 @@ function _hyUpdateHullLights(isThrusting) {
         _hl.points.material.uniforms.uHalfH.value = _hlSize.y * 0.5;
     }
     const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
-    const ph = (now % 1000) / 1000;                                   // 1 Hz
-    const strobe = (ph < 0.05 || (ph > 0.13 && ph < 0.18)) ? 1 : 0;   // short double flash
     const g = (_hl.key === 'Player') ? _HL.STOCK_GAIN : 1;
     const thr = Math.min(1.2, _hl.level);
-    const arr = _hl.gain.array;
-    for (let i = 0; i < _hl.kinds.length; i++) {
-        const k = _hl.kinds[i];
-        let a;
-        if (k === 'strobe') a = strobe * 1.2;
-        else if (k === 'throat') a = 0.18 + 0.95 * thr;
-        else if (k === 'cockpit') a = 0.55;
-        else if (k === 'panel') a = 0.62 + 0.12 * Math.sin(now * 0.002 + i * 1.7);
-        else a = 1.15;                                                // nav lights: steady
-        arr[i] = a * g;
-    }
+    _hyHullLightGains(_hl.kinds, _hl.gain.array, thr, now, g);
     _hl.gain.needsUpdate = true;
 }
 if (typeof window !== 'undefined') {
     window._hyBuildHullLights = _hyBuildHullLights;
     window._hyHullLights = _hl;
+    window._hyMakeHullLightPoints = _hyMakeHullLightPoints;
+    window._hyHullLightGains = _hyHullLightGains;
+    window._hyHullLightMaterial = _hlMaterial;
+    window._HY_HULL_LIGHT_KIND_COLOR = _HL.KIND_COLOR;
 }

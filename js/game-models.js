@@ -114,12 +114,20 @@ async function loadEnemyModels() {
     console.log('🎯 === LOADING ENEMY MODELS ===');
     const promises = [];
 
+    // HYBRID enemyModels: v2 (Ben 2026-10-11, package AI) — his new fighter hulls stand in for Enemy<n>.glb,
+    // baked nose -Z to one raw size (HY_MODEL_POSE._enemyRawLongest = the stock fighters' median in game)
+    // the same way loadBossModels bakes Boss<n>-v2; the stock file stays the fallback.
+    const _v2 = !!(window.HYBRID && window.HYBRID.is && window.HYBRID.is('enemyModels', 'v2'));
     for (let i = 1; i <= 8; i++) {
         const path = `models/Enemy${i}.glb`;
-        console.log(`🎯 Queueing enemy ${i}: ${path}`);
+        console.log(`🎯 Queueing enemy ${i}: ${path}` + (_v2 ? ' (+ v2 hull)' : ''));
         promises.push(
             loadGLBModel(path)
-                .then(model => {
+                .then(async (model) => {
+                    if (_v2) {
+                        try { const alt = await loadGLBModel(`models/Enemy${i}-v2.glb`); model = _hyBakeAltModel(alt, model, `Enemy${i}-v2`, null, HY_MODEL_POSE._enemyRawLongest); }
+                        catch (e) { console.warn(`⚠️ Enemy${i}-v2.glb failed, using the stock hull:`, e && e.message); }
+                    }
                     console.log(`✅ Enemy ${i} cached successfully`);
                     modelCache.enemies[i] = model;
                     modelCache.loadingProgress += (1 / 17) * 100; // 17 total models
@@ -210,6 +218,19 @@ const HY_MODEL_POSE = {
     'Boss7-v2':  { ry: -90 , emissive: 0.9 },           // crystal spike, raw nose -X
     'Boss8-v2':  { ry: -90 , emissive: 0.9 },           // crescent: cockpit at -X, orange exhaust at +X
     'UFO-v2':    { rx: -90 , emissive: 0.9 },           // authored standing on edge (disc in XY, dome +Z) → laid flat, dome up
+    // FIGHTERS (package AI enemyhulls): poses read off the turnarounds + end-slab cross-sections, checked nose-on in game
+    'Enemy1-v2': { ry: 0 , emissive: 0.9 },             // spider body: legs and the orange engine panel trail at +Z
+    'Enemy2-v2': { ry: 0 , emissive: 0.9 },             // long hull along Z, cyan engine ring at +Z
+    'Enemy3-v2': { rx: -90 , emissive: 0.9 },           // authored upright (nose +Y, canopy on +Z) → laid flat, nose -Z, canopy up
+    'Enemy4-v2': { rx: -90 , emissive: 0.9 },           // same as Enemy3
+    'Enemy5-v2': { ry: 0 , emissive: 0.9 },             // twin cannons point -Z
+    'Enemy6-v2': { ry: 0 , emissive: 0.9 },             // prongs trail at +Z
+    'Enemy7-v2': { ry: 180 , emissive: 0.9 },           // the red eye faces +Z → turned forward
+    'Enemy8-v2': { ry: -90 , emissive: 0.9 },           // cockpit at -X, three nozzles at +X
+    // Every v2 fighter is baked to this raw longest dimension; the fighter builder scales x48 (scaleOverride 96 x 0.5),
+    // so 0.257 = 12.35 u across in game = the MEDIAN of the stock fighters measured in play (9.8 / 11.0 / 11.3 / 11.9 /
+    // 12.8 / 14.1 / 16.0 / 22.7 u for Enemy4 / 3 / 8 / 1 / 2 / 5 / 6 / 7). A per-model `scale` multiplies it.
+    _enemyRawLongest: 0.257,
     // Every v2 boss is baked to this raw longest dimension; the boss builder scales x72, so 1.0 = 72 u across in game
     // (the stock bosses ranged 3-87 u because of per-file sizes and the Sith x0.25 fix-up). A per-model `scale` multiplies it.
     _bossRawLongest: 1.0,
@@ -264,6 +285,61 @@ function _hyBakeAltModel(model, ref, name, poseOverride, targetLongest) {
     return model;
 }
 if (typeof window !== 'undefined') { window._hyBakeAltModel = _hyBakeAltModel; window._hyIsAltModel = _hyIsAltModel; }
+// HYBRID enemyModels: v2 — the faction RIM on a textured fighter hull. The stock look clones every hull
+// mesh in an additive faction colour (opacity pulsed 0.35-0.85 by the enemy-glow loop in game-core.js);
+// over a texture that is a coloured wash. This shell is the same clone (same geometry, same transform,
+// same draw count, tagged isGlowLayer so the pulse loop drives it and every hull measurement skips it),
+// but its alpha is a fresnel term: the faction colour sits on the silhouette and grazing faces, the
+// texture reads untouched face-on. One material per faction colour, shared (the pulse value is global).
+const HY_FIGHTER_RIM = { POW: 2.4, GAIN: 1.15, BASE: 0.05 };   // rim falloff, rim strength x pulse, face-on tint x pulse
+const _hyRimMats = {};
+function _hyFighterRimMaterial(color) {
+    const key = new THREE.Color(color).getHexString();
+    if (_hyRimMats[key]) return _hyRimMats[key];
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uColor: { value: new THREE.Color(color).multiplyScalar(1.2) },
+            uPow: { value: HY_FIGHTER_RIM.POW }, uGain: { value: HY_FIGHTER_RIM.GAIN }, uBase: { value: HY_FIGHTER_RIM.BASE },
+            uOpacity: { value: 0.2 }
+        },
+        vertexShader: [
+            'varying vec3 vN;', 'varying vec3 vV;',
+            '#include <common>', '#include <logdepthbuf_pars_vertex>',
+            'void main() {',
+            '  vec4 mv = modelViewMatrix * vec4(position, 1.0);',
+            '  vN = normalMatrix * normal;',
+            '  vV = -mv.xyz;',
+            '  gl_Position = projectionMatrix * mv;',
+            '  #include <logdepthbuf_vertex>',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'uniform vec3 uColor;', 'uniform float uPow;', 'uniform float uGain;', 'uniform float uBase;', 'uniform float uOpacity;',
+            'varying vec3 vN;', 'varying vec3 vV;',
+            '#include <common>', '#include <logdepthbuf_pars_fragment>',
+            'void main() {',
+            '  #include <logdepthbuf_fragment>',
+            '  float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), uPow);',
+            '  gl_FragColor = vec4(uColor, clamp((uBase + uGain * f) * uOpacity, 0.0, 1.0));',
+            '}'
+        ].join('\n'),
+        transparent: true, depthWrite: false, depthTest: true,
+        blending: THREE.AdditiveBlending, side: THREE.FrontSide, toneMapped: false
+    });
+    // the pulse loop writes material.opacity; the shader reads it through this uniform
+    Object.defineProperty(mat.uniforms.uOpacity, 'value', { get() { return mat.opacity; }, set(v) { mat.opacity = v; } });
+    mat.opacity = 0.2;
+    mat.userData._hyFighterRim = true;
+    _hyRimMats[key] = mat;
+    return mat;
+}
+function _hyFighterRimMesh(geometry, color) {
+    const m = new THREE.Mesh(geometry, _hyFighterRimMaterial(color));   // shares the hull's geometry: same vertices, same depth
+    m.userData.isGlowLayer = true;
+    m.userData._hyFighterRim = true;
+    m.renderOrder = 1;
+    return m;
+}
 
 // Load player model (Player.glb)
 async function loadPlayerModel() {
@@ -1874,6 +1950,8 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 const baseColor = new THREE.Color(material.color || 0xff0000);
                 baseColor.multiplyScalar(0.4);
 
+                if (child.userData && child.userData._hyAltMesh) child.material = child.material.clone();   // HYBRID enemyModels: v2 hulls keep their own textured material (one per ship, like the stock path)
+                else
                 child.material = new THREE.MeshStandardMaterial({
                     color: baseColor,
                     transparent: false,
@@ -1904,6 +1982,9 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
 
         // STEP 3: NOW add glow layers (after centering)
         baseMeshes.forEach((child) => {
+            // HYBRID enemyModels: v2 — a full additive copy would wash the texture out; the faction
+            // colour rides a thin fresnel RIM instead (same draw count, same pulse: isGlowLayer).
+            if (child.userData && child.userData._hyAltMesh) { child.add(_hyFighterRimMesh(child.geometry, material.color || 0xff0000)); return; }
             const glowGeometry = child.geometry.clone();
             const glowColor = new THREE.Color(material.color || 0xff0000);
             glowColor.multiplyScalar(1.2);
@@ -1934,7 +2015,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
         // size. Bosses are unaffected (separate createBossMeshWithModel).
         const ENEMY_SCALE_FACTOR = 0.5;
         const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
-        const correction = _enemyModelScaleCorrection[regionId] || 1.0;
+        const correction = _hyIsAltModel(model) ? 1.0 : (_enemyModelScaleCorrection[regionId] || 1.0);   // HYBRID: v2 hulls are baked to one size, no per-region fix-up
         model.scale.multiplyScalar(finalScale * correction);
 
         // Nose-flip models authored +Z-forward so they fly nose-first
@@ -2046,7 +2127,8 @@ function createEnemyMeshWithModel_overhaul(regionId, fallbackGeometry, material,
                     panelCellSize: _hullPanelCellSize(child.geometry),
                     // Nose direction in MESH-LOCAL space: the nose-flipped
                     // regions are authored +Z-forward, everything else -Z.
-                    formNoseSign: _enemyModelNoseFlip[regionId] ? 1.0 : -1.0
+                    // HYBRID: a baked v2 hull is nose -Z whatever its region.
+                    formNoseSign: (_enemyModelNoseFlip[regionId] && !_hyIsAltModel(model)) ? 1.0 : -1.0
                 }));
 
                 child.castShadow = false;
@@ -2122,7 +2204,7 @@ function createEnemyMeshWithModel_overhaul(regionId, fallbackGeometry, material,
         // 350/470u, well above anything this changes.
         const ENEMY_SCALE_FACTOR = 2.02;
         const finalScale = (scaleOverride !== undefined ? scaleOverride : 96.0) * ENEMY_SCALE_FACTOR;
-        const correction = _enemyModelScaleCorrection[regionId] || 1.0;
+        const correction = _hyIsAltModel(model) ? 1.0 : (_enemyModelScaleCorrection[regionId] || 1.0);   // HYBRID: v2 hulls are baked to one size, no per-region fix-up
         model.scale.multiplyScalar(finalScale * correction);
 
         // Nose-flip models authored +Z-forward so they fly nose-first

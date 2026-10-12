@@ -199,7 +199,9 @@ const HELPERS = `(() => {
     ie('gameState').velocityVector.copy(dir).multiplyScalar(1);
     return dir;
   };
-  K.additiveVisible = () => { let n = 0; ie('scene').traverse((o) => { if (o.visible && o.material && o.material.blending === THREE.AdditiveBlending) n++; }); return n; };
+  // fighter light elements (package AI) are built/disposed by distance to the player, so a whip away from a
+  // fight drops them — hull decoration, not slingshot fx: not counted
+  K.additiveVisible = () => { let n = 0; ie('scene').traverse((o) => { if (o.visible && o.material && o.material.blending === THREE.AdditiveBlending && !(o.userData && o.userData._hyFighterLights)) n++; }); return n; };
   // per-frame FOV watcher: short kicks fall between setTimeout samples
   K.fov = { max: 0, min: 999 }; K.fovReset = () => { K.fov.max = 0; K.fov.min = 999; };
   (function tick() { try { const f = ie('camera').fov; if (f > K.fov.max) K.fov.max = f; if (f < K.fov.min) K.fov.min = f; } catch (e) {} requestAnimationFrame(tick); })();
