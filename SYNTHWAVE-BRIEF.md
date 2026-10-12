@@ -51,6 +51,19 @@ deploy other agents as needed."
 `deathScreen: synthwave | original` · `postFx: bloom | off` · `vectorShips: edges | off`
 (the hybrid's switches all still apply; `?hy=key:value` overrides for a session).
 
+## Refreshed from the hybrid (2026-10-11, build 20261012w, HEAD 5e7b445)
+
+Ben moved the day's work to the hybrid branch (8803: "8803 is so perfect"); this branch now carries all of it, merged in
+on top of W1 + W2: the arcade MISSION FAILED (its own), the AAA launch title as the DEFAULT (`titleScreen: launch`,
+js/title-launch.js: Earth at dawn, legible glass menu, countdown + lift-off inside the scene) with an ON-SCREEN CHOOSER
+for the intro branches (menu row TITLE SCREEN ‹ › and a pill on the chrome / landscape / poster sketches — ← → cycles,
+persists, reloads), Ben's new player / boss / fighter / UFO hulls (slimmed, posed, lit by the hull light rig, plumes on
+their nozzles, faction light elements), bosses 3x harder with evades and telegraphed attack patterns
+(`bossDifficulty: hard`), the far-side start across the Sun from Sgr A*, the fill light, plus this branch's own
+`postFx: bloom` and `vectorShips: edges` kept on. Served on :8805 (`node scripts/serve.mjs 8805 <this dir>`); the
+Claude-controlled tab opens here. Not done on this branch: W3-W5 (modern-polish menu beyond the title, arcade feel pass,
+vector ship models) — the hybrid's HYBRID-BRIEF.md Round 5 is the detailed ledger.
+
 ## Waves
 | Wave | What | Status |
 |---|---|---|
