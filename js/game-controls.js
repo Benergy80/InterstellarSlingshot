@@ -10514,6 +10514,7 @@ function _fxShards_overhaul(center, count, color, size, speed, life, kind, opa) 
 // the polygon rim the same way the streaks' texture feathers theirs.
 const _FX_CHUNK_MIN  = 6;         // fragments per kill, low end
 const _FX_CHUNK_MAX  = 9;         // ... and high end (critic's 6-10 window)
+const _FX_FRAG_MAX_TRIS = 600;    // HYBRID: triangles per kill chunk at most (v2 hulls are 2-12 k triangles)
 const _FX_CHUNK_LIFE = 1150;      // ms total; the colour ramp finishes at 900
 const _FX_CHUNK_COOL = 900;       // ms white -> orange -> dark
 const _FX_CHUNK_LEAD = 150;       // ms fade-in: visible as it leaves the flash
@@ -10635,7 +10636,10 @@ function _fxFragGeo(g) {
         const pos = g.attributes.position, idx = g.index;
         const triCount = Math.floor((idx ? idx.count : pos.count) / 3);
         if (triCount < 8) return g.clone();
-        const keep = Math.max(4, Math.round(triCount * (0.25 + Math.random() * 0.35)));
+        // HYBRID enemyModels: v2 — the textured hulls carry 2-12 k triangles (the stock ones 92-460), so a
+        // 25-60 % slice would be thousands per chunk x 6-9 chunks per kill; cap it (the chunk is re-fitted to
+        // its wanted size anyway). Stock hulls never reach the cap, so their chunks are unchanged.
+        const keep = Math.min(_FX_FRAG_MAX_TRIS, Math.max(4, Math.round(triCount * (0.25 + Math.random() * 0.35))));
         const start = Math.floor(Math.random() * Math.max(1, triCount - keep));
         const nrm = g.attributes.normal, uvs = g.attributes.uv;
         const P = new Float32Array(keep * 9);
