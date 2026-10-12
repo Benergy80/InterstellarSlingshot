@@ -16058,6 +16058,11 @@ if (enemy.userData.health <= 0) {
     const _hyBossEpic = !!(enemy.userData && enemy.userData._hyBossFx);
     if (wasBoss) {
     showAchievement('BOSS DEFEATED!', `${bossName} destroyed!`);
+    // HYBRID arcadeFeel: on — a laser-killed flagship scores like a missile-killed one
+    // (arcade.js's own boss value; its pop-up is the big faction-coloured one).
+    if (window.arcade && window.HYBRID && HYBRID.is('arcadeFeel', 'on')) {
+        try { window.arcade.addKill(enemy.userData, enemy.position, true); } catch (e) {}
+    }
     // Flagship kill: full-screen flash + bullet-time slow-mo as it dies.
     if (window.arcade && !_hyBossEpic) {
         window.arcade.flash('rgba(255,200,80,0.9)', 0.85);

@@ -445,3 +445,109 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
 #hyTitle .hyt-style b { color: #ffffff; font-weight: 700; }
 #hyTitle .hyt-style-b { font: inherit; font-size: 26px; line-height: 1; color: var(--sw-cyan, #7bffe0); background: rgba(8,12,28,0.6); border: 1px solid rgba(150,225,255,0.35); border-radius: 8px; width: 44px; height: 44px; cursor: pointer; }
 #hyTitle .hyt-style-b:hover, #hyTitle .hyt-style-b:focus { background: rgba(150,225,255,0.18); outline: none; }
+
+/* ── ARCADE FEEL (package AK, HYBRID arcadeFeel: on — js/arcade.js "ARCADE FEEL") ─────────────
+   Every element below is created only when the switch is on, so these rules are inert when off. */
+/* SCORE + COMBO block: a slim glass strip docked under the title header (desktop), top-left (phone) */
+#hyafHud { position: fixed; z-index: 601; left: 50%; top: 106px; transform: translateX(-50%); pointer-events: none;
+    display: flex; align-items: center; gap: 16px; height: 30px; padding: 0 14px 0 16px; box-sizing: border-box; white-space: nowrap;
+    background: rgba(5,3,15,0.78); border: 1px solid rgba(170,200,255,0.16); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    font-family: var(--sw-font-title); color: var(--sw-white); transition: opacity 160ms linear; }
+#hyafHud.hyaf-yield { opacity: 0; }
+#hyafHud.hyaf-phone { left: max(12px, env(safe-area-inset-left)); top: max(12px, env(safe-area-inset-top)); transform: none; gap: 12px; padding: 0 10px 0 12px; height: 34px; }
+#hyafHud.hyaf-off, #hyafPops.hyaf-off { display: none !important; }
+#hyafHud .hyaf-score { display: flex; align-items: baseline; gap: 10px; }
+#hyafHud .hyaf-lbl { font-family: var(--sw-font-ui); font-weight: 700; font-size: 16px; letter-spacing: 0.28em; text-transform: uppercase; color: #9fefff; }
+#hyafHud .hyaf-num { font-weight: 700; font-size: 20px; line-height: 1; letter-spacing: 0.05em; color: var(--sw-yellow); font-variant-numeric: tabular-nums; min-width: 7.6ch; text-align: right;
+    text-shadow: 0 0 8px rgba(255,224,102,0.45); }
+#hyafHud.hyaf-phone .hyaf-num { min-width: 6.4ch; }
+#hyafHud .hyaf-combo { visibility: hidden; display: flex; align-items: center; width: 58px; }
+#hyafHud .hyaf-combo.on { visibility: visible; }
+#hyafHud .hyaf-x { display: inline-block; font-weight: 900; font-size: 20px; line-height: 1; color: var(--hyaf-c, #19f0ff); transform: scale(var(--hyaf-s, 1)); transform-origin: left center;
+    text-shadow: 0 0 10px var(--hyaf-c, #19f0ff); }
+#hyafHud .hyaf-bar { position: absolute; left: 10px; right: 10px; bottom: 3px; height: 2px; border-radius: 2px; overflow: hidden; background: rgba(255,255,255,0.10); }
+#hyafHud .hyaf-bar i { display: block; height: 100%; background: var(--hyaf-c, #19f0ff); transform-origin: left center; box-shadow: 0 0 6px var(--hyaf-c, #19f0ff); }
+/* "+points" pop-ups: pooled, positioned by transform only, outlined so they read over any sky */
+#hyafPops { position: fixed; inset: 0; z-index: 74; pointer-events: none; overflow: hidden; }
+#hyafPops .hyaf-pop { position: absolute; left: 0; top: 0; visibility: hidden; transform: translate3d(-1000px,-1000px,0); will-change: transform; }
+#hyafPops .hyaf-pop span { display: block; white-space: nowrap; padding: 6px 14px; background: radial-gradient(closest-side, rgba(0,0,0,0.5), rgba(0,0,0,0)); font-family: var(--sw-font-title); font-weight: 900; font-size: 24px; line-height: 1; letter-spacing: 0.05em;
+    color: var(--sw-yellow); font-variant-numeric: tabular-nums; -webkit-text-stroke: 1px rgba(0,0,0,0.85); paint-order: stroke fill;
+    text-shadow: 0 0 2px #000, 0 0 6px rgba(0,0,0,0.95), 0 0 14px rgba(255,224,102,0.5); }
+#hyafPops .hyaf-pop-combo span { font-size: 26px; color: #fff3b0; }
+#hyafPops .hyaf-pop-boss span { font-size: 40px; letter-spacing: 0.06em; text-shadow: 0 0 2px #000, 0 0 8px rgba(0,0,0,0.95), 0 0 22px currentColor; }
+#hyafPops .hyaf-pop-wing { opacity: 0.78; }
+#hyafPops .hyaf-pop-wing span { font-size: 16px; font-weight: 700; letter-spacing: 0.16em; color: var(--sw-mint); text-shadow: 0 0 2px #000, 0 0 6px rgba(0,0,0,0.95); }
+/* the launch title: BEST under the menu plate, in the plate's glass */
+#hyTitle.hyt-launch .hyaf-best { position: absolute; left: 0; top: calc(100% + 8px); display: flex; align-items: baseline; gap: 14px; box-sizing: border-box;
+    padding: 6px 24px 6px 46px; border-radius: 12px; background: rgba(3,2,10,0.72); -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
+    border: 1px solid rgba(170,200,255,0.16); box-shadow: 0 24px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+    font-family: var(--sw-font-ui); text-transform: uppercase; white-space: nowrap; }
+#hyTitle.hyt-launch .hyaf-best .k { font-weight: 700; font-size: 18px; letter-spacing: 0.3em; color: #9fefff; }
+#hyTitle.hyt-launch .hyaf-best .v { font-family: var(--sw-font-title); font-weight: 700; font-size: 22px; letter-spacing: 0.05em; color: var(--sw-yellow); font-variant-numeric: tabular-nums; }
+#hyTitle.hyt-launch .hyaf-best .d { font-weight: 600; font-size: 16px; letter-spacing: 0.14em; color: #b9c3dc; }
+@media (max-width: 760px), (max-aspect-ratio: 3/4), (max-height: 700px) {
+    #hyTitle.hyt-launch .hyaf-best { position: static; margin-top: 8px; padding: 6px 20px 6px 40px; }
+}
+/* MISSION FAILED: the Best row + the NEW RECORD slam */
+#swDeath .sw-tally .row.hyaf-record .k { color: var(--sw-white); }
+#swDeath .sw-tally .row.hyaf-record .v { color: #ffffff; text-shadow: 0 0 10px var(--sw-magenta), 0 0 22px rgba(255,43,214,0.7); animation: hyafRecordFlash 900ms steps(2) 2; }
+@keyframes hyafRecordFlash { 50% { color: var(--sw-yellow); } }
+#swDeath .hyaf-newrecord { margin-top: 10px; font-family: var(--sw-font-title); font-weight: 900; font-size: clamp(48px, 7vw, 72px); line-height: 1; letter-spacing: 0.06em; text-transform: uppercase;
+    background: linear-gradient(180deg, #ffffff 0%, #fff6d0 38%, var(--sw-yellow) 50%, var(--sw-orange) 52%, var(--sw-magenta) 100%); -webkit-background-clip: text; background-clip: text;
+    color: transparent; -webkit-text-fill-color: transparent; filter: drop-shadow(-3px 0 0 rgba(25,240,255,0.7)) drop-shadow(3px 0 0 rgba(255,43,214,0.6)) drop-shadow(0 6px 16px rgba(0,0,0,0.6));
+    animation: hyafSlam 420ms cubic-bezier(.2,.9,.3,1.2) both; }
+@keyframes hyafSlam { 0% { opacity: 0; transform: scale(2.4); } 55% { opacity: 1; transform: scale(0.94); } 100% { opacity: 1; transform: scale(1); } }
+/* PAUSE: the title's glass plate; every id and handler of the game's own menu kept */
+#pauseOverlay.hyaf-pause { background: radial-gradient(ellipse at 50% 40%, rgba(123,43,255,0.10), rgba(0,0,0,0) 60%), rgba(4,2,12,0.80) !important; }
+#pauseOverlay.hyaf-pause > .ui-panel { box-sizing: border-box; width: min(460px, 92vw); padding: 16px 0 10px !important; text-align: left !important; border-radius: 12px !important;
+    background: rgba(3,2,10,0.80) !important; -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
+    border: 1px solid rgba(170,200,255,0.16) !important; box-shadow: 0 24px 60px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.05) !important;
+    font-family: var(--sw-font-ui); color: var(--sw-white); animation: hyafPlateIn 220ms cubic-bezier(.2,.9,.3,1.25) both; }
+@keyframes hyafPlateIn { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+#pauseOverlay.hyaf-pause h2 { margin: 0 0 4px !important; padding: 0 28px 0 46px; font-family: var(--sw-font-title) !important; font-weight: 900 !important; font-size: 30px !important; line-height: 1.1;
+    letter-spacing: 0.14em; text-transform: uppercase; color: #ffffff !important; text-shadow: -2px 0 0 rgba(25,240,255,0.55), 2px 0 0 rgba(255,43,214,0.45), 0 0 18px rgba(25,240,255,0.35); }
+#pauseOverlay.hyaf-pause p { margin: 0 0 10px !important; padding: 0 28px 0 46px; font-size: 16px !important; font-weight: 600; letter-spacing: 0.12em; color: #b9c3dc !important; }
+#pauseOverlay.hyaf-pause .hyaf-pstats { display: grid; grid-template-columns: repeat(3, auto); justify-content: start; gap: 4px 26px; margin: 6px 0 8px; padding: 8px 28px 9px 46px;
+    border-top: 1px solid rgba(150,225,255,0.14); border-bottom: 1px solid rgba(150,225,255,0.14); }
+#pauseOverlay.hyaf-pause .hyaf-pstats > div { display: flex; flex-direction: column; gap: 3px; }
+#pauseOverlay.hyaf-pause .hyaf-pstats .k { font-weight: 700; font-size: 16px; letter-spacing: 0.28em; text-transform: uppercase; color: #9fefff; }
+#pauseOverlay.hyaf-pause .hyaf-pstats .v { font-family: var(--sw-font-title); font-weight: 700; font-size: 22px; letter-spacing: 0.04em; color: var(--sw-white); font-variant-numeric: tabular-nums; }
+#pauseOverlay.hyaf-pause .hyaf-pstats [data-k="score"] { color: var(--sw-yellow); }
+#pauseOverlay.hyaf-pause h3 { margin: 0 !important; padding: 0 28px 2px 46px; font-family: var(--sw-font-ui); font-weight: 700 !important; font-size: 16px; letter-spacing: 0.3em; text-transform: uppercase; color: #9fefff !important; }
+#pauseOverlay.hyaf-pause .ui-panel > div[style*="border-top"] { border-top: 1px solid rgba(150,225,255,0.14) !important; margin-top: 6px !important; padding-top: 8px !important; }
+/* items: the title's menu rows — flat, left aligned, one bright focus bar */
+#pauseOverlay.hyaf-pause .space-btn { position: relative; display: flex !important; align-items: center; box-sizing: border-box; min-height: 48px; margin: 0 !important; padding: 8px 28px 8px 46px !important;
+    background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; transform: none !important; backdrop-filter: none !important;
+    font-family: var(--sw-font-ui) !important; font-weight: 700; font-size: 22px; letter-spacing: 0.14em; text-transform: uppercase; color: #f4f7ff !important; cursor: pointer !important; text-align: left;
+    transition: background-color 160ms ease !important; -webkit-tap-highlight-color: transparent; }
+#pauseOverlay.hyaf-pause #pauseResumeBtn { width: 100%; min-height: 56px; font-size: 32px; letter-spacing: 0.1em; }
+#pauseOverlay.hyaf-pause #pauseFlightBtn { width: 100%; }
+#pauseOverlay.hyaf-pause .space-btn i { margin-right: 12px !important; font-size: 0.72em; color: #9fefff; }
+#pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 { display: grid !important; grid-template-columns: repeat(3, 1fr); gap: 0 !important; margin: 0 !important; }
+#pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn { padding: 8px 10px 8px 46px !important; font-size: 20px; }
+#pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn + .space-btn { padding-left: 34px !important; }
+#pauseOverlay.hyaf-pause .hyaf-slider { position: relative; display: flex; flex-direction: column; gap: 2px; min-height: 48px; justify-content: center; padding: 3px 28px 3px 46px; }
+#pauseOverlay.hyaf-pause .hyaf-slider > div { margin: 0 !important; font-size: 16px !important; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase; color: #d9e0f2 !important; }
+#pauseOverlay.hyaf-pause input[type="range"] { -webkit-appearance: none; appearance: none; width: 100% !important; height: 24px; margin: 0; background: transparent; cursor: pointer; }
+#pauseOverlay.hyaf-pause input[type="range"]::-webkit-slider-runnable-track { height: 2px; background: rgba(160,190,255,0.28); border-radius: 2px; }
+#pauseOverlay.hyaf-pause input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -8px; border-radius: 50%; background: #7bffe0; box-shadow: 0 0 10px #19f0ff; border: 0; }
+#pauseOverlay.hyaf-pause input[type="range"]::-moz-range-track { height: 2px; background: rgba(160,190,255,0.28); }
+#pauseOverlay.hyaf-pause input[type="range"]::-moz-range-thumb { width: 18px; height: 18px; border-radius: 50%; background: #7bffe0; border: 0; }
+#pauseOverlay.hyaf-pause .hyaf-focus, #pauseOverlay.hyaf-pause .space-btn:hover { background: linear-gradient(90deg, rgba(150,225,255,0.15), rgba(150,225,255,0.05) 70%, rgba(150,225,255,0)) !important; }
+#pauseOverlay.hyaf-pause .hyaf-focus::before { content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 4px; border-radius: 0 3px 3px 0; background: #7bffe0; box-shadow: 0 0 12px #19f0ff; }
+#pauseOverlay.hyaf-pause .hyaf-focus::after { content: ''; position: absolute; left: 20px; top: 50%; width: 0; height: 0; transform: translateY(-50%);
+    border-top: 7px solid transparent; border-bottom: 7px solid transparent; border-left: 10px solid #7bffe0; filter: drop-shadow(0 0 6px #19f0ff); }
+#pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn + .space-btn.hyaf-focus::after { left: 12px; }
+#pauseOverlay.hyaf-pause .hyaf-focus, #pauseOverlay.hyaf-pause .hyaf-focus > div { color: #ffffff !important; }
+#pauseOverlay.hyaf-pause .hyaf-pkeys { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 10px 28px 2px 46px; margin-top: 6px; border-top: 1px solid rgba(150,225,255,0.10);
+    font-family: var(--sw-font-ui); font-weight: 600; font-size: 16px; letter-spacing: 0.12em; text-transform: uppercase; color: #b9c3dc; }
+@media (max-width: 760px) {
+    #pauseOverlay.hyaf-pause > .ui-panel { padding-top: 14px !important; }
+    #pauseOverlay.hyaf-pause h2 { font-size: 24px !important; padding-left: 40px; }
+    #pauseOverlay.hyaf-pause p, #pauseOverlay.hyaf-pause h3, #pauseOverlay.hyaf-pause .hyaf-pstats, #pauseOverlay.hyaf-pause .hyaf-slider { padding-left: 40px; padding-right: 18px; }
+    #pauseOverlay.hyaf-pause .space-btn { padding-left: 40px !important; }
+    #pauseOverlay.hyaf-pause .hyaf-pstats { gap: 4px 18px; }
+    #pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 { grid-template-columns: 1fr; }
+    #pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn, #pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn + .space-btn { padding-left: 40px !important; }
+    #pauseOverlay.hyaf-pause .ui-panel .flex.gap-2 .space-btn + .space-btn.hyaf-focus::after { left: 20px; }
+}

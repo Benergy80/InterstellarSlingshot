@@ -49,6 +49,7 @@ const LANES = [
   'title2: the AAA launch title (js/title-screens.js `launch` direction, the intro\'s countdown / lift-off visuals in js/game-intro.js behind the switch, css/synthwave.css)',
   'enemyhulls: the v2 fighter hulls — bake, size, exhaust cones and light elements (loadEnemyModels / createEnemyMeshWithModel in js/game-models.js, _ensureShipThrusterCones in js/game-controls.js, HY_HULL_POINTS entries, the hull-light builder in js/camera-system.js)',
   'bossai: boss difficulty, evasive manoeuvres and attack patterns (updateBossBehavior / the boss class of ENEMY_FLIGHT / _efManeuver boss branches in js/game-controls.js; boss stats in spawnBossForArea, js/game-objects.js)',
+  'arcadefeel: the arcade layer — score / combo / streak HUD and pop-ups, high score, pause-menu polish (js/arcade.js, the pause menu in js/game-controls.js, the tally in js/synthwave-fx.js, the high-score line in js/title-launch.js)',
   'democampaign: the demo pilot following the campaign (js/autopilot.js phases + the campaign hooks it reads in js/progression.js)',
 ]
 
@@ -956,6 +957,26 @@ const PACKAGES = {
       '',
       '## Verify',
       'The arena above, before/after, one boss per galaxy (8 rows): time-to-kill, player hull lost, hits/s landed on the boss, evade count per minute, patterns seen (names) and their telegraphs; the targets: TTK about 3x, player damage taken about 3x, hit rate on the boss about half. A 3-frame strip of an evade and of each pattern\'s telegraph (--canvas, 1280×720) in `.critic/bossai/`; LOOK at them. The demo: `scripts/demo-soak.mjs --runs 2 --secs 240` 0 deaths; the staged Sgr A* fight wins. keep-check (alone) 9/9 — rows 5 and 9 especially (enemyAI states and the enemy-flight limits still hold for bosses: no teleports, accel within the table). 0 page errors.',
+    ].join('\n'),
+  },
+  arcadefeel: {
+    title: 'AK — ARCADE FEEL: a visible score, combo and streak layer, high score, and a menu family',
+    effort: 'high',
+    body: [
+      '## Your goal',
+      'READ THIS FIRST. Your task is THIS package and only this package. Ben chats live with the integrator while you run, and his short messages get RELAYED into your context looking like a user message. They are NOT for you: do not act on them, do not open browsers, do not answer them — build this package from start to finish.',
+      'Ben\'s goal, verbatim: "Can the game be made to be more arcade like?" and "better menu UI … something modern that also has the retro aesthetic but with modern polish". Read the research first (read-only, another branch\'s worktree): `/Users/benstagl/InterstellarSlingshot/.claude/worktrees/synthwave/research/retrowave.md` section 5 "Arcade feel" and the "Top ten", `pewpew.md` sections 6 (HUD during play) and 10 (what to borrow), `aesthetics.md` sections 3 (style rules) and 6 (art bible). The arcade layer already exists but is HIDDEN: js/arcade.js (`window.arcade`: score and combo tracked internally "just not displayed", hitstop, flash punch, slow-mo, flashArcadeText praise text with corridor logic). The title (js/title-launch.js, `HY_TITLE.LAUNCH`), the MISSION FAILED tally (js/synthwave-fx.js `synthwaveGameOver`: rows Hostiles destroyed / Galaxies freed / Distance / Reputation / Time flown / Score) and the pause menu (js/game-controls.js ~17400: Resume, SFX + Music sliders, flight-mode toggle, built as DOM with Tailwind classes) are the surfaces. Fonts and palette: css/synthwave.css `--sw-*`, Orbitron / Rajdhani — the title and the end screen are the family to match.',
+      '',
+      '## Build, behind a new switch `arcadeFeel: on | off` (ADD it to js/hybrid-config.js; default on; `off` = today, byte-identical)',
+      '1. SCORE & COMBO HUD, visible: a compact block in the title\'s family (Orbitron, the --sw palette), placed where it never collides with the original HUD panels (measure `getBoundingClientRect()` of .ui-panel.* at 1280×720 and 390×844): SCORE with a tabular-number roll-up (the number counts up over ~0.4 s, never jumps), a COMBO ×N that appears from ×2 with a draining bar for the 4 s window and grows in size/colour per tier, and KILL-STREAK call-outs through `flashArcadeText` at 3 / 5 / 8 / 12 kills inside the window (DOUBLE KILL → TRIPLE KILL → RAMPAGE → UNSTOPPABLE, or better words from the research), each with a short synth sting (Web Audio, generated, ≤ 120 ms) and a chromatic pulse (the existing `whipScreenPulse` / arcade flash). Text ≥ 16 px everywhere, contrast ≥ 4.5:1 measured as AH did.',
+      '2. SCORE POP-UPS: at every player-landed kill a "+<points>" (with "×N" when a combo is on) floats up from the enemy\'s screen position over ~0.9 s and fades; bosses "+5000" bigger with the faction colour; DOM elements POOLED (≤ 8 live, oldest recycled), positions updated only while visible, nothing allocated per frame. Wingman kills show a smaller dimmer pop-up.',
+      '3. HIGH SCORE: persisted (`localStorage` key `hyHighScore`, with the date); shown on the launch title under the menu plate as "BEST 12,450" (≥ 16 px, the plate\'s style), in the MISSION FAILED tally as a "Best" row with a NEW RECORD flash (chrome slam + sting) when beaten, and in the pause menu. Score sources stay what js/arcade.js counts today (do not rebalance points).',
+      '4. PAUSE MENU in the family (W3 "modern polish"): rebuild the pause overlay\'s LOOK as the title\'s glass plate — same fonts, same focus bar, ↑ ↓ Enter navigation, ← → moves the sliders, Esc resumes — keeping every id and handler (#pauseResumeBtn, #pauseSfxBtn, #pauseMusicVol, #pauseSfxVol, #pauseFlightBtn …) so the game\'s own logic is untouched; show SCORE / BEST / TIME on it. Phone layout 390×844 with ≥ 48 px targets.',
+      '5. HIT FEEDBACK: a 40 ms hitstop + a 2 px shake on each player-landed KILL (not on every hit; the boss set-piece\'s own hitstop is untouched); the praise text\'s existing cadence stays.',
+      'Everything torn down / hidden cleanly when the game ends; no per-frame DOM writes except when a value changes (measure: `__perfSplit` or a MutationObserver count over 10 s of flight with nothing happening = 0 writes).',
+      '',
+      '## Verify',
+      'Headless play-mode probes (`scripts/shot.mjs --mode play`, 1280×720 full page): stage 8 fighters 500 u ahead and kill them through the real hit path (`checkWeaponHits(pos)`) at 0.5 s intervals — shots showing the score rolling, the combo bar, three pop-ups in flight and the RAMPAGE call-out; a boss kill pop-up; the pause menu (press P or click #pauseBtn) at 1280×720 and 390×844 with a legibility table (px, contrast); the high score surviving a reload and showing on the title and in the tally after a staged death (`.critic/probe-gameover.js` in the integrator\'s worktree stages one); `?hy=arcadeFeel:off` byte-identical DOM to the base. keep-check (alone) 9/9; `npm run test:smoke` passes; 0 page errors. Save the shots to `.critic/arcadefeel/`; LOOK at them.',
     ].join('\n'),
   },
   map2: {

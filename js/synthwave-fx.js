@@ -203,7 +203,7 @@
         const kills = gs.enemiesKilled || gs.kills || gs.enemiesDestroyed || (dp && dp.enemiesKilled) || 0;
         const secs = gs.gameStartTime ? Math.max(0, (Date.now() - gs.gameStartTime) / 1000) : 0;
         const mm = Math.floor(secs / 60), ss = Math.floor(secs % 60);
-        return [
+        const rows = [
             stat('Hostiles destroyed', kills),
             stat('Galaxies freed', gs.galaxiesCleared || 0, (v) => Math.round(v) + ' / 8'),
             stat('Distance', gs.distance || 0, (v) => v.toFixed(1) + ' ly'),
@@ -211,6 +211,8 @@
             stat('Time flown', secs, (v) => { const m = Math.floor(v / 60), s = Math.floor(v % 60); return m + ':' + (s < 10 ? '0' : '') + s; }),
             stat('Score', (kills * 150) + Math.round((gs.distance || 0) * 1000) + (gs.galaxiesCleared || 0) * 5000 + (gs.reputation || 0) * 10)
         ];
+        // HYBRID arcadeFeel: on — Score = the arcade score the HUD showed, plus a Best row (js/arcade.js)
+        return (window.hyArcadeFeel && window.hyArcadeFeel.tallyRows) ? window.hyArcadeFeel.tallyRows(rows, stat) : rows;
     }
 
     // ── the sequence ────────────────────────────────────────────────────────
