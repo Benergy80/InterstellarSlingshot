@@ -13064,6 +13064,106 @@ const HY_HULL_POINTS = {
             { x:  0.36, y: -0.37, z:  1.01, kind: 'throat',    size: 0.08 },
             { x:  0.45, y: -0.26, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' },
             { x: -0.45, y: -0.26, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' }
+        ] },
+    // ── BOSSES (Ben 2026-10-11: "boss enemies need illumination as well as all new enemies"): nozzles from the
+    // rear-plane vertex blobs of each baked hull (the integrator's tmp/glb-nozzles.py) checked against the turnarounds;
+    // lights laid out generically on the box (nav at the wing extremes, strobe on top, cockpit forward, panels aft).
+    'Boss1-v2': { nose: -1,   // spread-wing prow: two red engine rings either side of the tail (placed from the turnaround; the rear slab only caught the leg tips)
+        thrusters: [{ x: -0.32, y: +0.05, z: 0.98, r: 0.060 }, { x: +0.32, y: +0.05, z: 0.98, r: 0.060 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.32, y: +0.05, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x: +0.32, y: +0.05, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss2-v2': { nose: -1,   // orb: the single hex engine port on the rear face
+        thrusters: [{ x: +0.00, y: -0.09, z: 0.98, r: 0.140 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.09, z:  1.01, kind: 'throat',    size: 0.13 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss3-v2': { nose: -1,   // bat: one central exhaust under the twin cannon (the two rear blobs at y +0.82 are the barrel ends)
+        thrusters: [{ x: +0.00, y: -0.10, z: 0.98, r: 0.120 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.10, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss4-v2': { nose: -1,   // three exhaust cylinders: two big outer rings and a centre one
+        thrusters: [{ x: -0.71, y: -0.21, z: 0.98, r: 0.120 }, { x: +0.00, y: -0.21, z: 0.98, r: 0.090 }, { x: +0.71, y: -0.21, z: 0.98, r: 0.120 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.71, y: -0.21, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x: +0.00, y: -0.21, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x: +0.71, y: -0.21, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss5-v2': { nose: -1,   // dart: two outer pods and two inner nozzles
+        thrusters: [{ x: -0.70, y: -0.23, z: 0.98, r: 0.080 }, { x: -0.36, y: -0.21, z: 0.98, r: 0.045 }, { x: +0.36, y: -0.21, z: 0.98, r: 0.045 }, { x: +0.70, y: -0.23, z: 0.98, r: 0.080 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.70, y: -0.23, z:  1.01, kind: 'throat',    size: 0.07 },
+            { x: -0.36, y: -0.21, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x: +0.36, y: -0.21, z:  1.01, kind: 'throat',    size: 0.06 },
+            { x: +0.70, y: -0.23, z:  1.01, kind: 'throat',    size: 0.07 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss6-v2': { nose: -1,   // wedge: three pods in a row below the hull
+        thrusters: [{ x: -0.55, y: -0.62, z: 0.98, r: 0.100 }, { x: +0.00, y: -0.62, z: 0.98, r: 0.100 }, { x: +0.55, y: -0.62, z: 0.98, r: 0.100 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.20, z: -0.75, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: -0.55, y: -0.62, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x: +0.00, y: -0.62, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x: +0.55, y: -0.62, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss7-v2': { nose: -1,   // crystal spike: two rear facets, one above the other
+        thrusters: [{ x: +0.00, y: -0.07, z: 0.98, r: 0.100 }, { x: +0.00, y: +0.38, z: 0.98, r: 0.080 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.10, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.10, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.10, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.10, z: -0.90, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.07, z:  1.01, kind: 'throat',    size: 0.09 },
+            { x: +0.00, y: +0.38, z:  1.01, kind: 'throat',    size: 0.07 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Boss8-v2': { nose: -1,   // crescent: the one orange exhaust low on the tail
+        thrusters: [{ x: +0.00, y: -0.30, z: 0.98, r: 0.090 }],
+        lights: [
+            { x: -1.00, y: -0.10, z: +0.00, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.10, z: +0.00, kind: 'starboard', size: 0.06 },
+            { x: +0.00, y: +1.00, z: +0.00, kind: 'strobe',    size: 0.07 },
+            { x: +0.00, y: +0.45, z: -0.60, kind: 'cockpit',   size: 0.10, color: 'faction' },
+            { x: +0.00, y: -0.30, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.50, y:  0.30, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
         ] }
 };
 // The table entry for a hull object (player ship, wingman clone, any model
