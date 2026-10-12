@@ -287,3 +287,150 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
     #hyTitle .hyt-credit { display: none; }
     #hyTitle .sw-hint { display: none; }
 }
+
+/* ── THE LAUNCH TITLE (package AH, HYBRID titleScreen: launch — js/title-launch.js) ──
+   Earth at dawn from the pad; the countdown and the ascent play in this scene.
+   Type floor: nothing under 16 px. Menu text >= 7:1 on its glass plate. */
+#hyTitle.hyt-launch { background: #05030f; cursor: default; }
+#hyTitle.hyt-launch .hyl-world { position: absolute; inset: 0; overflow: hidden; will-change: transform; }
+#hyTitle.hyt-launch .hyl-skywrap { position: absolute; left: -12%; width: 124%; top: -90%; height: 190%; will-change: transform; }
+#hyTitle.hyt-launch .hyl-skywrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hyTitle.hyt-launch .hyl-night { opacity: 0; }
+#hyTitle.hyt-launch .hyl-clouds { position: absolute; left: -12%; top: 0; display: block; will-change: transform, opacity; }
+#hyTitle.hyt-launch .hyl-landwrap { position: absolute; left: -12%; width: 124%; top: 0; height: 100%; will-change: transform; }
+#hyTitle.hyt-launch .hyl-land { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hyTitle.hyt-launch .hyl-flare { position: absolute; left: 0; top: 0; width: 0; height: 0; pointer-events: none; mix-blend-mode: screen; --r: 100px; --k: 1; }
+#hyTitle.hyt-launch .hyl-flare i { position: absolute; display: block; left: 0; top: 0; transform: translate(-50%, -50%); }
+#hyTitle.hyt-launch .hyl-flare-core { width: calc(var(--r) * 6 * var(--k)); height: calc(var(--r) * 6 * var(--k)); border-radius: 50%;
+    background: radial-gradient(circle closest-side, rgba(255,240,210,0) calc(var(--r) * 0.96), rgba(255,246,226,0.9) calc(var(--r) * 1.03), rgba(255,206,140,0.42) calc(var(--r) * 1.35),
+                rgba(255,150,120,0.12) calc(var(--r) * 2.0), rgba(120,80,255,0) 100%); }
+#hyTitle.hyt-launch .hyl-limb { position: absolute; left: 50%; top: 58%; width: 300%; aspect-ratio: 1 / 1; transform: translateX(-50%); border-radius: 50%; opacity: 0; pointer-events: none;
+    background: radial-gradient(circle at 50% 0%, #0d1838 0%, #060716 6%, #030309 18%);
+    box-shadow: 0 -1px 0 1px rgba(200,245,255,0.85), 0 -4px 22px 4px rgba(110,210,255,0.55), 0 -16px 70px 18px rgba(90,120,255,0.22), inset 0 10px 30px rgba(120,200,255,0.35); }
+#hyTitle.hyt-launch .hyl-ship { position: absolute; inset: 0; width: 100%; height: 100%; display: block; opacity: 0; transition: opacity 1200ms ease; pointer-events: none; }
+#hyTitle.hyt-launch .hyl-ship.on { opacity: 1; }
+#hyTitle.hyt-launch .hyl-vig { position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse 120% 90% at 50% 46%, rgba(4,2,12,0) 55%, rgba(4,2,12,0.62) 100%),
+                radial-gradient(ellipse 34% 60% at 0% 100%, rgba(4,2,12,0.72), rgba(4,2,12,0) 70%),
+                radial-gradient(ellipse 34% 60% at 100% 100%, rgba(4,2,12,0.72), rgba(4,2,12,0) 70%); }
+#hyTitle.hyt-launch .hyl-black { position: absolute; inset: 0; z-index: 4; background: #000; opacity: 0; pointer-events: none; }
+#hyTitle.hyt-launch .sw-glitch { z-index: 3; }
+
+/* the logo: the landscape sketch's chrome logotype, top centre, ~60% of the width */
+#hyTitle.hyt-launch .hyl-lockup { position: absolute; left: 0; right: 0; top: max(5.2vh, env(safe-area-inset-top)); display: flex; flex-direction: column; align-items: center; z-index: 2;
+    transition: transform 560ms cubic-bezier(0.5, 0, 0.75, 0), opacity 560ms ease-in; }
+#hyTitle.hyt-launch .sw-title { visibility: hidden;   /* the landscape chrome, its violet half lifted so it holds 4.5:1 on the corona */
+    background: linear-gradient(180deg, #ffffff 0%, #e6fffb 38%, #7bffe0 50%, #a06aff 52%, #e2d2ff 100%); -webkit-background-clip: text; background-clip: text; }
+#hyTitle.hyt-launch.hyl-logo-in .sw-title { visibility: visible; }
+#hyTitle.hyt-launch .sw-title span:first-child { font-size: clamp(30px, 4.7vw, 80px); letter-spacing: 0.17em; }
+#hyTitle.hyt-launch .sw-title span:last-child { font-size: clamp(54px, 8.3vw, 140px); letter-spacing: 0.06em; }
+#hyTitle.hyt-launch .hyt-sub { margin-top: 16px; opacity: 0; transition: opacity 600ms ease 500ms; }
+#hyTitle.hyt-launch.hyl-logo-in .hyt-sub { opacity: 1; }
+#hyTitle.hyt-launch .hyt-sub span { font-size: 17px; letter-spacing: 0.3em; color: #eef1ff; }
+#hyTitle.hyl-reduced .sw-title.slam { animation: swFadeUp 400ms ease-out both; }
+
+/* the menu: a thin vertical list on dark glass, left-centre */
+#hyTitle.hyt-launch .hyl-menu { position: absolute; z-index: 2; left: max(56px, 5.5vw); top: 61%; transform: translateY(-50%); width: max-content; min-width: 340px; opacity: 1;
+    transition: opacity 280ms ease, transform 560ms cubic-bezier(0.5, 0, 0.75, 0); }
+#hyTitle.hyt-launch .hyl-plate { position: relative; padding: 14px 0 12px; border-radius: 12px;
+    background: rgba(3,2,10,0.72); -webkit-backdrop-filter: blur(14px) saturate(1.15); backdrop-filter: blur(14px) saturate(1.15);
+    border: 1px solid rgba(170,200,255,0.16); box-shadow: 0 24px 60px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05); }
+#hyTitle.hyt-launch .hyl-items { display: flex; flex-direction: column; }
+#hyTitle.hyt-launch .hyl-slot { position: relative; }
+#hyTitle.hyt-launch .hyl-item {
+    position: relative !important; inset: auto !important; transform: none !important; margin: 0 !important; z-index: auto !important; animation: none !important;
+    opacity: 1 !important; display: flex !important; flex-direction: column; align-items: flex-start; justify-content: center; gap: 6px;
+    width: 100%; min-height: 76px; box-sizing: border-box; padding: 12px 28px 12px 46px !important;
+    background: transparent !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important;
+    color: #f4f7ff; text-align: left; font-family: var(--sw-font-ui); cursor: pointer !important; outline: none;
+    transition: background-color 160ms ease, color 160ms ease !important; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+#hyTitle.hyt-launch .hyl-k { font-family: var(--sw-font-ui); font-weight: 700; font-size: 42px; line-height: 1; white-space: nowrap; letter-spacing: 0.1em; text-transform: uppercase; color: #f4f7ff; }
+#hyTitle.hyt-launch .hyl-s { font-family: var(--sw-font-ui); font-weight: 600; font-size: 18px; line-height: 1.1; letter-spacing: 0.3em; text-transform: uppercase; color: #9fefff; }
+#hyTitle.hyt-launch .hyl-slot[data-k="demo"] .hyl-s { color: #ffe39a; }
+#hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-item { min-height: 54px; }
+#hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-k { font-size: 22px; font-weight: 600; letter-spacing: 0.22em; color: #d9e0f2; }
+#hyTitle.hyt-launch .hyl-slot[data-k="skip"]::before { content: ''; position: absolute; left: 46px; right: 28px; top: 0; height: 1px; background: rgba(170,200,255,0.14); }
+/* pre-flight: the items dimmed, a thin progress line, a caption */
+#hyTitle.hyt-launch .hyl-ph { cursor: default !important; }
+#hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-k, #hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-s { color: rgba(204,212,232,0.86); }   /* dimmed, still 7:1 */
+#hyTitle.hyt-launch:not(.hyl-ready) .hyl-item { pointer-events: none; }
+#hyTitle.hyt-launch .hyl-prep { display: flex; flex-direction: column; gap: 9px; padding: 8px 28px 6px 46px; }
+#hyTitle.hyt-launch .hyl-prep-bar { display: block; height: 2px; background: rgba(160,190,255,0.16); border-radius: 2px; overflow: hidden; }
+#hyTitle.hyt-launch .hyl-prep-bar i { display: block; height: 100%; width: 4%; background: linear-gradient(90deg, #7bffe0, #19f0ff); box-shadow: 0 0 8px #19f0ff; transition: width 300ms ease; }
+#hyTitle.hyt-launch .hyl-prep-t { font-family: var(--sw-font-ui); font-weight: 600; font-size: 18px; letter-spacing: 0.12em; color: #dfe6f7; }
+#hyTitle.hyt-launch.hyl-ready .hyl-prep { display: none; }
+#hyTitle.hyt-launch .hyl-keys { display: none; gap: 22px; padding: 10px 28px 2px 46px; font-family: var(--sw-font-ui); font-weight: 600; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase; color: #b9c3dc; }
+#hyTitle.hyt-launch.hyl-ready .hyl-keys { display: flex; }
+@media (pointer: coarse) { #hyTitle.hyt-launch.hyl-ready .hyl-keys { display: none; } }
+/* focus: one item, a bright bar + chevron and a brighter plate */
+#hyTitle.hyt-launch .hyl-item.is-focus { background: linear-gradient(90deg, rgba(150,225,255,0.15), rgba(150,225,255,0.05) 70%, rgba(150,225,255,0)) !important; }
+#hyTitle.hyt-launch .hyl-item.is-focus::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 4px; border-radius: 0 3px 3px 0; background: #7bffe0; box-shadow: 0 0 12px #19f0ff; }
+#hyTitle.hyt-launch .hyl-item.is-focus::after { content: ''; position: absolute; left: 20px; top: 50%; width: 0; height: 0; transform: translateY(-50%);
+    border-top: 8px solid transparent; border-bottom: 8px solid transparent; border-left: 11px solid #7bffe0; filter: drop-shadow(0 0 6px #19f0ff); }
+#hyTitle.hyt-launch .hyl-item.is-focus .hyl-k { color: #ffffff; text-shadow: 0 0 18px rgba(123,255,224,0.45); }
+#hyTitle.hyt-launch .hyl-btn i { display: none; }
+/* attract: the menu steps back (any input restores it in 280 ms) */
+#hyTitle.hyt-launch.hyl-attract .hyl-menu { opacity: 0.4; transition: opacity 1600ms ease, transform 560ms cubic-bezier(0.5, 0, 0.75, 0); }
+/* activate: the menu and logo slide away (<= 0.6 s), the scene stays */
+#hyTitle.hyt-launch.hyl-go .hyl-menu { opacity: 0; transform: translate(-70px, -50%); pointer-events: none; transition: opacity 520ms ease-in, transform 560ms cubic-bezier(0.5, 0, 0.75, 0); }
+#hyTitle.hyt-launch.hyl-go .hyl-lockup { opacity: 0; transform: translateY(-60px); }
+#hyTitle.hyt-launch.hyl-go .hyl-credit, #hyTitle.hyt-launch.hyl-go .hyl-build { opacity: 0; }
+/* the credit and the build tag: bottom corners, 16 px, 60% white */
+#hyTitle.hyt-launch .hyl-credit, #hyTitle.hyt-launch .hyl-build { position: absolute; z-index: 2; bottom: max(16px, env(safe-area-inset-bottom)); font-family: var(--sw-font-ui); font-weight: 600; font-size: 16px; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.6); transition: opacity 400ms ease; }
+#hyTitle.hyt-launch .hyl-credit { left: max(20px, env(safe-area-inset-left)); }
+#hyTitle.hyt-launch .hyl-build { right: max(20px, env(safe-area-inset-right)); text-transform: none; }
+
+/* the game's countdown (#introCountdownOverlay, its text and timing untouched), drawn into the scene */
+#introCountdownOverlay.hyl-cdx { background: none !important; }
+#introCountdownOverlay.hyl-cdx.hyl-cd-top { z-index: 10001 !important; }
+#introCountdownOverlay.hyl-cdx.hyl-cd-gone { opacity: 0 !important; transition: opacity 400ms ease !important; }
+#introCountdownOverlay.hyl-cdx > div { left: max(56px, 6vw) !important; top: 52% !important; right: auto !important; transform: translateY(-50%) !important; text-align: left !important; }
+#introCountdownOverlay.hyl-cdx #countdownTimer { font-family: 'Orbitron', monospace !important; font-weight: 900 !important; line-height: 0.92 !important; margin: 0 0 18px !important; animation: none !important;
+    background: linear-gradient(180deg, #ffffff 0%, #e6fffb 40%, #7bffe0 52%, #7b2bff 54%, #c49bff 100%); -webkit-background-clip: text; background-clip: text;
+    color: transparent !important; -webkit-text-fill-color: transparent; text-shadow: none !important;
+    filter: drop-shadow(-3px 0 0 rgba(25,240,255,0.7)) drop-shadow(3px 0 0 rgba(255,43,214,0.55)) drop-shadow(0 6px 18px rgba(0,0,0,0.55)); }
+#introCountdownOverlay.hyl-cdx #countdownTimer.text-8xl { font-size: clamp(120px, 25vh, 210px) !important; letter-spacing: 0.02em; }
+#introCountdownOverlay.hyl-cdx #countdownTimer.text-6xl { font-size: clamp(44px, 9.5vh, 80px) !important; letter-spacing: 0.06em; }
+#introCountdownOverlay.hyl-cdx #countdownTimer.text-orange-400 { background-image: linear-gradient(180deg, #ffffff 0%, #fff1c8 40%, #ffc26a 52%, #ff6a2b 54%, #ffb089 100%); }
+#introCountdownOverlay.hyl-cdx #countdownStatus { font-family: 'Orbitron', monospace !important; font-weight: 700 !important; font-size: 22px !important; letter-spacing: 0.2em !important; margin-bottom: 18px !important;
+    color: #eafcff !important; text-shadow: 0 0 10px rgba(25,240,255,0.45), 0 2px 10px rgba(0,0,0,0.7) !important; }
+#introCountdownOverlay.hyl-cdx #missionControl, #introCountdownOverlay.hyl-cdx #systemStatus { font-size: 18px !important; letter-spacing: 0.06em; animation: none !important; text-shadow: 0 1px 8px rgba(0,0,0,0.8) !important; }
+#introCountdownOverlay.hyl-cdx #missionControl { color: #8affc4 !important; }
+#introCountdownOverlay.hyl-cdx #systemStatus { color: #ffe27a !important; }
+#introCountdownOverlay.hyl-cdx > div > div:last-child { font-size: 18px !important; }
+#introCountdownOverlay.hyl-cdx > div::before { content: ''; position: absolute; inset: -48px -72px; z-index: -1; pointer-events: none;   /* a soft bed under the type (the sun's corona can sit behind it) */
+    background: radial-gradient(ellipse closest-side, rgba(4,2,14,0.66) 35%, rgba(4,2,14,0)); }
+#introCountdownOverlay.hyl-cdx.hyl-liftoff > div { animation: hylShake 70ms steps(2) 14; }
+@keyframes hylShake { 0% { translate: -5px 3px; } 50% { translate: 6px -4px; } 100% { translate: -3px -2px; } }
+
+/* phones: logo high, sun and range mid, the menu low in thumb reach */
+@media (max-width: 760px), (max-aspect-ratio: 3/4) {
+    #hyTitle.hyt-launch .hyl-lockup { top: max(8vh, calc(env(safe-area-inset-top) + 24px)); padding: 0 16px; }
+    #hyTitle.hyt-launch .sw-title span:first-child { font-size: min(7vw, 40px); letter-spacing: 0.14em; }
+    #hyTitle.hyt-launch .sw-title span:last-child { font-size: min(12.2vw, 68px); letter-spacing: 0.04em; }
+    #hyTitle.hyt-launch .hyt-sub { margin-top: 14px; padding: 6px 16px; }
+    #hyTitle.hyt-launch .hyt-sub span { font-family: var(--sw-font-ui); font-size: 17px; letter-spacing: 0.1em; white-space: nowrap; }
+    #hyTitle.hyt-launch .hyl-menu { left: max(16px, env(safe-area-inset-left)); right: max(16px, env(safe-area-inset-right)); width: auto; top: auto;
+        bottom: calc(max(16px, env(safe-area-inset-bottom)) + 34px); transform: none; }
+    #hyTitle.hyt-launch.hyl-go .hyl-menu { transform: translateY(80px); }
+    #hyTitle.hyt-launch .hyl-plate { padding: 8px 0 8px; }
+    #hyTitle.hyt-launch .hyl-item { min-height: 68px; padding: 10px 20px 10px 40px !important; gap: 5px; }
+    #hyTitle.hyt-launch .hyl-k { font-size: 32px; letter-spacing: 0.07em; }
+    #hyTitle.hyt-launch .hyl-s { font-size: 16px; letter-spacing: 0.24em; }
+    #hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-item { min-height: 52px; }
+    #hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-k { font-size: 20px; }
+    #hyTitle.hyt-launch .hyl-slot[data-k="skip"]::before { left: 40px; right: 20px; }
+    #hyTitle.hyt-launch .hyl-item.is-focus::after { left: 16px; }
+    #hyTitle.hyt-launch .hyl-prep { padding: 6px 20px 6px 40px; }
+    #hyTitle.hyt-launch .hyl-credit, #hyTitle.hyt-launch .hyl-build { bottom: max(10px, env(safe-area-inset-bottom)); letter-spacing: 0.12em; }
+    #introCountdownOverlay.hyl-cdx > div { left: 16px !important; right: 16px !important; top: 25% !important; text-align: center !important; }
+    #introCountdownOverlay.hyl-cdx #countdownTimer.text-8xl { font-size: clamp(110px, 17vh, 170px) !important; }
+    #introCountdownOverlay.hyl-cdx #countdownTimer.text-6xl { font-size: clamp(32px, 9vw, 48px) !important; }
+    #introCountdownOverlay.hyl-cdx #countdownStatus { font-size: 16px !important; letter-spacing: 0.05em !important; }
+    #introCountdownOverlay.hyl-cdx #missionControl, #introCountdownOverlay.hyl-cdx #systemStatus { font-size: 16px !important; letter-spacing: 0 !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+    #hyTitle.hyt-launch .sw-glitch { display: none; }
+    #introCountdownOverlay.hyl-cdx.hyl-liftoff > div { animation: none; }
+}
