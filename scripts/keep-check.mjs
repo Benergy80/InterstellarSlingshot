@@ -323,6 +323,8 @@ check('scale', async () => {
 check('park', async () => {
     const K = window.__kc, ie = K.ie, sleep = K.sleep; const cam = ie('camera'), gs = ie('gameState');
     const D = window.__warpdiag, dp = window.demoPilot;
+    // the boot stops the pilot (so a late start cannot take the controls in rows 1/2/4); this row drives it, so start it here
+    if (dp && !dp.active && typeof dp.start === 'function') { try { dp.start(); } catch (e) { /* reported below */ } await sleep(400); }
     if (!dp || !dp.active) return { err: 'demo pilot not active' };
     if (!D || !D.goPhase) return { err: 'window.__warpdiag missing (autopilot.js warpdiag hooks)' };
     K.stashEnemies(); K.reset();
@@ -605,6 +607,11 @@ try {
     results.build = await page.evaluate(() => window.BUILD_TAG);
     await page.click('#introDemoBtn');
     await page.waitForFunction(() => typeof gameState !== 'undefined' && gameState.gameStarted && gameState.frameCount > 60, null, { timeout: 120000 });
+    // The demo pilot starts a few seconds AFTER the game (and ~3 s later again under the launch title's lift-off):
+    // wait for it, then stop it, so a late start cannot take the controls mid-row (rows 1/2/4 then read
+    // 'engaged @null, peak 1 u/f' and '+1s exit 0.4' — the pilot overriding the row's keys).
+    await page.waitForFunction(() => window.demoPilot && window.demoPilot.active, null, { timeout: 20000 }).catch(() => {});
+    await page.evaluate(() => { try { if (window.demoPilot) window.demoPilot.stop(); } catch (e) { /* optional */ } });
     await page.evaluate(HELPERS);
     // Name the culprit: when a draw call throws, record WHICH object and material
     // (three.min.js stack traces alone say nothing). First 6 distinct offenders.

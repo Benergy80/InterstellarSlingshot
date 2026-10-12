@@ -288,7 +288,8 @@
     const root = el('div', 'hyt hyt-' + mode); root.id = 'hyTitle';
     document.body.classList.add('hyt-on', 'hyt-on-' + mode);
     const sub = '<div class="hyt-sub"><span>' + HY_TITLE.TAGLINE + '</span></div>';
-    const menu = '<div class="hyt-menu"><div class="hyt-wait"><span class="hyt-wait-k">Pre-flight</span><span class="hyt-wait-bar"><i></i></span><span class="hyt-wait-v"></span></div></div>';
+    const menu = '<div class="hyt-menu"><div class="hyt-wait"><span class="hyt-wait-k">Pre-flight</span><span class="hyt-wait-bar"><i></i></span><span class="hyt-wait-v"></span></div>' +
+        '<div class="hyt-style" role="group" aria-label="Title screen style"><button type="button" class="hyt-style-b" data-d="-1" aria-label="Previous title style">&lsaquo;</button><span class="hyt-style-t">TITLE &middot; <b></b></span><button type="button" class="hyt-style-b" data-d="1" aria-label="Next title style">&rsaquo;</button></div></div>';
     if (mode === 'chrome') {
         root.innerHTML = '<canvas class="hyt-sky"></canvas><div class="hyt-vig"></div>' +
             '<div class="hyt-stage"><div class="hyt-lockup">' + logoSVG() + sub + '</div>' + menu + '</div>' +
@@ -409,12 +410,28 @@
     }
     state.raf = requestAnimationFrame(frame);
 
+    // the intro-branch chooser (goal: "choose from multiple branches on the intro screen"): ‹ › or ← → cycle the
+    // title directions; the choice persists (HYBRID.set → localStorage) and the page reloads into it.
+    const TITLE_STYLES = [['launch', 'EARTH AT DAWN'], ['chrome', 'CHROME'], ['landscape', 'LANDSCAPE'], ['poster', 'POSTER']];
+    const styleIdx = () => { const i = TITLE_STYLES.findIndex((t) => t[0] === mode); return i < 0 ? 0 : i; };
+    const styleName = root.querySelector('.hyt-style-t b'); if (styleName) styleName.textContent = TITLE_STYLES[styleIdx()][1];
+    let restyling = false;
+    function cycleStyle(d) {
+        if (restyling) return; restyling = true;
+        const next = TITLE_STYLES[(styleIdx() + d + TITLE_STYLES.length) % TITLE_STYLES.length];
+        try { if (window.HYBRID && window.HYBRID.set) window.HYBRID.set('titleScreen', next[0]); } catch (e) { /* private mode */ }
+        if (styleName) styleName.textContent = next[1];
+        setTimeout(() => { try { location.reload(); } catch (e) { restyling = false; } }, 320);
+    }
     // any exit from the menu starts the fade (the game's own handlers run as before)
     function onPress(e) {
         const t = e.target;
+        const sb = t && t.closest ? t.closest('.hyt-style-b') : null;
+        if (sb && root.contains(sb)) { e.preventDefault(); e.stopPropagation(); cycleStyle(+sb.dataset.d || 1); return; }
         if (t && t.closest && t.closest('#introStartBtn, #introDemoBtn, #skipIntroBtn')) teardown(e.type);
     }
     function onKey(e) {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); cycleStyle(e.key === 'ArrowLeft' ? -1 : 1); return; }
         if ((e.key === 'Enter' || e.key === ' ') && document.getElementById('introStartBtn')) teardown('key');
     }
     window.addEventListener('click', onPress, true); state.listeners.push(['click', onPress, true]);

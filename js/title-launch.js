@@ -141,7 +141,8 @@
         '<header class="hyl-lockup"><h1 class="sw-title"><span>Interstellar</span><span>Slingshot</span></h1>' +
             '<div class="hyt-sub"><span>' + TAGLINE + '</span></div></header>' +
         '<nav class="hyl-menu" aria-label="Main menu"><div class="hyl-plate">' +
-            '<div class="hyl-items">' + item('launch', 'PRESS TO LAUNCH', 'BEGIN MISSION') + item('demo', 'DEMO MODE', 'AUTOPILOT SHOWCASE') + item('skip', 'Skip Intro', null) + '</div>' +
+            '<div class="hyl-items">' + item('launch', 'PRESS TO LAUNCH', 'BEGIN MISSION') + item('demo', 'DEMO MODE', 'AUTOPILOT SHOWCASE') + item('skip', 'Skip Intro', null) +
+                '<div class="hyl-slot" data-k="style"><button class="hyl-item hyl-btn hyl-style" data-k="style" tabindex="-1" aria-label="Title screen style"><span class="hyl-k"><i class="hyl-arr">&lsaquo;</i> <b class="hyl-style-name"></b> <i class="hyl-arr">&rsaquo;</i></span><span class="hyl-s">TITLE SCREEN &middot; &larr; &rarr; TO CHANGE</span></button></div>' + '</div>' +
             '<div class="hyl-prep" role="status"><span class="hyl-prep-bar"><i></i></span><span class="hyl-prep-t">Preparing launch systems…</span></div>' +
             '<div class="hyl-keys"><span>↑ ↓ Select</span><span>Enter Confirm</span></div>' +
         '</div></nav>' +
@@ -445,6 +446,27 @@
         demo: '<span class="hyl-k">DEMO MODE</span><span class="hyl-s">AUTOPILOT SHOWCASE</span>',
         skip: '<span class="hyl-k">Skip Intro</span>'
     };
+    // ── the intro-branch chooser (goal: "choose from multiple branches on the intro screen"): ← → on the
+    // TITLE SCREEN row cycles the title directions; the choice persists (HYBRID.set → localStorage) and the
+    // page reloads into it. The classic launch screen stays reachable with ?hy=titleScreen:original.
+    const TITLE_STYLES = [['launch', 'EARTH AT DAWN'], ['chrome', 'CHROME'], ['landscape', 'LANDSCAPE'], ['poster', 'POSTER']];
+    const styleBtn = root.querySelector('.hyl-style');
+    function styleIndex() { const cur = (window.HYBRID && window.HYBRID.get('titleScreen')) || 'launch'; const i = TITLE_STYLES.findIndex((t) => t[0] === cur); return i < 0 ? 0 : i; }
+    function showStyle() { const el = root.querySelector('.hyl-style-name'); if (el) el.textContent = TITLE_STYLES[styleIndex()][1]; }
+    showStyle();
+    function cycleStyle(d) {
+        if (state.go || state.restyling) return;
+        const next = TITLE_STYLES[(styleIndex() + d + TITLE_STYLES.length) % TITLE_STYLES.length];
+        state.restyling = true;
+        try { if (window.HYBRID && window.HYBRID.set) window.HYBRID.set('titleScreen', next[0]); } catch (e) { /* private mode: the reload will show the default */ }
+        const el = root.querySelector('.hyl-style-name'); if (el) el.textContent = next[1];
+        confirmSound();
+        later(() => { try { location.reload(); } catch (e) { state.restyling = false; } }, 360);
+    }
+    if (styleBtn) {
+        styleBtn.addEventListener('pointerenter', () => { if (state.ready && !state.go) setFocus(order().indexOf(styleBtn), true); });
+        styleBtn.querySelectorAll('.hyl-arr').forEach((arr, i) => arr.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); noteInput(); audio(true); cycleStyle(i === 0 ? -1 : 1); }));
+    }
     const adopted = {};
     function adopt() {
         if (state.go) return;
@@ -468,7 +490,7 @@
             setFocus(0, false);
         }
     }
-    function order() { return ['launch', 'demo', 'skip'].map((k) => adopted[k]).filter((b) => b && b.isConnected); }
+    function order() { return ['launch', 'demo', 'skip'].map((k) => adopted[k]).concat([styleBtn]).filter((b) => b && b.isConnected); }
     function setFocus(i, sound) {
         const items = order();
         if (!items.length) return;
@@ -516,6 +538,7 @@
         try { b.click(); } finally { state.passClick = false; }
     }
     function activate(k, viaKey, ev) {
+        if (k === 'style') { if (ev) { ev.preventDefault(); ev.stopImmediatePropagation(); } cycleStyle(1); return; }
         if (state.go || !state.ready) { if (ev) { ev.preventDefault(); ev.stopImmediatePropagation(); } return; }
         const b = adopted[k];
         state.go = k; state.goT0 = performance.now();
@@ -550,6 +573,11 @@
         if (d) {
             e.preventDefault(); e.stopPropagation();
             if (state.ready) setFocus(state.focus + d, true);
+            return;
+        }
+        if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'a' || k === 'A' || k === 'd' || k === 'D') {
+            const b = order()[state.focus];
+            if (b && b.dataset.k === 'style') { e.preventDefault(); e.stopPropagation(); cycleStyle((k === 'ArrowLeft' || k === 'a' || k === 'A') ? -1 : 1); }
             return;
         }
         if (k === 'Enter' || k === ' ' || k === 'Spacebar') {

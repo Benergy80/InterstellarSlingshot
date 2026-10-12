@@ -349,6 +349,11 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
 #hyTitle.hyt-launch .hyl-s { font-family: var(--sw-font-ui); font-weight: 600; font-size: 18px; line-height: 1.1; letter-spacing: 0.3em; text-transform: uppercase; color: #9fefff; }
 #hyTitle.hyt-launch .hyl-slot[data-k="demo"] .hyl-s { color: #ffe39a; }
 #hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-item { min-height: 54px; }
+#hyTitle.hyt-launch .hyl-slot[data-k="style"] .hyl-item { min-height: 58px; border-top: 1px solid rgba(150,225,255,0.14); margin-top: 4px; background: none; border-left: 0; border-right: 0; border-bottom: 0; font: inherit; color: inherit; text-align: left; width: 100%; cursor: pointer; }
+#hyTitle.hyt-launch .hyl-slot[data-k="style"] .hyl-k { font-size: 22px; font-weight: 600; letter-spacing: 0.2em; color: rgba(204,212,232,0.92); }
+#hyTitle.hyt-launch .hyl-style .hyl-arr { font-style: normal; color: var(--sw-cyan, #7bffe0); opacity: 0.85; padding: 0 6px; }
+#hyTitle.hyt-launch .hyl-style .hyl-style-name { color: #ffffff; }
+#hyTitle.hyt-launch .hyl-slot[data-k="style"] .hyl-s { font-size: 16px; letter-spacing: 0.18em; opacity: 0.8; }
 #hyTitle.hyt-launch .hyl-slot[data-k="skip"] .hyl-k { font-size: 22px; font-weight: 600; letter-spacing: 0.22em; color: #d9e0f2; }
 #hyTitle.hyt-launch .hyl-slot[data-k="skip"]::before { content: ''; position: absolute; left: 46px; right: 28px; top: 0; height: 1px; background: rgba(170,200,255,0.14); }
 /* pre-flight: the items dimmed, a thin progress line, a caption */
@@ -434,3 +439,9 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
     #hyTitle.hyt-launch .sw-glitch { display: none; }
     #introCountdownOverlay.hyl-cdx.hyl-liftoff > div { animation: none; }
 }
+
+/* the intro-branch chooser pill on the sketch titles (chrome / landscape / poster) */
+#hyTitle .hyt-style { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; font-family: var(--sw-font-ui); font-size: 16px; letter-spacing: 0.18em; color: rgba(204,212,232,0.9); }
+#hyTitle .hyt-style b { color: #ffffff; font-weight: 700; }
+#hyTitle .hyt-style-b { font: inherit; font-size: 26px; line-height: 1; color: var(--sw-cyan, #7bffe0); background: rgba(8,12,28,0.6); border: 1px solid rgba(150,225,255,0.35); border-radius: 8px; width: 44px; height: 44px; cursor: pointer; }
+#hyTitle .hyt-style-b:hover, #hyTitle .hyt-style-b:focus { background: rgba(150,225,255,0.18); outline: none; }
