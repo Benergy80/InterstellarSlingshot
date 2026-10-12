@@ -689,7 +689,7 @@
         timers.forEach(clearTimeout); timers.length = 0;
         if (state.ship) { try { state.ship.dispose(); } catch (e) { /* ok */ } state.ship = null; }
         if (state.actx) { try { state.actx.close(); } catch (e) { /* ok */ } state.actx = null; }
-        if (state.cd) { state.cd.classList.remove('hyl-cd-top', 'hyl-liftoff'); }   // keeps its look; back under the game's own fade (z 65)
+        if (state.cd) { state.cd.classList.remove('hyl-cd-top', 'hyl-liftoff'); state.cd.classList.add('hyl-cd-gone'); }   // its last line has been read over the black; it must not sit on the cockpit as the HUD comes up
         // buttons the game has not removed yet go back to the body, hidden (the game removes them itself)
         ['launch', 'demo', 'skip'].forEach((k) => { const b = adopted[k]; if (b && b.isConnected && root.contains(b)) { b.style.display = 'none'; document.body.appendChild(b); } });
         [skyC, nightC, cloudC, landC].forEach((c) => { c.width = 0; c.height = 0; });

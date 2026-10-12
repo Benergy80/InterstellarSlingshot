@@ -353,7 +353,7 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
 #hyTitle.hyt-launch .hyl-slot[data-k="skip"]::before { content: ''; position: absolute; left: 46px; right: 28px; top: 0; height: 1px; background: rgba(170,200,255,0.14); }
 /* pre-flight: the items dimmed, a thin progress line, a caption */
 #hyTitle.hyt-launch .hyl-ph { cursor: default !important; }
-#hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-k, #hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-s { color: rgba(214,222,240,0.62); }
+#hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-k, #hyTitle.hyt-launch:not(.hyl-ready) .hyl-item .hyl-s { color: rgba(204,212,232,0.86); }   /* dimmed, still 7:1 */
 #hyTitle.hyt-launch:not(.hyl-ready) .hyl-item { pointer-events: none; }
 #hyTitle.hyt-launch .hyl-prep { display: flex; flex-direction: column; gap: 9px; padding: 8px 28px 6px 46px; }
 #hyTitle.hyt-launch .hyl-prep-bar { display: block; height: 2px; background: rgba(160,190,255,0.16); border-radius: 2px; overflow: hidden; }
@@ -384,6 +384,7 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
 /* the game's countdown (#introCountdownOverlay, its text and timing untouched), drawn into the scene */
 #introCountdownOverlay.hyl-cdx { background: none !important; }
 #introCountdownOverlay.hyl-cdx.hyl-cd-top { z-index: 10001 !important; }
+#introCountdownOverlay.hyl-cdx.hyl-cd-gone { opacity: 0 !important; transition: opacity 400ms ease !important; }
 #introCountdownOverlay.hyl-cdx > div { left: max(56px, 6vw) !important; top: 52% !important; right: auto !important; transform: translateY(-50%) !important; text-align: left !important; }
 #introCountdownOverlay.hyl-cdx #countdownTimer { font-family: 'Orbitron', monospace !important; font-weight: 900 !important; line-height: 0.92 !important; margin: 0 0 18px !important; animation: none !important;
     background: linear-gradient(180deg, #ffffff 0%, #e6fffb 40%, #7bffe0 52%, #7b2bff 54%, #c49bff 100%); -webkit-background-clip: text; background-clip: text;
