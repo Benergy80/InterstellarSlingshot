@@ -11558,7 +11558,14 @@ if (scene && scene.add) {
                     dist * Math.cos(dirPhi) * 0.6,
                     dist * Math.sin(dirPhi) * Math.sin(dirTheta)
                 );
-                const scale = 14000 + Math.random() * 14000;
+                // HYBRID deepSpaceGalaxies (Ben 2026-10-12: "what are the semi opaque white circular clouds we see when the
+                // game starts?"): these far-sphere galaxy impostors read as white discs since the universe grew and the fog
+                // moved out. 'faint' dims and shrinks them (HY_DEEPSPACE), 'off' skips them, 'overhaul' is the old look.
+                const _dsg = (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.get) ? window.HYBRID.get('deepSpaceGalaxies') : 'faint';
+                if (_dsg === 'off') continue;
+                const _dsK = (_dsg === 'faint') ? (window.HY_DEEPSPACE || (window.HY_DEEPSPACE = { OPACITY_K: 0.28, SCALE_K: 0.55 })) : { OPACITY_K: 1, SCALE_K: 1 };
+                mat.opacity *= _dsK.OPACITY_K;
+                const scale = (14000 + Math.random() * 14000) * _dsK.SCALE_K;
                 sprite.scale.set(scale, scale, 1);
                 sprite.frustumCulled = false;
                 sprite.renderOrder = -2; // behind stars/nebulas, in front of Hubble/CMB skyboxes

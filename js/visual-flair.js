@@ -1740,7 +1740,10 @@ const HY_WARP_FX = {
     JUMP_STREAK: 0.4,      // streak burst + envelope (was 0.75 burst, full envelope)
     JUMP_TUNNEL: 0.3,      // half-tunnel strength (was 0.5)
     JUMP_HYPERSPACE: 0,    // DOM line bursts (was 2)
-    JUMP_STARFIELD: false  // the 3D warp starfield streaks (were toggled on)
+    JUMP_STARFIELD: false, // the 3D warp starfield streaks (were toggled on)
+    // Ben 2026-10-12: "Black hole warps should not include speed line effects like the other warps" — the event-horizon
+    // transit keeps its own pull / flash but no streak field, no tunnel, no 3D starfield streaks.
+    BLACKHOLE_LINES: false
 };
 if (typeof window !== 'undefined') window.HY_WARP_FX = HY_WARP_FX;
 function _hyWarpCalm() {
@@ -2564,6 +2567,7 @@ function _updateWarpStreaks() {
     const _cruiseCeil = _spectacleCruiseCeil((gameState.velocityVector ? gameState.velocityVector.length() : 0) * 1000);
     target = Math.min(target, _cruiseCeil +
         (1 - _cruiseCeil) * moment * _warpSpeedRamp());
+    if (_warpMode() === 'blackhole' && _hyWarpCalm() && !HY_WARP_FX.BLACKHOLE_LINES) target = 0;   // HYBRID: no speed lines on a black-hole transit
     // WARP-EXIT SYNC: compose (not replace) the existing speed-scaled
     // envelope with the physics exit ramp's own published progress, so if
     // this speed-driven path is ever reached while a ramp is still live
@@ -3400,8 +3404,10 @@ function _updateWarpTunnel() {
     let target = 0, bh = false;
     const ew = gs.emergencyWarp;
     if (ew && ew.active) target = ew.isJump ? (_hyWarpCalm() ? HY_WARP_FX.JUMP_TUNNEL : 0.5) : (_hyWarpCalmMode(_warpMode()) ? HY_WARP_FX.TUNNEL : 1);   // HYBRID calm emergency warp / toned-down jump
-    if (gs.isBlackHoleWarping || gs.warping) { target = 1; bh = true; }
-    if (_wtu.forceUntil > now) {
+    const _bhLines = !(_hyWarpCalm() && !HY_WARP_FX.BLACKHOLE_LINES);   // HYBRID: the black-hole transit gets no tunnel
+    if (gs.isBlackHoleWarping) { if (_bhLines) { target = 1; bh = true; } }
+    else if (gs.warping) { target = 1; bh = true; }
+    if (_wtu.forceUntil > now && (_bhLines || !_wtu.bh)) {
         target = Math.max(target, _wtu.forceAmp);
         bh = bh || _wtu.bh;
     }

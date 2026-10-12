@@ -251,7 +251,7 @@ function _hyIsAltModel(obj) {
 // illumination as well as all new enemies"). The same camera-locked key / fill / back lamps the stock hull
 // material carries (_HULL_LIGHT_RIG, evaluated in view space inside the hull's own shader, so planets keep
 // their sun-lit terminator and nothing else in the scene changes) plus a thin faction rim. Once per material.
-const HY_ALT_RIG = { KEY: 1.7, FILL: 0.4, BACK: 0.45, RIM: 0.35, RIM_POW: 2.6, ALBEDO: 0.85 };
+const HY_ALT_RIG = { KEY: 2.2, FILL: 0.5, BACK: 0.5, RIM: 0.45, RIM_POW: 2.4, ALBEDO: 0.85, GLOW_K: 1.3, TINT: 0.35 };   // Ben 2026-10-12: brighter, more colourful enemies (KEY was 1.7, RIM 0.35; GLOW_K lifts the texture glow, TINT mixes the faction colour into the albedo)
 if (typeof window !== 'undefined') window.HY_ALT_RIG = HY_ALT_RIG;
 function _hyRigAltMaterial(m, color) {
     if (!m || !m.isMeshStandardMaterial || typeof _addFresnelRim !== 'function') return m;
@@ -259,6 +259,8 @@ function _hyRigAltMaterial(m, color) {
     const R = HY_ALT_RIG;
     _addFresnelRim(m, { hullLightRig: true, keyStrength: R.KEY, fillStrength: R.FILL, backStrength: R.BACK, rigAlbedo: R.ALBEDO,
         idle: color !== undefined ? color : 0x66aaff, baseStrength: R.RIM, boostStrength: R.RIM, power: R.RIM_POW, coreDarken: 0 });
+    if (R.GLOW_K && m.emissiveIntensity) m.emissiveIntensity *= R.GLOW_K;
+    if (R.TINT && color !== undefined && m.color) m.color.lerp(new THREE.Color(color), R.TINT);   // the faction colour mixed into the texture's albedo
     m.userData._hyRigged = true;
     m.needsUpdate = true;
     return m;
@@ -308,7 +310,7 @@ if (typeof window !== 'undefined') { window._hyBakeAltModel = _hyBakeAltModel; w
 // same draw count, tagged isGlowLayer so the pulse loop drives it and every hull measurement skips it),
 // but its alpha is a fresnel term: the faction colour sits on the silhouette and grazing faces, the
 // texture reads untouched face-on. One material per faction colour, shared (the pulse value is global).
-const HY_FIGHTER_RIM = { POW: 2.4, GAIN: 1.15, BASE: 0.05 };   // rim falloff, rim strength x pulse, face-on tint x pulse
+const HY_FIGHTER_RIM = { POW: 2.2, GAIN: 1.9, BASE: 0.16 };   // Ben 2026-10-12: "Martians and enemies need to be brighter or more colorful" (was 2.4 / 1.15 / 0.05)   // rim falloff, rim strength x pulse, face-on tint x pulse
 const _hyRimMats = {};
 function _hyFighterRimMaterial(color) {
     const key = new THREE.Color(color).getHexString();

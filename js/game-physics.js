@@ -2910,6 +2910,7 @@ function updateWarpStarfieldFade() {
     // (HY_WARP_FX.JUMP_STARFIELD); the fade is speed-driven and a jump's 15 u/frame lit it.
     if (gameState.emergencyWarp && gameState.emergencyWarp.isJump && (gameState.emergencyWarp.active || gameState.emergencyWarp.autoBraking) &&
         typeof window !== 'undefined' && window.HY_WARP_FX && window.HYBRID && window.HYBRID.is('warpFx', 'calm') && !window.HY_WARP_FX.JUMP_STARFIELD) k = 0;
+    if (gameState.isBlackHoleWarping && typeof window !== 'undefined' && window.HY_WARP_FX && window.HYBRID && window.HYBRID.is('warpFx', 'calm') && !window.HY_WARP_FX.BLACKHOLE_LINES) k = 0;   // HYBRID: no starfield streaks on a black-hole transit
     gameState._warpStarfieldFade = k;
     sf.lines.material.opacity = 0.62 * k;
     sf.lines.visible = k > 0.01;
