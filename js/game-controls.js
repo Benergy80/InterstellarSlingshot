@@ -722,6 +722,35 @@ function _ensureShipThrusterCones(ship, color) {
         return { mesh: cone, mat: mat, geo: geo };
     }
 
+    // HYBRID enemyModels: v2 — the cones sit on the hull's REAL nozzles (HY_HULL_POINTS entry, local frame,
+    // engines at +Z): one inner + outer pair per nozzle, the outer cone's base = the nozzle rim, length as
+    // below (22% of the hull, 5u floor) measured on the hull's own local box. Stock hulls keep the generic pair.
+    const _fe = _hyFighterHullEntry(ship);
+    const _fn = _fe ? _hyFighterNozzles(ship, _fe) : null;
+    if (_fn && _fn.length) {
+        const _lb = _hyFighterLocalBox(ship);
+        const _lenW = Math.max(_lb.max.x - _lb.min.x, _lb.max.y - _lb.min.y, _lb.max.z - _lb.min.z) * sx;
+        const _len = Math.max(_lenW * 0.22, 5) / sx;
+        ship.userData._thrusterApexSign = 1;
+        const cones = [];
+        _fn.forEach((nz) => {
+            const rad = Math.max(nz.r / 0.85, 0.5 / sx);
+            const back = nz.pos.z + _len * 0.5;
+            const inner = _makeCone(rad * 0.55, _len, innerCol, back);
+            inner.mesh.position.x = nz.pos.x; inner.mesh.position.y = nz.pos.y;
+            inner.mesh.userData._hyNozzle = nz.pos.clone();
+            ship.add(inner.mesh);
+            cones.push(inner);
+            const outer = _makeCone(rad * 0.85, _len * 1.3, outerCol, back + _len * 0.15);
+            outer.mesh.position.x = nz.pos.x; outer.mesh.position.y = nz.pos.y;
+            ship.add(outer.mesh);
+            cones.push(outer);
+        });
+        ship.userData._thrusters = cones;
+        ship.userData._thrusterIntensity = 0;
+        return;
+    }
+
     // Two side-by-side engine plumes. Anchor the cone BASE at the
     // model's actual rear edge (localBack), then push it forward by
     // coneLen/2 so the center sits at the base + apex protrudes
@@ -987,7 +1016,22 @@ function _ensureShipThrusterCones_overhaul(ship, color) {
     const back = localBack + _apex * coneLen * 0.5;
     const cones = [];
     const sideOff = Math.min(coneRad * 1.05, (hullWideLocal || coneRad * 2) * 0.20);
-    [-sideOff, sideOff].forEach(xOff => {
+    // HYBRID enemyModels: v2 — one core + streak per REAL nozzle (HY_HULL_POINTS); stock hulls keep the pair.
+    const _fe = _hyFighterHullEntry(ship);
+    const _fn = _fe ? _hyFighterNozzles(ship, _fe) : null;
+    if (_fn && _fn.length) {
+        _fn.forEach((nz) => {
+            const core = _makeCore(coneRad * 1.15, coreCol, nz.pos.z + _apex * coneRad * 0.55, 0.95);
+            core.mesh.position.x = nz.pos.x; core.mesh.position.y = nz.pos.y;
+            ship.add(core.mesh);
+            cones.push(core);
+            const streak = _makeStreak(coneRad * 0.85, coneLen, haloCol, nz.pos.z + _apex * coneLen * 0.5, 1.0);
+            streak.mesh.position.x = nz.pos.x; streak.mesh.position.y = nz.pos.y;
+            ship.add(streak.mesh);
+            cones.push(streak);
+        });
+    }
+    if (!(_fn && _fn.length)) [-sideOff, sideOff].forEach(xOff => {
         // Index parity matters: the update loop treats even = core,
         // odd = streak, and reads _thrusters[1] for the px floor.
         // The core sprite deliberately overlaps the first fifth of the
@@ -3169,6 +3213,8 @@ function _enemyPlumeTick(enemy, thrusting, dist) {
     }
     _updateShipThrusterCones(enemy, (typeof thrusting === "number") ? thrusting : !!thrusting, dist,
                              enemy.userData._telegraphPhase || 0);
+    // HYBRID enemyModels: v2 — faction light elements on the new hulls, built only near the player
+    _hyFighterLightsTick(enemy, dist);
     // DAMAGE TIER. Driven from here rather than from a new loop because this
     // is already the one function every hostile in the game passes through
     // every frame — the combat loop, the tutorial patrol branch and the
@@ -12910,7 +12956,111 @@ const HY_HULL_POINTS = {
             { x: -0.62, y:  0.05, z: -0.78, kind: 'panel',     size: 0.05, color: 0xffb040 },
             { x:  0.00, y:  0.37, z: -0.02, kind: 'panel',     size: 0.045, color: 0xffb040 }
         ]
-    }
+    },
+    // ── v2 FIGHTERS (package AI enemyhulls, Ben 2026-10-11: "these will need scaling and the thruster plumes
+    // as well" + "and lights"). `nose: -1` = written in the FIGHTER'S OWN local frame: nose at z = -1, the
+    // engines at +Z, +X = starboard (port lights at -X). Measured on the BAKED geometry (models/Enemy<n>-v2.glb
+    // after _hyBakeAltModel, .critic/eh probes): the nozzle centres are where the glowing exhaust parts sit on
+    // a rear view framed on the hull box (cross-checked against the rear-facing vertices: the exit plane z is
+    // the rear-most rear-facing vertex within the rim), r = rim radius / hull width. Light heights are a
+    // straight-down raycast onto the hull (+0.04 lift); nav lights sit on the wingtip / leg-tip vertices.
+    // Cockpit + panel lights take the FACTION colour (color: 'faction'), throats the plume's.
+    'Enemy1-v2': { nose: -1,   // spider: one orange engine panel low on the rear face
+        thrusters: [{ x: 0.00, y: -0.13, z: 0.62, r: 0.045 }],
+        lights: [
+            { x: -0.98, y:  0.76, z:  0.88, kind: 'port',      size: 0.06 },
+            { x:  0.98, y:  0.76, z:  0.88, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.45, z:  0.00, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.19, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x:  0.00, y: -0.13, z:  0.66, kind: 'throat',    size: 0.08 },
+            { x:  0.30, y:  0.07, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.30, y:  0.07, z: -0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy2-v2': { nose: -1,   // long insect hull: one cyan engine ring, recessed in the rear face
+        thrusters: [{ x: 0.00, y: -0.02, z: 0.69, r: 0.075 }],
+        lights: [
+            { x: -1.00, y:  0.09, z: -0.82, kind: 'port',      size: 0.08 },
+            { x:  1.00, y:  0.09, z: -0.82, kind: 'starboard', size: 0.08 },
+            { x:  0.00, y:  0.89, z:  0.30, kind: 'strobe',    size: 0.09 },
+            { x:  0.00, y:  0.93, z:  0.00, kind: 'cockpit',   size: 0.11, color: 'faction' },
+            { x:  0.00, y: -0.02, z:  0.72, kind: 'throat',    size: 0.12 },
+            { x:  0.45, y:  0.89, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' },
+            { x: -0.45, y:  0.89, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' }
+        ] },
+    'Enemy3-v2': { nose: -1,   // flat fork: the two side pods' white exhausts, mid-ship
+        thrusters: [{ x: -0.636, y: -0.19, z: 0.28, r: 0.035 }, { x: 0.636, y: -0.19, z: 0.28, r: 0.035 }],
+        lights: [
+            { x: -1.00, y: -0.24, z: -0.35, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.24, z: -0.35, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  1.01, z: -0.80, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.79, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.636, y: -0.19, z: 0.31, kind: 'throat',    size: 0.06 },
+            { x:  0.636, y: -0.19, z: 0.31, kind: 'throat',    size: 0.06 },
+            { x:  0.45, y:  0.10, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.10, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy4-v2': { nose: -1,   // crystal wings: two round nozzles under the tail of the centre body
+        thrusters: [{ x: -0.11, y: 0.00, z: 0.72, r: 0.033 }, { x: 0.11, y: 0.00, z: 0.72, r: 0.033 }],
+        lights: [
+            { x: -1.00, y: -0.26, z: -0.54, kind: 'port',      size: 0.06 },
+            { x:  1.00, y: -0.26, z: -0.54, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.47, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.95, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.11, y:  0.00, z:  0.75, kind: 'throat',    size: 0.06 },
+            { x:  0.11, y:  0.00, z:  0.75, kind: 'throat',    size: 0.06 },
+            { x:  0.70, y:  0.20, z:  0.30, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.70, y:  0.20, z:  0.30, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy5-v2': { nose: -1,   // crab: the glowing cyan grille across the rear face, two plumes on it
+        thrusters: [{ x: -0.22, y: 0.05, z: 0.99, r: 0.06 }, { x: 0.22, y: 0.05, z: 0.99, r: 0.06 }],
+        lights: [
+            { x: -1.00, y:  0.00, z:  0.06, kind: 'port',      size: 0.06 },
+            { x:  1.00, y:  0.00, z:  0.06, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.51, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.37, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.22, y:  0.05, z:  1.02, kind: 'throat',    size: 0.08 },
+            { x:  0.22, y:  0.05, z:  1.02, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y:  0.48, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.48, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy6-v2': { nose: -1,   // hex pod: one cyan nozzle high in the rear face's hexagon
+        thrusters: [{ x: 0.00, y: 0.434, z: 0.95, r: 0.045 }],
+        lights: [
+            { x: -1.00, y:  0.47, z: -0.04, kind: 'port',      size: 0.06 },
+            { x:  1.00, y:  0.47, z: -0.04, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  1.01, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.97, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x:  0.00, y:  0.434, z: 0.98, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y:  0.73, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.73, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy7-v2': { nose: -1,   // armoured eye: no modelled nozzle — two plumes low on the rear dome
+        thrusters: [{ x: -0.30, y: -0.30, z: 0.78, r: 0.06 }, { x: 0.30, y: -0.30, z: 0.78, r: 0.06 }],
+        lights: [
+            { x: -1.00, y:  0.71, z:  0.04, kind: 'port',      size: 0.06 },
+            { x:  1.00, y:  0.71, z:  0.04, kind: 'starboard', size: 0.06 },
+            { x:  0.00, y:  0.99, z:  0.30, kind: 'strobe',    size: 0.07 },
+            { x:  0.00, y:  0.96, z: -0.50, kind: 'cockpit',   size: 0.09, color: 'faction' },
+            { x: -0.30, y: -0.30, z:  0.81, kind: 'throat',    size: 0.08 },
+            { x:  0.30, y: -0.30, z:  0.81, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y:  0.59, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' },
+            { x: -0.45, y:  0.59, z:  0.10, kind: 'panel',     size: 0.05, color: 'faction' }
+        ] },
+    'Enemy8-v2': { nose: -1,   // swept wedge: one big nozzle over a row of three
+        thrusters: [{ x: 0.00, y: 0.09, z: 0.98, r: 0.067 },
+                    { x: -0.36, y: -0.37, z: 0.98, r: 0.05 }, { x: 0.00, y: -0.37, z: 0.98, r: 0.05 }, { x: 0.36, y: -0.37, z: 0.98, r: 0.05 }],
+        lights: [
+            { x: -1.00, y: -1.00, z: -1.00, kind: 'port',      size: 0.08 },
+            { x:  1.00, y: -1.00, z: -1.00, kind: 'starboard', size: 0.08 },
+            { x:  0.00, y:  1.00, z:  0.70, kind: 'strobe',    size: 0.09 },
+            { x:  0.00, y:  0.34, z: -0.45, kind: 'cockpit',   size: 0.11, color: 'faction' },
+            { x:  0.00, y:  0.09, z:  1.01, kind: 'throat',    size: 0.11 },
+            { x: -0.36, y: -0.37, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.00, y: -0.37, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.36, y: -0.37, z:  1.01, kind: 'throat',    size: 0.08 },
+            { x:  0.45, y: -0.26, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' },
+            { x: -0.45, y: -0.26, z:  0.10, kind: 'panel',     size: 0.06, color: 'faction' }
+        ] }
 };
 // The table entry for a hull object (player ship, wingman clone, any model
 // built from modelCache.player): the baked alternate hull carries its name in
@@ -12972,6 +13122,135 @@ if (typeof window !== 'undefined') {
     window.hyHullPoints = hyHullPoints;
     window.hyHullLocal = hyHullLocal;
     window.hyHullThrusters = hyHullThrusters;
+}
+// ── v2 FIGHTER anchors + LIGHTS (package AI enemyhulls) ───────────────────
+// A fighter built from a baked v2 hull (meshes flagged userData._hyAltMesh = 'Enemy<n>-v2') whose
+// HY_HULL_POINTS entry says `nose: -1`. Its fractions are in the fighter's own local frame (nose -Z,
+// engines +Z), so hyHullLocal reads them directly and "aft" is +Z for its readers (the plume builders
+// above and the lights below), the opposite of the player's +Z-nosed entries read by hyHullThrusters.
+// LIGHTS: one THREE.Points per fighter (the player's hull-light builder, js/camera-system.js), built
+// LAZILY only while the fighter is alive, visible and within RANGE of the camera, and disposed when it
+// leaves, dies or stops being ticked; all fighters share ONE material. No PointLights (a light-count
+// change recompiles every lit material).
+const HY_FIGHTER_LIGHTS = {
+    RANGE: 3000,          // build within this distance (u) of the player/camera, dispose beyond RANGE x 1.1
+    STALE_FRAMES: 30,     // a fighter not ticked for this many frames loses its lights
+    GAIN: 1.0,            // overall brightness of the elements
+    THROAT_WHITE: 0.35    // engine throats: the faction colour this far toward white (the plume core reads hot)
+};
+function _hyFighterHullEntry(ship) {
+    if (!ship || !ship.userData) return null;
+    const ud = ship.userData;
+    if (ud._hyFighterKey === undefined) {
+        let name = null;
+        if (ship.traverse) ship.traverse((o) => { if (!name && o.userData && o.userData._hyAltMesh) name = o.userData._hyAltMesh; });
+        const e = name ? HY_HULL_POINTS[name] : null;
+        ud._hyFighterKey = (e && e.nose === -1) ? name : null;
+    }
+    return ud._hyFighterKey ? HY_HULL_POINTS[ud._hyFighterKey] : null;
+}
+// The hull's local box over the v2 hull meshes ONLY (no hitbox sphere, no rim / glow, no cones).
+function _hyFighterLocalBox(ship) {
+    const ud = ship.userData;
+    if (ud._hyFighterBox) return ud._hyFighterBox;
+    ship.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(ship.matrixWorld).invert();
+    const box = new THREE.Box3(), m = new THREE.Matrix4(), bb = new THREE.Box3();
+    let any = false;
+    ship.traverse((c) => {
+        if (!c.isMesh || !c.geometry || !c.userData || !c.userData._hyAltMesh || c.userData.isGlowLayer) return;
+        if (!c.geometry.boundingBox) c.geometry.computeBoundingBox();
+        m.multiplyMatrices(inv, c.matrixWorld);
+        bb.copy(c.geometry.boundingBox).applyMatrix4(m);
+        box.union(bb);
+        any = true;
+    });
+    if (!any || !(box.max.x - box.min.x > 1e-9)) return null;
+    ud._hyFighterBox = box;
+    return box;
+}
+// Nozzle exits in the ship's local frame: [{pos: Vector3, r: rim radius (local units)}]
+function _hyFighterNozzles(ship, entry) {
+    const box = _hyFighterLocalBox(ship);
+    if (!box || !entry || !entry.thrusters) return null;
+    const W = box.max.x - box.min.x;
+    return entry.thrusters.map((t) => ({ pos: hyHullLocal(box, t, new THREE.Vector3()), r: t.r * W }));
+}
+const _hyFL = { ships: new Set(), mat: null, frame: -1, size: null };
+function _hyFighterLightsDispose(ship) {
+    const L = ship && ship.userData && ship.userData._hyLights;
+    if (L) {
+        if (L.points.parent) L.points.parent.remove(L.points);
+        L.points.geometry.dispose();                 // the material is shared
+        ship.userData._hyLights = null;
+    }
+    _hyFL.ships.delete(ship);
+}
+function _hyFighterLightsBuild(ship, entry) {
+    if (typeof window._hyMakeHullLightPoints !== 'function') return null;
+    const box = _hyFighterLocalBox(ship);
+    if (!box) return null;
+    if (!_hyFL.mat) _hyFL.mat = window._hyHullLightMaterial();
+    const fac = new THREE.Color(ship.userData.galaxyColor != null ? ship.userData.galaxyColor : 0xff5522);
+    const hot = fac.clone().lerp(new THREE.Color(0xffffff), HY_FIGHTER_LIGHTS.THROAT_WHITE).getHex();
+    const KC = window._HY_HULL_LIGHT_KIND_COLOR || {};
+    const made = window._hyMakeHullLightPoints(entry.lights || [], box, {
+        material: _hyFL.mat,
+        colorOf: (L) => (L.color === 'faction') ? fac.getHex() : (L.kind === 'throat') ? hot : (L.color != null ? L.color : (KC[L.kind] || 0xffffff))
+    });
+    if (!made) return null;
+    made.points.frustumCulled = true;               // off-screen fighters cost nothing
+    const bs = made.points.geometry.boundingSphere;
+    if (bs) bs.radius = bs.radius * 1.15 + (box.max.x - box.min.x) * 0.1;
+    made.points.userData._hyFighterLights = true;
+    ship.add(made.points);
+    const L = { points: made.points, gain: made.gain, kinds: made.kinds, phase: ((ship.id || 0) * 137) % 1000, tick: 0 };
+    ship.userData._hyLights = L;
+    _hyFL.ships.add(ship);
+    return L;
+}
+// Once per frame: drop the lights of fighters that died, left the scene, left range or stopped ticking.
+function _hyFighterLightsSweep(frame) {
+    if (_hyFL.frame === frame) return;
+    _hyFL.frame = frame;
+    if (_hyFL.mat && typeof renderer !== 'undefined' && renderer && renderer.getDrawingBufferSize) {
+        if (!_hyFL.size) _hyFL.size = new THREE.Vector2();
+        renderer.getDrawingBufferSize(_hyFL.size);
+        _hyFL.mat.uniforms.uHalfH.value = _hyFL.size.y * 0.5;
+    }
+    if (!_hyFL.ships.size) return;
+    const camPos = (typeof camera !== 'undefined' && camera) ? camera.position : null;
+    const far2 = Math.pow(HY_FIGHTER_LIGHTS.RANGE * 1.1, 2);
+    _hyFL.ships.forEach((ship) => {
+        const ud = ship.userData || {};
+        const L = ud._hyLights;
+        let attached = !!ship.parent;
+        if (!L || !attached || !(ud.health > 0) || !ship.visible || (frame - L.tick) > HY_FIGHTER_LIGHTS.STALE_FRAMES ||
+            (camPos && ship.position.distanceToSquared(camPos) > far2)) _hyFighterLightsDispose(ship);
+    });
+}
+function _hyFighterLightsTick(ship, dist) {
+    const frame = (typeof gameState !== 'undefined' && gameState) ? (gameState.frameCount || 0) : 0;
+    _hyFighterLightsSweep(frame);
+    const ud = ship.userData;
+    const entry = _hyFighterHullEntry(ship);
+    if (!entry || !entry.lights) return;
+    const near = (dist !== undefined && dist !== null && dist <= HY_FIGHTER_LIGHTS.RANGE) &&
+                 ship.visible && ud.health > 0 && !ud._materializing && !!ship.parent;
+    if (!near) { if (ud._hyLights) _hyFighterLightsDispose(ship); return; }
+    const L = ud._hyLights || _hyFighterLightsBuild(ship, entry);
+    if (!L) return;
+    L.tick = frame;
+    const now = ((typeof performance !== 'undefined') ? performance.now() : Date.now()) + L.phase;
+    const thr = Math.min(1.2, ud._thrusterIntensity || 0);
+    window._hyHullLightGains(L.kinds, L.gain.array, thr, now, HY_FIGHTER_LIGHTS.GAIN);
+    L.gain.needsUpdate = true;
+}
+if (typeof window !== 'undefined') {
+    window.HY_FIGHTER_LIGHTS = HY_FIGHTER_LIGHTS;
+    window._hyFighterLights = _hyFL;
+    window._hyFighterHullEntry = _hyFighterHullEntry;
+    window._hyFighterNozzles = _hyFighterNozzles;
 }
 function _hyShipLocalBox(ship) {
     const ud = ship.userData;
