@@ -20360,7 +20360,7 @@ function createUFOEnemy(position, systemName, index) {
         // GLB UFOs read as enemies (not the friendly-green default).
         ufo.traverse((child) => {
             if (child.isMesh && child.material) {
-                if (child.userData && child.userData._hyAltMesh) return;   // HYBRID: the v2 saucer keeps its texture
+                if (child.userData && child.userData._hyAltMesh) { if (typeof _hyRigAltMaterial === 'function') _hyRigAltMaterial(child.material, 0xff4444); return; }   // HYBRID: the v2 saucer keeps its texture, with the hull light rig
                 if (child.material.isMeshStandardMaterial) {
                     child.material.metalness = 0.85;
                     child.material.roughness = 0.15;

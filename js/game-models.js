@@ -247,6 +247,23 @@ function _hyIsAltModel(obj) {
     obj.traverse((o) => { if (!hit && o.userData && o.userData._hyAltMesh) hit = true; });
     return hit;
 }
+// HYBRID: the game's per-pixel HULL LIGHT RIG on a new textured hull (Ben 2026-10-11: "boss enemies need
+// illumination as well as all new enemies"). The same camera-locked key / fill / back lamps the stock hull
+// material carries (_HULL_LIGHT_RIG, evaluated in view space inside the hull's own shader, so planets keep
+// their sun-lit terminator and nothing else in the scene changes) plus a thin faction rim. Once per material.
+const HY_ALT_RIG = { KEY: 1.7, FILL: 0.4, BACK: 0.45, RIM: 0.35, RIM_POW: 2.6, ALBEDO: 0.85 };
+if (typeof window !== 'undefined') window.HY_ALT_RIG = HY_ALT_RIG;
+function _hyRigAltMaterial(m, color) {
+    if (!m || !m.isMeshStandardMaterial || typeof _addFresnelRim !== 'function') return m;
+    if (m.userData && m.userData._hyRigged) return m;
+    const R = HY_ALT_RIG;
+    _addFresnelRim(m, { hullLightRig: true, keyStrength: R.KEY, fillStrength: R.FILL, backStrength: R.BACK, rigAlbedo: R.ALBEDO,
+        idle: color !== undefined ? color : 0x66aaff, baseStrength: R.RIM, boostStrength: R.RIM, power: R.RIM_POW, coreDarken: 0 });
+    m.userData._hyRigged = true;
+    m.needsUpdate = true;
+    return m;
+}
+if (typeof window !== 'undefined') window._hyRigAltMaterial = _hyRigAltMaterial;
 function _hyBakeAltModel(model, ref, name, poseOverride, targetLongest) {
     const pose = Object.assign({}, HY_MODEL_POSE[name] || {}, poseOverride || {});
     model.updateWorldMatrix(true, true);
@@ -1950,7 +1967,7 @@ function createEnemyMeshWithModel(regionId, fallbackGeometry, material, scaleOve
                 const baseColor = new THREE.Color(material.color || 0xff0000);
                 baseColor.multiplyScalar(0.4);
 
-                if (child.userData && child.userData._hyAltMesh) child.material = child.material.clone();   // HYBRID enemyModels: v2 hulls keep their own textured material (one per ship, like the stock path)
+                if (child.userData && child.userData._hyAltMesh) child.material = _hyRigAltMaterial(child.material.clone(), material.color || 0xff0000);   // HYBRID enemyModels: v2 hulls keep their own textured material (one per ship, like the stock path)
                 else
                 child.material = new THREE.MeshStandardMaterial({
                     color: baseColor,
@@ -2122,6 +2139,7 @@ function createEnemyMeshWithModel_overhaul(regionId, fallbackGeometry, material,
                 // measured, not something the player sees, and paying for it
                 // with a brighter constant flattened every dense hull in the
                 // game to buy a better median on one sparse one.
+                if (child.userData && child.userData._hyAltMesh) _hyRigAltMaterial(child.material, material.color || 0xff0000);   // HYBRID: the hull light rig on a v2 hull
                 if (!(child.userData && child.userData._hyAltMesh))   // HYBRID: v2 hulls keep their own textured material
                 child.material = createFactionHullMaterial(material.color || 0xff0000, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
                     panelCellSize: _hullPanelCellSize(child.geometry),
@@ -2289,6 +2307,7 @@ function createBossMeshWithModel(regionId, fallbackGeometry, material) {
                 const baseColor = new THREE.Color(material.color || 0xff0000);
                 const tintColor = baseColor.clone().multiplyScalar(0.7);
 
+                if (child.userData && child.userData._hyAltMesh) _hyRigAltMaterial(child.material, material.color || 0xff0000);   // HYBRID: the hull light rig on a v2 hull
                 if (!(child.userData && child.userData._hyAltMesh))   // HYBRID bossModels: v2 hulls keep their own textured material
                 child.material = new THREE.MeshStandardMaterial({
                     color: tintColor,
@@ -2381,6 +2400,7 @@ function createBossMeshWithModel_overhaul(regionId, fallbackGeometry, material) 
                 // view-dependent terms, rather than a bigger constant floor.
                 // A boss that out-read its escorts by carrying more emissive
                 // was out-reading them by being flatter than they are.
+                if (child.userData && child.userData._hyAltMesh) _hyRigAltMaterial(child.material, material.color || 0xff0000);   // HYBRID: the hull light rig on a v2 hull
                 if (!(child.userData && child.userData._hyAltMesh))   // HYBRID: v2 hulls keep their own textured material
                 child.material = createFactionHullMaterial(material.color || 0xff0000, Object.assign({}, _HULL_EMISSIVE_FLOOR, {
                     hullHeat: 0.40,
@@ -3039,7 +3059,7 @@ function _applyUFOHullPresenceFloor(ufo) {
         if (!child.isMesh || !child.material) return;
         const mat = child.material;
         if (!mat.isMeshStandardMaterial || mat.transparent === true) return;
-        if (child.userData && child.userData._hyAltMesh) return;   // HYBRID ufoModel: v2 keeps its own textured material
+        if (child.userData && child.userData._hyAltMesh) { _hyRigAltMaterial(child.material, UFO_HULL_COLOR); return; }   // HYBRID ufoModel: v2 keeps its own textured material, rigged
         // models/UFO.glb's hull mesh ships with NO normal attribute at all
         // (verified live: geometry.attributes.normal is undefined even on
         // a fresh GLTFLoader parse) — every other enemy/boss GLB in the
