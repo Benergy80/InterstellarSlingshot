@@ -5061,7 +5061,7 @@ if (typeof window !== 'undefined') window.HY_ENEMY_SPEED_K = HY_ENEMY_SPEED_K;
 function _efClass(ud) {
     if (ud.isAlly) return ud._jumpUntil ? WINGMAN_FLIGHT.dash : WINGMAN_FLIGHT.wingman;   // HYBRID (package AA): wingmen fly the same model
     if (ud.guardianRole === 'ram') return ENEMY_FLIGHT.elite;   // HYBRID (package R): a rammer needs the thrust
-    if (ud.isBoss) return ENEMY_FLIGHT.boss;
+    if (ud.isBoss) return ud._hbHard ? ((ud._hbBoostUntil || 0) > Date.now() ? ENEMY_FLIGHT.bossBoost : ENEMY_FLIGHT.bossHard) : ENEMY_FLIGHT.boss;   // HYBRID (package AJ): hard bosses
     if (ud.isBossSupport) return ENEMY_FLIGHT.support;
     if (ud.isEliteGuardian || ud.isBlackHoleGuardian) return ENEMY_FLIGHT.elite;
     return ENEMY_FLIGHT.fighter;
@@ -5590,7 +5590,8 @@ function updateEnemyBehavior() {
         const maxAttackers = isLocal ? difficultySettings.maxLocalAttackers : difficultySettings.maxDistantAttackers;
         const currentAttackers = isLocal ? localActiveAttackers : activeAttackers;
 
-        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && currentAttackers < maxAttackers) {
+        const _hyCapFree = _hyBossHard(enemy);   // HYBRID (package AJ): a hard boss is never benched by the attacker cap
+        if (distanceToPlayer < detectionRange && !enemy.userData.isActive && (currentAttackers < maxAttackers || _hyCapFree)) {
             enemy.userData.isActive = true;
             enemy.userData.detectedPlayer = true;
             enemy.userData.lastSeenPlayerPos = playerPos.clone();
@@ -5604,7 +5605,7 @@ function updateEnemyBehavior() {
             if (isLocal) localActiveAttackers++;
             else activeAttackers++;
         } else if (enemy.userData.isActive &&
-                   (distanceToPlayer > detectionRange * 1.5 || currentAttackers > maxAttackers)) {
+                   (distanceToPlayer > detectionRange * 1.5 || (currentAttackers > maxAttackers && !_hyCapFree))) {
             enemy.userData.isActive = false;
             enemy.userData.detectedPlayer = false;
             if (isLocal) localActiveAttackers--;
@@ -5627,7 +5628,7 @@ function updateEnemyBehavior() {
             if (isLocal) {
                 updateLocalEnemyBehavior(enemy, distanceToPlayer, engageSpeed, difficultySettings);
             } else {
-                if (enemy.userData.isBoss) {
+                if (enemy.userData.isBoss || (enemy.userData.isEliteGuardian && _hyBossHard(enemy))) {   // (HYBRID package AJ: elite guardians fly the boss patterns too)
                     updateBossBehavior(enemy, playerPos, engageSpeed);
                 } else if (enemy.userData.isBossSupport) {
                     updateSupportBehavior(enemy, playerPos, engageSpeed);
@@ -5719,10 +5720,12 @@ function updateEnemyBehavior() {
                 const inRange = nearestTargetDist < firingRange;
 
                 if (enemy.userData.isBoss) {
-                    if (inRange && now >= (enemy.userData.nextFire || 0)) {
+                    if (inRange && now >= (enemy.userData.nextFire || 0) && !enemy.userData._hbHoldFire) {
                         fireEnemyWeapon(enemy, difficultySettings);
                         enemy.userData.lastAttack = now;
-                        enemy.userData.nextFire = now + attackCooldown * (1.0 + Math.random() * 0.7);
+                        enemy.userData.nextFire = enemy.userData._hbHard   // HYBRID (package AJ): hard bosses fire faster, patterns faster still
+                            ? now + (enemy.userData._hbFireMs || HY_BOSS_AI.FIRE_MS) * (1.0 + Math.random() * HY_BOSS_AI.FIRE_JITTER)
+                            : now + attackCooldown * (1.0 + Math.random() * 0.7);
                     }
                 } else if (typeof _updateEnemyFireCycle === 'function') {
                     if (_updateEnemyFireCycle(enemy, attackCooldown, inRange)) {
@@ -6134,11 +6137,16 @@ function updateBossBehavior(enemy, playerPos, speed) {
     // Bosses use more complex movement patterns
     const time = Date.now() * 0.001;
     const distance = enemy.position.distanceTo(playerPos);
+    // HYBRID (package AJ, bossDifficulty: hard): stats, evasive breaks, and the
+    // attack-pattern machine (guardians keep their role underneath).
+    const _hyHard = _hyBossHard(enemy);
+    if (_hyHard) _hyBossHardPrep(enemy, playerPos, distance);
     // HYBRID (package R): Black Hole Guardians fly their own role
     if (enemy.userData.guardianRole && typeof _hyGuardianBehavior === 'function') {
         _hyGuardianBehavior(enemy, playerPos, speed, distance);
         return;
     }
+    if (_hyHard && _hyBossPatterns(enemy, playerPos, distance)) return;
 
     // Standoff scales with the (now 2×) hull so the boss circles OUTSIDE
     // the player's personal space instead of parking inside it at 120u.
@@ -6203,12 +6211,13 @@ function _spawnBossMissile(boss) {
     // Launch in a fanned direction toward the player
     const aim = _bossPlayerAimPos();
     const dir = aim.sub(boss.position).normalize();
-    dir.x += (Math.random() - 0.5) * 0.5;
-    dir.y += (Math.random() - 0.5) * 0.3;
-    dir.z += (Math.random() - 0.5) * 0.5;
+    const _sp = (boss.userData._hbSpread != null) ? boss.userData._hbSpread : 1;   // HYBRID (package AJ): a Vulcan volley is precise
+    dir.x += (Math.random() - 0.5) * 0.5 * _sp;
+    dir.y += (Math.random() - 0.5) * 0.3 * _sp;
+    dir.z += (Math.random() - 0.5) * 0.5 * _sp;
     dir.normalize();
     scene.add(m);
-    _bossMissiles.push({ mesh: m, vel: dir.multiplyScalar(2.2), born: Date.now() });
+    _bossMissiles.push({ mesh: m, vel: dir.multiplyScalar(2.2), born: Date.now(), k: boss.userData._hbDmgK || 1 });
 }
 
 // Called once per behavior pass (30 Hz) from updateEnemyBehavior.
@@ -6231,7 +6240,7 @@ function _updateBossMissiles() {
             const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
             if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
                 const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
-                gameState.hull = Math.max(0, gameState.hull - 6 * (1 - red));
+                gameState.hull = Math.max(0, gameState.hull - 6 * (bm.k || 1) * (1 - red));   // (k: HYBRID package AJ)
                 if (gameState.velocityVector) {
                     gameState.velocityVector.addScaledVector(bm.vel.clone().normalize(), 0.35);
                 }
@@ -6266,7 +6275,7 @@ function _updateBossSpecials(boss, playerPos, distance) {
     if (!ud.noVolley && now >= ud._nextVolleyAt && distance > 250 && distance < (ud.volleyRange || 3500) &&
         (typeof _hyBossTelegraph !== 'function' || _hyBossTelegraph(boss, 'volley', now))) {
         ud._nextVolleyAt = now + (11000 + Math.random() * 5000) * _hyK;
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < (ud._hbVolleyN || 5); i++) {   // (HYBRID package AJ: the pattern sizes the volley)
             setTimeout(() => _spawnBossMissile(boss), i * 170);
         }
         if (typeof showAchievement === 'function') {
@@ -6316,7 +6325,7 @@ function _updateBossSpecials(boss, playerPos, distance) {
                     const isInvuln = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
                     if (!isInvuln && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
                         const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
-                        gameState.hull = Math.max(0, gameState.hull - 4 * (1 - red));
+                        gameState.hull = Math.max(0, gameState.hull - 4 * (ud._hbDmgK || 1) * (1 - red));   // (_hbDmgK: HYBRID package AJ)
                         // Knock outward, away from the sweep
                         if (gameState.velocityVector && distXZ > 1) {
                             gameState.velocityVector.x += (toPlayer.x / distXZ) * 0.3;
@@ -6487,6 +6496,516 @@ function _hyGuardianBehavior(enemy, playerPos, speed, distance) {
         if (dl > 20) enemy.position.addScaledVector(dir.divideScalar(dl), Math.min(dl, speed * 0.7));
     }
     if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+}
+
+// =============================================================================
+// HYBRID (package AJ) — BOSSES THREE TIMES HARDER   switch `bossDifficulty`
+// Ben, 2026-10-11: "bosses need to be 3x more difficult with evasive maneuvers
+// and patterns of attack".
+//   STATS     health x2, shield x2 hits, weapon damage x1.5, faster fire, and a
+//             more agile flight class (ENEMY_FLIGHT.bossHard / .bossBoost) that
+//             is still slower than the player on a straight line.
+//   EVADES    under the player's guns (the nose within AIM_CONE_DEG of the boss,
+//             the lock on it, a hit or graze, a missile inbound) the boss breaks
+//             every 2-5 s: a 0.65 s wind-up (cyan shell flicker + full plume),
+//             then a barrel roll / corkscrew / split-S flown by the flight model,
+//             or a boosted jink out of the aim line. A LOCKED shot fired while
+//             it is mid-manoeuvre misses with probability DODGE (the beam goes
+//             wide); an aimed shot misses only if the hull really left the ray.
+//   PATTERNS  a rotation of telegraphed attacks — strafing run, orbit barrage,
+//             missile volley, beam sweep, ram feint, shield phase, cloak strike
+//             (Romulan), escort recall (once, at 50 %) — chosen by a small state
+//             machine gated at 100-66-33 % hull (the mix widens and the tempo
+//             rises), never the same twice running, each 4-9 s. The first one
+//             of every boss is its faction's signature (FACTION_FIRST). Each is
+//             named on the boss card (flashArcadeText) and, the first time in a
+//             fight, on the comms channel.
+//   Campaign guardians keep their role (warden / ram / volley) and add the
+//   evades, the stats and shield phases at 66 % and 33 %; elite guardians fly
+//   the pattern machine with three patterns; warlords (distress bosses) the set.
+// ?hy=bossDifficulty:original flies every boss exactly as before.
+// =============================================================================
+const HY_BOSS_AI = {
+    HEALTH_K: 2,             // x maxHealth (shield below; manoeuvres + phases supply the rest)
+    SHIELD_HITS: 4,          // laser hits to shatter the orange shield (ORIGINAL 2)
+    MISSILE_SHIELD_HITS: 2,  // a missile counts this many shield hits (ORIGINAL: shatters it)
+    DMG_K: 1.5,              // boss lasers, missiles, sweep, ram
+    FIRE_MS: 420,            // between shots outside a pattern (ORIGINAL 600 x 1-1.7)
+    FIRE_JITTER: 0.5,
+    FIRING_RANGE: 950,       // ORIGINAL 400 — the orbit and the standoff sit outside that
+    // evasion
+    AIM_CONE_DEG: 4, AIM_RANGE: 3000, MISSILE_WARN: 1600,
+    EVADE_GAP: [1500, 3800], // ms between breaks while under fire (/ tempo)
+    EVADE_TELE_MS: 650,      // wind-up before a break
+    JINK_MS: 1000, JINK_SPEED: 290,
+    DODGE: 0.7,              // P(a locked shot misses) while a break is being flown
+    // patterns
+    PAT_MS: [4500, 8500], REST_MS: [600, 1300], TEMPO: [1, 1.2, 1.45],
+    CRUISE: 170,             // u/s between patterns (player top speed 240 u/s)
+    STANDOFF: 650,
+    ORBIT_R: 700, ORBIT_SPEED: 180, REVERSE_MS: [1500, 2600], REVERSE_TELE_MS: 650,
+    STRAFE_SPEED: 240, STRAFE_FIRE_MS: 230, ORBIT_FIRE_MS: 340,
+    RAM_SPEED: 280, RAM_TELE_MS: 900, RAM_DAMAGE: 10, RAM_FEINT: 280,
+    SHIELD_MS: [4000, 6000], SHIELD_TELE_MS: 700,
+    CLOAK_MS: 2600, CLOAK_TELE_MS: 700, STRIKE_MS: 1600, STRIKE_FIRE_MS: 160,
+    RECALL_N: 3, RECALL_TELE_MS: 1000,
+    VOLLEY_N: [2, 3, 4],     // missiles per volley by hull gate
+    TELE_MS: { strafe: 700, orbit: 650, volley: 0, sweep: 0, ram: 900, shield: 700, cloak: 700, recall: 1000 },
+    MIX: [
+        ['strafe', 'orbit', 'volley'],
+        ['strafe', 'orbit', 'volley', 'sweep', 'ram', 'shield'],
+        ['strafe', 'orbit', 'volley', 'sweep', 'ram', 'shield'],
+    ],
+    ELITE_MIX: ['strafe', 'volley', 'shield'],
+    FACTION_FIRST: { 0: 'orbit', 1: 'ram', 2: 'strafe', 3: 'cloak', 4: 'shield', 5: 'volley', 6: 'sweep', 7: 'volley' },
+    NAMES: { strafe: 'STRAFING RUN', orbit: 'ORBIT BARRAGE', volley: 'MISSILE VOLLEY', sweep: 'BEAM SWEEP',
+        ram: 'RAM FEINT', shield: 'SHIELD PHASE', cloak: 'CLOAK STRIKE', recall: 'ESCORT RECALL' },
+    COLORS: { strafe: 0xff3355, orbit: 0xff9933, ram: 0xff6a00, shield: 0x66ddff, cloak: 0x55ff99, recall: 0xffe066,
+        evade: 0x66ffff, reverse: 0xffffff },
+    LINES: {
+        strafe: '%s is lining up a strafing run — break across its line, not along it.',
+        orbit: '%s is circling to bracket you — watch for the reversal.',
+        volley: '%s is spooling a missile volley — keep moving, they home in.',
+        sweep: '%s is charging a beam sweep — get clear of its hull.',
+        ram: '%s is lining up a ram — side-step when it lunges.',
+        shield: '%s raised a full shield — its escorts are covering it. Hold fire, take the escorts.',
+        cloak: '%s cloaked — check your six.',
+        recall: '%s is calling in its escorts.',
+    },
+};
+if (typeof window !== 'undefined') window.HY_BOSS_AI = HY_BOSS_AI;
+// Flight classes for hard bosses (same columns as ENEMY_FLIGHT; x HY_ENEMY_SPEED_K):
+// bossHard tops out at 200 u/s, bossBoost (jinks, charges, the cloak run) at 300.
+ENEMY_FLIGHT.bossHard = { maxSpeed: 250, mainThrust: 300, manThrust: 150, brake: 170, maxTurn: 70, evadeTurn: 115, turnAccel: 220, maxSlip: 35, bankMax: 35, rollRate: 240, rollAccel: 900, align: 1.6 };
+ENEMY_FLIGHT.bossBoost = { maxSpeed: 375, mainThrust: 420, manThrust: 170, brake: 200, maxTurn: 70, evadeTurn: 115, turnAccel: 220, maxSlip: 35, bankMax: 35, rollRate: 240, rollAccel: 900, align: 1.6 };
+
+const _hbV1 = new THREE.Vector3(), _hbV2 = new THREE.Vector3(), _hbV3 = new THREE.Vector3(), _hbV4 = new THREE.Vector3();
+const _hbUp = new THREE.Vector3(0, 1, 0);
+
+function _hyBossHard(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !(ud.isBoss || ud.isEliteGuardian)) return false;
+    return !!(typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is('bossDifficulty', 'hard'));
+}
+function _hbRand(a) { return a[0] + Math.random() * (a[1] - a[0]); }
+function _hbDt(ud) { return (ud._ef && ud._ef.dt) ? ud._ef.dt : 1 / 30; }
+
+// One-time stat lift (and kept: a difficulty refresh may rewrite maxHealth).
+function _hyBossHardInit(enemy) {
+    const ud = enemy.userData, C = HY_BOSS_AI;
+    if (ud._hbHard) {
+        if (ud._hbMaxH && ud.maxHealth < ud._hbMaxH) { ud.health = ud.health * ud._hbMaxH / Math.max(0.1, ud.maxHealth); ud.maxHealth = ud._hbMaxH; }
+        return;
+    }
+    ud._hbHard = true;
+    const frac = ud.maxHealth > 0 ? Math.max(0, Math.min(1, ud.health / ud.maxHealth)) : 1;
+    ud.maxHealth = Math.round((ud.maxHealth || 3) * C.HEALTH_K);
+    ud.health = Math.round(ud.maxHealth * frac * 10) / 10;
+    ud._hbMaxH = ud.maxHealth;
+    ud._hbShieldHits = C.SHIELD_HITS;
+    ud._hbDmgK = C.DMG_K;
+    ud.firingRange = Math.max(ud.firingRange || 0, C.FIRING_RANGE);
+    const elite = !ud.isBoss;
+    const guard = !!ud.guardianRole;
+    if (!guard) { ud._nextVolleyAt = Infinity; ud._nextSweepAt = Infinity; }
+    ud._hb = { pat: null, stage: 'rest', t0: Date.now(), until: Date.now() + 1500, last: null, seen: {}, gate: 0, tempo: 1,
+        evNext: Date.now() + 1200, evTele: null, recalled: false, elite: elite, guard: guard, shieldGates: {}, teleMs: 0, n: 0 };
+}
+
+// The shell round the hull (shared with the specials' telegraph).
+function _hbShell(boss, color, k, grow) {
+    if (typeof _hyTeleShell !== 'function') return;
+    const s = _hyTeleShell(boss);
+    s.visible = true;
+    s.material.color.setHex(color).multiplyScalar(Math.max(0.05, k));
+    s.scale.setScalar(s.userData.baseS * (1 + (grow || 0)));
+}
+function _hbShellOff(boss) { const s = boss.userData._teleShell; if (s && !boss.userData._tele) s.visible = false; }
+function _hbPulse(p, rate) { return 0.35 + 0.65 * Math.abs(Math.sin(p * Math.PI * (rate || 3))); }
+
+function _hbSay(boss, pat, now) {
+    const ud = boss.userData, hb = ud._hb;
+    const near = (typeof camera !== 'undefined') && boss.position.distanceTo(camera.position) < 5000;
+    if (!near) return;
+    const nm = HY_BOSS_AI.NAMES[pat];
+    try { if (typeof flashArcadeText === 'function') flashArcadeText(nm, 1, (ud.name || 'FLAGSHIP').toUpperCase()); } catch (e) {}
+    if (!hb.seen[pat]) {
+        hb.seen[pat] = true;
+        if (typeof _hyTeleSaidAt !== 'undefined') _hyTeleSaidAt = now;   // the specials' own call-out stays quiet
+        const line = (HY_BOSS_AI.LINES[pat] || '%s').replace('%s', ud.name || 'The flagship');
+        try { if (typeof showIncomingTransmission === 'function') showIncomingTransmission('Tactical Warning', line, 'ship'); } catch (e) {}
+    }
+}
+
+// Is the player shooting at this boss right now? Returns the cause or null.
+function _hbThreat(enemy, distance, now) {
+    const ud = enemy.userData;
+    try {
+        if (window.activeMissiles) {
+            for (let i = 0; i < window.activeMissiles.length; i++) {
+                const m = window.activeMissiles[i];
+                if (m && m.userData && m.userData.target === enemy && m.position.distanceTo(enemy.position) < HY_BOSS_AI.MISSILE_WARN) return 'missile';
+            }
+        }
+    } catch (e) {}
+    if ((ud._underFireUntil || 0) > now) return 'hit';
+    if (typeof gameState !== 'undefined' && gameState.targetLock && gameState.targetLock.active && gameState.targetLock.target === enemy) return 'lock';
+    if (typeof camera !== 'undefined' && distance < HY_BOSS_AI.AIM_RANGE) {
+        camera.getWorldDirection(_hbV1);
+        _hbV2.subVectors(enemy.position, camera.position).normalize();
+        if (_hbV1.dot(_hbV2) > Math.cos(HY_BOSS_AI.AIM_CONE_DEG * Math.PI / 180)) return 'aim';
+    }
+    return null;
+}
+
+// Evasive breaks (every hard boss, every tick).
+function _hbEvade(enemy, ud, hb, playerPos, distance, now) {
+    const C = HY_BOSS_AI;
+    if (hb.evTele) {
+        const p = (now - hb.evTele.t0) / C.EVADE_TELE_MS;
+        if (p < 1) {
+            if (!hb.shellOwned) _hbShell(enemy, C.COLORS.evade, _hbPulse(p, 4), 0.08 * p);
+            if (ud._ef) ud._ef.thr = 1;            // plume flare
+            return;
+        }
+        const type = hb.evTele.type; hb.evTele = null;
+        if (!hb.shellOwned) _hbShellOff(enemy);
+        if (type === 'jink') {
+            // out of the aim line: perpendicular to the player -> boss line
+            _hbV1.subVectors(enemy.position, playerPos).normalize();
+            _hbV2.crossVectors(_hbV1, _hbUp); if (_hbV2.lengthSq() < 1e-4) _hbV2.set(1, 0, 0);
+            _hbV2.normalize();
+            const a = Math.random() * Math.PI * 2;
+            _hbV3.crossVectors(_hbV2, _hbV1).normalize();
+            const dir = _hbV2.multiplyScalar(Math.cos(a)).addScaledVector(_hbV3, Math.sin(a) * 0.6).normalize();
+            ud._hbJink = { until: now + C.JINK_MS, dir: dir.clone() };
+            ud._hbBoostUntil = now + C.JINK_MS;
+        } else if (typeof _startEvasive === 'function') {
+            _startEvasive(enemy, type);
+        }
+        hb.evades = (hb.evades || 0) + 1;
+        return;
+    }
+    if (ud._evade || (ud._hbJink && now < ud._hbJink.until)) return;
+    if (now < hb.evNext || hb.noEvade) return;
+    const cause = _hbThreat(enemy, distance, now);
+    if (!cause) return;
+    const r = Math.random();
+    const type = cause === 'missile' ? (r < 0.6 ? 'jink' : 'splitS')
+        : cause === 'hit' ? (r < 0.4 ? 'splitS' : r < 0.75 ? 'jink' : 'barrel')
+        : (r < 0.4 ? 'barrel' : r < 0.7 ? 'corkscrew' : 'jink');
+    hb.evTele = { type: type, t0: now };
+    hb.evNext = now + C.EVADE_TELE_MS + _hbRand(C.EVADE_GAP) / hb.tempo;
+}
+
+// Is this boss flying a break right now (the lock cannot follow it)?
+function _hyBossEvading(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud._hbHard) return false;
+    const now = Date.now();
+    if (ud._hbJink && now < ud._hbJink.until) return true;
+    const m = ud._evade;
+    if (m && m.t0 && m.dur) { const p = (now - m.t0) / m.dur; return p > 0.08 && p < 0.92; }
+    return false;
+}
+// fireWeapon: a locked shot at a breaking boss goes wide. Returns the miss point or null.
+function _hyBossLockDodge(target, targetPosition) {
+    if (!target || !target.userData || !_hyBossEvading(target) || Math.random() >= HY_BOSS_AI.DODGE) return null;
+    const ud = target.userData;
+    if (typeof camera === 'undefined') return null;
+    _hbV1.subVectors(target.position, camera.position).normalize();
+    _hbV2.crossVectors(_hbV1, _hbUp); if (_hbV2.lengthSq() < 1e-4) _hbV2.set(1, 0, 0);
+    _hbV2.normalize();
+    _hbV3.crossVectors(_hbV2, _hbV1).normalize();
+    const a = Math.random() * Math.PI * 2, off = Math.max(140, (ud.hitboxSize || 72) * 1.6);
+    ud._hbDodged = (ud._hbDodged || 0) + 1;
+    return target.position.clone().addScaledVector(_hbV2, Math.cos(a) * off).addScaledVector(_hbV3, Math.sin(a) * off);
+}
+// _enemyShieldAbsorbHit: the shield phase and the cloak take every hit.
+function _hyBossInvulnHit(enemy) {
+    const ud = enemy && enemy.userData;
+    if (!ud || !ud._hbHard || !(ud._hbInvulnUntil > Date.now())) return false;
+    ud._hbAbsorbed = (ud._hbAbsorbed || 0) + 1;
+    ud._hbFlashUntil = Date.now() + 160;
+    return true;
+}
+
+// Fly toward a point at up to `speed` u/s (an intent: the flight model flies it).
+function _hbFly(enemy, target, speed, dt) {
+    const d = _hbV4.subVectors(target, enemy.position), dl = d.length();
+    if (dl < 1) return;
+    enemy.position.addScaledVector(d.divideScalar(dl), Math.min(dl, speed * dt));
+}
+// A point on the standoff ring round the player.
+function _hbRing(hb, playerPos, R, ang, out) {
+    return out.set(playerPos.x + Math.cos(ang) * R, playerPos.y + Math.sin(ang * 0.37) * R * 0.25, playerPos.z + Math.sin(ang) * R);
+}
+function _hbCloak(enemy, on) {
+    const ud = enemy.userData;
+    if (on) {
+        if (ud._hbCloaked) return;
+        ud._hbCloaked = [];
+        enemy.traverse(function (o) {
+            if (o === enemy || !o.visible || (o.userData && o.userData.isTelegraphShell)) return;
+            if (o.isMesh || o.isPoints || o.isSprite || o.isLine) { o.visible = false; ud._hbCloaked.push(o); }
+        });
+    } else if (ud._hbCloaked) {
+        ud._hbCloaked.forEach(function (o) { o.visible = true; });
+        ud._hbCloaked = null;
+    }
+}
+
+function _hbPick(enemy, ud, hb) {
+    const C = HY_BOSS_AI;
+    const frac = ud.health / Math.max(0.1, ud.maxHealth);
+    if (!hb.recalled && !hb.elite && frac <= 0.5 && typeof spawnBossSupport === 'function') { hb.recalled = true; return 'recall'; }
+    if (!hb.n && C.FACTION_FIRST[ud.galaxyId] && !hb.elite) return C.FACTION_FIRST[ud.galaxyId];
+    let mix = hb.elite ? C.ELITE_MIX.slice() : C.MIX[hb.gate].slice();
+    const sig = C.FACTION_FIRST[ud.galaxyId];
+    if (!hb.elite && sig && mix.indexOf(sig) < 0) mix.push(sig);   // the signature stays in its rotation
+    mix = mix.filter(function (p) { return p !== hb.last; });
+    // never twice running, and the least-flown moves come up first (weight 1 / (1 + uses))
+    const uses = hb.uses || (hb.uses = {});
+    let tot = 0; const w = mix.map(function (p) { const v = 1 / (1 + (uses[p] || 0) * 1.5); tot += v; return v; });
+    let r = Math.random() * tot, pick = mix[mix.length - 1];
+    for (let i = 0; i < mix.length; i++) { r -= w[i]; if (r <= 0) { pick = mix[i]; break; } }
+    return pick;
+}
+
+function _hbStart(enemy, ud, hb, pat, now) {
+    const C = HY_BOSS_AI;
+    hb.pat = pat; hb.last = pat; hb.n++;
+    hb.uses = hb.uses || {}; hb.uses[pat] = (hb.uses[pat] || 0) + 1;
+    hb.t0 = now; hb.stage = C.TELE_MS[pat] ? 'tele' : 'act';
+    hb.teleMs = C.TELE_MS[pat] || 1100;      // volley / sweep wind up in _updateBossSpecials (HY_TELEGRAPH.MS)
+    hb.teleUntil = now + (C.TELE_MS[pat] || 0);
+    hb.until = hb.teleUntil + _hbRand(C.PAT_MS) / Math.sqrt(hb.tempo);
+    hb.sub = null; hb.subT = now; hb.fired = false;
+    if (ud._tele && ud._tele.kind !== pat && typeof _hyTeleCancel === 'function') _hyTeleCancel(enemy);   // a stale wind-up never blocks the next move
+    if (pat === 'volley') {
+        ud._hbVolleyN = C.VOLLEY_N[hb.gate];
+        ud._hbSpread = (ud.galaxyId === 7) ? 0.25 : 1;   // Vulcan: precise
+        ud.volleyRange = (ud.galaxyId === 7) ? 4500 : 3500;
+        ud._nextVolleyAt = now;
+    }
+    if (pat === 'sweep') ud._nextSweepAt = now;
+    if (pat === 'orbit') { hb.dir = Math.random() < 0.5 ? -1 : 1; hb.revAt = now + _hbRand(C.REVERSE_MS); hb.ang = Math.atan2(enemy.position.z - camera.position.z, enemy.position.x - camera.position.x); }
+    _hbSay(enemy, pat, now);
+}
+function _hbEnd(enemy, ud, hb, now) {
+    if (hb.pat === 'cloak') _hbCloak(enemy, false);
+    ud._hbInvulnUntil = 0; ud._hbHoldFire = false; ud._hbFireMs = 0; hb.noEvade = false; hb.shellOwned = false;
+    ud._nextVolleyAt = Infinity; if (!(ud._sweepUntil && now < ud._sweepUntil)) ud._nextSweepAt = Infinity;
+    _hbShellOff(enemy);
+    hb.pat = null; hb.stage = 'rest'; hb.t0 = now; hb.until = now + _hbRand(HY_BOSS_AI.REST_MS) / hb.tempo;
+}
+
+// The pattern machine. Owns the boss's movement and specials this tick.
+function _hyBossPatterns(enemy, playerPos, distance) {
+    const ud = enemy.userData, hb = ud._hb, C = HY_BOSS_AI, now = Date.now(), dt = _hbDt(ud);
+    if (!hb || typeof camera === 'undefined') return false;
+    const frac = ud.health / Math.max(0.1, ud.maxHealth);
+    const gate = frac > 0.66 ? 0 : frac > 0.33 ? 1 : 2;
+    if (gate !== hb.gate) { hb.gate = gate; hb.tempo = C.TEMPO[gate]; }
+    const R = Math.max(C.STANDOFF, (ud.hitboxSize || 72) * 2);
+    camera.getWorldDirection(_hbV3);      // player's forward (for "behind you")
+
+    if (hb.stage === 'rest' || !hb.pat) {
+        // Between patterns: hold the standoff ring, drifting round it.
+        const ang = Math.atan2(enemy.position.z - playerPos.z, enemy.position.x - playerPos.x) + 0.35;
+        _hbFly(enemy, _hbRing(hb, playerPos, R, ang, _hbV1), C.CRUISE, dt);
+        if (now >= hb.until && distance < 6000) _hbStart(enemy, ud, hb, _hbPick(enemy, ud, hb), now);
+        if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+        return true;
+    }
+    const pat = hb.pat;
+    const tele = hb.stage === 'tele';
+    const tp = tele ? (now - hb.t0) / Math.max(1, hb.teleUntil - hb.t0) : 1;
+    if (tele && now >= hb.teleUntil) { hb.stage = 'act'; hb.actAt = now; }
+    hb.shellOwned = false;
+
+    switch (pat) {
+    case 'strafe': {
+        if (tele) {           // nose onto the player, plume flaring
+            _hbShell(enemy, C.COLORS.strafe, _hbPulse(tp, 3), 0.12 * tp); hb.shellOwned = true;
+            _hbFly(enemy, playerPos, distance > 400 ? 35 : 10, dt); if (ud._ef) ud._ef.thr = 1;
+            break;
+        }
+        if (!hb.sub) { hb.sub = 'run'; hb.side = (Math.random() < 0.5 ? -1 : 1); }
+        if (hb.sub === 'run') {
+            _hbV1.subVectors(playerPos, enemy.position).normalize();
+            _hbV2.crossVectors(_hbV1, _hbUp).normalize().multiplyScalar(hb.side * 120);
+            ud._hbBoostUntil = now + 300;
+            _hbFly(enemy, _hbV2.add(playerPos), C.STRAFE_SPEED, dt);
+            ud._hbFireMs = C.STRAFE_FIRE_MS;
+            if (distance < 260) { hb.sub = 'break'; hb.subT = now; if (typeof _startEvasive === 'function' && !ud._evade) _startEvasive(enemy, 'splitS'); }
+        } else if (hb.sub === 'break') {
+            ud._hbFireMs = 0;
+            _hbV1.subVectors(enemy.position, playerPos).normalize();
+            _hbFly(enemy, _hbV2.copy(enemy.position).addScaledVector(_hbV1, 600), C.CRUISE, dt);
+            if (now - hb.subT > 1700) { hb.sub = 'run'; hb.side = -hb.side; }
+        }
+        break;
+    }
+    case 'orbit': {
+        if (tele) { _hbShell(enemy, C.COLORS.orbit, _hbPulse(tp, 3), 0.1 * tp); hb.shellOwned = true; }
+        const Ro = Math.max(C.ORBIT_R, (ud.hitboxSize || 72) * 2.4);
+        ud._hbFireMs = C.ORBIT_FIRE_MS;
+        if (!tele && now >= hb.revAt - C.REVERSE_TELE_MS && now < hb.revAt) {
+            // reversal wind-up: a white flash and a brake
+            _hbShell(enemy, C.COLORS.reverse, _hbPulse((hb.revAt - now) / C.REVERSE_TELE_MS, 4), 0.06); hb.shellOwned = true;
+            hb.ang += hb.dir * (C.ORBIT_SPEED * 0.35 / Ro) * dt;
+        } else {
+            if (!tele && now >= hb.revAt) { hb.dir = -hb.dir; hb.revAt = now + _hbRand(C.REVERSE_MS) / hb.tempo; ud._hbBoostUntil = now + 700; }
+            hb.ang += hb.dir * (C.ORBIT_SPEED * hb.tempo / Ro) * dt;
+        }
+        _hbFly(enemy, _hbRing(hb, playerPos, Ro, hb.ang, _hbV1), C.ORBIT_SPEED * 1.6, dt);
+        break;
+    }
+    case 'volley': {
+        // circle out to range (sliding across the player's sights, not away
+        // down them) and let _updateBossSpecials telegraph + launch
+        if (hb.ang === undefined || hb.volAng !== hb.t0) { hb.volAng = hb.t0; hb.ang = Math.atan2(enemy.position.z - playerPos.z, enemy.position.x - playerPos.x); hb.dir = Math.random() < 0.5 ? -1 : 1; }
+        hb.ang += hb.dir * (C.ORBIT_SPEED * 0.9 / 950) * dt;
+        _hbFly(enemy, _hbRing(hb, playerPos, 950, hb.ang, _hbV2), C.ORBIT_SPEED * 1.4, dt);
+        if (ud._nextVolleyAt !== Infinity && ud._nextVolleyAt > now + 1000) { hb.fired = true; ud._nextVolleyAt = Infinity; hb.until = Math.min(hb.until, now + 2500); }
+        break;
+    }
+    case 'sweep': {
+        _hbV1.subVectors(enemy.position, playerPos).normalize();
+        _hbFly(enemy, _hbV2.copy(playerPos).addScaledVector(_hbV1, 520), C.CRUISE, dt);
+        if (ud._nextSweepAt !== Infinity && ud._nextSweepAt > now + 1000) { hb.fired = true; ud._nextSweepAt = Infinity; hb.until = Math.max(hb.until, (ud._sweepUntil || now) + 800); }
+        hb.noEvade = !!(ud._sweepUntil && now < ud._sweepUntil);
+        break;
+    }
+    case 'ram': {
+        if (tele) {
+            _hbShell(enemy, C.COLORS.ram, _hbPulse(tp, 2 + 4 * tp), 0.18 * tp); hb.shellOwned = true;
+            _hbFly(enemy, playerPos, distance > 400 ? 35 : 10, dt); if (ud._ef) ud._ef.thr = 1;
+            hb.noEvade = true;
+            break;
+        }
+        if (!hb.sub) { hb.sub = 'charge'; hb.subT = now; hb.hit = false; hb.feint = (Math.random() < 0.5 ? -1 : 1); }
+        if (hb.sub === 'charge') {
+            hb.noEvade = true;
+            ud._hbBoostUntil = now + 300;
+            _hbV1.subVectors(playerPos, enemy.position).normalize();
+            const tgt = _hbV2.copy(playerPos);
+            if (distance < 700) tgt.addScaledVector(_hbV4.crossVectors(_hbV1, _hbUp).normalize(), hb.feint * C.RAM_FEINT);   // the feint: veer late
+            _hbFly(enemy, tgt, C.RAM_SPEED, dt);
+            if (!hb.hit && distance < (ud.hitboxSize || 72) * 0.5 + 60) {
+                hb.hit = true;
+                const inv = typeof isBlackHoleWarpInvulnerable === 'function' && isBlackHoleWarpInvulnerable();
+                if (!inv && typeof gameState !== 'undefined' && gameState.hull !== undefined) {
+                    const red = typeof getShieldDamageReduction === 'function' ? getShieldDamageReduction() : 0;
+                    gameState.hull = Math.max(0, gameState.hull - C.RAM_DAMAGE * C.DMG_K * (1 - red));
+                    if (gameState.velocityVector) gameState.velocityVector.addScaledVector(_hbV1, 0.8);
+                    if (typeof createEnhancedScreenDamageEffect === 'function') createEnhancedScreenDamageEffect(enemy.position);
+                }
+            }
+            if (distance < 200 || now - hb.subT > 3500) { hb.sub = 'break'; hb.subT = now; if (typeof _startEvasive === 'function' && !ud._evade) _startEvasive(enemy, 'splitS'); }
+        } else {
+            hb.noEvade = false;
+            _hbV1.subVectors(enemy.position, playerPos).normalize();
+            _hbFly(enemy, _hbV2.copy(enemy.position).addScaledVector(_hbV1, 600), C.CRUISE, dt);
+            if (now - hb.subT > 2000) { hb.sub = null; hb.stage = 'tele'; hb.t0 = now; hb.teleUntil = now + C.RAM_TELE_MS; }
+        }
+        break;
+    }
+    case 'shield': {
+        if (tele) {
+            _hbShell(enemy, C.COLORS.shield, _hbPulse(tp, 2), 0.25 * tp); hb.shellOwned = true;
+            break;
+        }
+        if (!hb.sub) {
+            hb.sub = 'up';
+            ud._hbInvulnUntil = now + _hbRand(C.SHIELD_MS);
+            hb.until = ud._hbInvulnUntil + 300;
+            if (typeof playSound === 'function') { try { playSound('shield_hit'); } catch (e) {} }
+            // the escorts press the attack while the boss repositions
+            if (typeof enemies !== 'undefined') enemies.forEach(function (e) {
+                if (e && e.userData && e.userData.isBossSupport && e.userData.health > 0 && e.position.distanceTo(enemy.position) < 6000) {
+                    e.userData.isActive = true; e.userData.detectedPlayer = true;
+                }
+            });
+        }
+        const fl = (ud._hbFlashUntil || 0) > now;
+        _hbShell(enemy, fl ? 0xffffff : C.COLORS.shield, fl ? 1 : 0.55 + 0.25 * Math.sin(now * 0.012), 0.25); hb.shellOwned = true;
+        ud._hbHoldFire = true;
+        _hbV1.subVectors(enemy.position, playerPos).normalize();
+        _hbFly(enemy, _hbV2.copy(playerPos).addScaledVector(_hbV1, 1200), C.CRUISE, dt);
+        break;
+    }
+    case 'cloak': {
+        if (tele) {
+            _hbShell(enemy, C.COLORS.cloak, (Math.random() < 0.5 ? 0.2 : 1) * _hbPulse(tp, 5), 0.05); hb.shellOwned = true;
+            break;
+        }
+        if (!hb.sub) { hb.sub = 'cloaked'; hb.subT = now; _hbCloak(enemy, true); ud._hbInvulnUntil = now + C.CLOAK_MS + 400; hb.until = now + C.CLOAK_MS + C.STRIKE_MS + 400; hb.noEvade = true; }
+        if (hb.sub === 'cloaked') {
+            ud._hbHoldFire = true;
+            ud._hbBoostUntil = now + 300;
+            _hbV2.copy(playerPos).addScaledVector(_hbV3, -450).addScaledVector(_hbUp, 80);   // behind the player
+            _hbFly(enemy, _hbV2, 300, dt);
+            if (now - hb.subT > C.CLOAK_MS) { hb.sub = 'strike'; hb.subT = now; _hbCloak(enemy, false); ud._hbInvulnUntil = 0; ud._hbHoldFire = false; hb.noEvade = false; ud.nextFire = now; }
+        } else {
+            ud._hbFireMs = C.STRIKE_FIRE_MS;
+            _hbFly(enemy, _hbV2.copy(playerPos).addScaledVector(_hbV3, -380), C.CRUISE, dt);
+        }
+        break;
+    }
+    case 'recall': {
+        if (tele) { _hbShell(enemy, C.COLORS.recall, _hbPulse(tp, 3), 0.3 * tp); hb.shellOwned = true; _hbFly(enemy, playerPos, distance > 500 ? 20 : 0, dt); break; }
+        if (!hb.sub) {
+            hb.sub = 'done'; hb.until = now + 1500;
+            for (let i = 0; i < C.RECALL_N; i++) { try { spawnBossSupport(ud.galaxyId, enemy.position.clone(), i, ud.areaKey || null, null); } catch (e) {} }
+        }
+        break;
+    }
+    default: break;
+    }
+    // personal space: outside a ram charge the hull never parks on the player
+    if (distance < Math.max(220, (ud.hitboxSize || 72) * 2) && !(pat === 'ram' && hb.sub === 'charge')) {
+        _hbV1.subVectors(enemy.position, playerPos).normalize();
+        _hbFly(enemy, _hbV2.copy(enemy.position).addScaledVector(_hbV1, 400), C.CRUISE, dt);
+    }
+    if (typeof _updateBossSpecials === 'function') _updateBossSpecials(enemy, playerPos, distance);
+    if (!hb.shellOwned && !hb.evTele && !ud._tele) _hbShellOff(enemy);   // a finished wind-up lets go of the shell
+    if (now >= hb.until && !(ud._sweepUntil && now < ud._sweepUntil) && !ud._tele) _hbEnd(enemy, ud, hb, now);
+    return true;
+}
+
+// Every tick, before the behaviour: stats, evades, guardian shield phases.
+function _hyBossHardPrep(enemy, playerPos, distance) {
+    _hyBossHardInit(enemy);
+    const ud = enemy.userData, hb = ud._hb, now = Date.now();
+    if (!hb) return;
+    if (ud.health <= 0) { _hbCloak(enemy, false); return; }
+    _hbEvade(enemy, ud, hb, playerPos, distance, now);
+    if (ud._hbJink && now < ud._hbJink.until) {
+        // the jink: a boosted lunge out of the aim line on top of the behaviour
+        enemy.position.addScaledVector(ud._hbJink.dir, HY_BOSS_AI.JINK_SPEED * _hbDt(ud));
+    }
+    if (hb.guard) {
+        // Campaign guardians: their role, plus a shield phase at 66 % and 33 %.
+        const frac = ud.health / Math.max(0.1, ud.maxHealth);
+        hb.tempo = HY_BOSS_AI.TEMPO[frac > 0.66 ? 0 : frac > 0.33 ? 1 : 2];
+        [0.66, 0.33].forEach(function (g) {
+            if (frac <= g && !hb.shieldGates[g]) {
+                hb.shieldGates[g] = true;
+                hb.gShieldTele = now + HY_BOSS_AI.SHIELD_TELE_MS;
+                _hbSay(enemy, 'shield', now);
+            }
+        });
+        if (hb.gShieldTele) {
+            if (now < hb.gShieldTele) _hbShell(enemy, HY_BOSS_AI.COLORS.shield, _hbPulse(1 - (hb.gShieldTele - now) / HY_BOSS_AI.SHIELD_TELE_MS, 2), 0.2);
+            else { ud._hbInvulnUntil = now + _hbRand(HY_BOSS_AI.SHIELD_MS); hb.gShieldTele = 0; hb.gShieldOn = true; }
+        }
+        if (hb.gShieldOn) {
+            if (now < ud._hbInvulnUntil) _hbShell(enemy, HY_BOSS_AI.COLORS.shield, 0.55 + 0.25 * Math.sin(now * 0.012), 0.25);
+            else { hb.gShieldOn = false; _hbShellOff(enemy); }
+        }
+    }
 }
 
 // Support ship behavior
@@ -6697,6 +7216,7 @@ function fireEnemyWeapon(enemy, difficultySettings) {
             (difficultySettings.galaxiesCleared === 0 ? 2 : 3 + difficultySettings.galaxiesCleared) :
             (enemy.userData.isBoss ? 8 : enemy.userData.isBossSupport ? 5 : 3);
         damage = Math.min(damage, 10);
+        if (enemy.userData._hbDmgK) damage = Math.round(damage * enemy.userData._hbDmgK);   // HYBRID (package AJ): hard bosses hit 1.5x
 
         let hitChance = 0.6;
         // Coefficients rescaled for the faster turn rates: the old 3.33 /
@@ -11962,6 +12482,7 @@ function hyBossDeath(enemy, opts) {
         typeof THREE === 'undefined' || typeof explosionManager === 'undefined') return false;
     const ud = enemy.userData;
     if (ud._hyBossFx) return true;
+    if (ud._hbCloaked && typeof _hbCloak === 'function') _hbCloak(enemy, false);   // HYBRID (package AJ): a boss dies visible
     opts = opts || {};
     const C = HY_BOSS_FX;
     const color = opts.color || ud.galaxyColor || 0xff5522;
@@ -14029,9 +14550,12 @@ function _setEnemyShieldEngaged(enemy, engaged) {
 // damage + kill check). isMissile=true shatters in one hit.
 function _enemyShieldAbsorbHit(enemy, isMissile) {
     const ud = enemy && enemy.userData;
+    if (typeof _hyBossInvulnHit === 'function' && _hyBossInvulnHit(enemy)) return true;   // HYBRID (package AJ): shield phase / cloak
     if (!ud || !ud.shieldActive || ud.shieldBroken || !ud._shieldMesh) return false;
     ud.shieldHits = (ud.shieldHits || 0) + 1;
-    const breakNow = isMissile || ud.shieldHits >= 2;
+    // HYBRID (package AJ): a hard boss's shield takes SHIELD_HITS lasers; a missile counts MISSILE_SHIELD_HITS
+    if (isMissile && ud._hbShieldHits) ud.shieldHits += HY_BOSS_AI.MISSILE_SHIELD_HITS - 1;
+    const breakNow = (isMissile && !ud._hbShieldHits) || ud.shieldHits >= (ud._hbShieldHits || 2);
     // Red flash on every shield hit (matches the hit-flash window
     // used by flashEnemyHit so a shield-then-hull combo doesn't
     // visually flicker between two flash lengths).
@@ -16547,6 +17071,9 @@ function fireWeapon() {
         // Auto-aim at locked target (including asteroids)
         targetPosition = gameState.targetLock.target.position.clone();
         targetObject = gameState.targetLock.target;
+        // HYBRID (package AJ): the lock cannot follow a boss through a break — the beam goes wide
+        const _hyMiss = (typeof _hyBossLockDodge === 'function') ? _hyBossLockDodge(targetObject, targetPosition) : null;
+        if (_hyMiss) { targetPosition = _hyMiss; targetObject = { userData: { type: 'miss' } }; }
     }
     
     if (!targetObject) {
