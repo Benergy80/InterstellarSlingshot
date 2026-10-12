@@ -3654,6 +3654,18 @@ function setupNormalGameContent() {
     // Re-add basic lighting
     const ambientLight = new THREE.AmbientLight(0x333333, 0.4);
     scene.add(ambientLight);
+    // HYBRID fillLight (Ben 2026-10-11: "There may need to be some slight global illumination so we can see
+    // the ships"): the start now sits across the Sun from Sgr A*, so the chase camera looks at the hulls' shadow
+    // side. A hemisphere fill (sky / ground tints) and a touch more ambient lift LIT materials only — ships,
+    // rocks, the textured hulls; planets shade by their own uSun uniform and the vector look is unlit.
+    if (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is && window.HYBRID.is('fillLight', 'on')) {
+        const F = window.HY_FILL || (window.HY_FILL = { SKY: 0x9fb4d8, GROUND: 0x2a1e3a, INTENSITY: 0.6, AMBIENT: 0.65 });
+        ambientLight.intensity = F.AMBIENT;
+        const hemi = new THREE.HemisphereLight(F.SKY, F.GROUND, F.INTENSITY);
+        hemi.name = 'hyFill';
+        scene.add(hemi);
+        window._hyFillLight = hemi;
+    }
 
     // CRITICAL: Re-add player ship after scene.clear() removed it
     if (typeof initCameraSystem === 'function' && window.gameCamera) {
@@ -3938,7 +3950,7 @@ function resetCameraToGamePosition() {
     // Ben, 2026-10-11: "Player starting position should be in orbit above earth,
     // facing Sagittarius A." (_hyStartPoint, js/game-objects.js — Earth's live
     // position at hand-off; Earth's orbital velocity is carried below.)
-    const _sp = (typeof _hyStartPoint === 'function' && typeof _hyScaleOn === 'function' && _hyScaleOn()) ? _hyStartPoint() : null;
+    const _sp = (typeof _hyStartPoint === 'function' && typeof _hyScaleOn === 'function' && _hyScaleOn()) ? _hyStartPoint({ pin: true }) : null;
     if (_sp && _sp.earth) camera.position.copy(_sp.pos);
     // Open the game facing Sagittarius A* (galactic center at the origin)
     // so the player's first view is the heart of the Milky Way — Earth

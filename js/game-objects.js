@@ -1022,9 +1022,9 @@ function _hySgrA() {
 // carrying Earth's own orbital velocity (game-core's updatePlanetOrbits:
 // angle = Date.now() x 0.001 x orbitSpeed x 3 for local planets, counter-
 // clockwise in x/z) so the view holds. Falls back to Sol + HY_SOL.START.
-const HY_START = { ABOVE_K: 2.3, TOWARD_K: 0.6, LOCAL_SPEED_MULT: 3.0 };
+const HY_START = { ABOVE_K: 2.3, TOWARD_K: 0.6, LOCAL_SPEED_MULT: 3.0, FAR_SIDE_JITTER_DEG: 14 };
 if (typeof window !== 'undefined') window.HY_START = HY_START;
-function _hyStartPoint() {
+function _hyStartPoint(opts) {
     const so = (typeof window !== 'undefined' && window.localSystemOffset) || { x: 0, y: 0, z: 0 };
     const S = (typeof HY_SOL !== 'undefined' && HY_SOL.START) || { x: 1560, y: 150, z: 173 };
     const oo = (typeof window !== 'undefined' && window.worldOriginOffset) || { x: 0, y: 0, z: 0 };
@@ -1044,6 +1044,21 @@ function _hyStartPoint() {
         const u0 = earth.userData, c0 = u0.systemCenter;
         if (c0 && u0.orbitRadius > 0 && u0.orbitSpeed) {
             const base0 = u0.orbitSpeed * HY_START.LOCAL_SPEED_MULT * Math.max(1, 500 / u0.orbitRadius);
+            // HYBRID startSide: farSide (Ben 2026-10-11: "the game should always start with somewhere on the
+            // opposite side of the sun from Sagittarius"). At the hand-off (opts.pin, or the first call if no
+            // caller pinned) Earth's orbit phase is set so Earth sits across the Sun from Sgr A*, a random
+            // ±FAR_SIDE_JITTER_DEG off the exact antipode ("somewhere"); Earth keeps orbiting from there, so the
+            // Sun stands between the player and the galactic centre and the slingshot round it is the way out.
+            const _far = typeof window !== 'undefined' && window.HYBRID && window.HYBRID.is && window.HYBRID.is('startSide', 'farSide');
+            if (_far && sgr && ((opts && opts.pin) || !window._hyStartPinned)) {
+                const sx = look.x - c0.x, sz = look.z - c0.z;
+                if (sx * sx + sz * sz > 1) {
+                    if (window._hyStartJitter === undefined) window._hyStartJitter = (Math.random() * 2 - 1) * HY_START.FAR_SIDE_JITTER_DEG * Math.PI / 180;
+                    const thFar = Math.atan2(-sz, -sx) + window._hyStartJitter;
+                    u0.orbitPhase = thFar - Date.now() * 0.001 * base0;
+                    window._hyStartPinned = true;
+                }
+            }
             const th0 = Date.now() * 0.001 * base0 + (u0.orbitPhase || 0);
             ep.set(c0.x + Math.cos(th0) * u0.orbitRadius, c0.y, c0.z + Math.sin(th0) * u0.orbitRadius);
         }
@@ -12130,7 +12145,7 @@ if (Math.random() < moonProbability) {
                 ? new THREE.Vector3(localSystemOffset.x + HY_SOL.START.x, localSystemOffset.y + HY_SOL.START.y, localSystemOffset.z + HY_SOL.START.z)
                 : new THREE.Vector3(localSystemOffset.x + 160, localSystemOffset.y + 40, localSystemOffset.z);
             let _lookAt = new THREE.Vector3(0, 0, 0);
-            if (_hyScaleOn() && typeof _hyStartPoint === 'function') { const _sp = _hyStartPoint(); if (_sp && _sp.earth) { earthInitialPosition = _sp.pos; _lookAt = _sp.look; } }
+            if (_hyScaleOn() && typeof _hyStartPoint === 'function') { const _sp = _hyStartPoint({ pin: true }); if (_sp && _sp.earth) { earthInitialPosition = _sp.pos; _lookAt = _sp.look; } }
             camera.position.copy(earthInitialPosition);
             camera.lookAt(_lookAt);
             

@@ -253,6 +253,9 @@ function _hyBakeAltModel(model, ref, name, poseOverride, targetLongest) {
         // The generator's textures are authored dark and the stock faction materials glow (emissive 0.35):
         // let the hull's own texture glow by `emissive` (0-1) so it reads at the same brightness in play.
         if (pose.emissive) { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((m) => { if (!m) return; if (m.map) { m.emissiveMap = m.map; m.emissive = new THREE.Color(0xffffff); } else if (m.emissive) { m.emissive.copy(m.color); } m.emissiveIntensity = pose.emissive; m.needsUpdate = true; }); }
+        // The generator bakes high metalness into its roughness/metal map; with no environment map a metallic
+        // surface reflects nothing and reads black under any light. Cap it so the hull answers the Sun and the fill.
+        { const mats = Array.isArray(o.material) ? o.material : [o.material]; mats.forEach((m) => { if (!m || !m.isMeshStandardMaterial) return; m.metalness = Math.min(m.metalness, pose.metalness !== undefined ? pose.metalness : 0.3); m.needsUpdate = true; }); }
     });
     model.traverse((o) => { o.position.set(0, 0, 0); o.quaternion.identity(); o.scale.set(1, 1, 1); });
     model.updateWorldMatrix(true, true);
