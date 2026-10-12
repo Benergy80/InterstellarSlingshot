@@ -51,7 +51,7 @@ deploy other agents as needed."
 `deathScreen: synthwave | original` · `postFx: bloom | off` · `vectorShips: edges | off`
 (the hybrid's switches all still apply; `?hy=key:value` overrides for a session).
 
-## Refreshed from the hybrid (2026-10-11, build 20261012w, HEAD 5e7b445)
+## Refreshed from the hybrid (2026-10-12, build 20261012y, HEAD b3e7a34)
 
 Ben moved the day's work to the hybrid branch (8803: "8803 is so perfect"); this branch now carries all of it, merged in
 on top of W1 + W2: the arcade MISSION FAILED (its own), the AAA launch title as the DEFAULT (`titleScreen: launch`,
@@ -60,18 +60,19 @@ for the intro branches (menu row TITLE SCREEN ‹ › and a pill on the chrome /
 persists, reloads), Ben's new player / boss / fighter / UFO hulls (slimmed, posed, lit by the hull light rig, plumes on
 their nozzles, faction light elements), bosses 3x harder with evades and telegraphed attack patterns
 (`bossDifficulty: hard`), the far-side start across the Sun from Sgr A*, the fill light, plus this branch's own
-`postFx: bloom` and `vectorShips: edges` kept on. Served on :8805 (`node scripts/serve.mjs 8805 <this dir>`); the
-Claude-controlled tab opens here. Not done on this branch: W3-W5 (modern-polish menu beyond the title, arcade feel pass,
-vector ship models) — the hybrid's HYBRID-BRIEF.md Round 5 is the detailed ledger.
+`postFx: bloom` and `vectorShips: edges` kept on, and the arcade layer (`arcadeFeel: on`: score / combo strip, streak
+call-outs with stings, pooled pop-ups, high score on the title / pause / tally, the pause menu in the title's glass
+family). Served on :8806 (detached: `nohup node scripts/serve.mjs 8806 <this dir> &`); the Claude-controlled tab opens
+here. W3-W5 are closed by that work (see the table) — the hybrid's HYBRID-BRIEF.md Round 5 is the detailed ledger.
 
 ## Waves
 | Wave | What | Status |
 |---|---|---|
 | W1 | MISSION FAILED as an arcade sequence: freeze-through overlay, RGB-split glitch, scanlines, scrolling neon grid + striped sun (2D canvas), chrome title slam, stat tally with blips, CONTINUE? 9→0, GAME OVER + INSERT COIN, any key restarts (`js/synthwave-fx.js`, `css/synthwave.css`) | done 20261011p |
 | W2 | EffectComposer with HDR-threshold bloom (only emissive > threshold glows: ship edge lines, lasers ×3); vector edge lines (EdgesGeometry → LineSegments2) on the player, wingmen and the nearest enemies in faction colours (`js/synthwave-post.js`) | done 20261012a, retuned 20261012b (see below) |
-| W3 | Intro / launch: neon grid + striped sun behind the title, chrome title, modern-polish menu with BRANCHES (Campaign · Arcade · Free flight · Daily run · Galaxy select), attract loop | next |
-| W4 | Arcade feel in play: combo + grade display (js/arcade.js already tracks it), kill call-outs, boss WARNING card, high-score initials | after W3 |
-| W5 | Vector ship models: fresnel rim via onBeforeCompile, faction style grammar, vector break-apart death | after W4 |
+| W3 | Intro / launch: neon grid + striped sun behind the title, chrome title, modern-polish menu with BRANCHES (Campaign · Arcade · Free flight · Daily run · Galaxy select), attract loop | DONE via the hybrid (20261012v/x): the launch title IS the modern-polish menu (glass plate, 42 px items, focus bar, keyboard/touch) with BRANCHES on screen — PRESS TO LAUNCH / DEMO MODE / SKIP INTRO plus the TITLE SCREEN chooser (Earth at dawn · chrome · landscape · poster); the striped sun became the rising eclipse over the beat-line range; the attract loop is the 30 s idle drift. Not built: Campaign / Arcade / Free-flight / Daily-run / Galaxy-select as separate game modes (the game has one campaign). |
+| W4 | Arcade feel in play: combo + grade display (js/arcade.js already tracks it), kill call-outs, boss WARNING card, high-score initials | DONE via the hybrid (20261012x, package AK): combo + score strip, kill call-outs with stings, pop-ups, high score (no initials entry; the boss WARNING card exists from the boss set-piece / name card). |
+| W5 | Vector ship models: fresnel rim via onBeforeCompile, faction style grammar, vector break-apart death | SUPERSEDED: Ben supplied his own textured hulls (player, 8 bosses, 8 fighters, UFO), now lit by the per-pixel hull light rig with a faction fresnel rim; this branch keeps `vectorShips: edges` (W2) over them; the vector break-apart death exists as the boss set-piece's wire-shard debris. |
 
 ## Measurements
 - W1: headless death at 6 s → overlay at 11 s (after the ship's own death animation), tally, CONTINUE 7 at 16 s,
