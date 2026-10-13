@@ -4672,16 +4672,39 @@ function startNormalGameplay() {
     // third-person, so running both made the ship blink out and snap back a
     // few seconds into the demo.
     if (window.demoAutostartPending) {
-        // Put the camera where the autopilot expects it, in one step, rather
-        // than letting it discover a hidden ship on its first frame.
+        // Ben 2026-10-13: "what happened to how the players ship slowly entering the scene when the game
+        // started?" — he starts in DEMO MODE, and this branch skipped the cinematic opening (it forced
+        // third-person at frame one so the pilot would not find a hidden ship). The demo now plays the same
+        // entrance as PRESS TO LAUNCH — HOLD_MS in the 0-person view, then the GLIDE_MS glide from behind the
+        // camera into the chase slot — and the pilot takes the stick once the ship has settled (never before
+        // the opening-vista hold). The 15 s safety net in setupNormalGameContent still covers this path.
+        const E = HY_DEMO_ENTRANCE;
+        if (E.ON && typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
+            cameraState.mode = 'zero-offset';
+            cameraState.playerShipMesh.visible = false;
+            cameraState.isTransitioning = false;
+            setTimeout(() => {
+                if (typeof cameraState === 'undefined' || !cameraState.playerShipMesh) return;
+                cameraState.playerShipMesh.visible = true;
+                cameraState.mode = 'third-person';
+                cameraState.isTransitioning = true;
+                cameraState.transitionStartTime = performance.now();
+                cameraState.transitionDuration = E.GLIDE_MS;
+                cameraState.transitionStartOffset = new THREE.Vector3(0.25, -1, 3);   // from behind the camera
+                cameraState.transitionTargetOffset = cameraState.normalThirdPersonOffset.clone();
+            }, E.HOLD_MS);
+            const startAt = Math.max(E.HOLD_MS + E.GLIDE_MS + E.SETTLE_MS,
+                (_ovState.active && OPENING_VISTA.DEMO_HOLD_S > 0) ? OPENING_VISTA.DEMO_HOLD_S * 1000 : 0);
+            setTimeout(startDemoAutopilotNow, startAt);
+            console.log('🎬 Demo mode — cinematic entrance, pilot takes the stick in ' + startAt + ' ms');
+            return;
+        }
+        // (HY_DEMO_ENTRANCE.ON false, or no ship mesh yet): the previous behaviour
         if (typeof cameraState !== 'undefined' && cameraState.playerShipMesh) {
             cameraState.playerShipMesh.visible = true;
             cameraState.mode = 'third-person';
             cameraState.isTransitioning = false;
         }
-        // HYBRID G2 (openingVista): let the opening view play for a beat with
-        // the ship in it before the pilot turns away (the 15 s safety net in
-        // setupNormalGameContent still covers this path).
         if (_ovState.active && OPENING_VISTA.DEMO_HOLD_S > 0) {
             setTimeout(startDemoAutopilotNow, OPENING_VISTA.DEMO_HOLD_S * 1000);
         } else {
@@ -4726,6 +4749,9 @@ function startNormalGameplay() {
 
 // Single entry point for kicking the demo autopilot off, so the reveal-driven
 // path and the safety-net timer can't both start it.
+// The demo's cinematic entrance (see startNormalGameplay): the same beats as the player's.
+const HY_DEMO_ENTRANCE = { ON: true, HOLD_MS: 2000, GLIDE_MS: 2000, SETTLE_MS: 500 };
+if (typeof window !== 'undefined') window.HY_DEMO_ENTRANCE = HY_DEMO_ENTRANCE;
 function startDemoAutopilotNow() {
     if (!window.demoAutostartPending) return;
     window.demoAutostartPending = false;

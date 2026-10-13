@@ -69,6 +69,7 @@
     get driving() { return ap.active && !ap.paused; },
     get paused() { return ap.paused; },
     get navStatus() { return ap._navStatus || null; },
+    get spectate() { return ap._spectate || null; },
     // package Y: the campaign director's leg (null when the showcase flies)
     get campaignLeg() {
       if (!_dirExists() || !ap._dir) return null;
@@ -555,6 +556,46 @@
   const _bcQuatTmp = (typeof THREE !== 'undefined') ? new THREE.Quaternion() : null;
 
   // ─── Main update (called every frame from animate()) ──────────────────────
+  // ── WATCH THE KILL ────────────────────────────────────────────────────────
+  // Ben 2026-10-13: "When a boss dies i see nothing. started in demo mode". The set-piece (hyBossDeath,
+  // game-controls.js) runs 2.2-2.5 s of death throe before the final blast — and the moment a boss's health
+  // hit zero the pilot's boss hunt resolved, the interrupted phase resumed, and the ship turned away or
+  // jumped: the blast went off behind the camera. Now, while a boss death set-piece is live and within
+  // range, the pilot brakes, keeps the hull (then the blast centre) in frame and holds fire until the
+  // blast has been seen; then the hunt resolves as before. Human players naturally keep looking.
+  const HY_SPECTATE = { MAX_MS: 7000, AFTER_FINAL_MS: 1700, MAX_RANGE: 9000, BRAKE_ABOVE: 2.5 };
+  if (typeof window !== 'undefined') window.HY_SPECTATE = HY_SPECTATE;
+  const _specTmp = (typeof THREE !== 'undefined') ? new THREE.Vector3() : null;
+  const _specDummy = { position: (typeof THREE !== 'undefined') ? new THREE.Vector3() : null, userData: {} };
+  function _spectateBossDeath() {
+    const fx = window.__bossFx;
+    if (!fx || fx.phase === 'done' || !fx.startedAt || !_specTmp) { ap._spectate = null; return false; }
+    const now = performance.now();
+    if (now - fx.startedAt > HY_SPECTATE.MAX_MS) { ap._spectate = null; return false; }
+    if (fx.finalAt && now - fx.finalAt > HY_SPECTATE.AFTER_FINAL_MS) { ap._spectate = null; return false; }
+    let pos = null;
+    if (fx.phase === 'final' && fx.center) pos = fx.center;
+    else if (fx.corpse && fx.corpse.parent) pos = fx.corpse.getWorldPosition(_specTmp);
+    else if (fx.center) pos = fx.center;
+    if (!pos) { ap._spectate = null; return false; }
+    const ew = gameState.emergencyWarp || {};
+    if (ew.active || ew.transitioning || (gameState.slingshot && gameState.slingshot.active) || gameState.slingshotWhip) return false;
+    const d = camPos().distanceTo(pos);
+    if (d > HY_SPECTATE.MAX_RANGE) { ap._spectate = null; return false; }
+    if (!ap._spectate) {
+      ap._spectate = { t0: now, name: fx.name || 'boss', d0: Math.round(d) };
+      setStatus('Holding to watch ' + (fx.name || 'the boss') + ' go');
+    }
+    _specDummy.position.copy(pos);
+    if (window.orientTowardsTarget) window.orientTowardsTarget(_specDummy);
+    const k = keys();
+    const speed = gameState.velocityVector ? gameState.velocityVector.length() : 0;
+    if (speed > HY_SPECTATE.BRAKE_ABOVE) k.x = true;   // coast to a stop with the blast in frame
+    if (gameState.targetLock) gameState.targetLock.active = false;   // hold fire
+    ap._navStatus = 'spectating';
+    tickHUD();
+    return true;
+  }
   function update() {
     if (!ap.active) return;
     // CRITICAL: ensure the game is NEVER left paused by the demo.  The
@@ -634,6 +675,8 @@
 
     // Clear movement keys each frame; we set what we need below
     releaseMovementKeys();
+    // A boss is dying in front of us: watch it (see _spectateBossDeath above)
+    if (_spectateBossDeath()) return;
 
     // ── Planet collision avoidance ──────────────────────────────────────
     // Runs at 10 Hz (every 6 frames) at cruise; every other frame above
@@ -8647,7 +8690,7 @@
     const now = Date.now();
     for (let i = 0; i < exps.length; i++) {
       const ex = exps[i];
-      if (!ex) continue;
+      if (!ex || ex._keep) continue;   // kept set-pieces (the boss death, its blast) run their full length
       if (!ex._demoCreatedAt) ex._demoCreatedAt = now;
       if (now - ex._demoCreatedAt > 500) {
         // Zero the animation variables so the manager's next update()

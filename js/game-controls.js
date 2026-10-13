@@ -160,6 +160,7 @@ const explosionManager = {
                 return;
             }
         }
+        if (this._keep) explosionData._keep = true;   // born inside a kept set-piece (see hyBossDeath): the demo's sweep leaves it alone
         this.activeExplosions.push(explosionData);
     },
 
@@ -12549,6 +12550,7 @@ function hyBossDeath(enemy, opts) {
         pops: 0, popsPlanned: C.POPS_MIN + Math.floor(Math.random() * (C.POPS_MAX - C.POPS_MIN + 1)),
         tFinal: 0, debris: 0, rings: 0, callout: null, hitstop: false, shake: false, pulse: false,
         pushed: 0, startedAt: performance.now(), finalAt: 0, doneAt: 0, center: null,
+        corpse: enemy,   // the tumbling hull (the demo pilot keeps it in frame: _spectateBossDeath, autopilot.js)
     };
     const popTimes = [];
     let tp = C.THROE_LEAD;
@@ -12742,7 +12744,9 @@ function hyBossDeath(enemy, opts) {
         scene.remove(holder);
         addFlash();
         if (typeof createBossExplosion === 'function') {
+            explosionManager._keep = (explosionManager._keep || 0) + 1;   // the blast's own layers are kept too
             try { createBossExplosion(fx.center, { color: color, scale: blastScale }); } catch (e) {}
+            explosionManager._keep--;
         }
         const r1 = Math.min(V * C.RING_R1_K, ringCap);
         addRing(V * C.RING_R0_K, r1, C.RING_LIFE, { x: -1.0, y: 0.25 }, color, 0);
@@ -12877,6 +12881,7 @@ function hyBossDeath(enemy, opts) {
 
     let nextPop = 0;
     explosionManager.addExplosion({
+        _keep: true,   // Ben 2026-10-13 ("When a boss dies i see nothing. started in demo mode"): the demo pilot's sweepOldExplosions ended EVERY manager entry older than 500 ms — this 2.5 s throe got one pop and no blast. Kept entries are exempt.
         update(dtIn) {
             const dt = Math.min(50, Math.max(0, dtIn || 0));
             fx.t += dt;
