@@ -11635,7 +11635,13 @@ if (scene && scene.add) {
                 // moved out. 'faint' dims and shrinks them (HY_DEEPSPACE), 'off' skips them, 'overhaul' is the old look.
                 const _dsg = (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.get) ? window.HYBRID.get('deepSpaceGalaxies') : 'faint';
                 if (_dsg === 'off') continue;
-                const _dsK = (_dsg === 'faint') ? (window.HY_DEEPSPACE || (window.HY_DEEPSPACE = { OPACITY_K: 0.28, SCALE_K: 0.55 })) : { OPACITY_K: 1, SCALE_K: 1 };
+                const _dsK = (_dsg === 'faint') ? (window.HY_DEEPSPACE || (window.HY_DEEPSPACE = { OPACITY_K: 0.28, SCALE_K: 0.55, SOL_CLEAR_R: 100000 })) : { OPACITY_K: 1, SCALE_K: 1, SOL_CLEAR_R: 100000 };
+                // Ben 2026-10-13: "Lets just remove them from the area around the player when he first starts the game. Keep
+                // otherwise." — none within SOL_CLEAR_R of the Sol system (the discs seen at the start were 43-80k from the
+                // camera); the rest of the far sphere keeps them.
+                { const _solC = (typeof _hyScaleOn === 'function' && typeof _hySolCenter === 'function' && _hyScaleOn()) ? _hySolCenter() : (window.localSystemOffset || { x: 8000, y: 0, z: 4800 });
+                  const _dxs = sprite.position.x - _solC.x, _dys = sprite.position.y - (_solC.y || 0), _dzs = sprite.position.z - _solC.z;
+                  if (Math.sqrt(_dxs * _dxs + _dys * _dys + _dzs * _dzs) < (_dsK.SOL_CLEAR_R || 0)) { mat.dispose(); continue; } }
                 mat.opacity *= _dsK.OPACITY_K;
                 const scale = (14000 + Math.random() * 14000) * _dsK.SCALE_K;
                 sprite.scale.set(scale, scale, 1);
@@ -22109,7 +22115,8 @@ function createEnemies3D() {
                 type: 'enemy',
                 health: getEnemyHealthForDifficulty(true, false, false),
                 maxHealth: getEnemyHealthForDifficulty(true, false, false),
-                speed: 1.2 + Math.random() * 0.8,
+                speed: (1.2 + Math.random() * 0.8) * (window.HY_PIRATE_SPEED_K || 0.8),   // Ben 2026-10-13: "martian pirates can move 20% slower" (behaviour pace)
+                _speedK: (window.HY_PIRATE_SPEED_K || 0.8),                                // ...and the flight model's top speed (game-controls.js _vMax)
                 aggression: 0.95 + Math.random() * 0.05,
                 patrolCenter: groupCenter.clone(),
                 // Tight patrol radius: each group holds its corridor station

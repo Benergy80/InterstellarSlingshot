@@ -612,8 +612,11 @@ try {
     // The demo pilot starts a few seconds AFTER the game (and ~3 s later again under the launch title's lift-off):
     // wait for it, then stop it, so a late start cannot take the controls mid-row (rows 1/2/4 then read
     // 'engaged @null, peak 1 u/f' and '+1s exit 0.4' — the pilot overriding the row's keys).
-    await page.waitForFunction(() => window.demoPilot && window.demoPilot.active, null, { timeout: 20000 }).catch(() => {});
-    await page.evaluate(() => { try { if (window.demoPilot) window.demoPilot.stop(); } catch (e) { /* optional */ } });
+    // 2026-10-13: the demo now plays the cinematic entrance before the pilot takes the stick (HY_DEMO_ENTRANCE), and a
+    // held fade-up on a slow boot can push that past 20 s — so wait for the pilot's actual start (the autostart flag
+    // clears when it fires), up to 60 s, then stop it AND defuse any autostart still pending.
+    await page.waitForFunction(() => (window.demoPilot && window.demoPilot.active) || window.demoAutostartPending === false, null, { timeout: 60000 }).catch(() => {});
+    await page.evaluate(() => { try { window.demoAutostartPending = false; if (window.demoPilot) window.demoPilot.stop(); } catch (e) { /* optional */ } });
     await page.evaluate(HELPERS);
     // Name the culprit: when a draw call throws, record WHICH object and material
     // (three.min.js stack traces alone say nothing). First 6 distinct offenders.

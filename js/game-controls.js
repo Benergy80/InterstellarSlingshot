@@ -5059,6 +5059,8 @@ function _efOn() {
 // (fighter 600 → 480, elite 660 → 528, support 520 → 416, boss 420 → 336 u/s).
 const HY_ENEMY_SPEED_K = 0.8;
 if (typeof window !== 'undefined') window.HY_ENEMY_SPEED_K = HY_ENEMY_SPEED_K;
+const HY_PIRATE_SPEED_K = 0.8;   // Ben 2026-10-13: "martian pirates can move 20% slower" — per-ship ud._speedK on Martian Pirates (not Vulcan Patrols), on top of HY_ENEMY_SPEED_K
+if (typeof window !== 'undefined') window.HY_PIRATE_SPEED_K = HY_PIRATE_SPEED_K;
 function _efClass(ud) {
     if (ud.isAlly) return ud._jumpUntil ? WINGMAN_FLIGHT.dash : WINGMAN_FLIGHT.wingman;   // HYBRID (package AA): wingmen fly the same model
     if (ud.guardianRole === 'ram') return ENEMY_FLIGHT.elite;   // HYBRID (package R): a rammer needs the thrust
@@ -5201,7 +5203,7 @@ function _efStep(enemy) {
 
     // ---- 1. the intent: what the behaviours asked for this tick ----------
     _efI.subVectors(enemy.position, ef.p0);
-    const _vMax = spec.maxSpeed * (ud.isAlly ? (ud._wmSpeedK || 1) : HY_ENEMY_SPEED_K);   // (wingmen: their tier, package AC)   // the 20% slow-down is for hostiles only
+    const _vMax = spec.maxSpeed * (ud.isAlly ? (ud._wmSpeedK || 1) : HY_ENEMY_SPEED_K * (ud._speedK || 1));   // (wingmen: their tier, package AC)   // the 20% slow-down is for hostiles only; _speedK = a class's own factor (Martian Pirates 0.8)
     // The per-frame swarm pull (autopilot.js swarmEnemiesNearPlayer) is
     // banked between ticks as a wish, not applied as a shove.
     if (ud._efPull) { _efI.add(ud._efPull); ud._efPull.set(0, 0, 0); }
