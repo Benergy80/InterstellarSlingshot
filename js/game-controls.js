@@ -12764,7 +12764,7 @@ function hyBossDeath(enemy, opts) {
         if (pulse) { try { pulse(color, C.PULSE); fx.pulse = true; } catch (e) {} }
         if (!callout()) fx._calloutUntil = fx.t + C.CALLOUT_RETRY_MS;
         // the kill paths' celebration, moved from the kill to the blast
-        if (opts.celebrate && typeof createFireworkCelebration === 'function') { try { createFireworkCelebration(); } catch (e) {} }
+        if ((opts.celebrate || fx._fireworksQueued) && typeof createFireworkCelebration === 'function') { try { createFireworkCelebration(); } catch (e) {} }   // incl. any fireworks queued during the throe
         if (opts.music && typeof playBossVictoryMusic === 'function') { try { playBossVictoryMusic(); } catch (e) {} }
         if (opts.ambient) setTimeout(function () { if (typeof switchToAmbientMusic === 'function') switchToAmbientMusic(); }, 800);
         // shock pulse: shove living ships near the blast outward
@@ -13134,6 +13134,13 @@ function createMassiveBorgExplosion(position, cubeSize = 30) {
 // =============================================================================
 
 function createFireworkCelebration() {
+    // Ben 2026-10-13: "fireworks happened first then the ship exploded. Lets make the fireworks happen once the ship
+    // explodes instead." The kill paths' own fireworks already wait for the blast, but the galaxy-liberation /
+    // warlord-defeated / campaign beats fire theirs the moment the boss's health hits zero — 2.5 s before the blast.
+    // While a boss death set-piece is in its throe, every fireworks call is queued; finalBlast (hyBossDeath) fires it.
+    { const _fx = (typeof window !== 'undefined') ? window.__bossFx : null;
+      if (_fx && _fx.phase === 'throe') { _fx._fireworksQueued = (_fx._fireworksQueued || 0) + 1; return; } }
+    if (typeof window !== 'undefined') window.__fwLastRun = performance.now();   // read by probes
     console.log('ðŸŽ† Boss defeated! Creating firework celebration!');
     
     // Create multiple firework bursts with delay
