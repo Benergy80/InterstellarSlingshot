@@ -449,7 +449,7 @@
     // ── the intro-branch chooser (goal: "choose from multiple branches on the intro screen"): ← → on the
     // TITLE SCREEN row cycles the title directions; the choice persists (HYBRID.set → localStorage) and the
     // page reloads into it. The classic launch screen stays reachable with ?hy=titleScreen:original.
-    const TITLE_STYLES = [['launch', 'EARTH AT DAWN'], ['chrome', 'CHROME'], ['landscape', 'LANDSCAPE'], ['poster', 'POSTER']];
+    const TITLE_STYLES = [['heroine', 'NEON CITY'], ['launch', 'EARTH AT DAWN'], ['chrome', 'CHROME'], ['landscape', 'LANDSCAPE'], ['poster', 'POSTER']];
     const styleBtn = root.querySelector('.hyl-style');
     function styleIndex() { const cur = (window.HYBRID && window.HYBRID.get('titleScreen')) || 'launch'; const i = TITLE_STYLES.findIndex((t) => t[0] === cur); return i < 0 ? 0 : i; }
     function showStyle() { const el = root.querySelector('.hyl-style-name'); if (el) el.textContent = TITLE_STYLES[styleIndex()][1]; }

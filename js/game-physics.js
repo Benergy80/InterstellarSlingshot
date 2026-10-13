@@ -3088,6 +3088,9 @@ function _applyWarpGuidance(forwardDirection, dtF) {
 // a standoff, and the ship parks there facing the body and holds station
 // (a slow sideways drift at minimum speed) until the player touches a key.
 // No target, or a target off the nose: the plain ballistic O-warp, as before.
+// Ben 2026-10-13: the W-double-tap jump holds twice as long now that the universe is 1.85x (was 2 s).
+const HY_JUMP = { MS: 4000 };
+if (typeof window !== 'undefined') window.HY_JUMP = HY_JUMP;
 const HY_NAVWARP = {
     MAX_OFF_DEG: 55,     // nose must be within this of the target at the key press (or auto-nav on)
     STAND_K: 2.6,        // park this many body radii out...
@@ -3790,7 +3793,7 @@ if (frameDistance > 0.01) { // Only track significant movement
             // request a range-scaled hold via gameState._pendingJumpMs
             // (sized to land just short of the target); 8s ceiling.
             const _jumpMs = (typeof gameState._pendingJumpMs === 'number' && gameState._pendingJumpMs > 0)
-                ? Math.min(8000, gameState._pendingJumpMs) : 2000;
+                ? Math.min(8000, gameState._pendingJumpMs) : ((typeof window !== 'undefined' && window.HY_JUMP && window.HY_JUMP.MS) || 4000);   // Ben 2026-10-13: "short warps should last twice as long now that the universe is bigger" (was 2000)
             gameState._pendingJumpMs = null;
             gameState.emergencyWarp.timeRemaining = _jumpMs;
             gameState.velocityVector.copy(capturedForwardDirection).multiplyScalar(capturedBoostSpeed);

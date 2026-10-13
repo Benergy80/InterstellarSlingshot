@@ -390,9 +390,11 @@ check('thrusters', async () => {
         return { n, visible: nv, energy: +e.toFixed(3) };
     };
     const out = { shipVisible: !!(window.cameraState && window.cameraState.playerShipMesh && window.cameraState.playerShipMesh.visible) };
-    gs.velocityVector.copy(dir).multiplyScalar(gs.minVelocity || 0.4); await sleep(1200); out.idle = plume();
-    keys.w = true; await sleep(1500); out.thrust = plume(); out.thrustSpeed = +gs.velocityVector.length().toFixed(2);
-    keys.wDoubleTap = true; await sleep(900); out.boost = plume(); out.boostSpeed = +gs.velocityVector.length().toFixed(2);
+    // the plumes flicker ±5 %: average three samples 150 ms apart (a single boost sample read 118 vs 125 under thrust twice)
+    const plume3 = async () => { const a = plume(), b = (await sleep(150), plume()), c = (await sleep(150), plume()); return { n: a.n, visible: Math.max(a.visible, b.visible, c.visible), energy: +((a.energy + b.energy + c.energy) / 3).toFixed(3) }; };
+    gs.velocityVector.copy(dir).multiplyScalar(gs.minVelocity || 0.4); await sleep(1200); out.idle = await plume3();
+    keys.w = true; await sleep(1500); out.thrust = await plume3(); out.thrustSpeed = +gs.velocityVector.length().toFixed(2);
+    keys.wDoubleTap = true; await sleep(900); out.boost = await plume3(); out.boostSpeed = +gs.velocityVector.length().toFixed(2);
     keys.w = false; keys.wDoubleTap = false;
     return out;
 });

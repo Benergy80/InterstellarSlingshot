@@ -560,3 +560,24 @@ body.hyt-on #skipIntroBtn { top: 14px; right: 16px; bottom: auto; left: auto; tr
 #hyafHud.hyaf-embedded .hyaf-combo { width: auto; gap: 6px; }
 #hyafHud.hyaf-embedded .hyaf-x { font-size: inherit; font-weight: 700; transform: none; }
 #hyafHud.hyaf-embedded .hyaf-bar { position: static; width: 32px; height: 3px; bottom: auto; left: auto; right: auto; }
+
+/* heroine: Ben's poster as the opening screen (2026-10-13) */
+#hyTitle.hyt-heroine { background: #06031a; }
+#hyTitle.hyt-heroine .hyt-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 62% 50%; }
+#hyTitle.hyt-heroine .hyt-bg-shade { position: absolute; left: 0; right: 0; bottom: 0; height: 48%; background: linear-gradient(180deg, rgba(5,3,15,0) 0%, rgba(5,3,15,0.45) 55%, rgba(5,3,15,0.78) 100%); pointer-events: none; }
+#hyTitle.hyt-heroine .hyt-byline { position: absolute; left: 0; right: 0; top: 24.5%; text-align: center; font-family: var(--sw-font-ui); font-weight: 600; font-size: 16px; letter-spacing: 0.32em; text-transform: uppercase; color: #ffe2f3; text-shadow: 0 0 12px rgba(255,80,180,0.75), 0 2px 6px rgba(0,0,0,0.8); }
+#hyTitle.hyt-heroine .hyt-stage.hyt-stage-heroine { position: absolute !important; inset: auto !important; left: 5.5% !important; bottom: 7% !important; top: auto !important; right: auto !important; width: 44% !important; height: auto !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; justify-content: flex-end !important; align-items: flex-start !important; padding: 0 !important; margin: 0 !important; }
+#hyTitle.hyt-heroine .hyt-menu { align-items: flex-start; gap: 10px; }
+#hyTitle.hyt-heroine .hyt-wait { align-items: flex-start; }
+#hyTitle.hyt-heroine .hyt-menu #introStartBtn, #hyTitle.hyt-heroine .hyt-menu #introDemoBtn { background: none !important; border: 0 !important; box-shadow: none !important; padding: 6px 0 !important; text-align: left !important; }
+#hyTitle.hyt-heroine .hyt-menu #introStartBtn .start-btn-text, #hyTitle.hyt-heroine .hyt-menu #introDemoBtn > div > div:nth-child(1) { font-size: 1.35rem !important; color: #ffffff !important; text-shadow: 0 0 14px rgba(0,245,255,0.7), 0 2px 6px rgba(0,0,0,0.9) !important; }
+#hyTitle.hyt-heroine .hyt-menu #introStartBtn .start-btn-subtext, #hyTitle.hyt-heroine .hyt-menu #introDemoBtn > div > div:nth-child(2) { color: #cfe9ff !important; text-shadow: 0 2px 6px rgba(0,0,0,0.9) !important; }
+#hyTitle.hyt-heroine .hyt-menu #introStartBtn:hover .start-btn-text, #hyTitle.hyt-heroine .hyt-menu #introStartBtn:focus .start-btn-text { color: #7bffe0 !important; }
+#hyTitle.hyt-heroine .hyt-style { justify-content: flex-start; }
+#hyTitle.hyt-heroine .hyt-build { position: absolute; right: 18px; bottom: 14px; font-family: var(--sw-font-ui); font-size: 16px; letter-spacing: 0.2em; color: rgba(255,255,255,0.6); text-shadow: 0 2px 6px rgba(0,0,0,0.9); }
+@media (max-width: 640px) {
+  #hyTitle.hyt-heroine .hyt-bg { object-position: 56% 50%; }
+  #hyTitle.hyt-heroine .hyt-byline { top: 18%; font-size: 13px; letter-spacing: 0.22em; padding: 0 12px; }
+  #hyTitle.hyt-heroine .hyt-stage.hyt-stage-heroine { left: 5% !important; right: 5% !important; width: auto !important; bottom: 6% !important; }
+  #hyTitle.hyt-heroine .hyt-bg-shade { height: 60%; }
+}

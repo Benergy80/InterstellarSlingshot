@@ -48,7 +48,7 @@
     };
     if (typeof window !== 'undefined') window.HY_TITLE = HY_TITLE;
 
-    const MODES = ['chrome', 'landscape', 'poster'];
+    const MODES = ['chrome', 'landscape', 'poster', 'heroine'];
     const mode = (typeof window !== 'undefined' && window.HYBRID && window.HYBRID.get('titleScreen')) || 'original';
     if (MODES.indexOf(mode) < 0 || typeof document === 'undefined' || !document.body) return;
 
@@ -290,7 +290,16 @@
     const sub = '<div class="hyt-sub"><span>' + HY_TITLE.TAGLINE + '</span></div>';
     const menu = '<div class="hyt-menu"><div class="hyt-wait"><span class="hyt-wait-k">Pre-flight</span><span class="hyt-wait-bar"><i></i></span><span class="hyt-wait-v"></span></div>' +
         '<div class="hyt-style" role="group" aria-label="Title screen style"><button type="button" class="hyt-style-b" data-d="-1" aria-label="Previous title style">&lsaquo;</button><span class="hyt-style-t">TITLE &middot; <b></b></span><button type="button" class="hyt-style-b" data-d="1" aria-label="Next title style">&rsaquo;</button></div></div>';
-    if (mode === 'chrome') {
+    if (mode === 'heroine') {
+        // Ben 2026-10-13: "Use this for the background" — his neon-city poster (images/title/heroine.jpg, the
+        // INTERSTELLAR SLINGSHOT logo is painted into it). A plateless menu sits lower left over the reflective
+        // floor, the credit under the painted logo; PRESS TO LAUNCH hands off to the original take-off as before.
+        root.innerHTML = '<img class="hyt-bg" src="images/title/heroine.jpg?v=' + String(window.BUILD_TAG || '') + '" alt="">' +
+            '<div class="hyt-bg-shade"></div>' +
+            '<div class="hyt-byline">A gravitational space explorer &middot; by ChiLab+Claude</div>' +
+            '<div class="hyt-stage hyt-stage-heroine">' + menu + '</div>' +
+            '<div class="hyt-build">Build ' + String(window.BUILD_TAG || '') + '</div>';
+    } else if (mode === 'chrome') {
         root.innerHTML = '<canvas class="hyt-sky"></canvas><div class="hyt-vig"></div>' +
             '<div class="hyt-stage"><div class="hyt-lockup">' + logoSVG() + sub + '</div>' + menu + '</div>' +
             '<div class="hyt-credit">ChiLab+Claude</div>';
@@ -339,7 +348,7 @@
         const P = comp.planet, rr = Math.min(w, h) * P.r * 1.01;
         disc = [w * P.x, h * P.y, rr * rr];
     }
-    if (mode !== 'landscape') { sky = root.querySelector('.hyt-sky'); skyG = sky.getContext('2d'); }
+    if (mode !== 'landscape' && mode !== 'heroine') { sky = root.querySelector('.hyt-sky'); skyG = sky.getContext('2d'); }   // heroine: a painted poster, no sky canvas
 
     if (mode === 'landscape') {
         const stars = root.querySelector('.hyt-stars');
@@ -400,7 +409,7 @@
         if (sky) {
             const pr = Math.min(2, window.devicePixelRatio || 1);
             ensureBackdrop(pr);
-            if (bg) { skyG.drawImage(bg, 0, 0); drawDrift(skyG, drift, sky.width, sky.height, dt, t, pr, disc); }
+            if (bg && skyG) { skyG.drawImage(bg, 0, 0); drawDrift(skyG, drift, sky.width, sky.height, dt, t, pr, disc); }
         }
         if (state.ship) state.ship.frame(now);
         if (!state.adopted) { if (!adopt()) updateWait(); }
@@ -412,7 +421,7 @@
 
     // the intro-branch chooser (goal: "choose from multiple branches on the intro screen"): ‹ › or ← → cycle the
     // title directions; the choice persists (HYBRID.set → localStorage) and the page reloads into it.
-    const TITLE_STYLES = [['launch', 'EARTH AT DAWN'], ['chrome', 'CHROME'], ['landscape', 'LANDSCAPE'], ['poster', 'POSTER']];
+    const TITLE_STYLES = [['heroine', 'NEON CITY'], ['launch', 'EARTH AT DAWN'], ['chrome', 'CHROME'], ['landscape', 'LANDSCAPE'], ['poster', 'POSTER']];
     const styleIdx = () => { const i = TITLE_STYLES.findIndex((t) => t[0] === mode); return i < 0 ? 0 : i; };
     const styleName = root.querySelector('.hyt-style-t b'); if (styleName) styleName.textContent = TITLE_STYLES[styleIdx()][1];
     let restyling = false;
