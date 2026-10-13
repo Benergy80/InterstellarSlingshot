@@ -15420,6 +15420,7 @@ if (e.key === 'Tab') {
                 } else {
                     gameState.autoNavigating = true;
                     gameState.autoNavOrienting = true;
+                    gameState._hyAutoNavArmed = Date.now();   // HYBRID autoNavWarp: armed by the player's own toggle (game-physics.js _hyAutoNavWarp)
                     showAchievement('Auto-Nav Engaged', `Orienting towards ${gameState.currentTarget.userData.name}`);
                 }
                 if (typeof updateUI === 'function') updateUI();
@@ -15747,6 +15748,7 @@ setTimeout(() => {
                 } else {
                     gameState.autoNavigating = true;
                     gameState.autoNavOrienting = true;
+                    gameState._hyAutoNavArmed = Date.now();   // HYBRID autoNavWarp: armed by the player's own toggle (game-physics.js _hyAutoNavWarp)
                     showAchievement('Auto-Nav Engaged', `Orienting towards ${gameState.currentTarget.userData.name}`);
                 }
                 if (typeof updateUI === 'function') updateUI();
@@ -18416,6 +18418,7 @@ function toggleAutoNavigate() {
     } else {
         gameState.autoNavigating = true;
         gameState.autoNavOrienting = true;
+        gameState._hyAutoNavArmed = Date.now();   // HYBRID autoNavWarp: armed by the player's own toggle (game-physics.js _hyAutoNavWarp)
         if (typeof showAchievement === 'function') {
             showAchievement('Auto-Nav Engaged', `Orienting towards ${gameState.currentTarget.userData.name}`);
         }

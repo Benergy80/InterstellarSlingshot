@@ -3105,6 +3105,7 @@ function _hyAutoNavWarp(dtF) {
     if (window.demoPilot && window.demoPilot.active) return false;          // the demo pilot flies itself
     if (gameState._hyNavWarp) return false;                                   // the nav computer already has it
     if (gameState.autoNavOrienting) return false;                             // the original orient-first beat runs first
+    if (!gameState._hyAutoNavArmed) return false;                              // only the player's own toggle arms it (never a probe, the guard or a script setting the flag)
     if (typeof _hyNavWarpOn === 'function' && !_hyNavWarpOn()) return false;
     const t = gameState.currentTarget;
     if (!t || !t.position || !t.userData) return false;
@@ -3116,7 +3117,7 @@ function _hyAutoNavWarp(dtF) {
     if (camera.position.distanceTo(t.position) < HY_AUTONAV.WARP_MIN) return false;
     const now = Date.now();
     if (now - (gameState._hyAutoNavFiredAt || 0) < HY_AUTONAV.RETRY_MS) return false;
-    gameState._hyAutoNavFiredAt = now;
+    gameState._hyAutoNavFiredAt = now; gameState._hyAutoNavArmed = 0;   // one nav-warp per arming
     if (window.keys) window.keys.o = true;   // the key press the player would make; the warp tick stages the nav-warp
     gameState._autoNavStatus = 'navwarp';
     if (typeof showAchievement === 'function') showAchievement('Auto-Nav', 'Warping to ' + (ud.name || 'target') + ' — the nav computer parks on arrival');

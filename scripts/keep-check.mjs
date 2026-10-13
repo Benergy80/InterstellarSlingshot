@@ -438,14 +438,14 @@ check('slingshot', async () => {
         { const _w = gs.slingshotWhip, _t = gs.currentTarget;
           r.navTarget = (_t && _t.userData && _t.userData.name) || (_t ? 'unnamed' : null);
           if (_w && _w.aim) r.aim = [_w.aim.x, _w.aim.y, _w.aim.z].map((x) => +x.toFixed(3)); }
-        const t0 = Date.now(); let rel = null, relV = null, relC = null, peak = 0, fmax = 0, amax = 0, trail = false, ramp = false, whip = false;
+        const t0 = Date.now(); let rel = null, relV = null, relC = null, peak = 0, fmax = 0, amax = 0, amin = a0, trail = false, ramp = false, whip = false;   // amin: the trail's rise is measured from the lowest count seen, so a long-lived effect (a kept boss set-piece) finishing mid-window cannot mask it
         // Per-100 ms samples: what the ship is doing against the body through
         // the whip and the first second of the glide (evidence for a flake).
         r.samples = [];
         const _bR = body.geometry.parameters.radius || 1;
         while (Date.now() - t0 < 7000) {
             await sleep(100); gs.hull = gs.maxHull || 100;
-            const v = gs.velocityVector.length(); peak = Math.max(peak, v); fmax = Math.max(fmax, cam.fov); amax = Math.max(amax, K.additiveVisible());
+            const v = gs.velocityVector.length(); peak = Math.max(peak, v); fmax = Math.max(fmax, cam.fov); { const _av = K.additiveVisible(); amax = Math.max(amax, _av); amin = Math.min(amin, _av); }
             if (r.samples.length < 80) r.samples.push({ t: Date.now() - t0, v: +v.toFixed(1), dR: +(cam.position.distanceTo(body.getWorldPosition(new THREE.Vector3())) / _bR).toFixed(2),
                 whip: !!gs.slingshotWhip, act: !!gs.slingshot.active, post: !!gs.slingshot.postSlingshot, x: !!keys.x, w: !!keys.w, tr: gs.slingshot.timeRemaining | 0, dying: !!(gs.playerDying || gs.gameOver) });
             try { if (ie('_whipTrail')) trail = true; } catch (x) { /* optional */ }
@@ -456,7 +456,7 @@ check('slingshot', async () => {
         }
         keys.left = false;
         Object.assign(r, { whip, releaseMs: rel, peak: +peak.toFixed(1), exit: +gs.velocityVector.length().toFixed(2),
-            fovKick: +(Math.max(fmax, K.fov.max) - fov0).toFixed(1), addedFx: amax - a0, trail, ramp, stillActive: !!gs.slingshot.active });
+            fovKick: +(Math.max(fmax, K.fov.max) - fov0).toFixed(1), addedFx: amax - amin, trail, ramp, stillActive: !!gs.slingshot.active });
         if (relV) { r.velTurn = K.deg(relV, gs.velocityVector.clone().normalize()); r.camTurn = K.deg(relC, cam.getWorldDirection(new THREE.Vector3())); }
         return r;
     };
