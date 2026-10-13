@@ -580,6 +580,11 @@
     if (!pos) { ap._spectate = null; return false; }
     const ew = gameState.emergencyWarp || {};
     if (ew.active || ew.transitioning || (gameState.slingshot && gameState.slingshot.active) || gameState.slingshotWhip) return false;
+    // Only a kill the pilot is part of: its own fight (combat / bossEngage) or its hunt target. A distant kill by
+    // wingmen or civilians while the pilot is on a travel or park leg must not stop the leg (the keep guard's park
+    // row measured exactly that: a 7 s hold mid-leg, 82 deg off the park target).
+    const ownKill = ap.phase === 'combat' || ap.phase === 'bossEngage' || (ap._bossHunt && fx.corpse && ap._bossHunt.boss === fx.corpse);
+    if (!ownKill || (typeof _burnCommitted === 'function' && _burnCommitted())) { ap._spectate = null; return false; }
     const d = camPos().distanceTo(pos);
     if (d > HY_SPECTATE.MAX_RANGE) { ap._spectate = null; return false; }
     if (!ap._spectate) {
