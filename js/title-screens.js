@@ -25,6 +25,9 @@
 
     const HY_TITLE = {
         FADE_MS: 480,            // overlay fade-out on launch
+        REVEAL_MS: 1400,         // fade-up after the loading screen (the CSS transition on #hyTitle; documented here)
+        REVEAL_NO_LOADER_MS: 2500,   // no #loadingScreen ever seen → show the title anyway after this
+        REVEAL_FALLBACK_MS: 60000,   // the loading screen never went away → show the title over it
         DRIFT_STARS: 170,        // stars that drift (chrome / poster)
         STATIC_STARS: 760,       // stars painted once into the backdrop
         DRIFT_PX_S: 7,           // drift speed of the nearest stars, px/s
@@ -285,7 +288,7 @@
 
     // ── build ───────────────────────────────────────────────────────────────
     const state = { mode: mode, active: true, raf: 0, stops: [], listeners: [], ship: null, castRenderer: null, adopted: false, gone: false };
-    const root = el('div', 'hyt hyt-' + mode); root.id = 'hyTitle';
+    const root = el('div', 'hyt hyt-' + mode + ' hyt-pre'); root.id = 'hyTitle';   // hyt-pre: held invisible until the loading screen has gone (see reveal())
     document.body.classList.add('hyt-on', 'hyt-on-' + mode);
     const sub = '<div class="hyt-sub"><span>' + HY_TITLE.TAGLINE + '</span></div>';
     const menu = '<div class="hyt-menu"><div class="hyt-wait"><span class="hyt-wait-k">Pre-flight</span><span class="hyt-wait-bar"><i></i></span><span class="hyt-wait-v"></span></div>' +
@@ -399,6 +402,26 @@
         waitEl.querySelector('.hyt-wait-v').textContent = pct >= 100 ? 'Stand by' : (txt && txt.textContent ? txt.textContent.replace(/\.+$/, '') : '');
     }
 
+    // ── the fade-up: AFTER the traditional loading screen ──────────────────
+    // Ben 2026-10-13: "fade up to Neon City Opening Screen should happen after the traditional INTERSTELLAR
+    // SLINGSHOT loading screen." The overlay is built at script load (above #loadingScreen) but starts in
+    // .hyt-pre (opacity 0, no pointer events); once the loading screen has been seen and then fades out,
+    // .hyt-pre is dropped and the CSS transition fades the poster up over HY_TITLE.REVEAL_MS.
+    const t0 = performance.now();
+    function loadingVisible() {
+        const ls = document.getElementById('loadingScreen');
+        if (!ls) return false;
+        if (ls.style.display === 'none' || ls.style.opacity === '0') return false;
+        try { const cs = getComputedStyle(ls); return cs.display !== 'none' && cs.visibility !== 'hidden' && parseFloat(cs.opacity) > 0.02; } catch (e) { return true; }
+    }
+    function reveal(why) {
+        if (state.shown) return;
+        state.shown = true; state.shownAt = performance.now(); state.shownWhy = why;
+        root.classList.remove('hyt-pre');
+        // Ben 2026-10-13: "The original loading screen should happen instead of the loading bar with the background
+        // image, then fade to image and load menus" — the loading screen carried the progress; no second bar here.
+        if (waitEl && waitEl.parentNode) waitEl.remove();
+    }
     // ── per-frame (title only) ──────────────────────────────────────────────
     let last = performance.now(), first = true;
     function frame(now) {
@@ -412,6 +435,13 @@
             if (bg && skyG) { skyG.drawImage(bg, 0, 0); drawDrift(skyG, drift, sky.width, sky.height, dt, t, pr, disc); }
         }
         if (state.ship) state.ship.frame(now);
+        if (!state.shown) {
+            const lv = loadingVisible();
+            if (lv) state.sawLoading = true;
+            if (state.sawLoading && !lv) reveal('loading screen gone');
+            else if (!state.sawLoading && now - t0 > HY_TITLE.REVEAL_NO_LOADER_MS) reveal('no loading screen');
+            else if (now - t0 > HY_TITLE.REVEAL_FALLBACK_MS) reveal('fallback');
+        }
         if (!state.adopted) { if (!adopt()) updateWait(); }
         else if (!document.getElementById('introStartBtn') && !document.getElementById('introDemoBtn')) { teardown('buttons gone'); return; }
         if (typeof gameState !== 'undefined' && gameState && gameState.gameStarted) { teardown('game started'); return; }
@@ -466,5 +496,5 @@
         };
         setTimeout(finish, HY_TITLE.FADE_MS);
     }
-    window.hyTitle = { mode: mode, get active() { return state.active; }, teardown: () => teardown('api'), state: state };
+    window.hyTitle = { mode: mode, get active() { return state.active; }, get shown() { return !!state.shown; }, teardown: () => teardown('api'), state: state };
 })();

@@ -56,6 +56,15 @@
     start: start,
     stop: stop,
     toggleTakeover: toggleTakeover,
+    // HYBRID 2026-10-13: the closed-loop controller and the reveal standoff, exposed for probes and for any player-side
+    // use (keys() is window.keys, so navigateTo drives the real controls). The player's Auto-Nav warp uses the
+    // nav-warp (game-physics.js) instead, which parks on its own.
+    navigateTo: function (pos, opts) { return navigateTo(pos, opts); },
+    arrivalStandoff: function (obj) {
+      if (!obj) return null;
+      const radius = (obj.geometry && obj.geometry.parameters && obj.geometry.parameters.radius) || (obj.userData && obj.userData.size) || 20;
+      return _arrivalStandoff(radius, _arrivalDangerR(obj));
+    },
     get active() { return ap.active; },
     get driving() { return ap.active && !ap.paused; },
     get paused() { return ap.paused; },

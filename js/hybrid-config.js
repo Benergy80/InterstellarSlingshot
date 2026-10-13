@@ -45,6 +45,7 @@
         asteroids:       'original',
         // — effects and audio —
         explosions:      'original',   // 'combined' (old burst + new detonation) | 'original' | 'overhaul' — Ben 2026-10-10: newer effects PAUSED while testing ("so we can just see the original ones"); flip back to 'combined' when he says
+        autoNavWarp:     'on',         // Ben 2026-10-13: Auto-Nav on a far target presses O for you — the nav-warp (package P) burns to it and parks at the standoff (HY_AUTONAV, game-physics.js)  'on' | 'original'
         bossExplosion:   'epic',       // Ben 2026-10-11: "I want to improve the boss explosions." — death throe (hull blasts, tumble, flicker) → scaled final blast + shockwave + vector debris + hitstop + call-out (HY_BOSS_FX, hyBossDeath)  'epic' | 'original'
         weaponFx:        'original',
         sfx:             'original',

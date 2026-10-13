@@ -3089,6 +3089,40 @@ function _applyWarpGuidance(forwardDirection, dtF) {
 // (a slow sideways drift at minimum speed) until the player touches a key.
 // No target, or a target off the nose: the plain ballistic O-warp, as before.
 // Ben 2026-10-13: the W-double-tap jump holds twice as long now that the universe is 1.85x (was 2 s).
+// HYBRID autoNavWarp (Ben 2026-10-13: "how does the player warp to a nebula and stop right when the planet is big and
+// beautiful like the demo player? Did we build that?"). It was built on 2026-10-10 (package P `navWarp`, below): O with a
+// nav target ahead sizes the emergency-warp burn to the leg, cuts it and PARKS at HY_NAVWARP.STAND_K radii of the body
+// (a nebula target parks at its biggest planet); X drops out early. What was missing is Auto-Nav knowing about it:
+// Enter / the HUD button only oriented and thrust at 0.4 into an orbital tangent. Now, once Auto-Nav has oriented on a
+// far target and a warp charge is available, it presses O for you — the same nav-warp, the same park — then the nav
+// computer owns the arrival. Close targets, no charge, shields up or enemies: the original approach as before.
+// Switch: autoNavWarp on | original (hybrid-config.js).
+const HY_AUTONAV = { WARP_MIN: 6000, RETRY_MS: 4000 };   // fire the nav-warp beyond WARP_MIN u; try again no sooner than RETRY_MS
+if (typeof window !== 'undefined') window.HY_AUTONAV = HY_AUTONAV;
+function _hyAutoNavOn() { return !!(window.HYBRID && window.HYBRID.is && window.HYBRID.is('autoNavWarp', 'on')); }
+function _hyAutoNavWarp(dtF) {
+    if (!_hyAutoNavOn() || typeof camera === 'undefined') return false;
+    if (window.demoPilot && window.demoPilot.active) return false;          // the demo pilot flies itself
+    if (gameState._hyNavWarp) return false;                                   // the nav computer already has it
+    if (gameState.autoNavOrienting) return false;                             // the original orient-first beat runs first
+    if (typeof _hyNavWarpOn === 'function' && !_hyNavWarpOn()) return false;
+    const t = gameState.currentTarget;
+    if (!t || !t.position || !t.userData) return false;
+    const ud = t.userData;
+    if (ud.isEnemy || ud.type === 'enemy' || (typeof _hyNWIsHostile === 'function' && _hyNWIsHostile(t))) return false;
+    const ew = gameState.emergencyWarp || {};
+    if (ew.active || ew.transitioning || !(ew.available > 0)) return false;
+    if (typeof shieldSystem !== 'undefined' && shieldSystem && shieldSystem.active) return false;   // the warp would be refused
+    if (camera.position.distanceTo(t.position) < HY_AUTONAV.WARP_MIN) return false;
+    const now = Date.now();
+    if (now - (gameState._hyAutoNavFiredAt || 0) < HY_AUTONAV.RETRY_MS) return false;
+    gameState._hyAutoNavFiredAt = now;
+    if (window.keys) window.keys.o = true;   // the key press the player would make; the warp tick stages the nav-warp
+    gameState._autoNavStatus = 'navwarp';
+    if (typeof showAchievement === 'function') showAchievement('Auto-Nav', 'Warping to ' + (ud.name || 'target') + ' — the nav computer parks on arrival');
+    return true;
+}
+if (typeof window !== 'undefined') window._hyAutoNavWarp = _hyAutoNavWarp;
 const HY_JUMP = { MS: 4000 };
 if (typeof window !== 'undefined') window.HY_JUMP = HY_JUMP;
 const HY_NAVWARP = {
@@ -4879,6 +4913,9 @@ if (dampedVelocity.length() >= gameState.minVelocity ||
 
     // SPECIFICATION: Auto-Navigation - Automatically disengages when energy drops below 5
     if (gameState.autoNavigating && gameState.currentTarget && gameState.energy > 5) {
+        if (_hyAutoNavWarp(dtF)) {
+            // HYBRID autoNavWarp: the nav-warp was just fired for this target (see _hyAutoNavWarp); it owns the arrival
+        } else
         if (gameState.autoNavOrienting) {
             const isOriented = orientTowardsTarget(gameState.currentTarget);
             if (isOriented) {

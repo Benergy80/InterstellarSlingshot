@@ -251,6 +251,12 @@ function _hyIsAltModel(obj) {
 // illumination as well as all new enemies"). The same camera-locked key / fill / back lamps the stock hull
 // material carries (_HULL_LIGHT_RIG, evaluated in view space inside the hull's own shader, so planets keep
 // their sun-lit terminator and nothing else in the scene changes) plus a thin faction rim. Once per material.
+// Ben 2026-10-13: "Vulcan ships do not need to be as bright as the martian ones" — a per-faction brightness factor keyed
+// by the faction colour the hull is built with (Vulcan Patrol 0xff6633; Martian Pirates 0xff4444 stay at 1). It scales the
+// v2 hull's albedo, its texture glow and its faction rim; the stock (non-v2) path is untouched.
+const HY_FACTION_DIM = { ff6633: 0.6 };
+if (typeof window !== 'undefined') window.HY_FACTION_DIM = HY_FACTION_DIM;
+function _hyFactionDim(color) { try { const k = HY_FACTION_DIM[new THREE.Color(color).getHexString()]; return (typeof k === 'number' && k > 0) ? k : 1; } catch (e) { return 1; } }
 const HY_ALT_RIG = { KEY: 2.2, FILL: 0.5, BACK: 0.5, RIM: 0.45, RIM_POW: 2.4, ALBEDO: 0.85, GLOW_K: 1.3, TINT: 0.35 };   // Ben 2026-10-12: brighter, more colourful enemies (KEY was 1.7, RIM 0.35; GLOW_K lifts the texture glow, TINT mixes the faction colour into the albedo)
 if (typeof window !== 'undefined') window.HY_ALT_RIG = HY_ALT_RIG;
 function _hyRigAltMaterial(m, color) {
@@ -261,6 +267,7 @@ function _hyRigAltMaterial(m, color) {
         idle: color !== undefined ? color : 0x66aaff, baseStrength: R.RIM, boostStrength: R.RIM, power: R.RIM_POW, coreDarken: 0 });
     if (R.GLOW_K && m.emissiveIntensity) m.emissiveIntensity *= R.GLOW_K;
     if (R.TINT && color !== undefined && m.color) m.color.lerp(new THREE.Color(color), R.TINT);   // the faction colour mixed into the texture's albedo
+    { const dim = color !== undefined ? _hyFactionDim(color) : 1; if (dim < 1) { if (m.color) m.color.multiplyScalar(dim); if (m.emissiveIntensity) m.emissiveIntensity *= dim; m.userData._hyDim = dim; } }   // HY_FACTION_DIM
     m.userData._hyRigged = true;
     m.needsUpdate = true;
     return m;
@@ -317,7 +324,7 @@ function _hyFighterRimMaterial(color) {
     if (_hyRimMats[key]) return _hyRimMats[key];
     const mat = new THREE.ShaderMaterial({
         uniforms: {
-            uColor: { value: new THREE.Color(color).multiplyScalar(1.2) },
+            uColor: { value: new THREE.Color(color).multiplyScalar(1.2 * _hyFactionDim(color)) },   // HY_FACTION_DIM: a dimmer rim for the dim factions
             uPow: { value: HY_FIGHTER_RIM.POW }, uGain: { value: HY_FIGHTER_RIM.GAIN }, uBase: { value: HY_FIGHTER_RIM.BASE },
             uOpacity: { value: 0.2 }
         },

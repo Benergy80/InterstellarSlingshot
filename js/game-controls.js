@@ -12431,6 +12431,8 @@ const HY_BOSS_FX = {
     POP_R_K: 0.07, POP_R_MIN: 1.0,      // pop fireball radius × hull radius (floor in world u)
     POP_GROW: 5,                        // a pop grows to (1 + POP_GROW) × its radius
     MIN_VIS_R: 45,                      // blast layers size off max(hull radius, this): bosses are 25-60 u hulls
+    MIN_VIS_DEG: 12,                    // Ben 2026-10-13 ("none are showing up"): the blast layers also size off the range to the player, so the
+    RING_MAX_DEG: 70,                   //   flash/debris subtend at least MIN_VIS_DEG of the view from any gun line; the rings stop at RING_MAX_DEG
     TUMBLE0: 0.25, TUMBLE1: 2.2,        // rad/s at the start / end of the throe
     SHUDDER_K: 0.025,                   // hull jitter × hull radius
     FLASH_R_K: 1.1, FLASH_LIFE: 320,    // white core flash
@@ -12477,6 +12479,20 @@ function _hyBossHullPoint(meshes, out) {
 // Start the set-piece for a dying boss. Returns false (and does nothing) when
 // the switch is 'original', so the caller falls back to createBossExplosion.
 // Call it BEFORE the kill path's scene.remove(enemy).
+// Boss-kill log (Ben 2026-10-13: "Bosses still need explosions, none are showing up" — headless, every finisher
+// runs the set-piece, so this records what happens in HIS browser): window.__bossKills (this session) and
+// localStorage hyBossKills (last 30 across sessions, same origin → readable from the Claude-controlled tab).
+function _hyBossLog(e) {
+    try {
+        e.t = Date.now(); e.build = (typeof window !== 'undefined' && window.BUILD_TAG) || '';
+        const L = window.__bossKills = window.__bossKills || [];
+        L.push(e); if (L.length > 60) L.shift();
+        let st = []; try { st = JSON.parse(localStorage.getItem('hyBossKills') || '[]') || []; } catch (x) { st = []; }
+        st.push(e); while (st.length > 30) st.shift();
+        localStorage.setItem('hyBossKills', JSON.stringify(st));
+    } catch (x) { /* private mode */ }
+}
+if (typeof window !== 'undefined') window._hyBossLog = _hyBossLog;
 function hyBossDeath(enemy, opts) {
     if (!_hyBossFxOn() || !enemy || !enemy.userData || typeof scene === 'undefined' ||
         typeof THREE === 'undefined' || typeof explosionManager === 'undefined') return false;
@@ -12521,7 +12537,13 @@ function hyBossDeath(enemy, opts) {
     });
     ud._hyBossFx = true;
 
-    const V = Math.max(R, C.MIN_VIS_R);   // blast-layer radius
+    // Distance-aware: from a 3,000 u gun line a 45 u blast is a speck. The flash / debris layers size so they
+    // subtend >= MIN_VIS_DEG of the view wherever the player is; the rings are capped at RING_MAX_DEG.
+    let camDist = 0;
+    try { camDist = camera.position.distanceTo(enemy.getWorldPosition(new THREE.Vector3())); } catch (e) {}
+    const V = Math.max(R, C.MIN_VIS_R, camDist * Math.tan(C.MIN_VIS_DEG * 0.5 * Math.PI / 180));   // blast-layer radius
+    const ringCap = camDist > 1 ? camDist * Math.tan(C.RING_MAX_DEG * 0.5 * Math.PI / 180) : Infinity;
+    _hyBossLog({ ev: 'start', name: ud.name, path: opts.path || '?', dist: Math.round(camDist), R: Math.round(R), V: Math.round(V), boss: isBoss });
     const fx = {
         t: 0, R: R, V: V, color: color, phase: 'throe', name: ud.name,
         pops: 0, popsPlanned: C.POPS_MIN + Math.floor(Math.random() * (C.POPS_MAX - C.POPS_MIN + 1)),
@@ -12722,9 +12744,11 @@ function hyBossDeath(enemy, opts) {
         if (typeof createBossExplosion === 'function') {
             try { createBossExplosion(fx.center, { color: color, scale: blastScale }); } catch (e) {}
         }
-        addRing(V * C.RING_R0_K, V * C.RING_R1_K, C.RING_LIFE, { x: -1.0, y: 0.25 }, color, 0);
-        addRing(V * C.RING_R0_K * 0.7, V * C.RING_R1_K * 0.7, C.RING_LIFE * 0.9, { x: 0.35, y: 1.2 }, color, 140);
-        addRing(V * C.RING_R0_K * 0.5, V * C.RING_R1_K * 0.45, C.RING_LIFE * 0.7, { x: 0, y: 0 }, 0xffffff, 0);
+        const r1 = Math.min(V * C.RING_R1_K, ringCap);
+        addRing(V * C.RING_R0_K, r1, C.RING_LIFE, { x: -1.0, y: 0.25 }, color, 0);
+        addRing(V * C.RING_R0_K * 0.7, r1 * 0.7, C.RING_LIFE * 0.9, { x: 0.35, y: 1.2 }, color, 140);
+        addRing(V * C.RING_R0_K * 0.5, r1 * 0.45, C.RING_LIFE * 0.7, { x: 0, y: 0 }, 0xffffff, 0);
+        _hyBossLog({ ev: 'final', name: ud.name, debris: fx.debris, rings: fx.rings, r1: Math.round(r1), dist: Math.round(camDist) });
         if (window.arcade) {
             try { window.arcade.flash('rgba(255,236,190,1)', 0.6); } catch (e) {}
             try { window.arcade.hitstop(C.HITSTOP_MS); fx.hitstop = true; } catch (e) {}
@@ -12883,6 +12907,10 @@ function hyBossDeath(enemy, opts) {
                 }
             } else {
                 if (fx._calloutUntil && !fx.callout && fx.t < fx._calloutUntil) callout();
+                else if (fx._calloutUntil && !fx.callout) {   // the arcade text never freed up: say it the plain way
+                    fx.callout = 'achievement';
+                    if (typeof showAchievement === 'function') { try { showAchievement('BOSS DESTROYED', (ud.name || 'Flagship') + ' is down'); } catch (e) {} }
+                }
                 const since = fx.t - fx.tFinal;
                 if (pushList && pushList.length && since < C.PUSH_MS) {
                     const kk = 1 - since / C.PUSH_MS;
@@ -12910,6 +12938,7 @@ function hyBossDeath(enemy, opts) {
             popGeo.dispose();
             fx.phase = 'done';
             fx.doneAt = performance.now();
+            _hyBossLog({ ev: 'done', name: ud.name, callout: fx.callout || null, ms: Math.round(fx.doneAt - fx.startedAt) });
         }
     });
     return true;
@@ -14348,7 +14377,7 @@ if (typeof window !== 'undefined') window.flashPlayerShipHit = flashPlayerShipHi
 // hull's longest dimension, every class alike; MIN/MAX are world-unit sanity
 // clamps only. 0.31 was ORIGINAL's fighter factor; 0.36 lets the bubble sit
 // just outside the hull on every ship.
-const HY_ENEMY_SHIELD = { K: 0.36, MIN: 12, MAX: 600 };
+const HY_ENEMY_SHIELD = { K: 0.36, MIN: 12, MAX: 600, BOSS_K: 1.0, BOSS_MAX_K: 1.1 };   // Ben 2026-10-13: "Vulcan High Command Overlords need larger shields" — an Overlord's bubble radius = BOSS_K x its hull span (was 0.62; guardians keep 0.62)
 if (typeof window !== 'undefined') window.HY_ENEMY_SHIELD = HY_ENEMY_SHIELD;
 function _ensureEnemyShield(enemy) {
     // HYBRID enemyLook: the ORIGINAL orange bubble (below) by default.
@@ -14461,7 +14490,7 @@ function _ensureEnemyShield_overhaul(enemy) {
         if (any && isFinite(box.min.x) && box.max.x > box.min.x) {
             const sz = box.getSize(new THREE.Vector3());
             hullSpan = Math.max(sz.x, sz.y, sz.z);
-            worldR = hullSpan * (_bigShield ? 0.62 : 0.31);
+            worldR = hullSpan * (_ud0.isBoss ? HY_ENEMY_SHIELD.BOSS_K : (_bigShield ? 0.62 : 0.31));   // HYBRID: Overlords (isBoss) get the larger bubble
         }
     } catch (e) {}
     {
@@ -14487,7 +14516,7 @@ function _ensureEnemyShield_overhaul(enemy) {
         // only for the un-measurable case it was actually written for.
         if (hullSpan > 0) {
             const relMin = hullSpan * 0.22;
-            const relMax = hullSpan * (_bigShield ? 0.75 : 0.40);
+            const relMax = hullSpan * (_ud1.isBoss ? HY_ENEMY_SHIELD.BOSS_MAX_K : (_bigShield ? 0.75 : 0.40));
             worldR = Math.max(relMin, Math.min(worldR, Math.min(relMax, maxR)));
         } else {
             const minR = _bigShield ? 45 : 22;
@@ -15994,8 +16023,9 @@ if (enemy.userData.health <= 0) {
         // HYBRID (bossExplosion: epic): the death set-piece takes the visuals
         // and runs the boss celebration at its final blast.
         if (!(typeof hyBossDeath === 'function' && hyBossDeath(enemy, {
-                color: _color, scale: _enemyUD.isBoss ? 1.8 : 1.3,
+                color: _color, scale: _enemyUD.isBoss ? 1.8 : 1.3, path: 'laser',
                 celebrate: !!(wasBoss || _enemyUD.isEliteGuardian), music: !!wasBoss, ambient: !!wasBoss }))) {
+        if (typeof _hyBossLog === 'function') _hyBossLog({ ev: 'fallback', path: 'laser', name: _enemyUD.name, fxOn: (typeof _hyBossFxOn === 'function') ? _hyBossFxOn() : null });
         createBossExplosion(enemy.position, {
             color: _color,
             scale: _enemyUD.isBoss ? 1.8 : 1.3
@@ -16821,8 +16851,9 @@ function handleMissileHit(missile, enemy) {
         } else if (_missBig && typeof createBossExplosion === 'function') {
             const _color = _missUD.galaxyColor || 0xff5522;
             if (!(typeof hyBossDeath === 'function' && hyBossDeath(enemy, {
-                    color: _color, scale: _missUD.isBoss ? 1.8 : 1.3,
+                    color: _color, scale: _missUD.isBoss ? 1.8 : 1.3, path: 'missile',
                     celebrate: !!wasBoss, music: !!wasBoss }))) {
+            if (typeof _hyBossLog === 'function') _hyBossLog({ ev: 'fallback', path: 'missile', name: _missUD.name, fxOn: (typeof _hyBossFxOn === 'function') ? _hyBossFxOn() : null });
             createBossExplosion(enemy.position, {
                 color: _color,
                 scale: _missUD.isBoss ? 1.8 : 1.3
@@ -20345,9 +20376,10 @@ function _handleWingmanKill(enemy) {
     // Visual + sound (HYBRID bossExplosion: epic — a boss gets the death set-piece)
     const _wud = enemy.userData;
     const _wBig = _wud.isBoss || _wud.isEliteGuardian || _wud.isBlackHoleGuardian;
-    if (_wBig && typeof hyBossDeath === 'function' && hyBossDeath(enemy, { color: _wud.galaxyColor })) {
+    if (_wBig && typeof hyBossDeath === 'function' && hyBossDeath(enemy, { color: _wud.galaxyColor, path: 'wingman' })) {
         // set-piece owns the visuals and sound
     } else {
+    if (_wBig && typeof _hyBossLog === 'function') _hyBossLog({ ev: 'fallback', path: 'wingman', name: _wud.name, fxOn: (typeof _hyBossFxOn === 'function') ? _hyBossFxOn() : null });
     if (typeof createExplosionEffect === 'function') {
         createExplosionEffect(enemy);
     }

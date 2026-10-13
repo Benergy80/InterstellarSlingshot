@@ -5306,46 +5306,111 @@ if (typeof window !== 'undefined') window.enhanceEarth = enhanceEarth;
 // =============================================================================
 const _planetTexCache = {};
 
+// HYBRID (Ben 2026-10-13: "Mercury ... needs more realistic texture"). The first plate was a flat tan fill
+// with 500 one-pixel-rimmed dots. This one: a seeded value-noise albedo (highland / lowland / smooth-plain
+// patches), ~1,500 craters on a power-law size spread with a shaded rim (shadow on the sun side's inner
+// wall, lit far wall, a lit outer lip), ejecta aprons and central peaks on the big ones, seven basins,
+// a handful of young rayed craters, and film grain. Equirectangular: craters widen toward the poles so
+// they stay round on the sphere, and anything near the seam is drawn twice so it wraps.
+const HY_MERCURY_TEX = { W: 2048, H: 1024, SEED: 7139, CRATERS: 1500, BASINS: 7, RAYED: 7, LIGHT_DEG: -135 };
+if (typeof window !== 'undefined') window.HY_MERCURY_TEX = HY_MERCURY_TEX;
 function _mercurySurfaceTexture() {
     if (_planetTexCache.mercury) return _planetTexCache.mercury;
-    const w = 1024, h = 512;
+    const M = HY_MERCURY_TEX, w = M.W, h = M.H;
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
     const ctx = cv.getContext('2d');
-
-    ctx.fillStyle = '#a89080';
-    ctx.fillRect(0, 0, w, h);
-
-    // Soft regional highland/lowland patches.
-    for (let i = 0; i < 60; i++) {
-        const cx = Math.random() * w;
-        const cy = Math.random() * h;
-        const r = 40 + Math.random() * 110;
-        const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        const lighter = Math.random() < 0.5;
-        grd.addColorStop(0, lighter ? 'rgba(200,180,160,0.40)' : 'rgba(80,70,60,0.40)');
-        grd.addColorStop(1, lighter ? 'rgba(200,180,160,0)' : 'rgba(80,70,60,0)');
-        ctx.fillStyle = grd;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fill();
+    let _s = M.SEED >>> 0;
+    const R = function () { _s = (_s + 0x6D2B79F5) >>> 0; let t = _s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+    const hash = function (x, y, k) { let n = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663) ^ Math.imul(k + 1, 83492791)) >>> 0; n = Math.imul(n ^ (n >>> 13), 1274126177) >>> 0; return ((n ^ (n >>> 16)) >>> 0) / 4294967296; };
+    const sm = function (t) { return t * t * (3 - 2 * t); };
+    // value noise, periodic in x (the seam), octave k on a lattice of `per` cells across
+    const vnoise = function (u, v, per, k) {
+        const x = u * per, y = v * per * 0.5;
+        const x0 = Math.floor(x), y0 = Math.floor(y), fx = sm(x - x0), fy = sm(y - y0);
+        const xa = ((x0 % per) + per) % per, xb = (xa + 1) % per;
+        const a = hash(xa, y0, k), b = hash(xb, y0, k), c = hash(xa, y0 + 1, k), d = hash(xb, y0 + 1, k);
+        return (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy;
+    };
+    // 1) ALBEDO BASE at quarter resolution, blown up (soft regional tone)
+    const lw = w >> 2, lh = h >> 2, low = document.createElement('canvas');
+    low.width = lw; low.height = lh;
+    const lg = low.getContext('2d'), img = lg.createImageData(lw, lh), px = img.data;
+    for (let y = 0; y < lh; y++) {
+        for (let x = 0; x < lw; x++) {
+            const u = x / lw, v = y / lh;
+            let n = 0, amp = 0.5, per = 6, tot = 0;
+            for (let k = 0; k < 5; k++) { n += vnoise(u, v, per, k) * amp; tot += amp; amp *= 0.55; per *= 2; }
+            n /= tot;
+            const plains = sm(Math.max(0, Math.min(1, (vnoise(u, v, 3, 9) - 0.42) * 4)));   // smooth-plain patches (slightly lighter, flatter)
+            const l = 0.30 + 0.55 * n + 0.10 * plains;
+            const i = (y * lw + x) * 4;
+            px[i] = Math.round(56 + 118 * l); px[i + 1] = Math.round(51 + 108 * l); px[i + 2] = Math.round(48 + 98 * l); px[i + 3] = 255;   // Mercury's albedo is lunar-dark (~0.14)
+        }
     }
-
-    // 500-ish craters at varied sizes: lighter rim + dark centre.
-    for (let i = 0; i < 500; i++) {
-        const cx = Math.random() * w;
-        const cy = Math.random() * h;
-        const r = 1.5 + Math.random() * 11;
-        ctx.beginPath();
-        ctx.arc(cx, cy, r + 1, 0, Math.PI * 2);
-        ctx.strokeStyle = 'rgba(210,190,170,0.55)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(60,52,44,0.65)';
-        ctx.fill();
-    }
+    lg.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(low, 0, 0, w, h);
+    // 2) CRATERS. Light from LIGHT_DEG (upper-left): the inner wall on that side is in shadow, the far
+    //    inner wall is lit, the outer lip on the lit side catches the sun.
+    const la = M.LIGHT_DEG * Math.PI / 180, ldx = Math.cos(la), ldy = Math.sin(la);   // toward the light
+    const cr = function (cx, cy, r, young) {
+        const lat = (cy / h - 0.5) * Math.PI, sx = Math.min(3, 1 / Math.max(0.2, Math.cos(lat)));   // widen toward the poles
+        const draw = function (ox) {
+            ctx.save(); ctx.translate(cx + ox, cy); ctx.scale(sx, 1);
+            // ejecta apron
+            if (r > 7) {
+                const g = ctx.createRadialGradient(0, 0, r * 0.95, 0, 0, r * (young ? 2.6 : 1.9));
+                g.addColorStop(0, 'rgba(214,202,190,' + (young ? 0.26 : 0.11) + ')'); g.addColorStop(1, 'rgba(214,202,190,0)');
+                ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 2.6, 0, Math.PI * 2); ctx.fill();
+            }
+            // floor: bowl for small craters, flat plain for basins
+            const fg = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+            if (r > 60) { fg.addColorStop(0, 'rgba(96,88,80,0.55)'); fg.addColorStop(0.8, 'rgba(84,76,70,0.55)'); fg.addColorStop(1, 'rgba(48,42,38,0.70)'); }
+            else { fg.addColorStop(0, 'rgba(44,38,34,0.62)'); fg.addColorStop(0.75, 'rgba(58,52,46,0.50)'); fg.addColorStop(1, 'rgba(70,62,56,0.40)'); }
+            ctx.fillStyle = fg; ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+            // inner wall: shadow on the light side, lit on the far side
+            const ig = ctx.createLinearGradient(ldx * r, ldy * r, -ldx * r, -ldy * r);
+            ig.addColorStop(0, 'rgba(18,14,12,0.80)'); ig.addColorStop(0.45, 'rgba(90,80,72,0.10)'); ig.addColorStop(1, 'rgba(236,226,214,0.82)');
+            ctx.strokeStyle = ig; ctx.lineWidth = Math.max(1, r * 0.20); ctx.beginPath(); ctx.arc(0, 0, r * 0.88, 0, Math.PI * 2); ctx.stroke();
+            // outer lip: lit on the light side, a soft shadow behind
+            const og = ctx.createLinearGradient(ldx * r, ldy * r, -ldx * r, -ldy * r);
+            og.addColorStop(0, 'rgba(240,232,222,0.70)'); og.addColorStop(0.5, 'rgba(120,110,100,0.05)'); og.addColorStop(1, 'rgba(20,16,14,0.45)');
+            ctx.strokeStyle = og; ctx.lineWidth = Math.max(1, r * 0.11); ctx.beginPath(); ctx.arc(0, 0, r * 1.06, 0, Math.PI * 2); ctx.stroke();
+            // central peak on the big ones
+            if (r > 24 && r < 90) {
+                ctx.fillStyle = 'rgba(20,16,14,0.55)'; ctx.beginPath(); ctx.arc(-ldx * r * 0.06, -ldy * r * 0.06, r * 0.13, 0, Math.PI * 2); ctx.fill();
+                ctx.fillStyle = 'rgba(232,222,210,0.80)'; ctx.beginPath(); ctx.arc(ldx * r * 0.05, ldy * r * 0.05, r * 0.10, 0, Math.PI * 2); ctx.fill();
+            }
+            // rays on the young ones
+            if (young) {
+                const n = 14 + Math.floor(R() * 16);
+                ctx.lineWidth = Math.max(1, r * 0.05);
+                for (let i = 0; i < n; i++) {
+                    const a = R() * Math.PI * 2, len = r * (2.5 + R() * 5.5);
+                    const rg = ctx.createLinearGradient(Math.cos(a) * r, Math.sin(a) * r, Math.cos(a) * len, Math.sin(a) * len);
+                    rg.addColorStop(0, 'rgba(240,234,226,0.30)'); rg.addColorStop(1, 'rgba(240,234,226,0)');
+                    ctx.strokeStyle = rg; ctx.beginPath(); ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r); ctx.lineTo(Math.cos(a) * len, Math.sin(a) * len); ctx.stroke();
+                }
+            }
+            ctx.restore();
+        };
+        draw(0);
+        const reach = r * sx * 3;
+        if (cx < reach) draw(w); else if (cx > w - reach) draw(-w);
+    };
+    const list = [];
+    for (let i = 0; i < M.BASINS; i++) list.push({ x: R() * w, y: h * (0.18 + R() * 0.64), r: 90 + R() * 70, young: false });
+    for (let i = 0; i < M.CRATERS; i++) list.push({ x: R() * w, y: h * (0.03 + R() * 0.94), r: 2 + 46 * Math.pow(R(), 3.2), young: false });
+    for (let i = 0; i < M.RAYED; i++) list.push({ x: R() * w, y: h * (0.15 + R() * 0.7), r: 8 + R() * 16, young: true });
+    list.sort(function (a, b) { return b.r - a.r; });   // big first, small overprint
+    for (let i = 0; i < list.length; i++) cr(list[i].x, list[i].y, list[i].r, list[i].young);
+    // 3) FILM GRAIN (a tiled noise pattern)
+    const gn = document.createElement('canvas'); gn.width = 256; gn.height = 256;
+    const gg = gn.getContext('2d'), gi = gg.createImageData(256, 256), gp = gi.data;
+    for (let i = 0; i < gp.length; i += 4) { const v = Math.round(R() * 255); gp[i] = gp[i + 1] = gp[i + 2] = v; gp[i + 3] = 22; }
+    gg.putImageData(gi, 0, 0);
+    ctx.fillStyle = ctx.createPattern(gn, 'repeat'); ctx.fillRect(0, 0, w, h);
 
     const tex = new THREE.CanvasTexture(cv);
     tex.needsUpdate = true;
@@ -9093,6 +9158,12 @@ function createOptimizedPlanets3D() {
     // atmospheres really do scatter blue (Mars's sunsets are blue), and a limb
     // that differs in HUE from the surface it hugs is what reads as air rather
     // than as an outline drawn around a disc.
+    // HYBRID (Ben 2026-10-13: "Mercury or venus spins too fast"): every Sol world turned once per 5 s (the
+    // 0.02 rad/frame default, no rotationSpeed was set). Real day lengths instead, scaled so Earth turns
+    // once per EARTH_S seconds of play; Venus and Uranus retrograde. rad per 60 fps frame.
+    const HY_SOL_SPIN = { EARTH_S: 90, MOON_S: 240, DAYS: { Mercury: 58.65, Venus: -243.0, Earth: 1.0, Mars: 1.03, Jupiter: 0.41, Saturn: 0.44, Uranus: -0.72, Neptune: 0.67, Pluto: 6.39 } };
+    if (typeof window !== 'undefined') window.HY_SOL_SPIN = HY_SOL_SPIN;
+    function _hySolSpin(name) { const d = HY_SOL_SPIN.DAYS[name]; const e = Math.PI * 2 / (HY_SOL_SPIN.EARTH_S * 60); return d ? e / d : e; }
     const localPlanets = [
         { name: 'Mercury', distance: 250,   size: 20, color: 0xa89080, moons: [],
           expose: 0.85, atmo: { scatter: 0.10, rimColor: 0xc9d6ff, rim: 0.22, city: 0 } },
@@ -9450,7 +9521,8 @@ try {
                 systemCenter: localSystemOffset,
                 mass: (planetData.physSize || planetData.size) * 2,
                 gravity: (planetData.physSize || planetData.size) * 0.8,
-                isLocal: true
+                isLocal: true,
+                rotationSpeed: _hySolSpin(planetData.name)   // HYBRID: real-ratio spin (HY_SOL_SPIN)
             };
             
             if (planets && planets.push) {
