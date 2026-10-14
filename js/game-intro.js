@@ -1124,6 +1124,7 @@ function _ivTitleChrome(trim) {
 }
 
 function showStartButton() {
+    if (document.getElementById('introStartBtn')) return;   // HYBRID: the title overlay may have asked for the menu already (js/title-screens.js ensureMenu)
     if (_hyIntroOverhaul()) return showStartButton_overhaul.apply(this, arguments);
     ivPerf('buttonAt');
     // Create and show the start button with fade-in

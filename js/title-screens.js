@@ -39,6 +39,11 @@
         SHIP_EMISSIVE: 0.08,     // poster: texture self-light (the hull is white: keep it low or it blows out)
         CAST_W: 200, CAST_H: 120,
         TAGLINE: 'A Gravitational Space Explorer by ChiLab+Claude',   // the game's own line (index.html loading screen)
+        GAMES: [                 // the title's GAME chooser (Ben 2026-10-13): this build, the live site, the Neon City branch
+            { key: 'hybrid', label: 'HYBRID' },
+            { key: 'live',   label: 'LIVE \u00b7 INTERSTELLARSLINGSHOT.COM', remote: 'https://interstellarslingshot.com/' },
+            { key: 'neon',   label: 'NEON CITY', local: 'http://localhost:8807/', remote: null }
+        ],
         DAWN: {                  // landscape palette handed to swLandscape (js/synthwave-fx.js)
             sky: [[0, 'rgba(5,3,20,0)'], [0.5, 'rgba(26,12,72,0.40)'], [0.86, 'rgba(70,36,150,0.55)'], [1, 'rgba(110,255,220,0.42)']],
             corona: [[0, 'rgba(255,226,150,0.70)'], [0.28, 'rgba(110,255,220,0.26)'], [0.62, 'rgba(90,60,255,0.12)'], [1, 'rgba(5,3,20,0)']],
@@ -292,7 +297,7 @@
     document.body.classList.add('hyt-on', 'hyt-on-' + mode);
     const sub = '<div class="hyt-sub"><span>' + HY_TITLE.TAGLINE + '</span></div>';
     const menu = '<div class="hyt-menu"><div class="hyt-wait"><span class="hyt-wait-k">Pre-flight</span><span class="hyt-wait-bar"><i></i></span><span class="hyt-wait-v"></span></div>' +
-        '<div class="hyt-style" role="group" aria-label="Title screen style"><button type="button" class="hyt-style-b" data-d="-1" aria-label="Previous title style">&lsaquo;</button><span class="hyt-style-t">TITLE &middot; <b></b></span><button type="button" class="hyt-style-b" data-d="1" aria-label="Next title style">&rsaquo;</button></div></div>';
+        '<div class="hyt-style" role="group" aria-label="Game version"><button type="button" class="hyt-style-b" data-d="-1" aria-label="Previous game version">&lsaquo;</button><span class="hyt-style-t">GAME &middot; <b></b></span><button type="button" class="hyt-style-b" data-d="1" aria-label="Next game version">&rsaquo;</button></div></div>';
     if (mode === 'heroine') {
         // Ben 2026-10-13: "Use this for the background" — his neon-city poster (images/title/heroine.jpg, the
         // INTERSTELLAR SLINGSHOT logo is painted into it). A plateless menu sits lower left over the reflective
@@ -442,6 +447,7 @@
             else if (!state.sawLoading && now - t0 > HY_TITLE.REVEAL_NO_LOADER_MS) reveal('no loading screen');
             else if (now - t0 > HY_TITLE.REVEAL_FALLBACK_MS) reveal('fallback');
         }
+        if (state.shown && !state.adopted) ensureMenu();
         if (!state.adopted) { if (!adopt()) updateWait(); }
         else if (!document.getElementById('introStartBtn') && !document.getElementById('introDemoBtn')) { teardown('buttons gone'); return; }
         if (typeof gameState !== 'undefined' && gameState && gameState.gameStarted) { teardown('game started'); return; }
@@ -449,18 +455,33 @@
     }
     state.raf = requestAnimationFrame(frame);
 
-    // the intro-branch chooser (goal: "choose from multiple branches on the intro screen"): ‹ › or ← → cycle the
-    // title directions; the choice persists (HYBRID.set → localStorage) and the page reloads into it.
-    const TITLE_STYLES = [['heroine', 'NEON CITY'], ['launch', 'EARTH AT DAWN'], ['chrome', 'CHROME'], ['landscape', 'LANDSCAPE'], ['poster', 'POSTER']];
-    const styleIdx = () => { const i = TITLE_STYLES.findIndex((t) => t[0] === mode); return i < 0 ? 0 : i; };
-    const styleName = root.querySelector('.hyt-style-t b'); if (styleName) styleName.textContent = TITLE_STYLES[styleIdx()][1];
+    // THE GAME CHOOSER. Ben 2026-10-13: "I want to choose between this new branch, the current live branch on github
+    // pages, and the neon city branch ... the neon city background is the one to keep for now." ‹ › or ← → cycle the
+    // three builds; picking another one navigates to it (the title STYLE chooser is gone — the Neon City poster stays;
+    // other styles remain at ?hy=titleScreen:…). Links: HY_TITLE.GAMES — the live site is GitHub Pages (main), Neon City
+    // is the claude/neon-city-level worktree served locally on :8807 (scripts/serve-all.sh) until it has a home online.
+    const _local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+    const GAMES = HY_TITLE.GAMES.map((g) => ({ key: g.key, label: g.label, url: g.key === 'hybrid' ? null : (_local && g.local) ? g.local : g.remote }));
+    let gameIdx = 0;
+    const styleName = root.querySelector('.hyt-style-t b'); if (styleName) styleName.textContent = GAMES[gameIdx].label;
     let restyling = false;
     function cycleStyle(d) {
-        if (restyling) return; restyling = true;
-        const next = TITLE_STYLES[(styleIdx() + d + TITLE_STYLES.length) % TITLE_STYLES.length];
-        try { if (window.HYBRID && window.HYBRID.set) window.HYBRID.set('titleScreen', next[0]); } catch (e) { /* private mode */ }
-        if (styleName) styleName.textContent = next[1];
-        setTimeout(() => { try { location.reload(); } catch (e) { restyling = false; } }, 320);
+        if (restyling) return;
+        gameIdx = (gameIdx + d + GAMES.length) % GAMES.length;
+        const g = GAMES[gameIdx];
+        if (styleName) styleName.textContent = g.label + (g.key !== 'hybrid' && !g.url ? ' \u00b7 NOT ONLINE YET' : '');
+        if (!g.url) return;                      // this build, or a build with no address from here: just the label
+        restyling = true;
+        setTimeout(() => { try { location.href = g.url; } catch (e) { restyling = false; } }, 320);
+    }
+    // STRAIGHT TO THE MENU. Ben 2026-10-13: "make the title screen have no menu bar loading but go straight to menus" —
+    // the game's own timeline builds the buttons a beat after the sky starts rising; the poster asks for them the moment
+    // it is up (showStartButton is guarded against building them twice).
+    function ensureMenu() {
+        if (document.getElementById('introStartBtn')) return true;
+        if (typeof showStartButton !== 'function' || typeof introSequence === 'undefined' || !introSequence || !introSequence.active) return false;
+        try { showStartButton(); } catch (e) { return false; }
+        return !!document.getElementById('introStartBtn');
     }
     // any exit from the menu starts the fade (the game's own handlers run as before)
     function onPress(e) {
