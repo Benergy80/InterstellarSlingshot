@@ -1141,6 +1141,82 @@ function _hyWarpPair(mode, a0, b0) {
     return t ? [t.a, t.b] : [a0, b0];
 }
 
+// ── EVENT-HORIZON TRANSIT (HYBRID warpFx: calm) ─────────────────────────────
+// Ben 2026-10-13: "There is still a spinning line effect when in a black hole warp. Lets remove that part and can we
+// think of something more unique that does not look like the other warp effects to go along with the fade transition?"
+// The spinning was the 'blackhole' streak field (swirl 0.11) fired at the horizon and, on wormholes, a rotating conic
+// vortex overlay. Both are gone under warpFx: calm. In their place a transit about GRAVITY, not speed:
+//   ENTRY  the horizon itself — a black disc with a thin photon ring and a faint Einstein ring ahead of it — opens at
+//          the centre and swallows the view (no lines, no rotation) while the scene behind it is red-shifted and
+//          tidally stretched into the hole (a CSS filter + transform on the canvas; the HUD is untouched).
+//   EXIT   the disc recedes behind you and the new sky lands blue-shifted, settling to normal.
+// Two DOM elements and the canvas, all CSS transitions (compositor work, nothing per frame).
+const HY_BH_TRANSIT = {
+    ENTRY_MS: 1500, EXIT_MS: 1300,            // the transit executes at +1,500 ms; the overlay is removed 1,500 ms after the exit starts
+    RING: { blackhole: '178,107,255', wormhole: '110,230,255' },   // photon-ring tint (violet hole / cyan wormhole)
+    STRETCH: [1.14, 1.30],                    // tidal stretch of the scene at full entry (x, y)
+    REDSHIFT: 'saturate(0.45) hue-rotate(-35deg) brightness(0.72) contrast(1.25)',
+    BLUESHIFT: 'saturate(1.25) hue-rotate(25deg) brightness(1.25) contrast(1.05)'
+};
+if (typeof window !== 'undefined') window.HY_BH_TRANSIT = HY_BH_TRANSIT;
+function _hyHorizonEnter(isWormhole) {
+    const T = HY_BH_TRANSIT, tint = isWormhole ? T.RING.wormhole : T.RING.blackhole;
+    if (!document.getElementById('hyHorizonStyle')) {
+        const st = document.createElement('style'); st.id = 'hyHorizonStyle';
+        st.textContent =
+            '#hyHorizon{position:fixed;inset:0;z-index:30;pointer-events:none;overflow:hidden}' +
+            '#hyHorizon .hz-disc{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;background:#02000a;transform:translate(-50%,-50%);' +
+              'transition:width var(--hz-ms) cubic-bezier(.55,0,1,.45),height var(--hz-ms) cubic-bezier(.55,0,1,.45)}' +
+            '#hyHorizon .hz-lens{position:absolute;left:50%;top:50%;width:0;height:0;border-radius:50%;border:2px solid rgba(255,255,255,.4);transform:translate(-50%,-50%);' +
+              'transition:width var(--hz-ms) cubic-bezier(.4,0,1,.6),height var(--hz-ms) cubic-bezier(.4,0,1,.6),opacity var(--hz-ms) ease-in}';
+        document.head.appendChild(st);
+    }
+    const root = document.createElement('div'); root.id = 'hyHorizon'; root.className = isWormhole ? 'hz-wormhole' : 'hz-blackhole';
+    root.style.setProperty('--hz-ms', T.ENTRY_MS + 'ms');
+    const disc = document.createElement('div'); disc.className = 'hz-disc';
+    disc.style.boxShadow = '0 0 1.2vmax 0.35vmax rgba(255,255,255,.9), 0 0 5vmax 1.4vmax rgba(' + tint + ',.75), 0 0 16vmax 5vmax rgba(' + tint + ',.35)';
+    const lens = document.createElement('div'); lens.className = 'hz-lens'; lens.style.opacity = '0.9';
+    root.appendChild(lens); root.appendChild(disc);
+    document.body.appendChild(root);
+    root._hyHorizon = true;
+    const cv = document.getElementById('gameCanvas');
+    if (cv) {
+        root._hyCanvas = cv;
+        root._hyCanvasPrev = { transition: cv.style.transition, filter: cv.style.filter, transform: cv.style.transform, origin: cv.style.transformOrigin };
+        cv.style.transformOrigin = '50% 50%';
+        cv.style.transition = 'filter ' + T.ENTRY_MS + 'ms ease-in, transform ' + T.ENTRY_MS + 'ms cubic-bezier(.55,0,1,.45)';
+    }
+    // two frames in (so the 0-size start is committed): the disc opens, the lens ring leads it, the scene is pulled in
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+        disc.style.width = '300vmax'; disc.style.height = '300vmax';
+        lens.style.width = '420vmax'; lens.style.height = '420vmax'; lens.style.opacity = '0';
+        if (cv) { cv.style.filter = T.REDSHIFT; cv.style.transform = 'scale(' + T.STRETCH[0] + ',' + T.STRETCH[1] + ')'; }
+    }); });
+    return root;
+}
+function _hyHorizonExit(root) {
+    const T = HY_BH_TRANSIT;
+    if (!root || !root._hyHorizon) return;
+    const disc = root.querySelector('.hz-disc'), lens = root.querySelector('.hz-lens'), cv = root._hyCanvas;
+    root.style.setProperty('--hz-ms', T.EXIT_MS + 'ms');
+    if (disc) disc.style.transition = 'width ' + T.EXIT_MS + 'ms cubic-bezier(0,.55,.45,1), height ' + T.EXIT_MS + 'ms cubic-bezier(0,.55,.45,1)';
+    if (cv) {
+        // filter only: the exit beat's screen shake owns the canvas transform (whipScreenShake writes it per frame)
+        cv.style.transition = 'none'; cv.style.transform = ''; cv.style.filter = T.BLUESHIFT;   // the new sky lands blue-shifted…
+        void cv.offsetWidth;
+        cv.style.transition = 'filter ' + T.EXIT_MS + 'ms ease-out';
+        cv.style.filter = '';                                                                   // …and settles
+    }
+    requestAnimationFrame(function () { requestAnimationFrame(function () {
+        if (disc) { disc.style.width = '0'; disc.style.height = '0'; }
+        if (lens) { lens.style.transition = 'none'; lens.style.width = '0'; lens.style.height = '0'; lens.style.opacity = '0'; }
+    }); });
+    setTimeout(function () {
+        if (cv && root._hyCanvasPrev) { const p = root._hyCanvasPrev; cv.style.transition = p.transition; cv.style.filter = p.filter; cv.style.transformOrigin = p.origin; }   // (transform: left to the shake)
+    }, T.EXIT_MS + 50);
+}
+if (typeof window !== 'undefined') { window._hyHorizonEnter = _hyHorizonEnter; window._hyHorizonExit = _hyHorizonExit; }
+
 function transitionToRandomLocation(sourceBlackHole, transitType) {
     const _isWormhole = (transitType === 'wormhole');
     console.log((_isWormhole ? 'WORMHOLE' : 'BLACK HOLE') + ' WARP INITIATED from:', sourceBlackHole);
@@ -1197,7 +1273,11 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
     // rip — lands on the frame the horizon takes you, while the white-out is
     // still ramping in and the shaft is visible through it. The exit beat
     // fires by itself as the flags clear and the white recedes off the tube.
-    if (typeof window !== 'undefined') {
+    // HYBRID (Ben 2026-10-13: "There is still a spinning line effect when in a black hole warp"): the 'blackhole'
+    // streak field (swirl 0.11) fired here was the spinning; under warpFx: calm with BLACKHOLE_LINES off, neither it
+    // nor the tunnel burst fires — the event-horizon transit below is the whole show.
+    const _hyNoLines = !!(typeof _hyWarpCalm === 'function' && _hyWarpCalm() && typeof window !== 'undefined' && window.HY_WARP_FX && !window.HY_WARP_FX.BLACKHOLE_LINES);
+    if (typeof window !== 'undefined' && !_hyNoLines) {
         if (typeof window.warpTunnelBurst === 'function') {
             window.warpTunnelBurst(1, 3200, true);
         }
@@ -1210,9 +1290,12 @@ function transitionToRandomLocation(sourceBlackHole, transitType) {
         }
     }
 
-    const fadeOverlay = document.createElement('div');
+    let fadeOverlay = document.createElement('div');
 
-    if (_isWormhole) {
+    if (_hyNoLines && typeof _hyHorizonEnter === 'function') {
+        // HYBRID: the EVENT-HORIZON transit (HY_BH_TRANSIT) — no vortex, no white-out, no lines
+        fadeOverlay = _hyHorizonEnter(_isWormhole);
+    } else if (_isWormhole) {
         // ── UNIQUE WORMHOLE ANIMATION ────────────────────────────────
         // A spinning violet vortex tunnel that zooms toward the camera,
         // rather than the black hole's flat white-out. Built from a
@@ -1602,7 +1685,9 @@ if (arrivedGalaxyId >= 0 && typeof cleanupDistantAsteroids === 'function') {
         // wouldn't visually fade it — cancel the animation and apply a
         // transition instead. The black-hole overlay already uses a
         // transition, so the simple assignment works for it.
-        if (_isWormhole) {
+        if (fadeOverlay && fadeOverlay._hyHorizon && typeof _hyHorizonExit === 'function') {
+            _hyHorizonExit(fadeOverlay);   // the horizon recedes behind you (HY_BH_TRANSIT.EXIT_MS); removed below as before
+        } else if (_isWormhole) {
             fadeOverlay.style.animation = 'none';
             fadeOverlay.style.transition = 'opacity 1.2s ease-out';
             // Force reflow so the transition picks up the new baseline.
