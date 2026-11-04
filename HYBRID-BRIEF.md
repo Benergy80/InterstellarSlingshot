@@ -4,6 +4,29 @@
 **This document governs the hybrid effort.** Where it disagrees with `CLAUDE.md`, `progress.html`
 or `SELF-IMPROVE.md`, this document wins.
 
+## COHESION BRANCH (2026-11-04) — `claude/cohesive-gameplay`
+
+Branched from `claude/star-explorer-hybrid` @ `9d3eb6e` (build 20261013l, Ben-accepted). Ben's goal: *"create a
+cohesive gameplay experience."* The campaign (progression.js) already had the rules; what it lacked was a thread
+the player can hold. New file `js/cohesion.js`, switch **`cohesion: on`** (`?hy=cohesion:off` = 20261013l behaviour).
+Build **20261104a**.
+
+| Piece | What the player gets | Where |
+|---|---|---|
+| Objective strip | Under the title header (or the floating score strip; phone: under the hull/energy pills): `Ch. N · <chapter>`, the current order, live progress (raiders 12/48 down, flagship hull %, distance to the line's end, forces / guardians left) and 8 pips for galaxies freed. Hidden on phone while the opening tutorial speaks, and while a boss intro card is up. | `computeObjective`, CSS `#hyObjective` (synthwave.css) |
+| Chapter cards | The original event-card slot announces CHAPTER I Sol Under Attack, II The Vulcan Blockade, III+ one per galaxy campaign (`<Faction> Space`), EPILOGUE; queued 2.6 s behind the phase's reward cards. | `chapterCard` |
+| Checkpoints | Recorded at every milestone (phase, nebula reached, galaxy reached) in TRUE coords, only once out of warp/whip/nav-warp; Sol phases respawn above Earth via `_hyStartPoint`. Kept clear of worlds/black holes at respawn. | `recordCheckpoint`, `clearOfBodies` |
+| CONTINUE? | The MISSION FAILED arcade count now really continues: the button reads **Continue**; a press while the count runs repairs the ship at the checkpoint in place (same world, wingmen, rewards, score; combo reset), hostiles inside 4.5k moved to 7.5k, hull held full 6 s, Mission Control confirms the standing order. After GAME OVER it restarts as before. Tally gains **Chapter** (+ Continues). | `respawn`, synthwave-fx.js `restart()`, arcade.js `resumeRun`, mobile-controls.js `startMobileUpdateLoop` |
+| Chapter saves | localStorage `is.hybrid.campaign.v1` at each chapter boundary (NEBULA_VISIT), dropped at VICTORY: galaxies freed, unlocks, max hull/energy, warheads, warp charges, score, nebula recruits. Title menu shows **CONTINUE CAMPAIGN · CHAPTER n · k OF 8 GALAXIES FREED** under PRESS TO LAUNCH; it runs the normal launch, restores, retires the Sol tutorial and opens the chapter 3 cloud-widths from its nebula. The world is regenerated per launch, so a restore always resumes at a chapter start. | progression.js `__campaign.saveData/restore`, cohesion `offerResume/tryResume` |
+
+Verified headless (SwiftShader, logic ~3 fps): objective text through every phase via `__campaign.advance()`; death →
+Continue → alive at Earth orbit, nearest hostile 2.9k → 10.9k, 0 page errors; save → reload → CONTINUE CAMPAIGN →
+NEBULA_VISIT with hull 125, spread shot, Ch. III, tutorial retired, tether off; demo 150 s clean (selftest: fps warn
+only). **Not yet played by hand at real frame rates** — the pacing of chapter cards against the tutorial/Mission
+Control alerts at launch and the 6 s protection window want Ben's eye. Knobs: `HY_COHESION` (cohesion.js).
+
+Debug: `__cohesion` (`objective`, `checkpoint`, `continues`, `respawn()`, `save`, `dropSave()`).
+
 ## RESUME HERE (updated 2026-10-13)
 
 **Latest (2026-10-13):** build **20261013l** (Ben ACCEPTED 20261013k: "it is good yes") — Round 5 items 23-30 (loading screen first, then the poster;

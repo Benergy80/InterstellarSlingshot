@@ -17,6 +17,6 @@ let html = readFileSync(file, 'utf8');
 let n = 0;
 html = html.replace(/((?:src|href)=")((?:js|css)\/[^"?]+)(?:\?v=[^"]*)?(")/g, (_m, a, path, z) => { n++; return `${a}${path}?v=${tag}${z}`; });
 html = html.replace(/(window\.BUILD_TAG\s*=\s*')[^']*(')/, `$1${tag}$2`);
-html = html.replace(/(window\.BUILD_ID\s*=\s*')[^']*(')/, `$1claude/star-explorer-hybrid$2`);
+html = html.replace(/(window\.BUILD_ID\s*=\s*')[^']*(')/, `$1claude/cohesive-gameplay$2`);
 writeFileSync(file, html);
 console.log(`stamped ${n} references + BUILD_TAG = ${tag}`);
