@@ -934,5 +934,75 @@
         // jump straight to a phase (debug) without the intervening rewards
         go: function (phase) { const i = P[phase]; if (i === undefined) return null; enter(i, 'debug'); return PHASES[C.idx]; },
         say: function () { _lastSayAt = 0; pumpComms(); return _q.length; },
+        // COHESION (js/cohesion.js): a chapter-boundary save and its restore. Only the
+        // run's PROGRESS persists (galaxies freed, unlocks, ship upgrades, score, wingman
+        // count) — the world is regenerated each launch, so a restore always resumes at
+        // the start of the next galaxy campaign (NEBULA_VISIT), beside its nebula.
+        saveData: function () {
+            if (C.idx < P.SGR_LIBERATED || C.idx >= P.VICTORY) return null;
+            const g = gs() || {}, A = ie('allyShips') || [];
+            return {
+                v: 1, at: Date.now(), build: window.BUILD_TAG || '',
+                cleared: C.clearedOrder.slice(), perm: Object.assign({}, C.perm), nebulaSaved: C.nebulaSaved,
+                grants: C.grants.map(function (x) { return x.label; }),
+                stats: {
+                    maxHull: g.maxHull || 100, maxEnergy: g.maxEnergy || 100,
+                    missileDamage: g.missiles ? g.missiles.damage : undefined,
+                    warp: g.emergencyWarp ? g.emergencyWarp.available : undefined,
+                    score: g.score || 0, reputation: g.reputation || 0,
+                },
+                // nebula recruits only: the starting wing is spawned by every launch anyway
+                wingmen: A.filter(function (a) { return a && a.userData && a.userData.recruitedFrom && !a.userData.recruitPending && !(a.userData.health <= 0); }).length,
+                wingmenFrom: A.filter(function (a) { return a && a.userData && a.userData.recruitedFrom && !a.userData.recruitPending && !(a.userData.health <= 0); })
+                    .map(function (a) { return String(a.userData.recruitedFrom); }),
+            };
+        },
+        restore: function (data) {
+            if (!data || data.v !== 1 || !Array.isArray(data.cleared) || !data.cleared.length) return false;
+            if (!C.started || C.idx > P.SOL_BOSS) return false;
+            const g = gs(), c = cam(); if (!g || !c) return false;
+            // progress
+            C.cleared = {}; C.clearedOrder = [];
+            data.cleared.forEach(function (k) { k = k | 0; if (k >= 0 && k < GALAXIES && !C.cleared[k]) { C.cleared[k] = true; C.clearedOrder.push(k); } });
+            if (!C.cleared[7]) { C.cleared[7] = true; C.clearedOrder.unshift(7); }
+            C.perm = Object.assign({}, data.perm || {});
+            C.nebulaSaved = data.nebulaSaved | 0;
+            C.grants = (data.grants || []).map(function (l) { return { phase: 'RESTORED', label: String(l) }; });
+            T.escaped = true;
+            const S = data.stats || {};
+            if (S.maxHull > 0) { g.maxHull = S.maxHull; g.hull = S.maxHull; }
+            if (S.maxEnergy > 0) { g.maxEnergy = S.maxEnergy; g.energy = S.maxEnergy; }
+            if (g.missiles && S.missileDamage > 0) { g.missiles.damage = S.missileDamage; g.missiles.current = g.missiles.capacity; }
+            if (g.emergencyWarp && S.warp >= 0) g.emergencyWarp.available = S.warp;
+            if (S.score > 0) g.score = S.score;
+            if (S.reputation > 0) g.reputation = S.reputation;
+            g.galaxiesCleared = C.clearedOrder.length;
+            if (typeof updateMissileUI === 'function') { try { updateMissileUI(); } catch (e) {} }
+            if (typeof refreshEnemyDifficulty === 'function') { try { refreshEnemyDifficulty(); } catch (e) {} }
+            // wingmen: the roster is recruited in order, so the same pilots come back
+            const n = Math.max(0, Math.min(4, data.wingmen | 0));
+            const from = Array.isArray(data.wingmenFrom) ? data.wingmenFrom : [];
+            for (let i = 0; i < n; i++) { try { if (typeof recruitNebulaWingman === 'function') recruitNebulaWingman(from[i] && from[i] !== 'unknown nebula' ? from[i] : undefined); } catch (e) { break; } }
+            // the chapter opens three cloud-widths out from its nebula, facing it
+            const t = pickTargetNebula();
+            if (t && t.position) {
+                const size = (t.userData && t.userData.size) || 2000;
+                const sa = sgrA();
+                const dir = (sa ? sa.position.clone().sub(t.position) : c.position.clone().sub(t.position));
+                if (dir.lengthSq() < 1) dir.set(1, 0, 0);
+                dir.normalize();
+                c.position.copy(t.position).addScaledVector(dir, size * 3);
+                c.lookAt(t.position);
+                if (g.velocityVector) g.velocityVector.set(0, 0, 0);
+                T.prevD = null;
+            }
+            C._libTarget = t || null;
+            for (let k = _q.length - 1; k >= 0; k--) _q.splice(k, 1);
+            enter(P.NEBULA_VISIT, 'restore');
+            say('Mission Control - Campaign Resumed',
+                'Welcome back, Captain. ' + C.clearedOrder.length + ' of ' + GALAXIES + ' galaxies are free' +
+                (n ? ' and your wing is with you' : '') + '. ' + (t ? nebulaName(t) + ' lies ahead — its people know the next faction.' : 'Chart a nebula to find the next faction.'));
+            return true;
+        },
     };
 })();

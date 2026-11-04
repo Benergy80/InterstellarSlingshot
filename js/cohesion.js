@@ -37,6 +37,7 @@
         TICK_MS: 250,              // objective refresh
         CARD_DELAY_MS: 2600,       // chapter card waits for the phase's reward cards
         MAX_CONTINUES: Infinity,   // arcade continues allowed per run
+        SAVE_KEY: 'is.hybrid.campaign.v1',
     };
     window.HY_COHESION = HY_COHESION;
 
@@ -431,6 +432,73 @@
     }
     window.hyContinue = { available: available, run: respawn };
 
+    // ── 3c. SAVE + RESUME across launches ───────────────────────────────────
+    // A save is written at every chapter boundary (entering NEBULA_VISIT: Sgr A*
+    // freed, or a galaxy cleared) and dropped at VICTORY. The title menu then offers
+    // CONTINUE CAMPAIGN beside PRESS TO LAUNCH; it runs the normal launch and, once
+    // the campaign starts, restores the run at its next chapter (progression.js
+    // __campaign.restore — the world is new each launch, so mid-chapter state is not kept).
+    function readSave() {
+        try { const v = JSON.parse(localStorage.getItem(HY_COHESION.SAVE_KEY) || 'null'); return v && v.v === 1 && Array.isArray(v.cleared) && v.cleared.length ? v : null; } catch (e) { return null; }
+    }
+    function writeSave() {
+        const C = camp(); if (!C || isDemo() || typeof C.saveData !== 'function') return;
+        let d = null; try { d = C.saveData(); } catch (e) { d = null; }
+        if (!d) return;
+        try { localStorage.setItem(HY_COHESION.SAVE_KEY, JSON.stringify(d)); R.savedAt = now(); } catch (e) {}
+    }
+    function dropSave() { try { localStorage.removeItem(HY_COHESION.SAVE_KEY); } catch (e) {} }
+    const startSave = readSave();
+    let resumeRequested = false, resumeDone = false;
+    function savedChapter(sv) { return Math.max(3, sv.cleared.length + 2); }
+    function offerResume() {
+        if (!startSave || resumeRequested) return;
+        const g = gs(); if (g && g.gameStarted) return;
+        const start = document.getElementById('introStartBtn');
+        if (!start || !start.parentNode) { setTimeout(offerResume, 400); return; }
+        let btn = document.getElementById('introResumeBtn');
+        if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'introResumeBtn';
+            btn.type = 'button';
+            btn.className = 'intro-start-btn';
+            const ch = savedChapter(startSave);
+            btn.innerHTML = '<div class="start-btn-content"><div class="start-btn-text">CONTINUE CAMPAIGN</div>' +
+                '<div class="start-btn-subtext">CHAPTER ' + roman(ch) + ' · ' + startSave.cleared.length + ' OF 8 GALAXIES FREED</div></div>';
+            btn.addEventListener('click', function (e) {
+                e.preventDefault(); e.stopPropagation();
+                const s2 = document.getElementById('introStartBtn'); if (!s2) return;
+                resumeRequested = true;
+                btn.remove();
+                s2.click();
+            });
+        }
+        if (btn.parentNode !== start.parentNode || btn.previousSibling !== start) start.parentNode.insertBefore(btn, start.nextSibling);
+        btn.classList.toggle('hyco-free', !document.getElementById('hyTitle') || !start.closest('#hyTitle'));
+        setTimeout(offerResume, 400);    // the title adopts and moves the buttons; follow them until launch
+    }
+    if (startSave) setTimeout(offerResume, 300);
+    function tryResume() {
+        if (!resumeRequested || resumeDone) return;
+        const C = camp(); if (!C || typeof C.restore !== 'function') return;
+        let st = null, started = false; try { st = C.state; started = (C.log || []).length > 0; } catch (e) { return; }
+        if (!started || st !== 'SOL_PIRATES') return;     // the campaign has not entered its first phase yet
+        resumeDone = true;
+        let ok = false; try { ok = C.restore(startSave); } catch (e) { console.warn('campaign restore failed', e); }
+        if (!ok) return;
+        // the Sol tutorial would brief the wrong war
+        try {
+            const tut = ie('tutorialSystem');
+            if (tut && !tut.completed) {
+                const ct = ie('completeTutorial');
+                if (typeof ct === 'function') ct(); else { tut.active = false; tut.completed = true; tut.completionTime = now(); }
+            }
+            const al = document.getElementById('missionCommandAlert'); if (al) al.classList.add('hidden');
+        } catch (e) {}
+        R.cardChapter = 0; R.lastState = null; R.checkpoint = null; R.lastKey = '';
+        console.log('💾 campaign resumed: chapter ' + roman(savedChapter(startSave)));
+    }
+
     // ── 4. TALLY: chapter reached ────────────────────────────────────────────
     (function wrapTally() {
         const AF = window.hyArcadeFeel;
@@ -464,12 +532,15 @@
         const t = now(); if (t - lastTick < HY_COHESION.TICK_MS) return; lastTick = t;
         const C = camp();
         if (!C || !g.gameStarted || g.gameOver) { if (g.gameOver) setHudVisible(false); return; }
+        tryResume();
         let D = null; try { D = C.director; } catch (e) { return; }
         if (!D || !D.state) return;
 
-        // phase change: chapter card, counters reset
+        // phase change: chapter card, counters reset, chapter-boundary save
         if (D.state !== R.lastState) {
             const prev = R.lastState; R.lastState = D.state;
+            if (D.state === 'NEBULA_VISIT' && !isDemo()) writeSave();
+            if (D.state === 'VICTORY' && !isDemo()) dropSave();
             if (D.state === 'SGR_VULCANS') R.vulcansMax = 0;
             if (D.state === 'NEBULA_VISIT') { R.guardMax = 0; }
             if (D.state === 'NEBULA_MISSION') R.missionMax = 0;
@@ -511,5 +582,10 @@
         available: available,
         respawn: respawn,
         cfg: HY_COHESION,
+        get save() { return readSave(); },
+        get resumed() { return resumeDone; },
+        dropSave: dropSave,
+        writeSave: writeSave,
+        requestResume: function () { if (!startSave) return false; resumeRequested = true; return true; },
     };
 })();

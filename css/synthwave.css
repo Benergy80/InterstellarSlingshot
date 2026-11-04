@@ -609,3 +609,16 @@ body.hyt-on-heroine #skipIntroBtn { display: none !important; }   /* Ben 2026-10
 #hyObjective.hyob-phone .hyob-det { font-size: 11px; }
 body.intro-active #hyObjective, #pauseOverlay:not(.hidden) ~ #hyObjective { display: none; }
 @media (prefers-reduced-motion: reduce) { #hyObjective.hyob-new { animation: none; } }
+/* CONTINUE CAMPAIGN on the title menu (js/cohesion.js — only when a chapter save exists) */
+#hyTitle .hyt-menu #introResumeBtn {
+    position: relative !important; top: auto !important; left: auto !important; right: auto !important; bottom: auto !important;
+    transform: none !important; margin: 0 !important; z-index: auto !important; animation: none !important;
+    min-width: 300px; min-height: 52px; cursor: pointer !important; box-sizing: border-box; }
+#hyTitle .hyt-menu #introResumeBtn .start-btn-content { font-family: var(--sw-font-title) !important; }
+#hyTitle .hyt-menu #introResumeBtn .start-btn-text { font-family: var(--sw-font-title) !important; font-weight: 900 !important; font-size: 1.05rem !important; letter-spacing: 0.24em !important; margin: 0 !important; }
+#hyTitle .hyt-menu #introResumeBtn .start-btn-subtext { font-family: var(--sw-font-ui) !important; font-weight: 600 !important; font-size: 0.74rem !important; letter-spacing: 0.34em !important; margin-top: 3px !important; opacity: 1 !important; }
+#hyTitle.hyt-heroine .hyt-menu #introResumeBtn { background: none !important; border: 0 !important; box-shadow: none !important; padding: 6px 0 !important; text-align: left !important; }
+#hyTitle.hyt-heroine .hyt-menu #introResumeBtn .start-btn-text { font-size: 1.15rem !important; color: #7bffe0 !important; text-shadow: 0 0 14px rgba(123,255,224,0.6), 0 2px 6px rgba(0,0,0,0.9) !important; }
+#hyTitle.hyt-heroine .hyt-menu #introResumeBtn .start-btn-subtext { color: #cfe9ff !important; text-shadow: 0 2px 6px rgba(0,0,0,0.9) !important; }
+#hyTitle.hyt-heroine .hyt-menu #introResumeBtn:hover .start-btn-text, #hyTitle.hyt-heroine .hyt-menu #introResumeBtn:focus .start-btn-text { color: #ffffff !important; }
+#introResumeBtn.hyco-free { top: calc(50% + 96px) !important; }
