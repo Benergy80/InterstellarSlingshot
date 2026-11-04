@@ -860,7 +860,14 @@
             sting(1046, 110, 0.09); setTimeout(() => sting(1568, 110, 0.07), 120);
         }, at);
     }
-    window.hyArcadeFeel = { tallyRows, best: () => best, bestAtStart, isNewRecord, AF };
+    // COHESION continue (js/cohesion.js): the run picks up again — same score, combo reset
+    function resumeRun() {
+        ended = false; lastStreakN = 0; lastScore = -1;
+        const g = gs(); if (g) { g._combo = 0; g._comboMult = 1; }
+        if (hud) hud.classList.remove('hyaf-off');
+        if (popLayer) popLayer.classList.remove('hyaf-off');
+    }
+    window.hyArcadeFeel = { tallyRows, best: () => best, bestAtStart, isNewRecord, AF, resumeRun };
 
     // ── LAUNCH TITLE: BEST under the menu plate ─────────────────────────────
     function titleBest() {

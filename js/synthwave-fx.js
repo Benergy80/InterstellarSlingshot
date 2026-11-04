@@ -241,8 +241,24 @@
         const titleEl = root.querySelector('.sw-title'), subEl = root.querySelector('.sw-sub');
         const tallyEl = root.querySelector('.sw-tally'), contEl = root.querySelector('.sw-continue');
         const numEl = contEl.querySelector('.n'), btn = root.querySelector('.sw-btn'), hint = root.querySelector('.sw-hint');
-        let done = false;
-        function restart() { if (done) return; done = true; stopGrid(); location.reload(); }
+        let done = false, iv = null, anyFn = null;
+        // COHESION (js/cohesion.js, HYBRID cohesion: on): while the CONTINUE? count is
+        // running, a press continues the campaign from its last checkpoint in place —
+        // same world, wingmen, rewards and score. After GAME OVER it restarts as before.
+        const cont = window.hyContinue;
+        const canCont = () => !!(cont && typeof cont.available === 'function' && cont.available()) && !root.classList.contains('sw-over');
+        if (cont && typeof cont.available === 'function' && cont.available()) btn.textContent = 'Continue';
+        function restart() {
+            if (done) return; done = true;
+            if (canCont()) {
+                stopGrid(); if (iv) clearInterval(iv);
+                if (anyFn) window.removeEventListener('keydown', anyFn);
+                root.remove();
+                if (canvasEl) canvasEl.style.pointerEvents = '';
+                try { cont.run(); return; } catch (e) { console.warn('continue failed, restarting', e); }
+            }
+            stopGrid(); location.reload();
+        }
         btn.addEventListener('click', restart);
         btn.addEventListener('touchend', (e) => { e.preventDefault(); restart(); });
 
@@ -280,11 +296,12 @@
             contEl.style.visibility = 'visible'; btn.style.visibility = 'visible'; hint.style.visibility = 'visible';
             let n = SW_DEATH.CONTINUE_FROM;
             numEl.textContent = n;
-            const iv = setInterval(() => {
+            iv = setInterval(() => {
                 n--;
                 if (n < 0) {
                     clearInterval(iv);
                     root.classList.add('sw-over');
+                    if (btn.textContent === 'Continue') btn.textContent = 'Restart Mission';
                     contEl.querySelector('.q').textContent = 'Game over';
                     numEl.textContent = '';
                     const coin = document.createElement('div'); coin.className = 'sw-coin'; coin.textContent = 'Insert coin';
@@ -296,7 +313,8 @@
                 blip(n > 3 ? 440 : 880, 50, 0.04);
             }, SW_DEATH.CONTINUE_STEP_MS);
             const any = (e) => { if (e && e.type === 'keydown' && (e.key === 'F5' || e.metaKey || e.ctrlKey)) return; restart(); };
-            setTimeout(() => { window.addEventListener('keydown', any); root.addEventListener('click', any); }, 600);
+            anyFn = any;
+            setTimeout(() => { if (done) return; window.addEventListener('keydown', any); root.addEventListener('click', any); }, 600);
         }, t + 200);
         return root;
     }

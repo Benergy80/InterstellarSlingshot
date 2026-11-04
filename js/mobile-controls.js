@@ -859,11 +859,19 @@ document.addEventListener('click', (e) => {
     }
 });
 
-// Periodic updates with game over check
-const mobileUpdateInterval = trackInterval(setInterval(() => {
+// Periodic updates with game over check. Game over stops it (clearAllGameIntervals);
+// a campaign CONTINUE (js/cohesion.js) starts it again through startMobileUpdateLoop().
+let mobileUpdateInterval = null;
+function startMobileUpdateLoop() {
+    if (mobileUpdateInterval) clearInterval(mobileUpdateInterval);
+    mobileUpdateInterval = trackInterval(setInterval(mobileUpdateTick, 1000));
+}
+window.startMobileUpdateLoop = startMobileUpdateLoop;
+function mobileUpdateTick() {
     // CRITICAL: Stop interval if game is over
     if (typeof gameState !== 'undefined' && gameState.gameOver) {
         clearInterval(mobileUpdateInterval);
+        mobileUpdateInterval = null;
         console.log('📱 Mobile update interval stopped - game over');
         return;
     }
@@ -893,7 +901,8 @@ const mobileUpdateInterval = trackInterval(setInterval(() => {
             if (warpBadge) warpBadge.textContent = gameState.emergencyWarp?.available ?? 5;
         }
     }
-}, 1000));
+}
+startMobileUpdateLoop();
 
 // Show mobile controls after intro
 document.addEventListener('DOMContentLoaded', () => {

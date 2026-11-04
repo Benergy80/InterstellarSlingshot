@@ -583,3 +583,29 @@ body.hyt-on-heroine #skipIntroBtn { display: none !important; }   /* Ben 2026-10
   #hyTitle.hyt-heroine .hyt-stage.hyt-stage-heroine { left: 5% !important; right: 5% !important; width: auto !important; bottom: 6% !important; }
   #hyTitle.hyt-heroine .hyt-bg-shade { height: 60%; }
 }
+
+/* ── COHESION (HYBRID cohesion: on — js/cohesion.js) ─────────────────────────────────────────────
+   OBJECTIVE strip: the campaign's "what now" under the score strip (desktop), under the phone bar (phone).
+   Created only when the switch is on. */
+#hyObjective { position: fixed; z-index: 600; left: 50%; top: 144px; transform: translateX(-50%); pointer-events: none;
+    display: flex; align-items: center; gap: 14px; max-width: min(760px, 62vw); padding: 6px 14px 7px 14px; box-sizing: border-box;
+    background: rgba(5,3,15,0.72); border: 1px solid rgba(123,255,224,0.22); border-left: 3px solid var(--sw-mint, #7bffb0); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35); color: var(--sw-white, #f4f7ff); font-family: var(--sw-font-ui); transition: opacity 200ms linear; }
+#hyObjective.hyob-off { opacity: 0; }
+#hyObjective .hyob-ch { flex: 0 0 auto; font-family: var(--sw-font-title); font-size: 10px; font-weight: 700; letter-spacing: 0.22em; text-transform: uppercase;
+    color: #7bffe0; max-width: 15ch; line-height: 1.25; }
+#hyObjective .hyob-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+#hyObjective .hyob-txt { font-size: 17px; font-weight: 700; letter-spacing: 0.04em; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hyObjective .hyob-det { font-size: 13px; font-weight: 600; letter-spacing: 0.06em; color: rgba(204,212,232,0.88); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hyObjective .hyob-det:empty { display: none; }
+#hyObjective .hyob-pips { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, 7px); gap: 3px; }
+#hyObjective .hyob-pips i { width: 7px; height: 7px; transform: rotate(45deg); border: 1px solid rgba(123,255,224,0.55); box-sizing: border-box; }
+#hyObjective .hyob-pips i.on { background: #7bffe0; box-shadow: 0 0 6px #7bffe0; border-color: #7bffe0; }
+#hyObjective.hyob-new { animation: hyobNew 900ms ease-out; }
+@keyframes hyobNew { 0% { border-color: rgba(123,255,224,0.9); box-shadow: 0 0 22px rgba(123,255,224,0.55); } 100% { border-color: rgba(123,255,224,0.22); box-shadow: 0 8px 24px rgba(0,0,0,0.35); } }
+#hyObjective.hyob-phone { top: max(100px, calc(env(safe-area-inset-top) + 94px)); max-width: calc(100vw - 24px); gap: 10px; padding: 5px 10px 6px 10px; }
+#hyObjective.hyob-phone .hyob-ch { display: none; }
+#hyObjective.hyob-phone .hyob-txt { font-size: 14px; }
+#hyObjective.hyob-phone .hyob-det { font-size: 11px; }
+body.intro-active #hyObjective, #pauseOverlay:not(.hidden) ~ #hyObjective { display: none; }
+@media (prefers-reduced-motion: reduce) { #hyObjective.hyob-new { animation: none; } }
